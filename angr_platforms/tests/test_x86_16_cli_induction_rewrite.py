@@ -3,20 +3,24 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
     CConstant,
     CForLoop,
-    CITE,
+    CIndexedVariable,
     CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
-    CIndexedVariable,
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
-from inertia_decompiler.cli_access_profiles import AccessTraitStrideEvidence, build_access_trait_evidence_profiles, infer_induction_variable
+from inertia_decompiler.cli_access_profiles import (
+    AccessTraitStrideEvidence,
+    build_access_trait_evidence_profiles,
+    infer_induction_variable,
+)
 from inertia_decompiler.cli_induction_rewrite import rewrite_for_loop_conditions_from_access_traits
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -49,7 +53,21 @@ def _iter_c_nodes_deep(node):
         for stmt in node.statements:
             yield from _iter_c_nodes_deep(stmt)
         return
-    for attr in ("lhs", "rhs", "operand", "expr", "variable", "index", "condition", "initializer", "iterator", "cond", "iftrue", "iffalse", "body"):
+    for attr in (
+        "lhs",
+        "rhs",
+        "operand",
+        "expr",
+        "variable",
+        "index",
+        "condition",
+        "initializer",
+        "iterator",
+        "cond",
+        "iftrue",
+        "iffalse",
+        "body",
+    ):
         child = getattr(node, attr, None)
         if child is None:
             continue

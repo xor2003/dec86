@@ -32,9 +32,7 @@ def _text_contains_forbidden_linear_pattern(text: str) -> str | None:
     return None
 
 
-def assert_no_linearized_segment_expr_8616(
-    expr: object, *, layer: str, function_addr: int | None = None
-) -> None:
+def assert_no_linearized_segment_expr_8616(expr: object, *, layer: str, function_addr: int | None = None) -> None:
     """Raise PipelineHardError if *expr* contains a linearized segment term.
 
     Call this before any semantic log, artifact emission, or postprocess
@@ -51,8 +49,7 @@ def assert_no_linearized_segment_expr_8616(
     if pattern is None:
         return
     raise PipelineHardError(
-        f"linearized segment expression leaked into {layer}: "
-        f"forbidden pattern {pattern!r} in {text[:200]}",
+        f"linearized segment expression leaked into {layer}: forbidden pattern {pattern!r} in {text[:200]}",
         layer=layer,
         function_addr=function_addr,
     )

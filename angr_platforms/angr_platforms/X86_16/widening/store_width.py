@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Widening
 # Responsibility: typed store-width joins after alias compatibility proof.
 # Forbidden: rendered-text adjacency as semantic proof.
-
 import angr
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypePointer, SimTypeShort

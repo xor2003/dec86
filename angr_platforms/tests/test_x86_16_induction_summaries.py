@@ -86,7 +86,15 @@ def test_structuring_stage_collects_induction_summaries_on_codegen():
                 "member_evidence": {},
                 "array_evidence": {},
                 "induction_evidence": {
-                    ("induction_like", "ss", ("stack", "bp", -4), ("reg", reg_offset), 2, 4, 2): AccessTraitStrideEvidence(
+                    (
+                        "induction_like",
+                        "ss",
+                        ("stack", "bp", -4),
+                        ("reg", reg_offset),
+                        2,
+                        4,
+                        2,
+                    ): AccessTraitStrideEvidence(
                         segment="ss",
                         base_key=("stack", "bp", -4),
                         index_key=("reg", reg_offset),

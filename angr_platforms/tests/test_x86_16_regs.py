@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from angr_platforms.X86_16.regs import coerce_reg16_t, coerce_reg32_t, coerce_sgreg_t, register_name_8616, reg16_t, reg32_t, sgreg_t
+from angr_platforms.X86_16.regs import (
+    coerce_reg16_t,
+    coerce_reg32_t,
+    coerce_sgreg_t,
+    reg16_t,
+    reg32_t,
+    register_name_8616,
+    sgreg_t,
+)
 
 
 def test_register_coercion_accepts_plain_indices() -> None:

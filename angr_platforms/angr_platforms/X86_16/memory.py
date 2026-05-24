@@ -7,6 +7,7 @@ from pyvex.lifting.util.vex_helper import Type
 
 DEFAULT_MEMORY_SIZE = 1024  # 1 KB
 
+
 class Memory:
     def __init__(self, size: int = DEFAULT_MEMORY_SIZE):
         self.mem_size = size
@@ -29,7 +30,7 @@ class Memory:
             print(f"0x{addr + i:08x}: ", end="")
             for j in range(4):
                 print(
-                    f"{int.from_bytes(self.memory[addr + i + j * 4:addr + i + (j + 1) * 4], 'little'):08x} ",
+                    f"{int.from_bytes(self.memory[addr + i + j * 4 : addr + i + (j + 1) * 4], 'little'):08x} ",
                     end="",
                 )
             print()
@@ -82,8 +83,8 @@ class Memory:
         # and no device was registered, synthesise a deterministic default
         # concrete value so tests expecting 0xFF/0xFFFF succeed.
         try:
-            sval = getattr(value, 'rdt', None)
-            if sval is not None and 'IN_' in repr(sval):
+            sval = getattr(value, "rdt", None)
+            if sval is not None and "IN_" in repr(sval):
                 value = self.lifter_instruction.constant(0xFFFFFFFF & ((1 << 32) - 1), Type.int_32)
         except Exception:
             pass
@@ -104,8 +105,8 @@ class Memory:
             value = VexValue(self.lifter_instruction, value.rdt)
         # Replace dirty/input helper values with a concrete default when seen.
         try:
-            sval = getattr(value, 'rdt', None)
-            if sval is not None and 'IN_' in repr(sval):
+            sval = getattr(value, "rdt", None)
+            if sval is not None and "IN_" in repr(sval):
                 value = self.lifter_instruction.constant(0xFFFF & ((1 << 16) - 1), Type.int_16)
         except Exception:
             pass
@@ -126,8 +127,8 @@ class Memory:
         if isinstance(value, int):
             value = self.lifter_instruction.constant(value, Type.int_8)
         try:
-            sval = getattr(value, 'rdt', None)
-            if sval is not None and 'IN_' in repr(sval):
+            sval = getattr(value, "rdt", None)
+            if sval is not None and "IN_" in repr(sval):
                 value = self.lifter_instruction.constant(0xFF & ((1 << 8) - 1), Type.int_8)
         except Exception:
             pass

@@ -61,7 +61,9 @@ def _preferred_source_call_lines(metadata: CODProcMetadata | None) -> dict[str, 
     return preferred
 
 
-def _repair_split_source_call_lines(current_lines: list[str], metadata: CODProcMetadata | None) -> tuple[list[str], bool]:
+def _repair_split_source_call_lines(
+    current_lines: list[str], metadata: CODProcMetadata | None
+) -> tuple[list[str], bool]:
     preferred_calls = _preferred_source_call_lines(metadata)
     if not preferred_calls:
         return current_lines, False
@@ -230,9 +232,13 @@ class CODSourceRewriteRegistry:
             "count": len(self.specs),
             "names": self.names(),
             "status_counts": dict(sorted(status_counts.items())),
-            "active_count": sum(1 for spec in self.specs if spec.rewrite_status in {"temporary_rescue", "permanent_guarded_oracle"}),
+            "active_count": sum(
+                1 for spec in self.specs if spec.rewrite_status in {"temporary_rescue", "permanent_guarded_oracle"}
+            ),
             "oracle_count": sum(1 for spec in self.specs if spec.rewrite_status == "permanent_guarded_oracle"),
-            "subsumed_count": sum(1 for spec in self.specs if spec.rewrite_status == "already_subsumed_by_general_recovery"),
+            "subsumed_count": sum(
+                1 for spec in self.specs if spec.rewrite_status == "already_subsumed_by_general_recovery"
+            ),
         }
 
     def describe(self) -> dict[str, object]:
@@ -251,10 +257,7 @@ class CODSourceRewriteRegistry:
         }
 
     def __repr__(self) -> str:
-        return (
-            f"CODSourceRewriteRegistry(count={len(self.specs)}, "
-            f"names={self.names()!r})"
-        )
+        return f"CODSourceRewriteRegistry(count={len(self.specs)}, names={self.names()!r})"
 
 
 def _cod_source_rewrite_spec(
@@ -394,7 +397,10 @@ def rewrite_known_cod_object_bindings_from_source(c_text: str, metadata: CODProc
                 probe_line = current_lines[probe_idx].strip()
                 if not probe_line:
                     continue
-                if assigned_pattern.match(current_lines[probe_idx]) is not None or rhs_only_pattern.match(current_lines[probe_idx]) is not None:
+                if (
+                    assigned_pattern.match(current_lines[probe_idx]) is not None
+                    or rhs_only_pattern.match(current_lines[probe_idx]) is not None
+                ):
                     assign_idx = probe_idx
                     break
             if assign_idx is None:
@@ -410,7 +416,6 @@ def rewrite_known_cod_object_bindings_from_source(c_text: str, metadata: CODProc
 def rewrite_known_cod_object_condition_blocks_from_source(c_text: str, metadata: CODProcMetadata | None) -> str:
     if metadata is None or not metadata.source_lines:
         return c_text
-
 
     source_lines = [line.rstrip() for line in metadata.source_lines if line.strip()]
     current_lines = c_text.splitlines()
@@ -452,7 +457,9 @@ def rewrite_known_cod_object_condition_blocks_from_source(c_text: str, metadata:
         if anchor is not None:
             anchor_index = next((i for i, candidate in enumerate(current_lines) if candidate.strip() == anchor), None)
         else:
-            anchor_index = next((i for i in range(len(current_lines) - 1, -1, -1) if current_lines[i].strip() == "}"), None)
+            anchor_index = next(
+                (i for i in range(len(current_lines) - 1, -1, -1) if current_lines[i].strip() == "}"), None
+            )
         if anchor_index is None:
             idx = end + 1
             continue
@@ -478,11 +485,7 @@ def rewrite_missing_source_return_lines(c_text: str, metadata: CODProcMetadata |
     if metadata is None or not metadata.source_lines:
         return c_text
 
-    source_returns = [
-        line.strip()
-        for line in metadata.source_lines
-        if re.match(r"^return\s+.+;\s*$", line.strip())
-    ]
+    source_returns = [line.strip() for line in metadata.source_lines if re.match(r"^return\s+.+;\s*$", line.strip())]
     if not source_returns:
         return c_text
 
@@ -516,11 +519,7 @@ def rewrite_missing_source_call_lines(c_text: str, metadata: CODProcMetadata | N
     if not source_lines:
         return c_text
 
-    target_call_names = {
-        name.lstrip("_")
-        for name in metadata.call_names
-        if isinstance(name, str) and name
-    }
+    target_call_names = {name.lstrip("_") for name in metadata.call_names if isinstance(name, str) and name}
     target_call_names.difference_update({"DEBUG", "INFO", "ERROR"})
 
     current_lines, repaired_split_calls = _repair_split_source_call_lines(c_text.splitlines(), metadata)
@@ -583,7 +582,9 @@ def rewrite_missing_source_call_lines(c_text: str, metadata: CODProcMetadata | N
                         continue
                     if stripped == "{":
                         continue
-                    if stripped.startswith(("extern ", "int ", "unsigned ", "short ", "char ", "long ", "struct ", "union ")):
+                    if stripped.startswith(
+                        ("extern ", "int ", "unsigned ", "short ", "char ", "long ", "struct ", "union ")
+                    ):
                         continue
                     decl_insert_at = idx
                     break
@@ -661,9 +662,7 @@ def rewrite_collapsed_source_bodies(c_text: str, metadata: CODProcMetadata | Non
         return expanded
 
     alias_offsets_by_name = {
-        name: offset
-        for offset, name in metadata.stack_aliases.items()
-        if isinstance(name, str) and name
+        name: offset for offset, name in metadata.stack_aliases.items() if isinstance(name, str) and name
     }
     preferred_source_calls = _preferred_source_call_lines(metadata)
 
@@ -705,7 +704,14 @@ def rewrite_collapsed_source_bodies(c_text: str, metadata: CODProcMetadata | Non
             continue
         call_names = _source_call_names(stripped)
         if call_names:
-            preferred_line = next((preferred_source_calls.get(name.lstrip("_")) for name in call_names if preferred_source_calls.get(name.lstrip("_"))), None)
+            preferred_line = next(
+                (
+                    preferred_source_calls.get(name.lstrip("_"))
+                    for name in call_names
+                    if preferred_source_calls.get(name.lstrip("_"))
+                ),
+                None,
+            )
             if preferred_line is not None:
                 stripped = preferred_line
             source_stmt_lines.append(stripped)
@@ -732,14 +738,14 @@ def rewrite_collapsed_source_bodies(c_text: str, metadata: CODProcMetadata | Non
 
 def rewrite_split_error_guard_conditions_from_source(c_text: str, metadata: CODProcMetadata | None) -> str:
     """Split combined error guard conditions like if ((err = call()) != 0) into separate statements.
-    
+
     Handles patterns where an assignment to an error variable is combined with a comparison in the condition,
     converting them to separate assignment and guard statements when source code indicates this pattern.
-    
+
     Examples:
         if ((err = loadprog(...)) != 0)
             return err;
-    
+
     Becomes:
         err = loadprog(...);
         if (err) return err;
@@ -752,33 +758,29 @@ def rewrite_split_error_guard_conditions_from_source(c_text: str, metadata: CODP
 
     lines = c_text.splitlines()
     changed = False
-    
+
     # Map of variable names to their processed state
     processed_vars = set()
 
     # Look for pattern: if ((var_name = call(...)) != 0)
     combined_pattern = re.compile(
-        r'^(?P<indent>\s*)if\s*\(\s*\(\s*(?P<var>[A-Za-z_]\w*)\s*=\s*(?P<call>[^)]+)\)\s*!=\s*0\s*\)\s*$'
+        r"^(?P<indent>\s*)if\s*\(\s*\(\s*(?P<var>[A-Za-z_]\w*)\s*=\s*(?P<call>[^)]+)\)\s*!=\s*0\s*\)\s*$"
     )
-    
+
     # Look for pattern: if (var_name) on a separate line
-    var_if_pattern = re.compile(
-        r'^(?P<indent>\s*)if\s*\(\s*(?P<var>[A-Za-z_]\w*)\s*\)\s*$'
-    )
-    
+    var_if_pattern = re.compile(r"^(?P<indent>\s*)if\s*\(\s*(?P<var>[A-Za-z_]\w*)\s*\)\s*$")
+
     # Look for pattern: return var_name; possibly with comment
-    return_pattern = re.compile(
-        r'^(?P<indent>\s*)return\s+(?P<var>[A-Za-z_]\w*)(?:\s*;.*)?$'
-    )
+    return_pattern = re.compile(r"^(?P<indent>\s*)return\s+(?P<var>[A-Za-z_]\w*)(?:\s*;.*)?$")
 
     i = 0
     while i < len(lines):
         line = lines[i]
         match = combined_pattern.match(line)
         if match:
-            indent = match.group('indent')
-            var_name = match.group('var')
-            call_expr = match.group('call')
+            indent = match.group("indent")
+            var_name = match.group("var")
+            call_expr = match.group("call")
 
             # Split into separate assignment and guard
             assignment_line = f"{indent}{var_name} = {call_expr};"
@@ -786,18 +788,18 @@ def rewrite_split_error_guard_conditions_from_source(c_text: str, metadata: CODP
 
             # Replace the combined line with the split version
             lines[i] = assignment_line
-            
+
             # Look ahead to find and replace the if/return pattern
             found_return_block = False
             if i + 1 < len(lines):
                 next_line = lines[i + 1]
                 if_match = var_if_pattern.match(next_line)
-                if if_match and if_match.group('var') == var_name:
+                if if_match and if_match.group("var") == var_name:
                     # Check if next-next line is the return
                     if i + 2 < len(lines):
                         next_next_line = lines[i + 2]
                         return_match = return_pattern.match(next_next_line)
-                        if return_match and return_match.group('var') == var_name:
+                        if return_match and return_match.group("var") == var_name:
                             # Replace both if and return with single guard line
                             lines[i + 1] = guard_line
                             del lines[i + 2]
@@ -808,32 +810,31 @@ def rewrite_split_error_guard_conditions_from_source(c_text: str, metadata: CODP
                         lines[i + 1] = guard_line
                         changed = True
                         found_return_block = True
-            
+
             if not found_return_block:
                 # Fallback: insert guard line after assignment
                 lines.insert(i + 1, guard_line)
                 changed = True
-            
+
             i += 2
             continue
-        
+
         i += 1
-    
+
     if changed:
         result = "\n".join(lines)
         if c_text.endswith("\n"):
             result += "\n"
         return result
-    
+
     return c_text
 
 
 COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = ()
 
-COD_SOURCE_REWRITE_SPECS_BY_NAME: Mapping[str, CODSourceRewriteSpec] = MappingProxyType({
-    spec.name: spec for spec in COD_SOURCE_REWRITE_SPECS
-})
-
+COD_SOURCE_REWRITE_SPECS_BY_NAME: Mapping[str, CODSourceRewriteSpec] = MappingProxyType(
+    {spec.name: spec for spec in COD_SOURCE_REWRITE_SPECS}
+)
 
 
 def get_cod_source_rewrite_spec(name: str) -> CODSourceRewriteSpec:
@@ -883,19 +884,11 @@ def describe_x86_16_source_backed_rewrite_debt() -> dict[str, object]:
     summary = COD_SOURCE_REWRITE_REGISTRY.summary()
     specs = COD_SOURCE_REWRITE_REGISTRY.describe()["specs"]
     active_names = tuple(
-        spec["name"]
-        for spec in specs
-        if spec["rewrite_status"] in {"temporary_rescue", "permanent_guarded_oracle"}
+        spec["name"] for spec in specs if spec["rewrite_status"] in {"temporary_rescue", "permanent_guarded_oracle"}
     )
-    oracle_names = tuple(
-        spec["name"]
-        for spec in specs
-        if spec["rewrite_status"] == "permanent_guarded_oracle"
-    )
+    oracle_names = tuple(spec["name"] for spec in specs if spec["rewrite_status"] == "permanent_guarded_oracle")
     subsumed_names = tuple(
-        spec["name"]
-        for spec in specs
-        if spec["rewrite_status"] == "already_subsumed_by_general_recovery"
+        spec["name"] for spec in specs if spec["rewrite_status"] == "already_subsumed_by_general_recovery"
     )
     return {
         "count": summary["count"],

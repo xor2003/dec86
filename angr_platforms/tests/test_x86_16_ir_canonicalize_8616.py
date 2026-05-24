@@ -2,10 +2,11 @@ from __future__ import annotations
 
 """Tests for ir_canonicalize_8616: constant reassociation canonicalizer."""
 
-import pytest
 from unittest.mock import MagicMock
+
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant
 from angr.sim_type import SimTypeInt
+
 from angr_platforms.X86_16.ir.ir_canonicalize_8616 import canonicalize_expr_8616
 
 _T = SimTypeInt(signed=False, label="int")
@@ -27,6 +28,7 @@ def make_const(value: int):
 def make_var(name: str):
     from angr.analyses.decompiler.structured_codegen.c import CVariable
     from angr.sim_variable import SimVariable
+
     var = SimVariable(2, None, name, None, None)
     return CVariable(var, codegen=_cg)
 

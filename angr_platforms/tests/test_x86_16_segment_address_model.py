@@ -3,13 +3,20 @@ from __future__ import annotations
 from copy import deepcopy
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CStatements, CUnaryOp, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CStatements,
+    CUnaryOp,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.address_ir import build_address_ir_8616, resolved_operand_to_address_ir_8616
 from angr_platforms.X86_16.addressing_helpers import ResolvedMemoryOperand
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import MemSpace
 from angr_platforms.X86_16.regs import sgreg_t
 from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
@@ -57,7 +64,13 @@ def _ss_stack_deref(project, stack_offset: int, addend: int, codegen):
             CBinaryOp("Mul", ss, _const(16, codegen), codegen=codegen),
             CBinaryOp(
                 "Add",
-                CUnaryOp("Reference", CVariable(SimStackVariable(stack_offset, 2, base="bp", name="local", region=0x4010), codegen=codegen), codegen=codegen),
+                CUnaryOp(
+                    "Reference",
+                    CVariable(
+                        SimStackVariable(stack_offset, 2, base="bp", name="local", region=0x4010), codegen=codegen
+                    ),
+                    codegen=codegen,
+                ),
                 _const(addend, codegen),
                 codegen=codegen,
             ),
@@ -115,7 +128,9 @@ def test_segmented_memory_reasoning_allows_ss_lowering_with_stable_ss_evidence()
 
 
 def test_segmented_memory_reasoning_allows_ss_lowering_with_provisional_typed_ss_evidence():
-    project, codegen = _codegen(summary={"stable_address_space_counts": {"ds": 1}, "address_space_counts": {"ds": 1, "ss": 1}})
+    project, codegen = _codegen(
+        summary={"stable_address_space_counts": {"ds": 1}, "address_space_counts": {"ds": 1, "ss": 1}}
+    )
     codegen.cfunc.statements = CStatements(
         [
             CAssignment(

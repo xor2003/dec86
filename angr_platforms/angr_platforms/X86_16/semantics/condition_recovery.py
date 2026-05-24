@@ -3,17 +3,14 @@ from __future__ import annotations
 # Layer: Semantics
 # Responsibility: recover typed IRCondition objects from x86-16 flag/test instruction patterns.
 # Forbidden: text-pattern semantics, CLI formatting, postprocess cleanup ownership.
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CVariable, CUnaryOp
+    pass
 
-from ..ir.core import IRCondition, IRValue, MemSpace
 from ..ir.condition_ir import (
-    ConditionOp,
     _JCC_COMPARISON_MNEMONICS_8616,
     JCC_EQ_MNEMONICS_8616,
     JCC_NE_MNEMONICS_8616,
@@ -25,10 +22,11 @@ from ..ir.condition_ir import (
     JCC_UGT_MNEMONICS_8616,
     JCC_ULE_MNEMONICS_8616,
     JCC_ULT_MNEMONICS_8616,
+    ConditionOp,
     build_condition_ir_8616,
     harmonize_condition_args_8616,
-    normalize_condition_op_8616,
 )
+from ..ir.core import IRCondition, IRValue, MemSpace
 
 __all__ = [
     "ConditionConfidence",

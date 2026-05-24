@@ -169,8 +169,9 @@ class Instr32(InstrBase):
         cls._opcode_template_chk = self.chk.copy()
 
     def add_rm32_r32(self):
-        binary_operation(self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
-
+        binary_operation(
+            self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs
+        )
 
     def adc_rm32_r32(self) -> None:
         binary_operation_with_carry(
@@ -184,7 +185,9 @@ class Instr32(InstrBase):
         )
 
     def add_r32_rm32(self):
-        binary_operation(self.emu, self.get_r32, self.get_rm32, self.set_r32, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
+        binary_operation(
+            self.emu, self.get_r32, self.get_rm32, self.set_r32, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs
+        )
 
     def adc_r32_rm32(self) -> None:
         binary_operation_with_carry(
@@ -198,7 +201,14 @@ class Instr32(InstrBase):
         )
 
     def add_eax_imm32(self):
-        binary_operation(self.emu, lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, lambda value: self.emu.set_gpreg(reg32_t.EAX, value), self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg32_t.EAX),
+            lambda: self.instr.imm32,
+            lambda value: self.emu.set_gpreg(reg32_t.EAX, value),
+            self.emu.update_eflags_add,
+            lambda lhs, rhs: lhs + rhs,
+        )
 
     def push_es(self):
         push_segment32(self.emu, reg16_t.ES)
@@ -207,13 +217,24 @@ class Instr32(InstrBase):
         pop_segment32(self.emu, reg16_t.ES)
 
     def or_rm32_r32(self):
-        binary_operation(self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
+        binary_operation(
+            self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs
+        )
 
     def or_r32_rm32(self):
-        binary_operation(self.emu, self.get_r32, self.get_rm32, self.set_r32, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
+        binary_operation(
+            self.emu, self.get_r32, self.get_rm32, self.set_r32, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs
+        )
 
     def or_eax_imm32(self):
-        binary_operation(self.emu, lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, lambda value: self.emu.set_gpreg(reg32_t.EAX, value), self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg32_t.EAX),
+            lambda: self.instr.imm32,
+            lambda value: self.emu.set_gpreg(reg32_t.EAX, value),
+            self.emu.update_eflags_or,
+            lambda lhs, rhs: lhs | rhs,
+        )
 
     def push_ss(self):
         push_segment32(self.emu, reg16_t.SS)
@@ -228,31 +249,64 @@ class Instr32(InstrBase):
         pop_segment32(self.emu, reg16_t.DS)
 
     def and_rm32_r32(self):
-        binary_operation(self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
+        binary_operation(
+            self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs
+        )
 
     def and_r32_rm32(self):
-        binary_operation(self.emu, self.get_r32, self.get_rm32, self.set_r32, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
+        binary_operation(
+            self.emu, self.get_r32, self.get_rm32, self.set_r32, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs
+        )
 
     def and_eax_imm32(self):
-        binary_operation(self.emu, lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, lambda value: self.emu.set_gpreg(reg32_t.EAX, value), self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg32_t.EAX),
+            lambda: self.instr.imm32,
+            lambda value: self.emu.set_gpreg(reg32_t.EAX, value),
+            self.emu.update_eflags_and,
+            lambda lhs, rhs: lhs & rhs,
+        )
 
     def sub_rm32_r32(self):
-        binary_operation(self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
+        binary_operation(
+            self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs
+        )
 
     def sub_r32_rm32(self):
-        binary_operation(self.emu, self.get_r32, self.get_rm32, self.set_r32, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
+        binary_operation(
+            self.emu, self.get_r32, self.get_rm32, self.set_r32, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs
+        )
 
     def sub_eax_imm32(self):
-        binary_operation(self.emu, lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, lambda value: self.emu.set_gpreg(reg32_t.EAX, value), self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg32_t.EAX),
+            lambda: self.instr.imm32,
+            lambda value: self.emu.set_gpreg(reg32_t.EAX, value),
+            self.emu.update_eflags_sub,
+            lambda lhs, rhs: lhs - rhs,
+        )
 
     def xor_rm32_r32(self):
-        binary_operation(self.emu, self.get_rm32, self.get_r32, self.set_rm32, lambda lhs, rhs: None, lambda lhs, rhs: lhs ^ rhs)
+        binary_operation(
+            self.emu, self.get_rm32, self.get_r32, self.set_rm32, lambda lhs, rhs: None, lambda lhs, rhs: lhs ^ rhs
+        )
 
     def xor_r32_rm32(self):
-        binary_operation(self.emu, self.get_r32, self.get_rm32, self.set_r32, lambda lhs, rhs: None, lambda lhs, rhs: lhs ^ rhs)
+        binary_operation(
+            self.emu, self.get_r32, self.get_rm32, self.set_r32, lambda lhs, rhs: None, lambda lhs, rhs: lhs ^ rhs
+        )
 
     def xor_eax_imm32(self):
-        binary_operation(self.emu, lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, lambda value: self.emu.set_gpreg(reg32_t.EAX, value), lambda lhs, rhs: None, lambda lhs, rhs: lhs ^ rhs)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg32_t.EAX),
+            lambda: self.instr.imm32,
+            lambda value: self.emu.set_gpreg(reg32_t.EAX, value),
+            lambda lhs, rhs: None,
+            lambda lhs, rhs: lhs ^ rhs,
+        )
 
     def cmp_rm32_r32(self):
         compare_operation(self.get_rm32, self.get_r32, self.emu.update_eflags_sub)
@@ -453,10 +507,14 @@ class Instr32(InstrBase):
         branch_rel32(self.emu, self._branch_cond_8616("jnz", ~self.emu.is_zero()), self.instr.imm32)
 
     def jbe_rel32(self):
-        branch_rel32(self.emu, self._branch_cond_8616("jbe", self.emu.is_carry() or self.emu.is_zero()), self.instr.imm32)
+        branch_rel32(
+            self.emu, self._branch_cond_8616("jbe", self.emu.is_carry() or self.emu.is_zero()), self.instr.imm32
+        )
 
     def ja_rel32(self):
-        branch_rel32(self.emu, self._branch_cond_8616("ja", not (self.emu.is_carry() or self.emu.is_zero())), self.instr.imm32)
+        branch_rel32(
+            self.emu, self._branch_cond_8616("ja", not (self.emu.is_carry() or self.emu.is_zero())), self.instr.imm32
+        )
 
     def js_rel32(self):
         branch_rel32(self.emu, self.emu.is_sign(), self.instr.imm32)
@@ -471,16 +529,28 @@ class Instr32(InstrBase):
         branch_rel32(self.emu, ~self.emu.is_parity(), self.instr.imm32)
 
     def jl_rel32(self):
-        branch_rel32(self.emu, self._branch_cond_8616("jl", self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm32)
+        branch_rel32(
+            self.emu, self._branch_cond_8616("jl", self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm32
+        )
 
     def jnl_rel32(self):
-        branch_rel32(self.emu, self._branch_cond_8616("jge", self.emu.is_sign() == self.emu.is_overflow()), self.instr.imm32)
+        branch_rel32(
+            self.emu, self._branch_cond_8616("jge", self.emu.is_sign() == self.emu.is_overflow()), self.instr.imm32
+        )
 
     def jle_rel32(self):
-        branch_rel32(self.emu, self._branch_cond_8616("jle", self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())), self.instr.imm32)
+        branch_rel32(
+            self.emu,
+            self._branch_cond_8616("jle", self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())),
+            self.instr.imm32,
+        )
 
     def jnle_rel32(self):
-        branch_rel32(self.emu, self._branch_cond_8616("jg", not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow())), self.instr.imm32)
+        branch_rel32(
+            self.emu,
+            self._branch_cond_8616("jg", not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow())),
+            self.instr.imm32,
+        )
 
     def imul_r32_rm32(self):
         r32_s = self.get_r32()
@@ -615,10 +685,24 @@ class Instr32(InstrBase):
         )
 
     def add_rm32_imm32(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm32, self.set_rm32, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm32,
+            self.set_rm32,
+            self.emu.update_eflags_add,
+            lambda lhs, rhs: lhs + rhs,
+        )
 
     def or_rm32_imm32(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm32, self.set_rm32, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm32,
+            self.set_rm32,
+            self.emu.update_eflags_or,
+            lambda lhs, rhs: lhs | rhs,
+        )
 
     def adc_rm32_imm32(self):
         binary_operation_with_carry(
@@ -643,22 +727,57 @@ class Instr32(InstrBase):
         )
 
     def and_rm32_imm32(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm32, self.set_rm32, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm32,
+            self.set_rm32,
+            self.emu.update_eflags_and,
+            lambda lhs, rhs: lhs & rhs,
+        )
 
     def sub_rm32_imm32(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm32, self.set_rm32, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm32,
+            self.set_rm32,
+            self.emu.update_eflags_sub,
+            lambda lhs, rhs: lhs - rhs,
+        )
 
     def xor_rm32_imm32(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm32, self.set_rm32, lambda lhs, rhs: None, lambda lhs, rhs: lhs ^ rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm32,
+            self.set_rm32,
+            lambda lhs, rhs: None,
+            lambda lhs, rhs: lhs ^ rhs,
+        )
 
     def cmp_rm32_imm32(self):
         compare_operation(self.get_rm32, lambda: self.instr.imm32, self.emu.update_eflags_sub)
 
     def add_rm32_imm8(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm8, self.set_rm32, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm8,
+            self.set_rm32,
+            self.emu.update_eflags_add,
+            lambda lhs, rhs: lhs + rhs,
+        )
 
     def or_rm32_imm8(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm8, self.set_rm32, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm8,
+            self.set_rm32,
+            self.emu.update_eflags_or,
+            lambda lhs, rhs: lhs | rhs,
+        )
 
     def adc_rm32_imm8(self):
         binary_operation_with_carry(
@@ -683,13 +802,34 @@ class Instr32(InstrBase):
         )
 
     def and_rm32_imm8(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm8, self.set_rm32, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm8,
+            self.set_rm32,
+            self.emu.update_eflags_and,
+            lambda lhs, rhs: lhs & rhs,
+        )
 
     def sub_rm32_imm8(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm8, self.set_rm32, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm8,
+            self.set_rm32,
+            self.emu.update_eflags_sub,
+            lambda lhs, rhs: lhs - rhs,
+        )
 
     def xor_rm32_imm8(self):
-        binary_operation(self.emu, self.get_rm32, lambda: self.instr.imm8, self.set_rm32, lambda lhs, rhs: None, lambda lhs, rhs: lhs ^ rhs)
+        binary_operation(
+            self.emu,
+            self.get_rm32,
+            lambda: self.instr.imm8,
+            self.set_rm32,
+            lambda lhs, rhs: None,
+            lambda lhs, rhs: lhs ^ rhs,
+        )
 
     def cmp_rm32_imm8(self):
         compare_operation(self.get_rm32, lambda: self.instr.imm8, self.emu.update_eflags_sub)
@@ -747,7 +887,12 @@ class Instr32(InstrBase):
         unary_operation(self.get_rm32, self.set_rm32, None, lambda value: ~value)
 
     def neg_rm32(self):
-        unary_operation(self.get_rm32, self.set_rm32, self.emu.update_eflags_neg, lambda value: (value.signed * -1).cast_to(Type.int_32))
+        unary_operation(
+            self.get_rm32,
+            self.set_rm32,
+            self.emu.update_eflags_neg,
+            lambda value: (value.signed * -1).cast_to(Type.int_32),
+        )
 
     def mul_edx_eax_rm32(self):
         rm32 = self.get_rm32()
@@ -819,6 +964,7 @@ class Instr32(InstrBase):
     def push_rm32(self):
         rm32 = self.get_rm32()
         push_immediate32(self.emu, rm32)
+
     def _branch_cond_8616(self, kind: str, fallback):
         direct = _consume_last_condition_branch_8616(self.emu.lifter_instruction, self.emu, kind)
         return fallback if direct is None else direct

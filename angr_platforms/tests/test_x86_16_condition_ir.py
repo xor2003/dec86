@@ -11,24 +11,21 @@ Verifies:
   - JCC mnemonic mapping is correct
 """
 
-import pytest
-from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
 from angr_platforms.X86_16.ir.condition_ir import (
     build_condition_ir_8616,
-    normalize_condition_op_8616,
-    is_condition_truth_test_8616,
-    is_condition_compare_family_8616,
     condition_compare_symbol_8616,
+    inverted_comparison_op_8616,
+    is_condition_compare_family_8616,
+    is_condition_truth_test_8616,
     is_signed_condition_8616,
     is_unsigned_condition_8616,
-    inverted_comparison_op_8616,
+    normalize_condition_op_8616,
 )
+from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.semantics.condition_recovery import (
-    RecoveredCondition,
     ConditionConfidence,
+    RecoveredCondition,
     build_typed_condition_from_cmp_pair_8616,
-    build_typed_condition_from_test_self_8616,
-    build_typed_condition_from_flag_mask_8616,
     classify_flag_mask_bit_8616,
 )
 
@@ -262,8 +259,6 @@ class TestRecoveredConditionProperties:
     def test_guessed_confidence(self):
         lhs = IRValue(MemSpace.REG, name="ax", size=2)
         cond = build_condition_ir_8616("zero", lhs)
-        recovered = RecoveredCondition(
-            condition=cond, confidence=ConditionConfidence.GUESSED
-        )
+        recovered = RecoveredCondition(condition=cond, confidence=ConditionConfidence.GUESSED)
         assert not recovered.is_proven
         assert not recovered.is_likely

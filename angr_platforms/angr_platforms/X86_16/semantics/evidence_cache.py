@@ -16,7 +16,6 @@ This replaces the old sys.modules hack for module-level cache access.
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any
 
 __all__ = [
     "AccessRecord8616",

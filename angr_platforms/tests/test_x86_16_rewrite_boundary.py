@@ -6,13 +6,12 @@ AGENTS rule: rewrite must not hide bad alias/type/condition recovery.
 If invariants fail, rewrite is blocked and honest partial output is emitted.
 """
 
-import pytest
 from angr_platforms.X86_16.pipeline.invariants import (
-    InvariantStatus,
     InvariantCheck,
     InvariantReport,
-    validate_before_rewrite_8616,
+    InvariantStatus,
     format_invariant_report_8616,
+    validate_before_rewrite_8616,
 )
 
 
@@ -49,8 +48,7 @@ class TestInvariantReport:
     def test_single_failure_blocks_rewrite(self):
         report = InvariantReport()
         report.checks.append(
-            InvariantCheck(name="no_ss_linear_expr", status=InvariantStatus.FAILED,
-                          detail="found linear SS expression")
+            InvariantCheck(name="no_ss_linear_expr", status=InvariantStatus.FAILED, detail="found linear SS expression")
         )
         report.rewrite_blocked = True
         report.skip_reason = "1 invariant(s) failed"
@@ -60,17 +58,13 @@ class TestInvariantReport:
 
     def test_uncertain_does_not_block(self):
         report = InvariantReport()
-        report.checks.append(
-            InvariantCheck(name="no_tmp_conditions", status=InvariantStatus.UNCERTAIN)
-        )
+        report.checks.append(InvariantCheck(name="no_tmp_conditions", status=InvariantStatus.UNCERTAIN))
         assert report.all_passed
         assert not report.rewrite_blocked
 
     def test_serialization(self):
         report = InvariantReport(function_addr=0x100, function_name="test_func")
-        report.checks.append(
-            InvariantCheck(name="no_stack_indexing", status=InvariantStatus.PASSED)
-        )
+        report.checks.append(InvariantCheck(name="no_stack_indexing", status=InvariantStatus.PASSED))
         d = report.to_dict()
         assert d["function_addr"] == 0x100
         assert d["function_name"] == "test_func"
@@ -102,7 +96,7 @@ class TestValidateBeforeRewrite:
         assert no_ss_checks[0].status == InvariantStatus.FAILED
 
     def test_detects_stack_indexing(self):
-        c_text = 'unsigned short v1 = stack[0xfffc];'
+        c_text = "unsigned short v1 = stack[0xfffc];"
         codegen = self._make_mock_codegen(
             cfunc=type("MockFunc", (), {"addr": 0x200, "name": "test_func"})(),
         )
@@ -178,12 +172,8 @@ class TestFormatInvariantReport:
 
     def test_format_passed_report(self):
         report = InvariantReport(function_addr=0x100, function_name="test")
-        report.checks.append(
-            InvariantCheck(name="no_ss_linear_expr", status=InvariantStatus.PASSED)
-        )
-        report.checks.append(
-            InvariantCheck(name="no_stack_indexing", status=InvariantStatus.PASSED)
-        )
+        report.checks.append(InvariantCheck(name="no_ss_linear_expr", status=InvariantStatus.PASSED))
+        report.checks.append(InvariantCheck(name="no_stack_indexing", status=InvariantStatus.PASSED))
         text = format_invariant_report_8616(report)
         assert "All invariants passed" in text
         assert "test" in text
@@ -191,8 +181,9 @@ class TestFormatInvariantReport:
     def test_format_blocked_report(self):
         report = InvariantReport(function_addr=0x100, function_name="test")
         report.checks.append(
-            InvariantCheck(name="no_ss_linear_expr", status=InvariantStatus.FAILED,
-                          detail="found 2 linear SS expressions")
+            InvariantCheck(
+                name="no_ss_linear_expr", status=InvariantStatus.FAILED, detail="found 2 linear SS expressions"
+            )
         )
         report.rewrite_blocked = True
         report.skip_reason = "1 invariant(s) failed: no_ss_linear_expr"

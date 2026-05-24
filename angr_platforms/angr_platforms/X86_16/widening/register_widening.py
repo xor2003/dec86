@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Widening
 # Responsibility: register-slice widening candidates and join proofs.
 # Forbidden: CLI/text-shape recovery and postprocess ownership.
-
 from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -109,7 +108,9 @@ def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None, 
     return low_candidate.is_joinable_with(high_candidate)
 
 
-def join_adjacent_register_slices(low_expr, high_expr, codegen, *, alias_state=None, proof=None) -> structured_c.CVariable | None:
+def join_adjacent_register_slices(
+    low_expr, high_expr, codegen, *, alias_state=None, proof=None
+) -> structured_c.CVariable | None:
     if proof is None and alias_state is not None:
         from .. import widening_model as _widening_model
 

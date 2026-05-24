@@ -5,8 +5,8 @@ try:
 except Exception:
     pass
 
-from importlib import import_module
 import sys
+from importlib import import_module
 
 __all__ = [
     "COD_SOURCE_REWRITE_REGISTRY",
@@ -123,24 +123,21 @@ __all__ = [
 ]
 
 from . import (  # noqa: F401  # noqa: F401
+    address_ir,
     alias_domains,
     alias_model,
     alias_state,
     alias_transfer,
-    address_ir,
     annotations,
     arch_86_16,
     calling_convention_compat,
+    callsite_summary,
     cod_extract,
     cod_source_rewrites,
     compat,
-    corpus_scan,
     corpus_recovery_artifact,
-    structuring_grouped_units,
-    structuring_grouped_graph_builder,
-    structuring_grouped_pass,
+    corpus_scan,
     correctness_goals,  # noqa: F401
-    callsite_summary,
     decompiler_postprocess,
     decompiler_postprocess_calls,
     decompiler_postprocess_flags,
@@ -158,20 +155,20 @@ from . import (  # noqa: F401  # noqa: F401
     readability_goals,  # noqa: F401
     readability_set,
     recompilable_subset,
-    recovery_artifact_writer,
     recovery_artifact_cache,
     recovery_artifact_manifest,
+    recovery_artifact_writer,
     recovery_artifacts,
     recovery_confidence,
     recovery_manifest,
-    targeted_recovery_artifact,
-    structuring_cross_entry,
-    structuring_grouped_units,
-    structuring_grouped_graph_builder,
-    structuring_grouped_pass,
     simos_86_16,
     stack_compat,
+    structuring_cross_entry,
+    structuring_grouped_graph_builder,
+    structuring_grouped_pass,
+    structuring_grouped_units,
     tail_validation,
+    targeted_recovery_artifact,
     typehoon_compat,
     validation_manifest,
     widening_alias,
@@ -205,6 +202,7 @@ from .cod_source_rewrites import (  # noqa: F401
 from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
 from .decompiler_return_compat import apply_x86_16_decompiler_return_compatibility  # noqa: F401
+from .function_effect_summary import summarize_x86_16_function_effects  # noqa: F401
 from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
 from .milestone_report import render_x86_16_tail_validation_console_summary  # noqa: F401
 from .readability_goals import (  # noqa: F401
@@ -213,7 +211,6 @@ from .readability_goals import (  # noqa: F401
     summarize_readability_focus,
 )
 from .recovery_confidence import describe_x86_16_recovery_confidence_axes  # noqa: F401
-from .function_effect_summary import summarize_x86_16_function_effects  # noqa: F401
 from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers  # noqa: F401
 from .stack_compat import apply_x86_16_stack_compatibility  # noqa: F401
 from .tail_validation import (  # noqa: F401

@@ -132,9 +132,7 @@ READABILITY_GOALS: tuple[ReadabilityGoalSpec, ...] = (
             "readability_set",
             "readability_tiers",
         ),
-        completion_signal=(
-            "Object-like output increases without a matching rise in hallucinated structs or arrays."
-        ),
+        completion_signal=("Object-like output increases without a matching rise in hallucinated structs or arrays."),
     ),
 )
 

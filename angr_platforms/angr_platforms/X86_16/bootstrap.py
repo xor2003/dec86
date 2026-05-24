@@ -25,6 +25,3 @@ def apply_x86_16_bootstrap() -> None:
     apply_x86_16_decompiler_return_compatibility()
     apply_x86_16_decompiler_structuring()
     apply_x86_16_decompiler_postprocess()
-
-
-

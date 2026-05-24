@@ -17,8 +17,8 @@ from angr_platforms.X86_16.type_array_matching import (
     ArrayRecoveryInfo,
     InductionVariable,
     InductionVariableCollector,
-    apply_x86_16_array_expression_matching,
     _cached_access_trait_profiles_8616,
+    apply_x86_16_array_expression_matching,
 )
 
 
@@ -27,9 +27,7 @@ class TestInductionVariable:
 
     def test_create_induction_variable(self):
         """Test creating an induction variable."""
-        ind_var = InductionVariable(
-            var_name="si", stride=2, base_value=0, loop_bound=100, element_width=16
-        )
+        ind_var = InductionVariable(var_name="si", stride=2, base_value=0, loop_bound=100, element_width=16)
 
         assert ind_var.var_name == "si"
         assert ind_var.stride == 2
@@ -37,9 +35,7 @@ class TestInductionVariable:
 
     def test_induction_variable_repr(self):
         """Test induction variable string representation."""
-        ind_var = InductionVariable(
-            var_name="di", stride=4, base_value=0, loop_bound=None, element_width=32
-        )
+        ind_var = InductionVariable(var_name="di", stride=4, base_value=0, loop_bound=None, element_width=32)
 
         repr_str = repr(ind_var)
         assert "di" in repr_str
@@ -160,9 +156,7 @@ class TestArrayExpressionMatcher:
         """Test matching array patterns with induction variables."""
         matcher = ArrayExpressionMatcher()
 
-        ind_var = InductionVariable(
-            var_name="i", stride=2, base_value=0, loop_bound=100, element_width=16
-        )
+        ind_var = InductionVariable(var_name="i", stride=2, base_value=0, loop_bound=100, element_width=16)
         induction_vars = {"i": ind_var}
 
         expressions = ["buffer[i]", "mem[si + i * 2]", "data[i]"]
@@ -176,9 +170,7 @@ class TestArrayExpressionMatcher:
         """Test extracting specific array patterns."""
         matcher = ArrayExpressionMatcher()
 
-        ind_var = InductionVariable(
-            var_name="j", stride=4, base_value=0, loop_bound=None, element_width=32
-        )
+        ind_var = InductionVariable(var_name="j", stride=4, base_value=0, loop_bound=None, element_width=32)
         induction_vars = {"j": ind_var}
 
         pattern = matcher._extract_array_pattern("arr[j * 4]", induction_vars)
@@ -374,7 +366,9 @@ class TestPhase22Integration:
 
         assert first is second
         assert call_count["count"] == 1
-        assert project._inertia_access_trait_profiles_cache[(0x4010, id(project._inertia_access_traits[0x4010]))] is first
+        assert (
+            project._inertia_access_trait_profiles_cache[(0x4010, id(project._inertia_access_traits[0x4010]))] is first
+        )
 
     def test_array_matching_refuses_over_associated_segmented_storage(self):
         stable_key = ("ss", ("stack", "bp", -4))
@@ -405,6 +399,7 @@ class TestPhase22Integration:
 
         from inertia_decompiler.cli_access_object_hints import AccessTraitObjectHint
         from inertia_decompiler.cli_access_profiles import AccessTraitEvidenceProfile
+
         from angr_platforms.X86_16 import type_array_matching as array_matching
 
         bridge_loader = array_matching.load_storage_object_bridge
@@ -428,9 +423,7 @@ class TestPhase22Integration:
 
         assert result is False
         assert set(codegen._inertia_array_matching_lowerable_arrays) == {stable_key}
-        assert codegen._inertia_array_matching_refused_arrays == {
-            refused_key: "segment space is over-associated"
-        }
+        assert codegen._inertia_array_matching_refused_arrays == {refused_key: "segment space is over-associated"}
         assert codegen._inertia_array_matching_stats == {
             "induction_vars": 0,
             "array_patterns": 2,

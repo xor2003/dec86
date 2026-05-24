@@ -270,6 +270,3 @@ def describe_x86_16_cod_known_objects() -> dict[str, object]:
             for spec in _KNOWN_COD_OBJECT_SPECS.values()
         ),
     }
-
-
-

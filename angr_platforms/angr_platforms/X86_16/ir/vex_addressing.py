@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from .core import AddressStatus, IRAddress, SegmentOrigin, MemSpace
+from .core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 
 __all__ = [
     "block_segment_hints",
@@ -142,7 +142,13 @@ def expr_to_address(
             )
         left = expr_to_value(args[0], tmps, conditions)
         right = expr_to_value(args[1], tmps, conditions)
-        if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None and left.name:
+        if (
+            "Add" in op
+            and left.space == MemSpace.REG
+            and right.space == MemSpace.CONST
+            and right.const is not None
+            and left.name
+        ):
             return _address_from_parts(
                 (left.name,),
                 left.offset + int(right.const),
@@ -150,7 +156,13 @@ def expr_to_address(
                 expr=(op, left.name),
                 segment_hints=segment_hints,
             )
-        if "Sub" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None and left.name:
+        if (
+            "Sub" in op
+            and left.space == MemSpace.REG
+            and right.space == MemSpace.CONST
+            and right.const is not None
+            and left.name
+        ):
             return _address_from_parts(
                 (left.name,),
                 left.offset - int(right.const),

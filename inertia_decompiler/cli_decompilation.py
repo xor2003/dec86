@@ -383,7 +383,7 @@ def _effective_decompile_timeout_8616(
     byte_count: int,
 ) -> int:
     effective_timeout = int(timeout)
-    if getattr(project.arch, "name", "") == "86_16":
+    if getattr(getattr(project, "arch", None), "name", "") == "86_16":
         if byte_count >= 320 or block_count >= 48:
             effective_timeout = max(effective_timeout, 40)
         elif byte_count >= 160 or block_count >= 24:
@@ -1244,7 +1244,7 @@ def _decompile_function(
                                                     )
                                                     if repeat_reason is not None:
                                                         record_failure_family_retry_stop(failure_family_state, failure_snapshot)
-                                                    print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry", file=sys.stderr, flush=True)
+                                                    print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry", flush=True)
                                                     detail = "Decompiler did not produce code."
                                                     messages = _analysis_log_messages(dec)
                                                     if messages:
@@ -1348,7 +1348,7 @@ def _decompile_function(
             )
             if repeat_reason is not None:
                 record_failure_family_retry_stop(failure_family_state, failure_snapshot)
-                print(f"[dbg] stop: {repeat_reason}; lane=isolated_retry", file=sys.stderr, flush=True)
+                print(f"[dbg] stop: {repeat_reason}; lane=isolated_retry", flush=True)
                 detail = "Decompiler did not produce code."
                 if messages:
                     detail += " angr details: " + "; ".join(messages[:3])
@@ -1379,7 +1379,7 @@ def _decompile_function(
             )
             if repeat_reason is not None:
                 record_failure_family_retry_stop(failure_family_state, fallback_snapshot)
-                print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry", file=sys.stderr, flush=True)
+                print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry", flush=True)
                 detail = "Decompiler did not produce code."
                 if messages:
                     detail += " angr details: " + "; ".join(messages[:3])
@@ -2578,8 +2578,6 @@ def _preferred_decompiler_options(
     no_call_helper: bool = False,
 ) -> list[tuple[str, str]] | None:
     """Choose a cheaper decompiler structurer for true wrapper-like functions."""
-    if block_count <= 1 and byte_count <= 96:
-        return [("structurer_cls", "Phoenix")]
     if wrapper_like or tiny_single_call_helper:
         return [("structurer_cls", "Phoenix")]
     if no_call_helper:

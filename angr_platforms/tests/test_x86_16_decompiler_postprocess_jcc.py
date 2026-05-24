@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CIfElse, CStatements, CVariable
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
@@ -11,8 +10,8 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_jcc import (
     _COND_TO_CMP_OP_8616,
-    _DecodedCmpGuard8616,
     _JCC_COMPARE_OPS_8616,
+    _DecodedCmpGuard8616,
     _rewrite_decoded_jcc_conditions_8616,
     _translate_cmp_jcc_guard_8616,
 )
@@ -327,7 +326,9 @@ def test_translate_cmp_jcc_guard_supports_all_alias_mnemonics(monkeypatch, mnemo
         _Insn(0x400E, "cmp", (_Operand(3, mem=_Mem(2, 0), size=1), _Operand(1, reg=4, size=1))),
         _Insn(0x4010, mnemonic, (_Operand(2, imm=0x4020, size=2),)),
     )
-    project.factory = SimpleNamespace(block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns)))
+    project.factory = SimpleNamespace(
+        block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    )
 
     decoded = _translate_cmp_jcc_guard_8616(project, codegen, 0x4000, 0x4010)
 
@@ -375,7 +376,9 @@ def test_translate_cmp_jcc_guard_supports_flag_variants(monkeypatch, mnemonic, e
         _Insn(0x4000, "mov", (_Operand(2, imm=0x4000),)),
         _Insn(0x4002, mnemonic, (_Operand(2, imm=0x4020, size=2),)),
     )
-    project.factory = SimpleNamespace(block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns)))
+    project.factory = SimpleNamespace(
+        block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    )
 
     decoded = _translate_cmp_jcc_guard_8616(project, codegen, 0x4000, 0x4002)
 
@@ -445,7 +448,9 @@ def test_translate_cmp_jcc_guard_uses_existing_bp_slot_variables_for_stack_loads
         _Insn(0x400E, "cmp", (_Operand(3, mem=_Mem(2, 0), size=1), _Operand(1, reg=4, size=1))),
         _Insn(0x4010, "jg", (_Operand(2, imm=0x4020, size=2),)),
     )
-    project.factory = SimpleNamespace(block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns)))
+    project.factory = SimpleNamespace(
+        block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    )
 
     decoded = _translate_cmp_jcc_guard_8616(project, codegen, 0x4000, 0x4010)
 
@@ -505,7 +510,9 @@ def test_translate_cmp_jcc_guard_keeps_distinct_bp_slot_operands():
         _Insn(0x400A, "cmp", (_Operand(3, mem=_Mem(2, 0), size=1), _Operand(1, reg=4, size=1))),
         _Insn(0x400C, "jg", (_Operand(2, imm=0x4020, size=2),)),
     )
-    project.factory = SimpleNamespace(block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns)))
+    project.factory = SimpleNamespace(
+        block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    )
 
     decoded = _translate_cmp_jcc_guard_8616(project, codegen, 0x4000, 0x400C)
 
@@ -558,7 +565,9 @@ def test_translate_cmp_jcc_guard_synthesizes_distinct_bp_slots_when_locals_missi
         _Insn(0x400A, "cmp", (_Operand(3, mem=_Mem(2, 0), size=1), _Operand(1, reg=4, size=1))),
         _Insn(0x400C, "jg", (_Operand(2, imm=0x4020, size=2),)),
     )
-    project.factory = SimpleNamespace(block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns)))
+    project.factory = SimpleNamespace(
+        block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    )
 
     decoded = _translate_cmp_jcc_guard_8616(project, codegen, 0x4000, 0x400C)
 
@@ -606,7 +615,9 @@ def test_translate_cmp_jcc_guard_supports_cmp_reg_mem_operand_order():
         _Insn(0x4002, "cmp", (_Operand(1, reg=2, size=2), _Operand(3, mem=_Mem(5, -4), size=2))),
         _Insn(0x4004, "jle", (_Operand(2, imm=0x4010, size=2),)),
     )
-    project.factory = SimpleNamespace(block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns)))
+    project.factory = SimpleNamespace(
+        block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    )
 
     decoded = _translate_cmp_jcc_guard_8616(project, codegen, 0x4000, 0x4004)
 
@@ -668,9 +679,7 @@ def test_translate_cmp_jcc_guard_decodes_32bit_le_chain():
         _Insn(0x5000, "cmp", (_Operand(1, reg=2, size=2), _Operand(3, mem=_Mem(5, -2), size=2))),
         _Insn(0x5002, "jle", (_Operand(2, imm=0x5010, size=2),)),
     )
-    block_mid = (
-        _Insn(0x5010, "jge", (_Operand(2, imm=0x5020, size=2),)),
-    )
+    block_mid = (_Insn(0x5010, "jge", (_Operand(2, imm=0x5020, size=2),)),)
     block_lo = (
         _Insn(0x5020, "cmp", (_Operand(1, reg=1, size=2), _Operand(3, mem=_Mem(5, -4), size=2))),
         _Insn(0x5022, "jbe", (_Operand(2, imm=0x5030, size=2),)),

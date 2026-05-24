@@ -41,12 +41,7 @@ class FunctionStateSummary:
         return bool(self.flag_inputs or self.flag_outputs)
 
     def has_memory_effects(self) -> bool:
-        return bool(
-            self.frame_stack_reads
-            or self.frame_stack_writes
-            or self.memory_reads
-            or self.memory_writes
-        )
+        return bool(self.frame_stack_reads or self.frame_stack_writes or self.memory_reads or self.memory_writes)
 
     def brief(self) -> str:
         return (

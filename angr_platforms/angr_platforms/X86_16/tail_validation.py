@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import hashlib
 import contextlib
+import hashlib
 import json
 import os
+import re
 from collections import Counter
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
-import re
 from typing import Callable, Mapping, Sequence, TypeVar
 
 from angr.analyses.decompiler.structured_codegen.c import (
-    CITE,
     CAssignment,
     CBinaryOp,
     CBreak,
@@ -31,10 +30,10 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
+from .callsite_summary import summarize_x86_16_callsite
 from .decompiler_postprocess_flags import _split_ordering_if_chain_replacement_condition_8616
+from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 from .ir.condition_ir import (
     _INVERTED_COMPARISON_OPS_8616,
     normalize_condition_fingerprint_algebraic_8616,
@@ -43,25 +42,18 @@ from .ir.condition_ir import (
 from .tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
 from .tail_validation_fingerprint import (
     TAIL_VALIDATION_FINGERPRINT_VERSION,
-    _bool_projection_fingerprint,
     _c_constant_int_value,
-    _expr_fingerprint,
     _call_target_name,
     _collect_direct_capstone_callsite_addrs_8616,
-    _extract_same_zero_compare_expr_8616,
-    _extract_zero_flag_source_expr_8616,
+    _expr_fingerprint,
     _function_for_call_context_8616,
     _is_runtime_segment_helper_call_8616,
-    _lookup_function_for_call_context_8616,
     _location_fingerprint,
-    _normalize_zero_flag_comparison_8616,
-    _register_name,
     _wrap_not_fingerprint,
     build_x86_16_contextual_call_fingerprints,
 )
-from .callsite_summary import summarize_x86_16_callsite
-from .tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
 from .tail_validation_routing import build_tail_validation_family_routing
+from .tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
 
 __all__ = [
     "X86_16TailValidationSummary",
@@ -163,8 +155,6 @@ def resolve_x86_16_validation_cached_artifact(
     }
 
 
-
-
 def _codegen_root(codegen):
     cfunc = getattr(codegen, "cfunc", None)
     for attr in ("body", "statements", "stmt"):
@@ -201,7 +191,9 @@ def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -
     return normalized
 
 
-def _invert_condition_fingerprint_8616(node, project, contextual_condition_fingerprints: Mapping[int, str]) -> str | None:
+def _invert_condition_fingerprint_8616(
+    node, project, contextual_condition_fingerprints: Mapping[int, str]
+) -> str | None:
     if isinstance(node, CBinaryOp):
         inverted_op = _INVERTED_COMPARISON_OPS_8616.get(node.op)
         if inverted_op is not None:
@@ -612,7 +604,9 @@ def _node_boundary_fingerprint(
                     _switch_case_fingerprint(case_value, project),
                     _node_boundary_fingerprint(case_body, project),
                 )
-                for case_value, case_body in sorted(cases.items(), key=lambda item: _switch_case_fingerprint(item[0], project))
+                for case_value, case_body in sorted(
+                    cases.items(), key=lambda item: _switch_case_fingerprint(item[0], project)
+                )
             )
         return (
             "switch",
@@ -651,7 +645,19 @@ def _node_boundary_fingerprint(
         )
 
     fields = []
-    for attr in ("condition", "cond", "body", "else_node", "iftrue", "iffalse", "lhs", "rhs", "expr", "operand", "retval"):
+    for attr in (
+        "condition",
+        "cond",
+        "body",
+        "else_node",
+        "iftrue",
+        "iffalse",
+        "lhs",
+        "rhs",
+        "expr",
+        "operand",
+        "retval",
+    ):
         if hasattr(node, attr):
             fields.append((attr, _node_boundary_fingerprint(getattr(node, attr, None), project)))
     return (type(node).__name__, tuple(fields))
@@ -771,7 +777,9 @@ def _tail_validation_changed_families(entry: Mapping[str, object]) -> tuple[str,
     return tuple(families)
 
 
-def _tail_validation_changed_family_summary(changed_functions: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+def _tail_validation_changed_family_summary(
+    changed_functions: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
     rows: dict[str, dict[str, object]] = {}
     for item in changed_functions:
         if not isinstance(item, Mapping):
@@ -866,8 +874,7 @@ def _tail_validation_function_accounting(records: Sequence[Mapping[str, object]]
     for record in records:
         proc_name = _tail_validation_record_proc_name(record)
         stage_statuses = {
-            stage: _tail_validation_stage_status(record.get(stage))
-            for stage in ("structuring", "postprocess")
+            stage: _tail_validation_stage_status(record.get(stage)) for stage in ("structuring", "postprocess")
         }
         if "changed" in stage_statuses.values():
             status = "changed"
@@ -1568,7 +1575,9 @@ def _record_expr_locations(node, project, observed_locations: set[str]) -> None:
 
 
 def _is_control_flow_node(node) -> bool:
-    return isinstance(node, (CIfElse, CIfBreak, CWhileLoop, CDoWhileLoop, CForLoop, CSwitchCase, CGoto, CBreak, CContinue, CReturn))
+    return isinstance(
+        node, (CIfElse, CIfBreak, CWhileLoop, CDoWhileLoop, CForLoop, CSwitchCase, CGoto, CBreak, CContinue, CReturn)
+    )
 
 
 def _collect_observed_locations(root, project, mode: str) -> set[str]:
@@ -1779,7 +1788,9 @@ def _canonicalize_segmented_write_aliases_8616(segmented_writes: set[str], globa
     return filtered
 
 
-def _prunable_live_out_segment_write_ids_8616(root, project, contextual_call_summaries: Mapping[int, object]) -> set[int]:
+def _prunable_live_out_segment_write_ids_8616(
+    root, project, contextual_call_summaries: Mapping[int, object]
+) -> set[int]:
     prunable_ids: set[int] = set()
 
     def _scan_statement_list(statements) -> None:
@@ -1799,7 +1810,9 @@ def _prunable_live_out_segment_write_ids_8616(root, project, contextual_call_sum
                 carrier_backed_args = any(
                     _expr_mentions_temp_carrier_8616(arg) for arg in (getattr(call, "args", ()) or ())
                 )
-                missing_arg_count = expected_arg_count - explicit_arg_count if isinstance(expected_arg_count, int) else 0
+                missing_arg_count = (
+                    expected_arg_count - explicit_arg_count if isinstance(expected_arg_count, int) else 0
+                )
                 wanted_prunable_count = max(missing_arg_count, 1 if carrier_backed_args else 0)
                 if wanted_prunable_count > 0:
                     scan = idx - 1

@@ -1,5 +1,5 @@
-from angr_platforms.X86_16.structuring_sequences import sequence_merge_is_safe
 from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType, compute_dominators
+from angr_platforms.X86_16.structuring_sequences import sequence_merge_is_safe
 
 
 def test_sequence_merge_is_unsafe_for_back_edge_successor():

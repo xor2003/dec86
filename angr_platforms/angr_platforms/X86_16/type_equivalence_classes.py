@@ -228,9 +228,7 @@ def _typed_ir_equivalence_from_codegen(codegen) -> tuple[dict[int, EquivalenceCl
 
     resolved = TypeVariableReplacer().replace(classes)
     resolved_by_expr = {
-        expr: resolved[class_id]
-        for expr, class_id in builder.expr_to_class.items()
-        if class_id in resolved
+        expr: resolved[class_id] for expr, class_id in builder.expr_to_class.items() if class_id in resolved
     }
     return classes, dict(sorted(resolved_by_expr.items()))
 
@@ -286,11 +284,19 @@ def apply_x86_16_type_equivalence_classes(codegen) -> bool:
             "equivalence_classes": len(typed_classes),
             "type_constraints": sum(len(eq_class.type_constraints) for eq_class in typed_classes.values()),
             "resolved_types": len(resolved_by_expr),
-            "ir_aliasable_values": int(ir_summary.get("aliasable_value_count", 0) or 0) if isinstance(ir_summary, dict) else 0,
+            "ir_aliasable_values": int(ir_summary.get("aliasable_value_count", 0) or 0)
+            if isinstance(ir_summary, dict)
+            else 0,
             "ir_frame_slots": int(ir_summary.get("frame_slot_count", 0) or 0) if isinstance(ir_summary, dict) else 0,
-            "ir_provisional_addresses": int(ir_summary.get("provisional_address_count", 0) or 0) if isinstance(ir_summary, dict) else 0,
-            "ir_multi_base_addresses": int(ir_summary.get("multi_base_address_count", 0) or 0) if isinstance(ir_summary, dict) else 0,
-            "ir_phi_nodes": int(getattr(function_ssa, "summary", {}).get("phi_node_count", 0) or 0) if function_ssa is not None else 0,
+            "ir_provisional_addresses": int(ir_summary.get("provisional_address_count", 0) or 0)
+            if isinstance(ir_summary, dict)
+            else 0,
+            "ir_multi_base_addresses": int(ir_summary.get("multi_base_address_count", 0) or 0)
+            if isinstance(ir_summary, dict)
+            else 0,
+            "ir_phi_nodes": int(getattr(function_ssa, "summary", {}).get("phi_node_count", 0) or 0)
+            if function_ssa is not None
+            else 0,
         }
 
         logger.debug("Type equivalence class pass completed")

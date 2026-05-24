@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from inertia_decompiler.cli_access_object_hints import _build_stable_access_object_hints
+from angr_platforms.X86_16.lowering.object_lowering import _build_stable_access_object_hints
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles
 from inertia_decompiler.cli_storage_objects import (
     StorageObjectArtifact,
@@ -58,10 +58,6 @@ def summarize_recompilable_storage_object_artifact(
     return RecompilableStorageObjectSummary(
         record_count=len(artifact.records),
         refusal_count=len(artifact.refusals),
-        object_kinds=tuple(
-            sorted({record.object_kind for record in artifact.records.values()})
-        ),
-        refusal_reasons=tuple(
-            sorted({refusal.reason for refusal in artifact.refusals.values()})
-        ),
+        object_kinds=tuple(sorted({record.object_kind for record in artifact.records.values()})),
+        refusal_reasons=tuple(sorted({refusal.reason for refusal in artifact.refusals.values()})),
     )

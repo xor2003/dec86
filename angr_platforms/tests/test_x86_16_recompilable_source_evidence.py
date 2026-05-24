@@ -30,7 +30,10 @@ def test_build_recompilable_source_evidence_text_for_dos_load_program_keeps_key_
     c_text = build_recompilable_source_evidence_text(case)
 
     assert c_text is not None
-    assert "unsigned short _dos_loadProgram(const char *file, const char *cmdline, unsigned short *cs, unsigned short *ss)" in c_text
+    assert (
+        "unsigned short _dos_loadProgram(const char *file, const char *cmdline, unsigned short *cs, unsigned short *ss)"
+        in c_text
+    )
     assert "if (err) return err;" in c_text
     assert "*cs = exeLoadParams.cs;" in c_text
     assert "*ss = exeLoadParams.ss;" in c_text

@@ -299,9 +299,7 @@ def apply_x86_16_metadata_annotations(
             annotations = _annotation_dict(func)
             annotations["source_lines"] = source_lines
             annotations["source_return_lines"] = tuple(
-                line.strip()
-                for line in source_lines
-                if re.match(r"^return\s+[^;]+;\s*$", line.strip())
+                line.strip() for line in source_lines if re.match(r"^return\s+[^;]+;\s*$", line.strip())
             )
             source_decl = _source_decl_from_cod_source_lines(source_lines)
             if source_decl is not None:

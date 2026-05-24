@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Postprocess
 # Responsibility: final simplification cleanup only
 # Forbidden: alias/widening/type ownership
-
 from .. import decompiler_postprocess_simplify as _decompiler_postprocess_simplify
 
 globals().update(

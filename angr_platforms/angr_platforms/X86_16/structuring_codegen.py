@@ -168,14 +168,12 @@ class StructuringCodegenPass:
 
         # Handle NaturalLoopInfo dataclass
         body_regions = []
-        if loop_meta and hasattr(loop_meta, 'body_regions'):
+        if loop_meta and hasattr(loop_meta, "body_regions"):
             body_regions = list(loop_meta.body_regions) if loop_meta.body_regions else []
 
         return LoopCodegenInfo(
             loop_type=loop_type,
-            condition_expr=region.metadata.get("condition")
-            or region.metadata.get("typed_ir_condition_hint")
-            or "cond",
+            condition_expr=region.metadata.get("condition") or region.metadata.get("typed_ir_condition_hint") or "cond",
             init_stmt=region.metadata.get("init"),
             increment_stmt=region.metadata.get("increment"),
             body_regions=body_regions,
@@ -195,15 +193,11 @@ class StructuringCodegenPass:
             SwitchCodegenInfo with rendering parameters
         """
         switch_candidates = region.metadata.get("switch_candidates", [])
-        case_targets = {
-            f"0x{i:x}": target for i, target in enumerate(switch_candidates)
-        }
+        case_targets = {f"0x{i:x}": target for i, target in enumerate(switch_candidates)}
         uses_goto = region.metadata.get("uses_goto", False)
 
         return SwitchCodegenInfo(
-            switch_expr=region.metadata.get("switch_expr")
-            or region.metadata.get("typed_ir_condition_hint")
-            or "value",
+            switch_expr=region.metadata.get("switch_expr") or region.metadata.get("typed_ir_condition_hint") or "value",
             case_targets=case_targets,
             default_target=None,
             uses_fallthrough=region.metadata.get("uses_fallthrough", False),
@@ -230,8 +224,7 @@ class StructuringCodegenPass:
 
         result = "\n".join(code)
         logger.info(
-            f"Codegen complete: {self.stats['loops_rendered']} loops, "
-            f"{self.stats['switches_rendered']} switches"
+            f"Codegen complete: {self.stats['loops_rendered']} loops, {self.stats['switches_rendered']} switches"
         )
         return result
 

@@ -17,14 +17,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
+from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.segmented_memory_reasoning import (
-    SegmentAssignment,
-    SegmentRegister,
-    apply_x86_16_segmented_memory_reasoning,
-)
-from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
 from angr_platforms.X86_16.decompiler_postprocess_utils import (
     _match_bp_stack_dereference_8616,
     _stack_bp_displacement_8616,
@@ -33,14 +28,19 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     lower_stable_ds_es_linear_global_addresses_8616,
     lower_stable_ds_es_linear_global_dereferences_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
-    match_stable_ds_es_linear_global_address_8616,
     match_stable_ds_es_linear_global_access_8616,
+    match_stable_ds_es_linear_global_address_8616,
     match_stable_ss_linear_stack_access_8616,
 )
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
     build_typed_stack_probe_return_facts_8616,
+)
+from angr_platforms.X86_16.segmented_memory_reasoning import (
+    SegmentAssignment,
+    SegmentRegister,
+    apply_x86_16_segmented_memory_reasoning,
 )
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
@@ -702,7 +702,7 @@ def test_match_stable_ds_es_linear_global_access_supports_segmentless_indexed_ba
     access = match_stable_ds_es_linear_global_access_8616(
         CUnaryOp(
             "Dereference",
-        CBinaryOp(
+            CBinaryOp(
                 "Add",
                 index_expr,
                 _const(0x0B4C, codegen),
@@ -764,17 +764,17 @@ def test_real_mode_linear_global_dereference_lowering_materializes_segmentless_i
             CAssignment(
                 CUnaryOp(
                     "Dereference",
+                    CBinaryOp(
+                        "Add",
                         CBinaryOp(
-                            "Add",
-                            CBinaryOp(
-                                "Shl",
-                                _reg(project, "bx", codegen),
-                                _const(1, codegen),
-                                codegen=codegen,
-                            ),
-	                        _const(0x0B4C, codegen),
+                            "Shl",
+                            _reg(project, "bx", codegen),
+                            _const(1, codegen),
                             codegen=codegen,
                         ),
+                        _const(0x0B4C, codegen),
+                        codegen=codegen,
+                    ),
                     codegen=codegen,
                 ),
                 _const(7, codegen),
@@ -828,9 +828,7 @@ def test_structuring_stage_does_not_relower_ds_globals_after_validation_boundary
 def test_rewrite_ss_stack_byte_offsets_resolves_pointer_alias_by_variable_name():
     project, codegen = _codegen([])
     cfunc = codegen.cfunc
-    cfunc.project = SimpleNamespace(
-        loader=SimpleNamespace(main_object=SimpleNamespace(binary_basename="SORTDEMO.EXE"))
-    )
+    cfunc.project = SimpleNamespace(loader=SimpleNamespace(main_object=SimpleNamespace(binary_basename="SORTDEMO.EXE")))
     cfunc.arg_list = []
     cfunc.unified_local_vars = {}
     cfunc.sort_local_vars = lambda: None

@@ -6,8 +6,8 @@ from typing import Any, Mapping
 
 from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
 from .function_state_summary import FunctionStateSummary, summarize_x86_16_function_state
-from .helper_family_routing import summarize_x86_16_helper_family_routes
 from .helper_effect_summary import HelperEligibilitySummary, summarize_x86_16_helper_eligibility
+from .helper_family_routing import summarize_x86_16_helper_family_routes
 from .ir_readiness import summarize_x86_16_ir_readiness
 
 __all__ = [
@@ -350,9 +350,7 @@ def summarize_recovery_confidence(results: list[Any]) -> dict[str, object]:
     helper_family_rows = tuple(
         item.to_dict()
         for item in summarize_x86_16_helper_family_routes(
-            summary.helper_summary
-            for summary in summaries
-            if summary.helper_summary is not None
+            summary.helper_summary for summary in summaries if summary.helper_summary is not None
         )
     )
 

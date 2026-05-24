@@ -23,6 +23,7 @@ CHK_MOFFS = 1 << 5
 
 MAX_OPCODE = 0x200
 
+
 # ModR/M byte structure
 class ModRM:
     __slots__ = ("rm", "reg", "mod")
@@ -32,6 +33,7 @@ class ModRM:
         self.reg = 0  # Register operand or opcode extension
         self.mod = 0  # Addressing mode
 
+
 # SIB byte structure
 class SIB:
     __slots__ = ("base", "index", "scale")
@@ -40,6 +42,7 @@ class SIB:
         self.base = 0  # Base register
         self.index = 0  # Index register
         self.scale = 0  # Scaling factor
+
 
 # X86Instruction data structure
 class InstrData:
@@ -121,6 +124,7 @@ def describe_x86_16_instruction_metadata_surface() -> dict[str, object]:
         ),
     }
 
+
 # Base class for instruction handlers
 class X86Instruction:
     __slots__ = ("emu", "instr", "mode32", "chsz_ad")
@@ -161,7 +165,9 @@ class X86Instruction:
         except ValueError:
             return decode_width_case(self.mode32, False, False).name
 
+
 # Class for executing instructions
+
 
 class InstrFlags:
     __slots__ = ("modrm", "imm32", "imm16", "imm8", "ptr16", "moffs", "moffs8")
@@ -179,13 +185,13 @@ class InstrFlags:
     def flags(self):
         """Returns a byte representation of the flags."""
         return (
-                (self.modrm << 0)
-                | (self.imm32 << 1)
-                | (self.imm16 << 2)
-                | (self.imm8 << 3)
-                | (self.ptr16 << 4)
-                | (self.moffs << 5)
-                | (self.moffs8 << 6)
+            (self.modrm << 0)
+            | (self.imm32 << 1)
+            | (self.imm16 << 2)
+            | (self.imm8 << 3)
+            | (self.ptr16 << 4)
+            | (self.moffs << 5)
+            | (self.moffs8 << 6)
         )
 
     @flags.setter

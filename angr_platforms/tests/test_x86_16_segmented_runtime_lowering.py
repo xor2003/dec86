@@ -3,10 +3,19 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CFunctionCall, CStatements, CUnaryOp, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CFunctionCall,
+    CStatements,
+    CUnaryOp,
+    CVariable,
+)
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from inertia_decompiler.cli_arg_parser import _build_cli_argument_parser
+from inertia_decompiler.recompile_check import check_c_recompiles_8616
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
@@ -16,8 +25,6 @@ from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
     lower_runtime_segment_address_8616,
 )
 from angr_platforms.X86_16.pipeline.architecture_guard import assert_final_c_quality_8616
-from inertia_decompiler.cli_arg_parser import _build_cli_argument_parser
-from inertia_decompiler.recompile_check import check_c_recompiles_8616
 
 
 class _DummyCodegen:
@@ -125,7 +132,11 @@ def test_apply_runtime_segment_lowering_preserves_ss_stack_dereferences():
         CBinaryOp(
             "Add",
             CBinaryOp("Mul", ss, _const(16, codegen), codegen=codegen),
-            CUnaryOp("Reference", CVariable(SimStackVariable(-2, 2, base="bp", name="local", region=0x4010), codegen=codegen), codegen=codegen),
+            CUnaryOp(
+                "Reference",
+                CVariable(SimStackVariable(-2, 2, base="bp", name="local", region=0x4010), codegen=codegen),
+                codegen=codegen,
+            ),
             codegen=codegen,
         ),
         codegen=codegen,
@@ -146,22 +157,16 @@ def test_architecture_guard_accepts_segment_helpers():
 def test_segment_linearization_through_tmp_is_rejected():
     with pytest.raises(Exception):
         assert_final_c_quality_8616(
-            "unsigned short tmp;\nunsigned long linear;\n"
-            "tmp = ss;\n"
-            "linear = tmp << 4;\n",
+            "unsigned short tmp;\nunsigned long linear;\ntmp = ss;\nlinear = tmp << 4;\n",
             function_addr=0x10498,
         )
     with pytest.raises(Exception):
         assert_final_c_quality_8616(
-            "unsigned short tmp;\nunsigned long linear;\n"
-            "tmp = ds;\n"
-            "linear = tmp * 16;\n",
+            "unsigned short tmp;\nunsigned long linear;\ntmp = ds;\nlinear = tmp * 16;\n",
             function_addr=0x10498,
         )
     assert_final_c_quality_8616(
-        "p = SEG_PTR(ds, off);\n"
-        "x = SEG_U16(ds, off);\n"
-        "y = MK_FP(ds, off);\n",
+        "p = SEG_PTR(ds, off);\nx = SEG_U16(ds, off);\ny = MK_FP(ds, off);\n",
         function_addr=0x10498,
     )
 

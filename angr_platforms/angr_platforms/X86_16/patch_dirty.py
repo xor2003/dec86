@@ -84,5 +84,3 @@ def apply_patch() -> int:
         except Exception:
             continue
     return patched
-
-

@@ -36,8 +36,12 @@ def test_coalesce_cod_word_global_statements_merges_adjacent_byte_stores(monkeyp
     high = _byte_global(0x2001, codegen)
     codegen.cfunc.statements = structured_c.CStatements(
         [
-            structured_c.CAssignment(low, structured_c.CConstant(0x34, SimTypeChar(False), codegen=codegen), codegen=codegen),
-            structured_c.CAssignment(high, structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen), codegen=codegen),
+            structured_c.CAssignment(
+                low, structured_c.CConstant(0x34, SimTypeChar(False), codegen=codegen), codegen=codegen
+            ),
+            structured_c.CAssignment(
+                high, structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen), codegen=codegen
+            ),
         ],
         codegen=codegen,
     )
@@ -68,8 +72,12 @@ def test_coalesce_cod_word_global_statements_refuses_non_adjacent_store_pair(mon
     high = _byte_global(0x2002, codegen)
     codegen.cfunc.statements = structured_c.CStatements(
         [
-            structured_c.CAssignment(low, structured_c.CConstant(0x34, SimTypeChar(False), codegen=codegen), codegen=codegen),
-            structured_c.CAssignment(high, structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen), codegen=codegen),
+            structured_c.CAssignment(
+                low, structured_c.CConstant(0x34, SimTypeChar(False), codegen=codegen), codegen=codegen
+            ),
+            structured_c.CAssignment(
+                high, structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen), codegen=codegen
+            ),
         ],
         codegen=codegen,
     )

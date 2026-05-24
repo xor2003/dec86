@@ -3,17 +3,16 @@ from __future__ import annotations
 # Layer: Widening
 # Responsibility: alias-proven widening compatibility and slice-join proofs.
 # Forbidden: rendered-text joins, CLI ownership, and postprocess semantics.
-
 from dataclasses import dataclass
 from typing import Iterable
 
-from ..alias_domains import DomainKey, register_pair_name
 from ..alias.alias_model import (
     AliasStorageFacts,
     _merge_storage_domains,
     _StorageDomainSignature,
     _StorageView,
 )
+from ..alias_domains import DomainKey, register_pair_name
 from ..alias_state import AliasState
 from ..semantics.alias_query import (
     _storage_domain_for_expr,
@@ -140,11 +139,17 @@ def prove_adjacent_storage_slices(
     high_version = version_resolver(high_expr, alias_state)
 
     if low_facts.needs_synthesis() or high_facts.needs_synthesis():
-        return WideningProof(False, "needs_synthesis", low_facts, high_facts, left_version=low_version, right_version=high_version)
+        return WideningProof(
+            False, "needs_synthesis", low_facts, high_facts, left_version=low_version, right_version=high_version
+        )
     if not same_alias_storage_domain(low_expr, high_expr):
-        return WideningProof(False, "domain_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version)
+        return WideningProof(
+            False, "domain_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version
+        )
     if not can_join_alias_storage(low_expr, high_expr):
-        return WideningProof(False, "view_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version)
+        return WideningProof(
+            False, "view_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version
+        )
     if alias_state is not None:
         if (
             low_facts.identity is not None
@@ -193,7 +198,9 @@ def prove_adjacent_storage_slices(
     )
 
 
-def analyze_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasState | None = None) -> StorageJoinAnalysis:
+def analyze_adjacent_storage_slices(
+    low_expr, high_expr, *, alias_state: AliasState | None = None
+) -> StorageJoinAnalysis:
     return StorageJoinAnalysis(prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state))
 
 
@@ -274,7 +281,9 @@ def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasS
     return True
 
 
-def merge_storage_slice_domains(low_expr, high_expr, *, alias_state: AliasState | None = None) -> _StorageDomainSignature:
+def merge_storage_slice_domains(
+    low_expr, high_expr, *, alias_state: AliasState | None = None
+) -> _StorageDomainSignature:
     proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
     if not proof.ok or proof.merged_domain is None:
         return _StorageDomainSignature("mixed")

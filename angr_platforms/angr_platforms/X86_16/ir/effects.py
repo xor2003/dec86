@@ -3,11 +3,10 @@ from __future__ import annotations
 # Layer: IR
 # Responsibility: typed memory and register effect records (LOAD, STORE, REG_WRITE).
 # Forbidden: semantic recovery ownership, text-pattern semantics, postprocess cleanup.
-
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
-from .core import IRAddress, IRValue, MemSpace
+from .core import IRAddress, IRValue
 
 __all__ = [
     "EffectKind",

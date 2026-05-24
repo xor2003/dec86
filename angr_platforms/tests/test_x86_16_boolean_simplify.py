@@ -56,7 +56,12 @@ def test_high_byte_projection_constant_helper_is_shared():
     high = _decompile.structured_c.CConstant(0x1200, _decompile.SimTypeShort(False), codegen=codegen)
     expr = _decompile.structured_c.CBinaryOp(
         "And",
-        _decompile.structured_c.CBinaryOp("Shr", _decompile.structured_c.CBinaryOp("Or", low, high, codegen=codegen), _decompile.structured_c.CConstant(8, _decompile.SimTypeShort(False), codegen=codegen), codegen=codegen),
+        _decompile.structured_c.CBinaryOp(
+            "Shr",
+            _decompile.structured_c.CBinaryOp("Or", low, high, codegen=codegen),
+            _decompile.structured_c.CConstant(8, _decompile.SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
         _decompile.structured_c.CConstant(0x00FF, _decompile.SimTypeShort(False), codegen=codegen),
         codegen=codegen,
     )

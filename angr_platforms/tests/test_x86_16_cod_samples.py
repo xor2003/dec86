@@ -84,10 +84,7 @@ DECOMP_CASES = (
         cod_name="NHORZ.COD",
         proc_name="_ChangeWeather",
         cod_dir=_F14_COD_DIR,
-        original_c=(
-            "if (BadWeather) { CLOUDHEIGHT=8150; CLOUDTHICK=500; } "
-            "else { CLOUDHEIGHT=125; CLOUDTHICK=1000; }"
-        ),
+        original_c=("if (BadWeather) { CLOUDHEIGHT=8150; CLOUDTHICK=500; } else { CLOUDHEIGHT=125; CLOUDTHICK=1000; }"),
         expected_tokens=("8150", "500", "125", "1000"),
     ),
     DecompCase(
@@ -112,8 +109,7 @@ DECOMP_CASES = (
         proc_name="_LookUp",
         cod_dir=_F14_COD_DIR,
         original_c=(
-            "Rp3D->Length1 = 150; RpCRT1->YBgn = 138; RpCRT2->YBgn = 136; "
-            "RpCRT4->YBgn = 150; else Rp3D->Length1 = 139;"
+            "Rp3D->Length1 = 150; RpCRT1->YBgn = 138; RpCRT2->YBgn = 136; RpCRT4->YBgn = 150; else Rp3D->Length1 = 139;"
         ),
         expected_tokens=("150", "138", "136", "139"),
     ),
@@ -1217,7 +1213,7 @@ def test_dosfunc_cod_sample_deduplicates_stack_local_names():
     text = result.stdout
 
     assert text.count("return err;") == 1
-    assert "ERROR(\"dos_free: error freeing segment 0x%x: error 0x%x\", segment, (int)err);" in text
+    assert 'ERROR("dos_free: error freeing segment 0x%x: error 0x%x", segment, (int)err);' in text
     assert "err_2" not in text
 
 

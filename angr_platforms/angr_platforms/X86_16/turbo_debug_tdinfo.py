@@ -28,12 +28,37 @@ _PAGE_SIZE = 512
 
 _TDS_VERSION_MAP = {
     # (tds_major, tds_minor): (tds_version_str, tlink_version_str, commandline_hint, products)
-    (2, 8): ("2.8", "2.0a/2.0b", "Turbo Link  Version 2.0  Copyright (c) 1987, 1988 Borland International", "Turbo Assembler 1.0/1.01, Turbo C 2.0/2.01"),
-    (2, 9): ("2.9", "3.0/3.01", "Turbo Link  Version 3.0 Copyright (c) 1987, 1990 Borland International", "Turbo Assembler 2.0/2.01"),
+    (2, 8): (
+        "2.8",
+        "2.0a/2.0b",
+        "Turbo Link  Version 2.0  Copyright (c) 1987, 1988 Borland International",
+        "Turbo Assembler 1.0/1.01, Turbo C 2.0/2.01",
+    ),
+    (2, 9): (
+        "2.9",
+        "3.0/3.01",
+        "Turbo Link  Version 3.0 Copyright (c) 1987, 1990 Borland International",
+        "Turbo Assembler 2.0/2.01",
+    ),
     (3, 0): ("3.0", "4.0", "Turbo Link  Version 4.0 Copyright (c) 1991 Borland International", "Borland C++ 2.0"),
-    (3, 10): ("3.10", "5.0/5.1", "Turbo Link  Version 5.0 Copyright (c) 1991 Borland International", "Borland C++ 3.0/3.1"),
-    (4, 1): ("4.1", "6.00/7.0a", "Turbo Link  Version 6.00 Copyright (c) 1992, 1993 Borland International", "Turbo Assembler 4.0, Borland C++ 4.0/4.5/4.52"),
-    (4, 3): ("4.3", "7.1.30.1/7.1.32.2", "Turbo Link  Version 7.1 Copyright (c) 1987, 1996 Borland International", "Turbo Assembler 5.0, Borland C++ 5.0/5.02"),
+    (3, 10): (
+        "3.10",
+        "5.0/5.1",
+        "Turbo Link  Version 5.0 Copyright (c) 1991 Borland International",
+        "Borland C++ 3.0/3.1",
+    ),
+    (4, 1): (
+        "4.1",
+        "6.00/7.0a",
+        "Turbo Link  Version 6.00 Copyright (c) 1992, 1993 Borland International",
+        "Turbo Assembler 4.0, Borland C++ 4.0/4.5/4.52",
+    ),
+    (4, 3): (
+        "4.3",
+        "7.1.30.1/7.1.32.2",
+        "Turbo Link  Version 7.1 Copyright (c) 1987, 1996 Borland International",
+        "Turbo Assembler 5.0, Borland C++ 5.0/5.02",
+    ),
 }
 
 # TDS versions that have no TDS info (pre-2.0 format)

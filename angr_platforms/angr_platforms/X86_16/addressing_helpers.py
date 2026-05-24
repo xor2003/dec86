@@ -127,7 +127,9 @@ def describe_x86_16_mixed_width_extension_surface() -> dict[str, object]:
             }
             for case in DECODE_WIDTH_MATRIX
         ),
-        "supported_pairs": tuple((case.profile.operand_bits, case.profile.address_bits) for case in DECODE_WIDTH_MATRIX),
+        "supported_pairs": tuple(
+            (case.profile.operand_bits, case.profile.address_bits) for case in DECODE_WIDTH_MATRIX
+        ),
         "address_widths": tuple(sorted({case.profile.address_bits for case in DECODE_WIDTH_MATRIX})),
         "operand_widths": tuple(sorted({case.profile.operand_bits for case in DECODE_WIDTH_MATRIX})),
     }
@@ -185,7 +187,7 @@ class ResolvedMemoryOperand:
     @property
     def linear(self) -> Any:
         """Deprecated: use exec_linear for execution-only linear address.
-        
+
         This property exists only for backward compatibility.
         Forbidden for alias/type/rewrite semantics — use ir_address() instead.
         """
@@ -203,10 +205,10 @@ class ResolvedMemoryOperand:
         """
         from .ir.core import IRAddress
         from .pipeline.errors import PipelineHardError
+
         if isinstance(self.exec_linear, IRAddress):
             raise PipelineHardError(
-                "exec_linear must not be an IRAddress — linear is execution-only, "
-                "use ir_address() for semantic layers",
+                "exec_linear must not be an IRAddress — linear is execution-only, use ir_address() for semantic layers",
                 layer="addressing",
             )
 
@@ -232,7 +234,11 @@ class ResolvedMemoryOperand:
             base = ()
 
         size = max(1, self.width_bits // 8) if isinstance(self.width_bits, int) and self.width_bits > 0 else 0
-        seg_origin = SegmentOrigin.PROVEN if explicit_segment else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN)
+        seg_origin = (
+            SegmentOrigin.PROVEN
+            if explicit_segment
+            else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN)
+        )
 
         # Unwrap VexValue wrapper and resolve RdTmp chain via IRSB
         offset_raw = self.offset
@@ -269,7 +275,7 @@ class ResolvedMemoryOperand:
                     base=base,
                     offset=offset_raw,
                     size=size,
-                    status=AddressStatus.PROVISIONAL,
+                    status=AddressStatus.STABLE if stable else AddressStatus.PROVISIONAL,
                     segment_origin=seg_origin,
                     expr=expr,
                 )
@@ -491,7 +497,9 @@ def _resolve_rdtmp_chain(expr: Any, tmp_defs: dict) -> Any:
     return expr
 
 
-def extract_bp_relative_offset_8616(offset_expr: Any, *, tmp_defs: dict | None = None) -> tuple[int, tuple[str, ...]] | None:
+def extract_bp_relative_offset_8616(
+    offset_expr: Any, *, tmp_defs: dict | None = None
+) -> tuple[int, tuple[str, ...]] | None:
     """Extract a BP-relative constant offset from a symbolic offset expression.
 
     Handles only proven forms:
@@ -622,7 +630,7 @@ def _collect_add_sub_terms(
             return (right_terms + [args[0]], (-right_const) & 0xFFFF)
         return ([args[0], args[1]], 0)
 
-    # Leaf: constant or register
+        # Leaf: constant or register
         # Handle VEX Const objects (tag=Iex_Const, .con.value)
         tag = getattr(expr, "tag", None)
         if tag == "Iex_Const":

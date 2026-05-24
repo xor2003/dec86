@@ -26,7 +26,7 @@ is failure, not progress.
 Do not add new recovery logic here.  This module only enforces contracts.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .errors import PipelineHardError
 

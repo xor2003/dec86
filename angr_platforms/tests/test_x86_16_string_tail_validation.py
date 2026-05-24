@@ -53,7 +53,9 @@ def test_string_instruction_lowering_is_tail_validation_neutral():
     function = SimpleNamespace(addr=0x4010, info={})
     project = SimpleNamespace(
         arch=arch,
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x4010 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x4010 else None)
+        ),
     )
 
     before = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")

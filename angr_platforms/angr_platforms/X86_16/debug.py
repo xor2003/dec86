@@ -11,6 +11,7 @@ F_MSG = 4
 # Global debug level
 debug_level = 0
 
+
 def debug_print(type, file, function, line, level, fmt, *args):
     """Prints debug messages based on the message type and debug level."""
     typeset = {
@@ -32,30 +33,37 @@ def debug_print(type, file, function, line, level, fmt, *args):
             traceback.print_stack()
             sys.exit(-1)
 
+
 def ASSERT(cond):
     """Asserts a condition and prints an error message if it fails."""
     if not cond:
         debug_print(F_ASSERT, *traceback.extract_stack()[-2], cond)
 
+
 def ERROR(fmt, *args):
     """Prints an error message and terminates the program."""
     debug_print(F_ERROR, *traceback.extract_stack()[-2], fmt, *args)
+
 
 def WARN(fmt, *args):
     """Prints a warning message."""
     debug_print(F_WARN, *traceback.extract_stack()[-2], 0, fmt, *args)
 
+
 def INFO(level, fmt, *args):
     """Prints an informational message based on the debug level."""
     debug_print(F_INFO, *traceback.extract_stack()[-2], level, fmt, *args)
+
 
 def DEBUG_MSG(level, fmt, *args):
     """Prints a debug message based on the debug level."""
     debug_print(F_MSG, *traceback.extract_stack()[-2], level, fmt, *args)
 
+
 def MSG(fmt, *args):
     """Prints a regular message to stdout."""
     print(fmt % args, file=sys.stdout)
+
 
 def set_debuglv(verbose):
     """Sets the global debug level."""

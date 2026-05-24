@@ -80,7 +80,9 @@ def _unwrap_synthetic_wide_return_8616(retval):
     return None
 
 
-def _normalize_arg_names_8616(arg_names: tuple[str | None, ...] | list[str | None] | None, count: int) -> list[str | None]:
+def _normalize_arg_names_8616(
+    arg_names: tuple[str | None, ...] | list[str | None] | None, count: int
+) -> list[str | None]:
     normalized: list[str | None] = []
     used: set[str] = set()
     source = list(arg_names or ())
@@ -500,8 +502,7 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
         else:
             if parsed_proto is not None:
                 source_pointer_flags = tuple(
-                    isinstance(arg, SimTypePointer)
-                    for arg in (getattr(parsed_proto, "args", ()) or ())
+                    isinstance(arg, SimTypePointer) for arg in (getattr(parsed_proto, "args", ()) or ())
                 )
 
     stack_specs = annotations.get("stack_vars", {}) if isinstance(annotations, dict) else {}
@@ -525,8 +526,7 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
         new_args = list(getattr(prototype, "args", ()) or ())
         if len(new_args) < target_arg_count:
             new_args.extend(
-                SimTypeShort(False).with_arch(project.arch)
-                for _ in range(target_arg_count - len(new_args))
+                SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(new_args))
             )
         elif len(new_args) > target_arg_count:
             new_args = new_args[:target_arg_count]
@@ -591,18 +591,13 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
                 codegen.cfunc.arg_list = [resolved_arg for resolved_arg in resolved_args if resolved_arg is not None]
             return True
 
-    fallback_args = [
-        arg
-        for arg in existing_args
-        if isinstance(getattr(arg, "variable", None), SimStackVariable)
-    ]
+    fallback_args = [arg for arg in existing_args if isinstance(getattr(arg, "variable", None), SimStackVariable)]
     if fallback_args:
         target_arg_count = len(fallback_args)
         new_args = list(getattr(current_proto, "args", ()) or ())
         if len(new_args) < target_arg_count:
             new_args.extend(
-                SimTypeShort(False).with_arch(project.arch)
-                for _ in range(target_arg_count - len(new_args))
+                SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(new_args))
             )
         elif len(new_args) > target_arg_count:
             new_args = new_args[:target_arg_count]
@@ -699,15 +694,16 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
             if target_arg_count > len(existing_args):
                 new_args = list(existing_args)
                 new_args.extend(
-                    SimTypeShort(False).with_arch(project.arch)
-                    for _ in range(target_arg_count - len(existing_args))
+                    SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(existing_args))
                 )
             else:
                 new_args = list(existing_args)
             arg_names = _normalize_arg_names_8616(getattr(prototype, "arg_names", None), len(new_args))
         else:
             existing_names = getattr(prototype, "arg_names", None)
-            arg_names = _normalize_arg_names_8616(existing_names, len(existing_args)) if existing_names is not None else None
+            arg_names = (
+                _normalize_arg_names_8616(existing_names, len(existing_args)) if existing_names is not None else None
+            )
 
         def has_wide_return_pattern() -> bool:
             for stmt in getattr(codegen.cfunc.statements, "statements", ()) or ():
@@ -894,6 +890,7 @@ def _prune_void_function_return_values_8616(project, codegen) -> bool:
         changed = True
     return changed
 
+
 def _apply_annotations_8616(project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
@@ -992,7 +989,9 @@ def _apply_annotations_8616(project, codegen) -> bool:
     exact_stack_candidates: dict[int, list[tuple[tuple[int, int, int, int, int], CVariable]]] = {}
 
     def _stack_name_is_generic(name: object) -> bool:
-        return isinstance(name, str) and re.fullmatch(r"(?:arg_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name) is not None
+        return (
+            isinstance(name, str) and re.fullmatch(r"(?:arg_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name) is not None
+        )
 
     def _stack_candidate_score(variable, cvar, *, exact: bool) -> tuple[int, int, int, int, int]:
         identity = _stack_slot_identity_for_variable(variable)
@@ -1002,7 +1001,11 @@ def _apply_annotations_8616(project, codegen) -> bool:
         cvar_name = getattr(cvar, "name", None)
         unified_name = getattr(getattr(cvar, "unified_variable", None), "name", None)
         preferred_name = next(
-            (name for name in (variable_name, cvar_name, unified_name) if isinstance(name, str) and name and not _stack_name_is_generic(name)),
+            (
+                name
+                for name in (variable_name, cvar_name, unified_name)
+                if isinstance(name, str) and name and not _stack_name_is_generic(name)
+            ),
             None,
         )
         is_arg_slot = 1 if identity in arg_slot_identities else 0
@@ -1066,7 +1069,9 @@ def _apply_annotations_8616(project, codegen) -> bool:
 
         unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
         if isinstance(unified_locals, dict):
-            unified_locals[stack_var] = {(cvar, vartype if vartype is not None else getattr(cvar, "variable_type", None))}
+            unified_locals[stack_var] = {
+                (cvar, vartype if vartype is not None else getattr(cvar, "variable_type", None))
+            }
 
         stack_vars_by_offset[offset] = cvar
         return cvar
@@ -1108,11 +1113,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
         return _materialize_stack_cvar(offset, None)
 
     def sync_arg_list_from_annotations() -> bool:
-        arg_offsets = [
-            offset
-            for offset in sorted(stack_specs)
-            if isinstance(offset, int) and offset > 0
-        ]
+        arg_offsets = [offset for offset in sorted(stack_specs) if isinstance(offset, int) and offset > 0]
         if not arg_offsets:
             return False
 
@@ -1161,7 +1162,10 @@ def _apply_annotations_8616(project, codegen) -> bool:
         desired_names = []
         for index in range(target_arg_count):
             if index < len(resolved_args):
-                desired_names.append(getattr(getattr(resolved_args[index], "unified_variable", None), "name", None) or resolved_args[index].name)
+                desired_names.append(
+                    getattr(getattr(resolved_args[index], "unified_variable", None), "name", None)
+                    or resolved_args[index].name
+                )
             elif index < len(getattr(current_proto, "arg_names", ()) or ()):
                 desired_names.append(current_proto.arg_names[index])
             else:
@@ -1240,7 +1244,9 @@ def _apply_annotations_8616(project, codegen) -> bool:
         current_name = getattr(variable, "name", None)
         if isinstance(current_name, str) and current_name and current_name == name:
             used_stack_names.add(current_name)
-            name_owner_offsets[current_name] = getattr(variable, "offset", 0) if isinstance(getattr(variable, "offset", None), int) else 0
+            name_owner_offsets[current_name] = (
+                getattr(variable, "offset", 0) if isinstance(getattr(variable, "offset", None), int) else 0
+            )
             if getattr(variable, "name", None) != current_name:
                 variable.name = current_name
                 changed = True
@@ -1408,6 +1414,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
 
     return changed
 
+
 def _prune_unused_unnamed_memory_declarations_8616(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
@@ -1443,6 +1450,7 @@ def _prune_unused_unnamed_memory_declarations_8616(codegen) -> bool:
 
     return changed
 
+
 def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
@@ -1470,7 +1478,19 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
                     used_registers.add(unified.reg)
             return
 
-        for attr in ("rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "callee_target", "else_node", "retval"):
+        for attr in (
+            "rhs",
+            "expr",
+            "operand",
+            "condition",
+            "cond",
+            "body",
+            "iffalse",
+            "iftrue",
+            "callee_target",
+            "else_node",
+            "retval",
+        ):
             child = getattr(node, attr, None)
             if _structured_codegen_node_8616(child):
                 collect_reads(child)
@@ -1533,6 +1553,7 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
     visit(codegen.cfunc.statements)
     return changed
 
+
 def _c_expr_uses_register_8616(node, reg_offset: int) -> bool:
     if not _structured_codegen_node_8616(node):
         return False
@@ -1540,7 +1561,20 @@ def _c_expr_uses_register_8616(node, reg_offset: int) -> bool:
         variable = getattr(node, "variable", None)
         return isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) == reg_offset
 
-    for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iftrue", "iffalse", "callee_target", "else_node", "retval"):
+    for attr in (
+        "lhs",
+        "rhs",
+        "expr",
+        "operand",
+        "condition",
+        "cond",
+        "body",
+        "iftrue",
+        "iffalse",
+        "callee_target",
+        "else_node",
+        "retval",
+    ):
         child = getattr(node, attr, None)
         if _structured_codegen_node_8616(child) and _c_expr_uses_register_8616(child, reg_offset):
             return True
@@ -1566,6 +1600,7 @@ def _c_expr_uses_register_8616(node, reg_offset: int) -> bool:
                 return True
 
     return False
+
 
 def _stmt_reads_reg_before_write_8616(stmt, reg_offset: int) -> tuple[bool, bool]:
     if not _structured_codegen_node_8616(stmt):
@@ -1615,6 +1650,7 @@ def _stmt_reads_reg_before_write_8616(stmt, reg_offset: int) -> tuple[bool, bool
         return False, False
 
     return _c_expr_uses_register_8616(stmt, reg_offset), False
+
 
 def _prune_overwritten_flag_assignments_8616(project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:

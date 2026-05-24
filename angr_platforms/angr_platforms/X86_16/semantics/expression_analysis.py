@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Semantics
 # Responsibility: expression-shape interpretation used by semantic query layers.
 # Forbidden: storage identity ownership, widening decisions, CLI formatting.
-
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
 

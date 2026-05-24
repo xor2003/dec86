@@ -13,9 +13,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from .semantics.alias_query import _storage_domain_for_expr
-from .widening_alias import join_adjacent_register_slices
-from .widening_model import prove_adjacent_storage_slices
 from .decompiler_postprocess_flags import _bool_cite_values_8616
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
@@ -23,6 +20,9 @@ from .decompiler_postprocess_utils import (
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
+from .semantics.alias_query import _storage_domain_for_expr
+from .widening_alias import join_adjacent_register_slices
+from .widening_model import prove_adjacent_storage_slices
 
 PROJECTION_CLEANUP_RULES = (
     (
@@ -85,7 +85,9 @@ def _simplify_boolean_cites_8616(codegen) -> bool:
     new_root = transform(root)
     if new_root is not root:
         if isinstance(root, CStatements) and not isinstance(new_root, CStatements):
-            new_root = CStatements(statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen)
+            new_root = CStatements(
+                statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen
+            )
         codegen.cfunc.statements = new_root
         root = new_root
         changed = True
@@ -214,7 +216,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return None
 
         region = getattr(getattr(codegen, "cfunc", None), "addr", None)
-        vartype = getattr(low_expr, "variable_type", None) or getattr(high_expr, "variable_type", None) or SimTypeShort(False)
+        vartype = (
+            getattr(low_expr, "variable_type", None) or getattr(high_expr, "variable_type", None) or SimTypeShort(False)
+        )
 
         if joined.space == "stack" and joined.stack_slot is not None:
             stack_slot = joined.stack_slot
@@ -251,7 +255,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             high_reg = getattr(high_var, "reg", None)
             if isinstance(low_reg, int) and isinstance(high_reg, int):
                 reg = min(low_reg, high_reg)
-                variable = SimRegisterVariable(reg, 2, name=getattr(low_var, "name", None) or getattr(high_var, "name", None))
+                variable = SimRegisterVariable(
+                    reg, 2, name=getattr(low_var, "name", None) or getattr(high_var, "name", None)
+                )
                 return CVariable(variable, variable_type=vartype, codegen=codegen)
 
         return None
@@ -286,7 +292,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             if lhs_val is not None and rhs_val is not None:
                 return CConstant((lhs_val << rhs_bits) | rhs_val, getattr(node, "type", None), codegen=codegen)
 
-            shift = CConstant(rhs_bits, getattr(node.rhs, "type", None) or getattr(node.lhs, "type", None), codegen=codegen)
+            shift = CConstant(
+                rhs_bits, getattr(node.rhs, "type", None) or getattr(node.lhs, "type", None), codegen=codegen
+            )
             return CBinaryOp(
                 "Or",
                 CBinaryOp("Shl", node.lhs, shift, codegen=codegen, tags=getattr(node, "tags", None)),
@@ -297,7 +305,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
         if isinstance(node, CBinaryOp) and node.op == "Mul":
             if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
-                type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                type_ = (
+                    getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                )
                 if type_ is not None:
                     return CConstant(0, type_, codegen=codegen)
 
@@ -319,7 +329,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
         if isinstance(node, CBinaryOp) and node.op == "And":
             if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
-                type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                type_ = (
+                    getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                )
                 if type_ is not None:
                     return CConstant(0, type_, codegen=codegen)
 
@@ -341,7 +353,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         simplified = _simplify_zero_flag_comparison_8616(node)
         if simplified is not node:
             return simplified
-        
+
         if (
             isinstance(node, CBinaryOp)
             and node.op in {"LogicalAnd", "LogicalOr", "And", "Or"}
@@ -350,11 +362,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return node.lhs
         if isinstance(node, CBinaryOp) and node.op in {"CmpEQ", "CmpNE"}:
             if isinstance(node.rhs, CConstant) and node.rhs.value == 0:
-                if (
-                    isinstance(node.lhs, CBinaryOp)
-                    and node.lhs.op == "Sub"
-                    and isinstance(node.lhs.rhs, CConstant)
-                ):
+                if isinstance(node.lhs, CBinaryOp) and node.lhs.op == "Sub" and isinstance(node.lhs.rhs, CConstant):
                     return CBinaryOp(
                         node.op,
                         node.lhs.lhs,
@@ -363,11 +371,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         tags=getattr(node, "tags", None),
                     )
             if isinstance(node.lhs, CConstant) and node.lhs.value == 0:
-                if (
-                    isinstance(node.rhs, CBinaryOp)
-                    and node.rhs.op == "Sub"
-                    and isinstance(node.rhs.rhs, CConstant)
-                ):
+                if isinstance(node.rhs, CBinaryOp) and node.rhs.op == "Sub" and isinstance(node.rhs.rhs, CConstant):
                     return CBinaryOp(
                         node.op,
                         node.rhs.lhs,
@@ -385,7 +389,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     new_root = transform(root)
     if new_root is not root:
         if isinstance(root, CStatements) and not isinstance(new_root, CStatements):
-            new_root = CStatements(statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen)
+            new_root = CStatements(
+                statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen
+            )
         codegen.cfunc.statements = new_root
         root = new_root
         changed = True
@@ -415,11 +421,7 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
         if isinstance(expr, CBinaryOp):
             return _safe_inline_expr(expr.lhs) and _safe_inline_expr(expr.rhs)
         if isinstance(expr, CITE):
-            return (
-                _safe_inline_expr(expr.cond)
-                and _safe_inline_expr(expr.iftrue)
-                and _safe_inline_expr(expr.iffalse)
-            )
+            return _safe_inline_expr(expr.cond) and _safe_inline_expr(expr.iftrue) and _safe_inline_expr(expr.iffalse)
         return False
 
     def _count_var_uses(node, target, *, assignment_lhs: bool = False) -> int:
@@ -499,10 +501,14 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
             pair_changed = False
             for cond, body in pairs:
                 new_cond, cond_changed = (
-                    _replace_var_use(cond, target, replacement) if _structured_codegen_node_8616(cond) else (cond, False)
+                    _replace_var_use(cond, target, replacement)
+                    if _structured_codegen_node_8616(cond)
+                    else (cond, False)
                 )
                 new_body, body_changed = (
-                    _replace_var_use(body, target, replacement) if _structured_codegen_node_8616(body) else (body, False)
+                    _replace_var_use(body, target, replacement)
+                    if _structured_codegen_node_8616(body)
+                    else (body, False)
                 )
                 new_pairs.append((new_cond, new_body))
                 pair_changed |= cond_changed or body_changed

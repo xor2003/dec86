@@ -11,23 +11,20 @@ already proven by the lifting stage.  This pass only reformats the C AST.
 """
 
 from angr.analyses.decompiler.structured_codegen.c import (
-    CAssignment,
     CBinaryOp,
     CConstant,
     CIfElse,
-    CStatements,
     CUnaryOp,
     CVariable,
 )
 from angr.sim_type import SimTypeInt, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
+from .condition_trace import record_materialized_condition_trace_8616
 from .decompiler_postprocess_utils import (
-    _iter_c_nodes_deep_8616,
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
-from .condition_trace import record_materialized_condition_trace_8616
 from .ir.condition_ir import ConditionIR
 from .ir.core import IRValue, MemSpace
 from .tail_validation_fingerprint import _expr_fingerprint
@@ -155,7 +152,9 @@ def _index_conditions_by_tag(conditions: list[ConditionIR]) -> dict[tuple, Condi
     return index
 
 
-def _resolve_condition_by_tag_with_delta(project, index: dict[tuple, ConditionIR], key: tuple | None) -> ConditionIR | None:
+def _resolve_condition_by_tag_with_delta(
+    project, index: dict[tuple, ConditionIR], key: tuple | None
+) -> ConditionIR | None:
     if key is None:
         return None
     cond = index.get(key)
@@ -181,6 +180,7 @@ def _is_flag_based_condition_node(node) -> bool:
     """Detect if a condition node is flag-based (tmp_* or flags mask pattern)."""
     # CITE nodes: if(tmp_*)
     from angr.analyses.decompiler.structured_codegen.c import CITE
+
     if isinstance(node, CITE):
         cond = getattr(node, "cond", None)
         if cond is not None:
@@ -313,7 +313,7 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
             if child is not None:
                 _walk(child)
         if hasattr(node, "condition_and_nodes"):
-            for cond_pair in (getattr(node, "condition_and_nodes", ()) or ()):
+            for cond_pair in getattr(node, "condition_and_nodes", ()) or ():
                 if isinstance(cond_pair, (tuple, list)) and len(cond_pair) >= 2:
                     _walk(cond_pair[0])
                     _walk(cond_pair[1])

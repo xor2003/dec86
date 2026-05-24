@@ -25,4 +25,3 @@ def test_parse_codeview_nb00_type_subsection():
     assert parsed.type_definitions[0].index == 0x200
     assert parsed.type_definitions[0].leaves[0].kind == "string"
     assert parsed.type_definitions[0].leaves[0].value == "foo"
-

@@ -264,7 +264,7 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
     if not lines:
         return c_text
     prototype_re = re.compile(
-        r"^\s*(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
+        r"^\s*(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?:\*\s*)*(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
     )
 
     def _split_top_level_args(args_text: str) -> list[str]:
@@ -1368,7 +1368,7 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
     def _has_any_decl_or_def(name: str) -> bool:
         escaped = re.escape(name)
         decl_or_def_re = re.compile(
-            rf"(?m)^\s*(?:extern\s+)?[A-Za-z_][\w\s\*]*\b{escaped}\s*\([^;{{}}]*\)\s*(?:;|\{{\s*$)"
+            rf"(?m)^\s*(?:extern\s+)?[A-Za-z_][\w\s\*]*?\s+(?:\*\s*)?{escaped}\s*\([^;{{}}]*\)\s*(?:;|\{{.*$)"
         )
         if decl_or_def_re.search(c_text):
             return True
@@ -2074,6 +2074,11 @@ def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
         normalized = re.sub(
             rf"\bSwapBars\(\s*0\s*,\s*{re.escape(suffixed)}\s*\)",
             f"SwapBars(0, {base_name})",
+            normalized,
+        )
+        normalized = re.sub(
+            rf"\bPercolateDown\(\s*{re.escape(suffixed)}\s*\)",
+            f"PercolateDown({base_name} - 1)",
             normalized,
         )
     if trailing_newline and not normalized.endswith("\n"):

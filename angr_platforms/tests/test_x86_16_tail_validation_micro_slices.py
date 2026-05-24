@@ -21,8 +21,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
 import angr_platforms.X86_16.tail_validation as tail_validation_module
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
@@ -136,8 +136,12 @@ def test_tail_validation_micro_slice_explicit_compare_branch_is_stable():
     project = _project()
     before_codegen = _DummyCodegen()
     after_codegen = _DummyCodegen()
-    condition_before = CBinaryOp("CmpGT", _reg(project, "ax", before_codegen), _reg(project, "bx", before_codegen), codegen=before_codegen)
-    condition_after = CBinaryOp("CmpGT", _reg(project, "ax", after_codegen), _reg(project, "bx", after_codegen), codegen=after_codegen)
+    condition_before = CBinaryOp(
+        "CmpGT", _reg(project, "ax", before_codegen), _reg(project, "bx", before_codegen), codegen=before_codegen
+    )
+    condition_after = CBinaryOp(
+        "CmpGT", _reg(project, "ax", after_codegen), _reg(project, "bx", after_codegen), codegen=after_codegen
+    )
     before = _codegen(
         [
             CIfElse(
@@ -196,7 +200,12 @@ def test_tail_validation_micro_slice_detects_raw_flags_condition_regression():
     after = _codegen(
         [
             CIfElse(
-                [(_flags_zero(project, after_codegen), CStatements([CBreak(codegen=after_codegen)], codegen=after_codegen))],
+                [
+                    (
+                        _flags_zero(project, after_codegen),
+                        CStatements([CBreak(codegen=after_codegen)], codegen=after_codegen),
+                    )
+                ],
                 None,
                 codegen=after_codegen,
             )
@@ -331,14 +340,20 @@ def test_tail_validation_micro_slice_preserves_helper_call_identity():
     after_codegen = _DummyCodegen()
     before = _codegen(
         [
-            CExpressionStatement(CFunctionCall("helper_ping", None, [_const(1, before_codegen)], codegen=before_codegen), codegen=before_codegen),
+            CExpressionStatement(
+                CFunctionCall("helper_ping", None, [_const(1, before_codegen)], codegen=before_codegen),
+                codegen=before_codegen,
+            ),
             CReturn(None, codegen=before_codegen),
         ],
         before_codegen,
     )
     after = _codegen(
         [
-            CExpressionStatement(CFunctionCall("helper_ping", None, [_const(1, after_codegen)], codegen=after_codegen), codegen=after_codegen),
+            CExpressionStatement(
+                CFunctionCall("helper_ping", None, [_const(1, after_codegen)], codegen=after_codegen),
+                codegen=after_codegen,
+            ),
             CReturn(None, codegen=after_codegen),
         ],
         after_codegen,
@@ -358,7 +373,9 @@ def test_tail_validation_micro_slice_detects_helper_call_identity_regression():
     after_codegen = _DummyCodegen()
     before = _codegen(
         [
-            CExpressionStatement(CFunctionCall("helper_ping", None, [], codegen=before_codegen), codegen=before_codegen),
+            CExpressionStatement(
+                CFunctionCall("helper_ping", None, [], codegen=before_codegen), codegen=before_codegen
+            ),
             CReturn(None, codegen=before_codegen),
         ],
         before_codegen,
@@ -452,7 +469,12 @@ def test_tail_validation_micro_slice_live_out_ignores_register_write_used_only_b
             CIfElse(
                 [
                     (
-                        CBinaryOp("Sub", _reg(project, "ax", before_codegen), _const(2, before_codegen), codegen=before_codegen),
+                        CBinaryOp(
+                            "Sub",
+                            _reg(project, "ax", before_codegen),
+                            _const(2, before_codegen),
+                            codegen=before_codegen,
+                        ),
                         CStatements([], codegen=before_codegen),
                     )
                 ],
@@ -492,7 +514,9 @@ def test_tail_validation_micro_slice_preserves_if_else_and_while_control_flow_su
     project = _project()
     before_codegen = _DummyCodegen()
     after_codegen = _DummyCodegen()
-    before_cond = CBinaryOp("CmpEQ", _reg(project, "ax", before_codegen), _const(0, before_codegen), codegen=before_codegen)
+    before_cond = CBinaryOp(
+        "CmpEQ", _reg(project, "ax", before_codegen), _const(0, before_codegen), codegen=before_codegen
+    )
     after_cond = CBinaryOp("CmpEQ", _reg(project, "ax", after_codegen), _const(0, after_codegen), codegen=after_codegen)
     before = _codegen(
         [

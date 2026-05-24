@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Alias
 # Responsibility: canonical alias transfer functions.
 # Forbidden: lowering and rewrite ownership.
-
 from dataclasses import dataclass
 
 from .domains import FULL16, HIGH8, LOW8, register_domain_for_name, register_pair_name, register_view_for_name

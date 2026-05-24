@@ -6,11 +6,10 @@ AGENTS rule: SS ≠ DS, DS ≠ ES are distinct memory spaces.
 No flattened (ss << 4) in semantic IR.
 """
 
-import pytest
 from angr_platforms.X86_16.ir.core import (
+    AddressStatus,
     IRAddress,
     MemSpace,
-    AddressStatus,
     SegmentOrigin,
     is_stack_address_8616,
 )

@@ -63,7 +63,7 @@ class DataAccess(Hardware):
             history = []
             self._inertia_resolved_operands = history
         history.append((mode, operand))
-        self._record_semantic_memory_access(operand, mode)
+        DataAccess._record_semantic_memory_access(self, operand, mode)
         return operand
 
     def _record_semantic_memory_access(self, operand: ResolvedMemoryOperand, mode: int) -> None:
@@ -104,10 +104,10 @@ class DataAccess(Hardware):
             # When function context IS known (re-lift), record directly by function.
             from .semantics.evidence_cache import (
                 get_current_function_addr,
-                get_accesses_for_block,
                 record_access,
                 record_access_by_block,
             )
+
             func_addr = get_current_function_addr()
             if isinstance(func_addr, int):
                 record_access(

@@ -16,6 +16,7 @@ CHSZ_AD: int = 2
 
 logger = logging.getLogger(__name__)
 
+
 class ParseInstr(X86Instruction):
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):
         super().__init__(emu, instr, mode32)
@@ -29,7 +30,7 @@ class ParseInstr(X86Instruction):
         prefix_len = 0
 
         while True:
-            #code = self.emu.get_code8_(bitstream)
+            # code = self.emu.get_code8_(bitstream)
             code = self.emu.bitstream.peek("uint:8")
             match code:
                 case 0x26:
@@ -66,7 +67,7 @@ class ParseInstr(X86Instruction):
             self.emu.bitstream.read("uint:8")
             self.instr.prefix = code
             prefix_len += 1
-            #self.emu.update_eip(1)
+            # self.emu.update_eip(1)
 
     def parse(self) -> None:
         start = self.emu.bitstream.bytepos
@@ -92,23 +93,25 @@ class ParseInstr(X86Instruction):
                 opcode,
                 self.emu.bitstream.peek("uint:32"),
             )
-            raise ParseError(f"Unknown opcode {self.emu.bitstream.bytepos:08x}: {opcode:02x}{self.emu.bitstream.peek('uint:32'):08x}")
-            #sys.exit(1)
+            raise ParseError(
+                f"Unknown opcode {self.emu.bitstream.bytepos:08x}: {opcode:02x}{self.emu.bitstream.peek('uint:32'):08x}"
+            )
+            # sys.exit(1)
         if self.chk[opcode] & CHK_MODRM:
             self.parse_modrm_sib_disp()
 
         if self.chk[opcode] & CHK_IMM32:
             self.instr.imm32 = self.emu.get_code32(0)
-            #self.emu.update_eip(4)
+            # self.emu.update_eip(4)
         if self.chk[opcode] & CHK_IMM16:
             self.instr.imm16 = self.emu.get_code16(0)
-            #self.emu.update_eip(2)
+            # self.emu.update_eip(2)
         if self.chk[opcode] & CHK_IMM8:
             self.instr.imm8 = struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0]
-            #self.emu.update_eip(1)
+            # self.emu.update_eip(1)
         if self.chk[opcode] & CHK_PTR16:
             self.instr.ptr16 = self.emu.get_code16(0)
-            #self.emu.update_eip(2)
+            # self.emu.update_eip(2)
 
         if self.chk[opcode] & CHK_MOFFS:
             self.parse_moffs()
@@ -147,24 +150,54 @@ class ParseInstr(X86Instruction):
         if opcode in {0xE9, 0xEB} or (opcode == 0xFF and self.instr.modrm.reg == 4):
             return "near_jump"
         if opcode in {
-            0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
-            0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F,
-            0x0F80, 0x0F81, 0x0F82, 0x0F83, 0x0F84, 0x0F85, 0x0F86, 0x0F87,
-            0x0F88, 0x0F89, 0x0F8A, 0x0F8B, 0x0F8C, 0x0F8D, 0x0F8E, 0x0F8F,
-            0xE0, 0xE1, 0xE2, 0xE3,
+            0x70,
+            0x71,
+            0x72,
+            0x73,
+            0x74,
+            0x75,
+            0x76,
+            0x77,
+            0x78,
+            0x79,
+            0x7A,
+            0x7B,
+            0x7C,
+            0x7D,
+            0x7E,
+            0x7F,
+            0x0F80,
+            0x0F81,
+            0x0F82,
+            0x0F83,
+            0x0F84,
+            0x0F85,
+            0x0F86,
+            0x0F87,
+            0x0F88,
+            0x0F89,
+            0x0F8A,
+            0x0F8B,
+            0x0F8C,
+            0x0F8D,
+            0x0F8E,
+            0x0F8F,
+            0xE0,
+            0xE1,
+            0xE2,
+            0xE3,
         }:
             return "conditional_jump"
         return "none"
 
-
     def parse_opcode(self) -> None:
         self.instr.opcode = self.emu.get_code8(0)
-        #self.emu.update_eip(1)
+        # self.emu.update_eip(1)
 
         # two byte opcode
         if self.instr.opcode == 0x0F:
             self.instr.opcode = (self.instr.opcode << 8) + self.emu.get_code8(0)
-            #self.emu.update_eip(1)
+            # self.emu.update_eip(1)
         logger.debug(f"opcode: {self.instr.opcode:0x}")
 
     def parse_modrm_sib_disp(self) -> None:
@@ -172,7 +205,7 @@ class ParseInstr(X86Instruction):
         self.instr.modrm.mod = modrm >> 6
         self.instr.modrm.reg = (modrm >> 3) & 0b111
         self.instr.modrm.rm = modrm & 0b111
-        #self.emu.update_eip(1)
+        # self.emu.update_eip(1)
 
         if self.instr.address_bits == 32:
             self.parse_modrm32()
@@ -185,7 +218,7 @@ class ParseInstr(X86Instruction):
             self.instr.sib.scale = sib >> 6
             self.instr.sib.index = (sib >> 3) & 0b111
             self.instr.sib.base = sib & 0b111
-            #self.emu.update_eip(1)
+            # self.emu.update_eip(1)
 
         if (
             self.instr.modrm.mod == 2
@@ -194,28 +227,30 @@ class ParseInstr(X86Instruction):
         ):
             self.instr.disp32 = self.emu.get_code32(0)
             self.instr.displacement_bits = 32
-            #self.emu.update_eip(4)
+            # self.emu.update_eip(4)
         elif self.instr.modrm.mod == 1:
             self.instr.disp8 = struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0]
             self.instr.displacement_bits = 8
-            #self.emu.update_eip(1)
+            # self.emu.update_eip(1)
 
     def parse_modrm16(self) -> None:
         if (self.instr.modrm.mod == 0 and self.instr.modrm.rm == 6) or self.instr.modrm.mod == 2:
             self.instr.disp16 = self.emu.constant(self.emu.get_code16(0), Type.int_16)
             self.instr.displacement_bits = 16
-            #self.emu.update_eip(2)
+            # self.emu.update_eip(2)
         elif self.instr.modrm.mod == 1:
-            self.instr.disp8 = self.emu.constant(struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0], Type.int_8)
+            self.instr.disp8 = self.emu.constant(
+                struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0], Type.int_8
+            )
             self.instr.displacement_bits = 8
-            #self.emu.update_eip(1)
+            # self.emu.update_eip(1)
 
     def parse_moffs(self) -> None:
         if self.instr.address_bits == 32:
             self.instr.moffs = self.emu.get_code32(0)
             self.instr.displacement_bits = 32
-            #self.emu.update_eip(4)
+            # self.emu.update_eip(4)
         else:
             self.instr.moffs = self.emu.get_code16(0)
             self.instr.displacement_bits = 16
-            #self.emu.update_eip(2)
+            # self.emu.update_eip(2)

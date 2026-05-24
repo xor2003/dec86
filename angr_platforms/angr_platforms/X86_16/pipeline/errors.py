@@ -26,7 +26,9 @@ class PipelineHardError(Exception):
     - uncollected validation treated as success
     """
 
-    def __init__(self, message: str, *, layer: str = "", function_addr: int | None = None, details: object = None) -> None:
+    def __init__(
+        self, message: str, *, layer: str = "", function_addr: int | None = None, details: object = None
+    ) -> None:
         super().__init__(message)
         self.layer = layer
         self.function_addr = function_addr

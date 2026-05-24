@@ -8,31 +8,13 @@ from .store_width import *  # noqa: F401,F403
 from .widening_rules import *  # noqa: F401,F403
 
 globals().update(
-    {
-        name: getattr(_register_widening, name)
-        for name in dir(_register_widening)
-        if not name.startswith("__")
-    }
+    {name: getattr(_register_widening, name) for name in dir(_register_widening) if not name.startswith("__")}
 )
-globals().update(
-    {
-        name: getattr(_stack_widening, name)
-        for name in dir(_stack_widening)
-        if not name.startswith("__")
-    }
-)
+globals().update({name: getattr(_stack_widening, name) for name in dir(_stack_widening) if not name.startswith("__")})
 
 __all__ = tuple(
     {
-        *(
-            name
-            for name in dir(_register_widening)
-            if not name.startswith("__")
-        ),
-        *(
-            name
-            for name in dir(_stack_widening)
-            if not name.startswith("__")
-        ),
+        *(name for name in dir(_register_widening) if not name.startswith("__")),
+        *(name for name in dir(_stack_widening) if not name.startswith("__")),
     }
 )

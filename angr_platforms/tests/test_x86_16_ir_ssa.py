@@ -8,7 +8,9 @@ def test_block_local_ssa_versions_register_defs_monotonically():
         addr=0x1000,
         instrs=(
             IRInstr("MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=1),), size=2),
-            IRInstr("MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.REG, name="ax", size=2),), size=2),
+            IRInstr(
+                "MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.REG, name="ax", size=2),), size=2
+            ),
         ),
     )
 
@@ -26,12 +28,20 @@ def test_function_ssa_builds_phi_node_at_cfg_join():
             IRBlock(
                 addr=0x1000,
                 successor_addrs=(0x1020, 0x1010),
-                instrs=(IRInstr("MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=1),), size=2),),
+                instrs=(
+                    IRInstr(
+                        "MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=1),), size=2
+                    ),
+                ),
             ),
             IRBlock(
                 addr=0x1010,
                 successor_addrs=(0x1020,),
-                instrs=(IRInstr("MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=2),), size=2),),
+                instrs=(
+                    IRInstr(
+                        "MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=2),), size=2
+                    ),
+                ),
             ),
             IRBlock(addr=0x1020, instrs=()),
         ),

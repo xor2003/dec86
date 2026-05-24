@@ -293,6 +293,7 @@ class TestFailureReasoning:
 
     def test_build_failure_max_iterations(self):
         """Test classifying MAX_ITERATIONS failure."""
+
         class MockStats:
             max_iterations_reached = True
             iterations = 1000
@@ -302,6 +303,7 @@ class TestFailureReasoning:
 
     def test_build_failure_no_progress(self):
         """Test classifying NO_PROGRESS failure."""
+
         class MockStats:
             max_iterations_reached = False
             iterations = 150
@@ -312,6 +314,7 @@ class TestFailureReasoning:
 
     def test_build_failure_none_for_success(self):
         """Test returning None for successful structuring."""
+
         class MockStats:
             max_iterations_reached = False
             iterations = 50
@@ -322,6 +325,7 @@ class TestFailureReasoning:
 
     def test_build_failure_no_stats_attribute(self):
         """Test handling missing stats attribute."""
+
         class MockStats:
             pass
 
@@ -334,6 +338,7 @@ class TestRecoveryHints:
 
     def test_hints_max_iterations(self):
         """Test hints for MAX_ITERATIONS."""
+
         class MockStats:
             max_iterations_reached = True
             iterations = 1000
@@ -347,6 +352,7 @@ class TestRecoveryHints:
 
     def test_hints_slow_progress(self):
         """Test hints for slow progress."""
+
         class MockStats:
             max_iterations_reached = False
             iterations = 200
@@ -360,6 +366,7 @@ class TestRecoveryHints:
 
     def test_hints_no_cycles(self):
         """Test hints when no cycles found."""
+
         class MockStats:
             max_iterations_reached = False
             iterations = 100
@@ -373,6 +380,7 @@ class TestRecoveryHints:
 
     def test_hints_unstructured_gotos(self):
         """Test hints when gotos remain."""
+
         class MockStats:
             max_iterations_reached = False
             iterations = 50
@@ -385,6 +393,7 @@ class TestRecoveryHints:
 
     def test_hints_with_region_ids(self):
         """Test hints include region IDs."""
+
         class MockStats:
             max_iterations_reached = False
             iterations = 20
@@ -401,6 +410,7 @@ class TestIntegration:
 
     def test_apply_pass_basic(self):
         """Test applying structuring diagnostics pass."""
+
         class MockStats:
             iterations = 100
             max_iterations_reached = False
@@ -475,8 +485,7 @@ class TestIntegration:
             for diag in report.diagnostics_collector.diagnostics
         )
         assert any(
-            "cfg_indirect candidates=0 total=2" in diag.message
-            for diag in report.diagnostics_collector.diagnostics
+            "cfg_indirect candidates=0 total=2" in diag.message for diag in report.diagnostics_collector.diagnostics
         )
         assert any(
             "cfg_grouping grouped_candidates=0 entry_fragments=0" in diag.message
@@ -485,6 +494,7 @@ class TestIntegration:
 
     def test_apply_pass_with_none_cfunc(self):
         """Test applying pass with None cfunc."""
+
         class MockCodegen:
             cfunc = None
 
@@ -494,6 +504,7 @@ class TestIntegration:
 
     def test_apply_pass_failure_classification(self):
         """Test that pass classifies failures."""
+
         class MockStats:
             iterations = 1000
             max_iterations_reached = True
@@ -552,10 +563,13 @@ class TestIntegration:
         assert any("defaulted" in hint for hint in report.recovery_hints)
         assert any("Segmented addresses remain provisional" in hint for hint in report.recovery_hints)
         assert any("Cross-block SSA absent" in hint for hint in report.recovery_hints)
-        assert any("ir_readiness level=typed_address_only" in diag.message for diag in report.diagnostics_collector.diagnostics)
+        assert any(
+            "ir_readiness level=typed_address_only" in diag.message for diag in report.diagnostics_collector.diagnostics
+        )
 
     def test_apply_pass_success_case(self):
         """Test that pass handles successful structuring."""
+
         class MockStats:
             iterations = 50
             max_iterations_reached = False
@@ -580,6 +594,7 @@ class TestIntegration:
 
     def test_apply_pass_handles_exceptions(self):
         """Test that pass handles exceptions gracefully."""
+
         class MockCodegen:
             cfunc = None  # Will cause iteration to skip
 
@@ -590,6 +605,7 @@ class TestIntegration:
 
     def test_summary_line_display(self):
         """Test summary line is useful for logging."""
+
         class MockStats:
             iterations = 42
             max_iterations_reached = False

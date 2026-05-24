@@ -43,7 +43,10 @@ def apply_x86_16_typehoon_compatibility() -> None:
             return claripy.BVS("stack_base", 16, explicit_name=True)
         return _orig_initial_stack_pointer(self)
 
-    if getattr(_rd_state.ReachingDefinitionsState._initial_stack_pointer, "__name__", "") != "_initial_stack_pointer_8616":
+    if (
+        getattr(_rd_state.ReachingDefinitionsState._initial_stack_pointer, "__name__", "")
+        != "_initial_stack_pointer_8616"
+    ):
         _rd_state.ReachingDefinitionsState._initial_stack_pointer = _initial_stack_pointer_8616
 
     class Pointer16(Pointer, TCInt16):
@@ -128,7 +131,9 @@ def apply_x86_16_typehoon_compatibility() -> None:
 
         self.solution = {}
         for tv, sol in self._equivalence.items():
-            if isinstance(tv, _typehoon_simple_solver.TypeVariable) and isinstance(sol, _typehoon_simple_solver.TypeConstant):
+            if isinstance(tv, _typehoon_simple_solver.TypeVariable) and isinstance(
+                sol, _typehoon_simple_solver.TypeConstant
+            ):
                 self.solution[tv] = sol
 
         self._solution_cache = {}
@@ -185,5 +190,3 @@ def apply_x86_16_typehoon_compatibility() -> None:
 
         _typehoon_lifter.TypeLifter.__init__ = _typelifter_init_16
         _typehoon_lifter.TypeLifter._lift_SimTypePointer = _lift_simtype_pointer_16
-
-

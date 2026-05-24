@@ -41,6 +41,7 @@ def _lift_block_and_collect_facts(project, block_addr: int) -> list[object]:
         project.factory.block(block_addr, opt_level=0)
     except Exception as ex:
         import logging
+
         logging.getLogger(__name__).debug(
             "fact transfer block lift failed block_addr=%#x: %s",
             block_addr,
@@ -59,12 +60,14 @@ def _lift_block_and_collect_facts(project, block_addr: int) -> list[object]:
 def _set_function_context(function_addr: int) -> None:
     """Set module-level function context for the coming block lift."""
     from ..semantics.evidence_cache import set_current_function_addr
+
     set_current_function_addr(function_addr)
 
 
 def _clear_function_context() -> None:
     """Clear module-level function context after block lift."""
     from ..semantics.evidence_cache import set_current_function_addr
+
     set_current_function_addr(None)
 
 
@@ -84,25 +87,25 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
     before frame normalization.
     """
     from ..access import _inertia_module_alias_fact_cache
-    from ..alias.alias_model_impl import alias_facts_for_ir_address_8616, AliasFailure
+    from ..alias.alias_model_impl import AliasFailure, alias_facts_for_ir_address_8616
     from ..semantics.evidence_cache import get_accesses_for_function as _evidence_get_accesses
-    from ..semantics.stack_frame_recovery import (
-        StackFrameInfo8616,
-        assert_no_unresolved_stable_ss_before_alias_8616,
-        detect_stack_frame_8616,
-        _gather_ir_artifacts_from_function_blocks,
-        _detect_sp_proven_delta_from_blocks,
-        normalize_semantic_accesses_8616,
-    )
 
     # ── Migrate block-keyed accesses → function-keyed ──
     # During initial CFG construction (when function context is unknown),
     # accesses are recorded by block address.  Now that we know which
     # blocks belong to this function, migrate them.
     from ..semantics.evidence_cache import (
-        get_accesses_for_block,
         migrate_block_accesses_to_function,
     )
+    from ..semantics.stack_frame_recovery import (
+        StackFrameInfo8616,
+        _detect_sp_proven_delta_from_blocks,
+        _gather_ir_artifacts_from_function_blocks,
+        assert_no_unresolved_stable_ss_before_alias_8616,
+        detect_stack_frame_8616,
+        normalize_semantic_accesses_8616,
+    )
+
     kb = getattr(project, "kb", None) if project is not None else None
     if kb is not None:
         func = kb.functions.function(addr=function_addr, create=False)
@@ -152,7 +155,7 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
     failures = []
 
     for acc in normalized:
-        addr = acc.addr if hasattr(acc, 'addr') else acc[1]
+        addr = acc.addr if hasattr(acc, "addr") else acc[1]
         fact = alias_facts_for_ir_address_8616(addr)
         if isinstance(fact, AliasFailure):
             failures.append(fact)
@@ -259,6 +262,7 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
     # Read raw semantic access counts from canonical evidence_cache
     # MUST be read AFTER collect_normalized (which re-lifts blocks and populates the cache).
     from ..semantics.evidence_cache import get_accesses_for_function as _evidence_get_accesses_raw
+
     raw_accesses = _evidence_get_accesses_raw(func_addr)
     raw_count = len(raw_accesses)
 
@@ -268,12 +272,11 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
 
     # Count stack facts and normalized accesses for diagnostics
     normalized_count = sum(
-        1 for fact in facts
-        if getattr(fact, "identity", None) is not None
-        and isinstance(fact.identity, tuple)
+        1 for fact in facts if getattr(fact, "identity", None) is not None and isinstance(fact.identity, tuple)
     )
     stack_count = sum(
-        1 for fact in facts
+        1
+        for fact in facts
         if getattr(fact, "identity", None) is not None
         and isinstance(fact.identity, tuple)
         and len(fact.identity) >= 2
@@ -299,9 +302,9 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
         raw=raw_count,
         normalized=normalized_count,
         classified=stack_count,
-        bound=0,              # filled by lowering pass
-        materialized=0,       # filled by materialization pass
-        verified=0,           # filled by validation pass
+        bound=0,  # filled by lowering pass
+        materialized=0,  # filled by materialization pass
+        verified=0,  # filled by validation pass
         failures=len(failures),
     )
 
@@ -313,24 +316,14 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
         "normalized_accesses": normalized_count,
         "alias_facts": len(facts),
         "stack_facts": stack_count,
-        "stack_materialized": getattr(
-            codegen, "_inertia_semantic_stack_materialized_count", 0
-        ),
-        "condition_facts": getattr(
-            codegen, "_inertia_semantic_condition_fact_count", 0
-        ),
-        "condition_materialized": getattr(
-            codegen, "_inertia_semantic_condition_materialized_count", 0
-        ),
+        "stack_materialized": getattr(codegen, "_inertia_semantic_stack_materialized_count", 0),
+        "condition_facts": getattr(codegen, "_inertia_semantic_condition_fact_count", 0),
+        "condition_materialized": getattr(codegen, "_inertia_semantic_condition_materialized_count", 0),
         "failures": len(failures),
         "primary_blocker": (
             "raw_accesses=0 (check lifter access recording / function context)"
             if raw_count == 0
-            else (
-                "stack_materialized=0 (fix lowering/stack_lowering_from_facts.py)"
-                if stack_count > 0
-                else None
-            )
+            else ("stack_materialized=0 (fix lowering/stack_lowering_from_facts.py)" if stack_count > 0 else None)
         ),
     }
     codegen._inertia_pipeline_diag = _diagnostic

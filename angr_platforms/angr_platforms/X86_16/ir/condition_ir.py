@@ -3,8 +3,7 @@ from __future__ import annotations
 # Layer: IR
 # Responsibility: typed condition domain representation.
 # Forbidden: late rewrite ownership and text-pattern semantics.
-
-from dataclasses import dataclass, replace, field
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from .core import IRCondition, IRValue
@@ -54,14 +53,9 @@ JCC_SGE_MNEMONICS_8616: frozenset[str] = frozenset({"jge", "jnl"})
 JCC_SLE_MNEMONICS_8616: frozenset[str] = frozenset({"jle", "jng"})
 JCC_SGT_MNEMONICS_8616: frozenset[str] = frozenset({"jg", "jnle"})
 
-_JCC_COMPARISON_MNEMONICS_8616: frozenset[str] = frozenset(
-    {"jo", "jno", "js", "jns", "jp", "jpe", "jpo", "jnp"}
-)
+_JCC_COMPARISON_MNEMONICS_8616: frozenset[str] = frozenset({"jo", "jno", "js", "jns", "jp", "jpe", "jpo", "jnp"})
 
-JCC_TO_COND_8616: dict[str, ConditionOp] = {
-    mnemonic: "eq"
-    for mnemonic in JCC_EQ_MNEMONICS_8616
-}
+JCC_TO_COND_8616: dict[str, ConditionOp] = {mnemonic: "eq" for mnemonic in JCC_EQ_MNEMONICS_8616}
 JCC_TO_COND_8616.update({mnemonic: "ne" for mnemonic in JCC_NE_MNEMONICS_8616})
 JCC_TO_COND_8616.update({mnemonic: "ult" for mnemonic in JCC_ULT_MNEMONICS_8616})
 JCC_TO_COND_8616.update({mnemonic: "uge" for mnemonic in JCC_UGE_MNEMONICS_8616})
@@ -78,6 +72,7 @@ _SUPPORTED_JCC_MNEMONICS_8616: frozenset[str] = frozenset(JCC_TO_COND_8616.keys(
 
 
 # ── Condition builders from CMP/TEST sources ──
+
 
 @dataclass(frozen=True, slots=True)
 class ConditionIR:
@@ -98,8 +93,16 @@ class ConditionIR:
     @property
     def is_comparison(self) -> bool:
         return self.op in {
-            "eq", "ne", "slt", "sle", "sgt", "sge",
-            "ult", "ule", "ugt", "uge",
+            "eq",
+            "ne",
+            "slt",
+            "sle",
+            "sgt",
+            "sge",
+            "ult",
+            "ule",
+            "ugt",
+            "uge",
         }
 
     @property
@@ -225,9 +228,11 @@ def build_condition_from_compare_8616(
 
 # ── Condition source tracking (on emulator) ──
 
+
 @dataclass(slots=True)
 class ConditionSource:
     """Lightweight record of last CMP/TEST for JCC consumption."""
+
     kind: str  # "cmp" or "test"
     lhs: Any | None = None
     rhs: Any | None = None
@@ -237,6 +242,7 @@ class ConditionSource:
 
 
 # ── Condition sorting/deduplication ──
+
 
 def condition_sort_key_8616(cond: ConditionIR) -> tuple:
     """Deterministic sort key for ConditionIR."""
@@ -264,6 +270,7 @@ def deduplicate_conditions_8616(conditions: list[ConditionIR]) -> list[Condition
 
 
 # ── IRValue-based builders (for use with the core IR types) ──
+
 
 def build_condition_ir_8616(
     op: ConditionOp,
@@ -301,8 +308,17 @@ def normalize_condition_op_8616(op: str) -> ConditionOp:
     if op in {"masked_zero", "zero"}:
         return "zero"
     if op in {
-        "eq", "ne", "slt", "sle", "sgt", "sge",
-        "ult", "ule", "ugt", "uge", "compare",
+        "eq",
+        "ne",
+        "slt",
+        "sle",
+        "sgt",
+        "sge",
+        "ult",
+        "ule",
+        "ugt",
+        "uge",
+        "compare",
     }:
         return op  # type: ignore[return-value]
     if op in {"lt", "le", "gt", "ge"}:
@@ -318,9 +334,17 @@ def is_condition_truth_test_8616(op: str) -> bool:
 
 def is_condition_compare_family_8616(op: str) -> bool:
     return normalize_condition_op_8616(op) in {
-        "compare", "eq", "ne",
-        "slt", "sle", "sgt", "sge",
-        "ult", "ule", "ugt", "uge",
+        "compare",
+        "eq",
+        "ne",
+        "slt",
+        "sle",
+        "sgt",
+        "sge",
+        "ult",
+        "ule",
+        "ugt",
+        "uge",
     }
 
 
@@ -383,7 +407,7 @@ def normalize_condition_fingerprint_string_8616(
     for prefix in control_flow_prefixes:
         if value.startswith(prefix):
             return prefix + normalize_condition_fingerprint_string_8616(
-                value[len(prefix):],
+                value[len(prefix) :],
                 control_flow_prefixes=control_flow_prefixes,
             )
 
@@ -457,7 +481,7 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
     # Handle control-flow prefixes
     for prefix in ("if:", "ifbreak:", "while:", "dowhile:", "for:", "switch:"):
         if value.startswith(prefix):
-            return prefix + normalize_condition_fingerprint_algebraic_8616(value[len(prefix):])
+            return prefix + normalize_condition_fingerprint_algebraic_8616(value[len(prefix) :])
 
     call = _split_fingerprint_call_8616(value)
     if call is None:
@@ -492,7 +516,11 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
                                 and sub_args[1].startswith("const:")
                             ):
                                 try:
-                                    a = int(inner_args[1].split(":")[-1], 0) if inner_args[1].startswith("const:") else 0
+                                    a = (
+                                        int(inner_args[1].split(":")[-1], 0)
+                                        if inner_args[1].startswith("const:")
+                                        else 0
+                                    )
                                     b = int(sub_args[1].split(":")[-1], 0) if sub_args[1].startswith("const:") else 0
                                 except (ValueError, IndexError):
                                     return value

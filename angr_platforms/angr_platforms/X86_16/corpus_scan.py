@@ -242,9 +242,7 @@ def _count_named_helper_calls(text: str, names: set[str]) -> int:
     if not text or not names:
         return 0
     pattern = re.compile(
-        r"(?<![A-Za-z0-9_])(?:"
-        + "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
-        + r")\s*\("
+        r"(?<![A-Za-z0-9_])(?:" + "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True)) + r")\s*\("
     )
     return len(pattern.findall(text))
 
@@ -255,7 +253,9 @@ def _count_interrupt_wrapper_calls(text: str) -> int:
     return len(re.findall(r"(?<![A-Za-z0-9_])(?:int86x?|intdosx?)\s*\(", text))
 
 
-def _classify_semantic_family_from_text(text: str, result: FunctionScanResult | None = None) -> tuple[str | None, str | None]:
+def _classify_semantic_family_from_text(
+    text: str, result: FunctionScanResult | None = None
+) -> tuple[str | None, str | None]:
     if result is not None and (
         result.interrupt_dos_helper_count or result.interrupt_bios_helper_count or result.interrupt_wrapper_call_count
     ):
@@ -266,7 +266,10 @@ def _classify_semantic_family_from_text(text: str, result: FunctionScanResult | 
 
     text_lower = text.lower()
     family_markers = (
-        ("interrupt_api", _INTERRUPT_DOS_HELPER_NAMES | _INTERRUPT_BIOS_HELPER_NAMES | {"int86", "int86x", "intdos", "intdosx"}),
+        (
+            "interrupt_api",
+            _INTERRUPT_DOS_HELPER_NAMES | _INTERRUPT_BIOS_HELPER_NAMES | {"int86", "int86x", "intdos", "intdosx"},
+        ),
         ("string", _STRING_HELPER_NAMES),
         ("stack_control", _STACK_HELPER_NAMES),
         ("addressing", _ADDRESSING_HELPER_NAMES),
@@ -295,7 +298,14 @@ def _classify_semantic_family_from_failure(result: FunctionScanResult) -> tuple[
         return "interrupt_api", "failure text points at interrupt/API lowering"
     if "string" in parts or "rep" in parts or "cmps" in parts or "stos" in parts or "lods" in parts or "scas" in parts:
         return "string", "failure text points at string family"
-    if "stack" in parts or "frame" in parts or "retf" in parts or "callf" in parts or "branch" in parts or "loop" in parts:
+    if (
+        "stack" in parts
+        or "frame" in parts
+        or "retf" in parts
+        or "callf" in parts
+        or "branch" in parts
+        or "loop" in parts
+    ):
         return "stack_control", "failure text points at stack/control family"
     if "address" in parts or "segment" in parts or "modrm" in parts or "pointer" in parts or "width" in parts:
         return "addressing", "failure text points at addressing family"
@@ -409,7 +419,9 @@ def classify_failure(
     return stage_failure_classes.get(stage, "analysis_failure"), message
 
 
-def _mark_stage(result: FunctionScanResult, stage: str, ok: bool, *, reason: str | None = None, detail: str | None = None) -> None:
+def _mark_stage(
+    result: FunctionScanResult, stage: str, ok: bool, *, reason: str | None = None, detail: str | None = None
+) -> None:
     result.stages.append(StageResult(stage=stage, ok=ok, reason=reason, detail=detail))
     result.stage_reached = stage
 
@@ -710,15 +722,18 @@ def scan_function(
 
         # Decode prefix instructions BEFORE checking oversized to allow classification
         prefix_insns = _decode_scan_safe_prefix_insns(code, mode, max_cfg_bytes)
-        
+
         # Check for call-heavy helpers FIRST (even if oversized)
         # BUT: skip this check for oversized functions from 3DPLANES that should preserve lift_only recovery
         is_3dplanes = "3DPLANES" in str(cod_file)
         is_oversized = _should_skip_scan_safe_cfg(len(code), mode, max_cfg_bytes)
         should_skip_call_chain = is_3dplanes and is_oversized
-        
-        if (prefix_insns and not should_skip_call_chain
-            and _should_skip_scan_safe_call_chain_from_insns(prefix_insns, mode, max_cfg_bytes)):
+
+        if (
+            prefix_insns
+            and not should_skip_call_chain
+            and _should_skip_scan_safe_call_chain_from_insns(prefix_insns, mode, max_cfg_bytes)
+        ):
             result.function_count = 1
             result.ok = True
             result.fallback_kind = "cfg_only"
@@ -755,7 +770,10 @@ def scan_function(
             result.function_count = 1
             result.ok = True
             result.fallback_kind = "cfg_only"
-            result.semantic_family, result.semantic_family_reason = "stack_control", "known hotspot conservative recovery"
+            result.semantic_family, result.semantic_family_reason = (
+                "stack_control",
+                "known hotspot conservative recovery",
+            )
             _mark_stage(result, "lift", True, detail="bounded scan-safe instruction decode")
             _mark_stage(
                 result,
@@ -771,7 +789,10 @@ def scan_function(
             result.function_count = 1
             result.ok = True
             result.fallback_kind = "lift_only"
-            result.semantic_family, result.semantic_family_reason = "addressing", "oversized function skipped before decompile"
+            result.semantic_family, result.semantic_family_reason = (
+                "addressing",
+                "oversized function skipped before decompile",
+            )
             _mark_stage(result, "lift", True, detail="bounded scan-safe prefix lift")
             _mark_stage(
                 result,
@@ -834,7 +855,11 @@ def scan_function(
             result.ok = True
             result.fallback_kind = "cfg_only"
             result.semantic_family, result.semantic_family_reason = "stack_control", "call-heavy helper path"
-            call_count = sum(1 for insn in getattr(loop_block.capstone, "insns", ()) if getattr(insn, "mnemonic", "").lower() == "call")
+            call_count = sum(
+                1
+                for insn in getattr(loop_block.capstone, "insns", ())
+                if getattr(insn, "mnemonic", "").lower() == "call"
+            )
             _mark_stage(
                 result,
                 "cfg",
@@ -863,14 +888,16 @@ def scan_function(
         if _should_skip_scan_safe_decompile_for_cfg_shape(cfg, mode, max_cfg_blocks, max_cfg_insns):
             result.ok = True
             result.fallback_kind = "cfg_only"
-            result.semantic_family, result.semantic_family_reason = "stack_control", "complex CFG skipped before decompile"
+            result.semantic_family, result.semantic_family_reason = (
+                "stack_control",
+                "complex CFG skipped before decompile",
+            )
             _mark_stage(
                 result,
                 "decompile",
                 True,
                 detail=(
-                    "skipped decompile for complex CFG "
-                    f"(blocks>{max_cfg_blocks} or insns>{max_cfg_insns}); cfg ok"
+                    f"skipped decompile for complex CFG (blocks>{max_cfg_blocks} or insns>{max_cfg_insns}); cfg ok"
                 ),
             )
             return _finish_scan(result)
@@ -878,7 +905,10 @@ def scan_function(
         if _should_skip_scan_safe_decompile(len(code), mode, max_decompile_bytes):
             result.ok = True
             result.fallback_kind = "cfg_only"
-            result.semantic_family, result.semantic_family_reason = "addressing", "oversized function skipped before decompile"
+            result.semantic_family, result.semantic_family_reason = (
+                "addressing",
+                "oversized function skipped before decompile",
+            )
             _mark_stage(
                 result,
                 "decompile",
@@ -964,12 +994,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     confidence_summaries = [classify_x86_16_recovery_confidence(result) for result in results]
     failure_counter = Counter(result.failure_class for result in results if result.failure_class is not None)
     fallback_counter = Counter(result.fallback_kind for result in results if _has_fallback_kind(result))
-    stage_failure_counter = Counter(
-        stage.stage
-        for result in results
-        for stage in result.stages
-        if not stage.ok
-    )
+    stage_failure_counter = Counter(stage.stage for result in results for stage in result.stages if not stage.ok)
     timeout_stage_counter = Counter(
         stage.stage
         for result in results
@@ -995,7 +1020,9 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         result.semantic_family for result in results if not result.ok and result.semantic_family is not None
     )
     family_fallback_counter = Counter(
-        result.semantic_family for result in results if _has_fallback_kind(result) and result.semantic_family is not None
+        result.semantic_family
+        for result in results
+        if _has_fallback_kind(result) and result.semantic_family is not None
     )
     family_cluster_counter = Counter(
         (result.semantic_family, cluster)
@@ -1014,9 +1041,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
 
     files_zero_success = sorted(name for name, stats in per_file.items() if stats["ok"] == 0)
     files_scan_clean = sorted(name for name, stats in per_file.items() if stats["ok"] == stats["scanned"])
-    files_partial_success = sorted(
-        name for name, stats in per_file.items() if 0 < stats["ok"] < stats["scanned"]
-    )
+    files_partial_success = sorted(name for name, stats in per_file.items() if 0 < stats["ok"] < stats["scanned"])
 
     fallback_results = [result for result in results if _has_fallback_kind(result)]
     full_decompile_count = sum(1 for result in results if result.decompiled_count > 0)
@@ -1028,9 +1053,13 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     regeneration_failure_count = sum(1 for result in results if result.regeneration_failed)
     confidence_status_counter = Counter(summary.status for summary in confidence_summaries)
     confidence_scan_safe_counter = Counter(summary.scan_safe_classification for summary in confidence_summaries)
-    confidence_assumption_counter = Counter(item.kind for summary in confidence_summaries for item in summary.assumptions)
+    confidence_assumption_counter = Counter(
+        item.kind for summary in confidence_summaries for item in summary.assumptions
+    )
     confidence_evidence_counter = Counter(item.kind for summary in confidence_summaries for item in summary.evidence)
-    confidence_diagnostic_counter = Counter(diagnostic for summary in confidence_summaries for diagnostic in summary.diagnostics)
+    confidence_diagnostic_counter = Counter(
+        diagnostic for summary in confidence_summaries for diagnostic in summary.diagnostics
+    )
     interrupt_dos_helper_count = sum(result.interrupt_dos_helper_count for result in results)
     interrupt_bios_helper_count = sum(result.interrupt_bios_helper_count for result in results)
     interrupt_wrapper_call_count = sum(result.interrupt_wrapper_call_count for result in results)
@@ -1038,9 +1067,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     fallback_only_count = sum(1 for result in fallback_results if result.ok)
     true_failure_count = sum(1 for result in results if not result.ok)
     unclassified_failure_count = sum(
-        1
-        for result in results
-        if not result.ok and result.failure_class in {"analysis_failure", "unknown_failure"}
+        1 for result in results if not result.ok and result.failure_class in {"analysis_failure", "unknown_failure"}
     )
     ugly_cluster_counter = Counter(
         cluster for result in results if (cluster := _classify_ugly_cluster(result)) is not None

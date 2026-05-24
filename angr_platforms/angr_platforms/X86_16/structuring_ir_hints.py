@@ -32,7 +32,9 @@ def build_structuring_ir_hint_artifact(codegen, *, succeeded: bool, iterations: 
     elif not succeeded and readiness.defaulted_segment_count > 0:
         hints.append("Segment identity is still defaulted: downstream memory reasoning may remain conservative")
     if not succeeded and readiness.provisional_address_count > 0:
-        hints.append("Segmented addresses remain provisional: memory-space evidence may still be too weak for later recovery")
+        hints.append(
+            "Segmented addresses remain provisional: memory-space evidence may still be too weak for later recovery"
+        )
     if not succeeded and readiness.phi_node_count == 0 and iterations >= 25:
         hints.append("Cross-block SSA absent: join-sensitive value history still depends on block-local facts")
 

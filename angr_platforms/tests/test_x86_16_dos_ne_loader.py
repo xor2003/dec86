@@ -99,6 +99,8 @@ def test_build_project_selects_dos_ne_for_ne_executable(tmp_path):
     project = decompile._build_project(sample, force_blob=False, base_addr=0x100, entry_point=0x1000)
 
     assert isinstance(project.loader.main_object, DOSNE)
-    assert project.entry == (
-        project.loader.main_object.initial_register_values["cs"] << 4
-    ) + project.loader.main_object.initial_register_values["ip"]
+    assert (
+        project.entry
+        == (project.loader.main_object.initial_register_values["cs"] << 4)
+        + project.loader.main_object.initial_register_values["ip"]
+    )

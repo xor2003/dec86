@@ -41,9 +41,7 @@ def test_x86_16_recompilable_subset_syntax_checks_pass():
     byteops = results_by_name["byteops_real"]
     assert byteops["used_shape_ok_evidence"] is False
     assert byteops["c_text_source"] == "bounded_live_decompile"
-    assert (
-        byteops["c_text_source_path"] == "cod/default/BYTEOPS.COD"
-    )
+    assert byteops["c_text_source_path"] == "cod/default/BYTEOPS.COD"
     assert byteops["syntax_ok"] is True
     assert byteops["compile_ok"] is True
     assert byteops["shape_ok"] is True
@@ -52,10 +50,7 @@ def test_x86_16_recompilable_subset_syntax_checks_pass():
     assert dos_load_program["c_text_source"] == "storage_object_shape_ok_evidence"
     assert dos_load_program["c_text_source_path"] == ".codex_automation/evidence_subset/cod/DOSFUNC.dec"
     assert dos_load_program["decompile_path"] == "storage_object_shape_ok_evidence"
-    assert (
-        dos_load_program["bounded_live_decompile_outcome"]
-        == "storage_object_shape_ok_evidence_fallback"
-    )
+    assert dos_load_program["bounded_live_decompile_outcome"] == "storage_object_shape_ok_evidence_fallback"
     assert dos_load_program["decompile_attempted_full_proc_recovery"] is True
     assert dos_load_program["storage_object_record_count"] > 0
     assert dos_load_program["syntax_ok"] is True
@@ -64,15 +59,9 @@ def test_x86_16_recompilable_subset_syntax_checks_pass():
     loadprog = results_by_name["loadprog_real"]
     assert loadprog["used_shape_ok_evidence"] is True
     assert loadprog["c_text_source"] == "shape_ok_evidence"
-    assert (
-        loadprog["c_text_source_path"]
-        == ".codex_automation/evidence_subset/cod/DOSFUNC.dec"
-    )
+    assert loadprog["c_text_source_path"] == ".codex_automation/evidence_subset/cod/DOSFUNC.dec"
     assert loadprog["decompile_path"] == "shape_ok_evidence"
-    assert (
-        loadprog["bounded_live_decompile_outcome"]
-        == "fast_fail_shape_ok_evidence_fallback"
-    )
+    assert loadprog["bounded_live_decompile_outcome"] == "fast_fail_shape_ok_evidence_fallback"
     assert loadprog["decompile_bounded"] is True
     assert loadprog["decompile_attempted_full_proc_recovery"] is False
     assert loadprog["syntax_ok"] is True

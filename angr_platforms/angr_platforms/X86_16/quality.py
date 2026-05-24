@@ -8,7 +8,6 @@ Forbidden: semantic recovery, postprocess cleanup ownership."""
 import re
 from collections.abc import Mapping
 
-
 __all__ = [
     "X86_16QualityMetrics",
     "measure_x86_16_codegen_quality_8616",

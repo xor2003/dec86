@@ -5,7 +5,6 @@ from pathlib import Path
 
 from angr_platforms.X86_16.widening.widening_rules import run_typed_widening_pass_8616
 
-
 _ROOT = Path(__file__).resolve().parents[1] / "angr_platforms" / "X86_16"
 _OWNING_LAYERS = ("semantics", "alias", "widening", "structuring", "lowering")
 _ALL_GUARDED_LAYERS = _OWNING_LAYERS + ("postprocess",)
@@ -49,7 +48,9 @@ def test_owning_layers_do_not_import_postprocess_layer() -> None:
     for layer in _OWNING_LAYERS:
         for path in _iter_layer_py_files(layer):
             for target in _import_targets(path):
-                if target == "angr_platforms.X86_16.postprocess" or target.startswith("angr_platforms.X86_16.postprocess."):
+                if target == "angr_platforms.X86_16.postprocess" or target.startswith(
+                    "angr_platforms.X86_16.postprocess."
+                ):
                     offenders.append(f"{path}: {target}")
     assert offenders == []
 
@@ -91,11 +92,7 @@ def test_flat_widening_modules_are_compatibility_shims_only() -> None:
         "can_join_adjacent_storage_slices",
         "merge_storage_slice_domains",
     }
-    wrapper_names = {
-        node.name
-        for node in model_tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    wrapper_names = {node.name for node in model_tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     assert wrapper_names <= allowed_wrappers
 
 

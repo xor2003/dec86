@@ -9,7 +9,6 @@ Forbidden: collapsing uncollected into success, hiding fallback identities."""
 from dataclasses import dataclass, field
 from enum import Enum
 
-
 __all__ = [
     "ValidationState",
     "ValidationRecord",
@@ -57,10 +56,7 @@ class ValidationRecord:
 
     @property
     def is_clean(self) -> bool:
-        return (
-            self.structuring_state == ValidationState.PASSED
-            and self.postprocess_state == ValidationState.PASSED
-        )
+        return self.structuring_state == ValidationState.PASSED and self.postprocess_state == ValidationState.PASSED
 
     @property
     def has_uncollected(self) -> bool:
@@ -191,11 +187,16 @@ def _count_record_into_aggregate_8616(agg: ValidationAggregate, r: ValidationRec
         elif state == ValidationState.FALLBACK and worst not in (ValidationState.CRASH, ValidationState.TIMEOUT):
             worst = ValidationState.FALLBACK
         elif state == ValidationState.UNCOLLECTED and worst not in (
-            ValidationState.CRASH, ValidationState.TIMEOUT, ValidationState.FALLBACK,
+            ValidationState.CRASH,
+            ValidationState.TIMEOUT,
+            ValidationState.FALLBACK,
         ):
             worst = ValidationState.UNCOLLECTED
         elif state == ValidationState.CHANGED and worst not in (
-            ValidationState.CRASH, ValidationState.TIMEOUT, ValidationState.FALLBACK, ValidationState.UNCOLLECTED,
+            ValidationState.CRASH,
+            ValidationState.TIMEOUT,
+            ValidationState.FALLBACK,
+            ValidationState.UNCOLLECTED,
         ):
             worst = ValidationState.CHANGED
         elif state == ValidationState.PASSED and worst is None:

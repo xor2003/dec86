@@ -73,9 +73,7 @@ def test_build_abnormal_loop_plan_marks_abnormal_entry():
 
     assert plan.can_normalize is True
     assert plan.entry_variable_name == "__loop_entry_sel_2001"
-    assert [(edge.source_region_id, edge.target_region_id) for edge in plan.abnormal_entries] == [
-        (0x2003, 0x2002)
-    ]
+    assert [(edge.source_region_id, edge.target_region_id) for edge in plan.abnormal_entries] == [(0x2003, 0x2002)]
 
 
 def test_abnormal_loop_analysis_records_plan_on_loop_region():

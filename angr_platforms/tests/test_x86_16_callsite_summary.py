@@ -14,7 +14,13 @@ class _Operand:
 
 
 class _Insn:
-    def __init__(self, address: int, mnemonic: str, operands: list[_Operand] | None = None, reg_names: dict[int, str] | None = None):
+    def __init__(
+        self,
+        address: int,
+        mnemonic: str,
+        operands: list[_Operand] | None = None,
+        reg_names: dict[int, str] | None = None,
+    ):
         self.address = address
         self.mnemonic = mnemonic
         self.insn = SimpleNamespace(operands=tuple(operands or ()), reg_name=lambda reg: (reg_names or {}).get(reg, ""))
@@ -203,11 +209,7 @@ def test_callsite_summary_uses_fallthrough_cleanup_block_after_call(monkeypatch)
         )
     )
     cleanup_block = SimpleNamespace(
-        capstone=SimpleNamespace(
-            insns=(
-                _Insn(0x1011, "add", [_Operand(reg=1), _Operand(imm=2)], reg_names={1: "sp"}),
-            )
-        )
+        capstone=SimpleNamespace(insns=(_Insn(0x1011, "add", [_Operand(reg=1), _Operand(imm=2)], reg_names={1: "sp"}),))
     )
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
@@ -248,7 +250,9 @@ def test_callsite_summary_marks_known_stack_probe_helpers(monkeypatch):
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
         factory=SimpleNamespace(block=lambda addr, opt_level=0: block),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: callee if addr == 0x1544 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: callee if addr == 0x1544 else None)
+        ),
     )
     function = SimpleNamespace(project=project)
     monkeypatch.setattr(
@@ -272,7 +276,9 @@ def test_callsite_summary_marks_rebased_exact_slice_stack_probe_helper_from_orig
     original_project = SimpleNamespace(
         kb=SimpleNamespace(
             functions=SimpleNamespace(
-                function=lambda addr, create=False: SimpleNamespace(addr=addr, name="aNchkstk") if addr == 0x11222 else None
+                function=lambda addr, create=False: (
+                    SimpleNamespace(addr=addr, name="aNchkstk") if addr == 0x11222 else None
+                )
             ),
             labels={0x11222: "aNchkstk"},
         ),
@@ -308,7 +314,9 @@ def test_callsite_summary_marks_stack_probe_returned_stack_address_when_ax_is_co
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
         factory=SimpleNamespace(block=lambda addr, opt_level=0: block),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: callee if addr == 0x1544 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: callee if addr == 0x1544 else None)
+        ),
     )
     function = SimpleNamespace(project=project)
     monkeypatch.setattr(
@@ -339,7 +347,9 @@ def test_callsite_summary_does_not_claim_stack_address_when_probe_return_is_not_
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
         factory=SimpleNamespace(block=lambda addr, opt_level=0: block),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: callee if addr == 0x1544 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: callee if addr == 0x1544 else None)
+        ),
     )
     function = SimpleNamespace(project=project)
     monkeypatch.setattr(

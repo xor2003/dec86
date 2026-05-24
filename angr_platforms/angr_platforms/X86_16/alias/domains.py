@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Alias
 # Responsibility: canonical alias-domain helpers.
 # Forbidden: lowering and rewrite ownership.
-
 from dataclasses import dataclass
 from typing import Literal
 

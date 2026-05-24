@@ -158,11 +158,45 @@ def _should_retry_with_relocated_ip(case: dict[str, Any], state) -> bool:
     except Exception:  # pylint:disable=broad-except
         return False
     return first.mnemonic not in {
-        "call", "jmp", "ljmp", "lcall",
-        "ret", "retf", "retn", "iret", "int", "int3", "into",
-        "loop", "loope", "loopne", "loopz", "loopnz", "jcxz",
-        "je", "jz", "jne", "jnz", "jg", "jge", "jl", "jle", "ja", "jae", "jb", "jbe", "jc", "jnc", "jno",
-        "jo", "jns", "js", "jnp", "jpo", "jp", "jpe",
+        "call",
+        "jmp",
+        "ljmp",
+        "lcall",
+        "ret",
+        "retf",
+        "retn",
+        "iret",
+        "int",
+        "int3",
+        "into",
+        "loop",
+        "loope",
+        "loopne",
+        "loopz",
+        "loopnz",
+        "jcxz",
+        "je",
+        "jz",
+        "jne",
+        "jnz",
+        "jg",
+        "jge",
+        "jl",
+        "jle",
+        "ja",
+        "jae",
+        "jb",
+        "jbe",
+        "jc",
+        "jnc",
+        "jno",
+        "jo",
+        "jns",
+        "js",
+        "jnp",
+        "jpo",
+        "jp",
+        "jpe",
     }
 
 
@@ -224,7 +258,9 @@ def _step_with_bytes(project: angr.Project, state, insn_bytes: bytes):
     raise RuntimeError("Execution produced no active or deadended state")
 
 
-def _step_with_lock_retry(project: angr.Project, state, insn_bytes: bytes, *, advance_ip_for_stripped_lock: bool = True):
+def _step_with_lock_retry(
+    project: angr.Project, state, insn_bytes: bytes, *, advance_ip_for_stripped_lock: bool = True
+):
     try:
         return _step_with_bytes(project, state, insn_bytes)
     except Exception as ex:  # pylint:disable=broad-except
@@ -523,15 +559,15 @@ def _maybe_execute_terminating_halt(project: angr.Project, state, case: dict[str
     expected_ip = _expected_reg(case, "ip")
     halt_ip = (expected_ip - 1) & 0xFFFF
     halt_linear = real_mode_linear(expected_cs, halt_ip)
-    state.memory.store(halt_linear, b"\xF4")
+    state.memory.store(halt_linear, b"\xf4")
 
     current_cs = state.solver.eval(state.regs.cs)
     current_ip = state.solver.eval(state.regs.ip)
     if current_cs == expected_cs and current_ip == halt_ip:
-        return _step_with_bytes(project, state, b"\xF4"), True
+        return _step_with_bytes(project, state, b"\xf4"), True
 
     if _current_fetch_byte(state) == 0xF4:
-        return _step_with_bytes(project, state, b"\xF4"), True
+        return _step_with_bytes(project, state, b"\xf4"), True
 
     return state, False
 
@@ -636,10 +672,14 @@ def verify_case(
         if repeat_limit is not None:
             iterations = 1
             max_iterations = max(1, repeat_limit)
-            while state.addr == start_addr and iterations < max_iterations and _repeat_should_continue(state, insn_bytes):
+            while (
+                state.addr == start_addr and iterations < max_iterations and _repeat_should_continue(state, insn_bytes)
+            ):
                 state = _step_with_lock_retry(project, state, insn_bytes, advance_ip_for_stripped_lock=False)
                 iterations += 1
-            if state.addr == start_addr and (iterations >= max_iterations or not _repeat_should_continue(state, insn_bytes)):
+            if state.addr == start_addr and (
+                iterations >= max_iterations or not _repeat_should_continue(state, insn_bytes)
+            ):
                 state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
         halted = False
         if execute_halt:

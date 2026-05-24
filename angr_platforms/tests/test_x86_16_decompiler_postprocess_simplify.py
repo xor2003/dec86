@@ -3,7 +3,15 @@ from __future__ import annotations
 from copy import deepcopy
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CReturn, CStatements, CUnaryOp, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CReturn,
+    CStatements,
+    CUnaryOp,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
@@ -13,6 +21,8 @@ from angr_platforms.X86_16.decompiler_postprocess_simplify import (
     _maybe_eliminate_single_use_temporaries_8616,
     _simplify_structured_expressions_8616,
 )
+
+
 class _DummyCodegen:
     def __init__(self):
         self._idx = 0
@@ -132,6 +142,7 @@ def test_eliminate_single_use_temporaries_inlines_immediate_use():
     retval = after_codegen.cfunc.statements.statements[0].retval
     assert isinstance(retval, CBinaryOp)
     assert retval.op == "Add"
+
 
 def test_eliminate_single_use_temporaries_refuses_multi_use_temporary():
     project = _project()

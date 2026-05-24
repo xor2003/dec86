@@ -103,7 +103,9 @@ def build_recompilable_source_evidence_text(case: RecompilableSubsetCase) -> str
         prelude_lines.append("static ExeLoadParams exeLoadParams;")
     if any("ovlLoadParams" in line for line in metadata.source_lines):
         prelude_lines.append("static OvlLoadParams ovlLoadParams;")
-    if any(re.search(r"\brin\b", line) for line in function_lines) or any(re.search(r"\brout\b", line) for line in function_lines):
+    if any(re.search(r"\brin\b", line) for line in function_lines) or any(
+        re.search(r"\brout\b", line) for line in function_lines
+    ):
         prelude_lines.append("static REGS rin, rout;")
 
     pieces = []

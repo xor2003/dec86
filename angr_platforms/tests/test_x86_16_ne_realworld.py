@@ -7,7 +7,6 @@ import pytest
 
 from angr_platforms.X86_16.ne_exe_parse import parse_ne_exe
 
-
 ZEEK1_EXE = Path("/home/xor/games/zeek/ZEEK1.EXE")
 
 
@@ -30,4 +29,3 @@ def test_zeek1_ne_loader_and_resources():
     parsed = parse_ne_exe(ZEEK1_EXE, load_base_linear=getattr(obj, "linked_base", 0), project=project)
     assert parsed.code_labels
     assert parsed.entry_offsets
-

@@ -1,3 +1,5 @@
+from pyvex.lifting.util.vex_helper import Type
+
 from angr_platforms.X86_16.alu_helpers import (
     binary_operation,
     binary_operation_with_carry,
@@ -12,7 +14,6 @@ from angr_platforms.X86_16.alu_helpers import (
     shift_right_operation,
 )
 from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
-from pyvex.lifting.util.vex_helper import Type
 
 
 class _AluEmu:
@@ -215,9 +216,7 @@ def test_compare_operation_captures_unary_nonzero_for_same_operand_test():
     assert emu.last_flags == ("and", 0x80, 0x80)
     assert emu.last_condition == IRCondition(
         op="nonzero",
-        args=(
-            IRValue(MemSpace.CONST, const=0x80, size=1, expr=("int",)),
-        ),
+        args=(IRValue(MemSpace.CONST, const=0x80, size=1, expr=("int",)),),
         expr=("update_eflags_and", "same_operand"),
     )
 
@@ -251,9 +250,7 @@ def test_build_compare_condition_zero_rhs_sub_becomes_unary_nonzero():
 
     assert condition == IRCondition(
         op="nonzero",
-        args=(
-            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
-        ),
+        args=(IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),),
         expr=("update_eflags_sub", "rhs_zero"),
     )
 
@@ -332,10 +329,38 @@ def test_shift_and_rotate_helpers_apply_value_transformations():
     emu = _AluEmu()
     state = {}
 
-    shift_left_operation(emu, lambda: 0x12, lambda value: state.setdefault("shl", value), lambda lhs, rhs: state.update({"shl_flags": (lhs, rhs)}), 1, 8)
-    shift_right_operation(emu, lambda: 0x12, lambda value: state.setdefault("shr", value), lambda lhs, rhs: state.update({"shr_flags": (lhs, rhs)}), 1, 8)
-    rotate_left_operation(emu, lambda: 0x81, lambda value: state.setdefault("rol", value), lambda lhs, rhs: state.update({"rol_flags": (lhs, rhs)}), 1, 8)
-    rotate_right_operation(emu, lambda: 0x81, lambda value: state.setdefault("ror", value), lambda lhs, rhs: state.update({"ror_flags": (lhs, rhs)}), 1, 8)
+    shift_left_operation(
+        emu,
+        lambda: 0x12,
+        lambda value: state.setdefault("shl", value),
+        lambda lhs, rhs: state.update({"shl_flags": (lhs, rhs)}),
+        1,
+        8,
+    )
+    shift_right_operation(
+        emu,
+        lambda: 0x12,
+        lambda value: state.setdefault("shr", value),
+        lambda lhs, rhs: state.update({"shr_flags": (lhs, rhs)}),
+        1,
+        8,
+    )
+    rotate_left_operation(
+        emu,
+        lambda: 0x81,
+        lambda value: state.setdefault("rol", value),
+        lambda lhs, rhs: state.update({"rol_flags": (lhs, rhs)}),
+        1,
+        8,
+    )
+    rotate_right_operation(
+        emu,
+        lambda: 0x81,
+        lambda value: state.setdefault("ror", value),
+        lambda lhs, rhs: state.update({"ror_flags": (lhs, rhs)}),
+        1,
+        8,
+    )
 
     assert state["shl"] == 0x24
     assert state["shl_flags"] == (0x12, 1)

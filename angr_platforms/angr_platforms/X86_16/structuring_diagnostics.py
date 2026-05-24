@@ -20,12 +20,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from .codegen_metadata import get_codegen_side_metadata
 from .structuring_cfg_grouping import CFGGroupingArtifact, build_cfg_grouping_artifact
 from .structuring_cfg_indirect import CFGIndirectSiteArtifact
 from .structuring_cfg_ownership import CFGOwnershipArtifact
 from .structuring_cfg_snapshot import CFGSnapshot
 from .structuring_ir_hints import StructuringIRHintArtifact, build_structuring_ir_hint_artifact
-from .codegen_metadata import get_codegen_side_metadata
 
 __all__ = [
     "StructuringFailureReason",
@@ -105,9 +105,7 @@ class DiagnosticsCollector:
         region_ids: tuple[int, ...] = (),
     ) -> None:
         """Record a failure with classified reason."""
-        self.add_diagnostic(
-            kind="failure", message=message, region_ids=region_ids, reason=reason
-        )
+        self.add_diagnostic(kind="failure", message=message, region_ids=region_ids, reason=reason)
 
     def failure_count(self) -> int:
         """Count total failures recorded."""
@@ -174,10 +172,7 @@ class StructuringDiagnosticsReport:
     def summary_line(self) -> str:
         """One-line summary for logging."""
         if self.succeeded:
-            return (
-                f"✓ {self.func_name} @ {hex(self.func_addr)}: "
-                f"structured in {self.final_iteration} iterations"
-            )
+            return f"✓ {self.func_name} @ {hex(self.func_addr)}: structured in {self.final_iteration} iterations"
         else:
             reason = self.last_failure_reason()
             reason_str = reason.value if reason else "unknown"
@@ -232,9 +227,7 @@ def build_failure_reason_from_stats(stats: object) -> Optional[StructuringFailur
     return None
 
 
-def suggest_recovery_hints(
-    stats: object, region_ids: tuple[int, ...] = ()
-) -> list[str]:
+def suggest_recovery_hints(stats: object, region_ids: tuple[int, ...] = ()) -> list[str]:
     """
     Suggest recovery hints based on structuring statistics.
 
@@ -252,23 +245,15 @@ def suggest_recovery_hints(
     cycles = getattr(stats, "cycles_resolved", 0)
 
     if getattr(stats, "max_iterations_reached", False):
-        hints.append(
-            f"Reached iteration limit ({iterations}): CFG is complex or contains unsupported patterns"
-        )
-        hints.append(
-            "Try: checking for indirect jumps, tail calls, or exception handling not yet supported"
-        )
+        hints.append(f"Reached iteration limit ({iterations}): CFG is complex or contains unsupported patterns")
+        hints.append("Try: checking for indirect jumps, tail calls, or exception handling not yet supported")
 
     if iterations > 100 and reduced < 5:
-        hints.append(
-            f"Very slow progress: only {reduced} regions reduced in {iterations} iterations"
-        )
+        hints.append(f"Very slow progress: only {reduced} regions reduced in {iterations} iterations")
         hints.append("Try: looking for cyclic patterns with mixed entry/exit points")
 
     if cycles == 0 and iterations > 50:
-        hints.append(
-            "No cyclic patterns found despite many iterations: loops may use uncommon patterns"
-        )
+        hints.append("No cyclic patterns found despite many iterations: loops may use uncommon patterns")
         hints.append("Try: checking for breaks/continues as separate regions")
 
     if getattr(stats, "had_unstructured_gotos", False):
@@ -304,7 +289,7 @@ def apply_x86_16_structuring_diagnostics(codegen) -> bool:
         # Handle missing or empty cfunc gracefully
         if not hasattr(codegen, "cfunc") or not codegen.cfunc:
             return True
-        
+
         cfunc = codegen.cfunc
         func_addr = getattr(cfunc, "addr", 0)
         func_name = getattr(cfunc, "name", f"func_{hex(func_addr)}")

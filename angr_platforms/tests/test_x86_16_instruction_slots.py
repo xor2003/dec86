@@ -1,4 +1,4 @@
-from angr_platforms.X86_16.instruction import InstrData, InstrFlags, ModRM, SIB, X86Instruction
+from angr_platforms.X86_16.instruction import SIB, InstrData, InstrFlags, ModRM, X86Instruction
 
 
 def test_instruction_metadata_classes_use_slots():

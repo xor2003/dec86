@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import pyvex.const as pyvex_const
 import pyvex.block
+import pyvex.const as pyvex_const
+from inertia_decompiler.project_loading import _build_project_from_bytes
 from pyvex.lifting.util import vex_helper
 
 import angr_platforms.X86_16  # noqa: F401
-from inertia_decompiler.project_loading import _build_project_from_bytes
 
 
 def test_pyvex_runtime_compatibility_is_applied() -> None:

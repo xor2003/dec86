@@ -43,8 +43,10 @@ def _assignment_lhs_rhs_8616(node: object) -> tuple[object, object]:
 
 def _is_assignment_node_8616(node: object) -> bool:
     class_name = node.__class__.__name__
-    return class_name == "CAssignment" or class_name.endswith("Assignment") or (
-        hasattr(node, "dst") and hasattr(node, "src")
+    return (
+        class_name == "CAssignment"
+        or class_name.endswith("Assignment")
+        or (hasattr(node, "dst") and hasattr(node, "src"))
     )
 
 
@@ -266,7 +268,11 @@ def _classify_dead_carrier_candidate_8616(
     # Keep setup around call boundaries only when the call actually references
     # this carrier key.
     for near in (stmt_index - 1, stmt_index + 1):
-        if near in call_indices and 0 <= near < len(statements) and _stmt_uses_carrier_key_8616(statements[near], lhs_key):
+        if (
+            near in call_indices
+            and 0 <= near < len(statements)
+            and _stmt_uses_carrier_key_8616(statements[near], lhs_key)
+        ):
             return StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP
     if _generic_stack_carrier_keys_8616(rhs).intersection(known_carriers):
         # If RHS references other carrier keys, preserve unless we can prove the
@@ -298,9 +304,7 @@ def _expr_is_pure_stack_address_carrier_8616(
             node.lhs, known_carriers
         ) or _expr_is_pure_stack_address_carrier_8616(node.rhs, known_carriers)
     key = _stack_carrier_key_8616(node)
-    return key is not None and (
-        _generic_stack_carrier_name_8616(node) is not None or key in (known_carriers or set())
-    )
+    return key is not None and (_generic_stack_carrier_name_8616(node) is not None or key in (known_carriers or set()))
 
 
 def _dead_stack_carrier_assignment_8616(
@@ -369,11 +373,7 @@ def _prune_dead_stack_carrier_assignments_8616(block: object, codegen: object | 
         if _is_plain_statement_block_8616(stmt):
             changed |= _prune_dead_stack_carrier_assignments_8616(stmt, codegen=codegen)
         for pair in getattr(stmt, "condition_and_nodes", ()) or ():
-            if (
-                isinstance(pair, tuple)
-                and len(pair) == 2
-                and _is_plain_statement_block_8616(pair[1])
-            ):
+            if isinstance(pair, tuple) and len(pair) == 2 and _is_plain_statement_block_8616(pair[1]):
                 changed |= _prune_dead_stack_carrier_assignments_8616(pair[1], codegen=codegen)
 
     statement_list = list(getattr(block, "statements", ()) or ())
@@ -476,7 +476,9 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
         typed_fact_map = {}
     else:
         typed_fact_map = {
-            key: value for key, value in typed_fact_map.items() if isinstance(key, int) and isinstance(value, TypedStackProbeReturnFact8616)
+            key: value
+            for key, value in typed_fact_map.items()
+            if isinstance(key, int) and isinstance(value, TypedStackProbeReturnFact8616)
         }
     materialized_metadata_ids = getattr(codegen, "_inertia_materialized_callsite_metadata_ids", None)
     if not isinstance(materialized_metadata_ids, dict):
@@ -517,7 +519,11 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
             # those stores are segment metadata and should be pruned even without a
             # preceding stack-probe helper call.
             has_materialized_metadata = call is not None and bool(materialized_metadata_ids.get(id(call), ()))
-            if call is not None and (stack_probe_address_seen or has_materialized_metadata) and not bool(getattr(summary, "stack_probe_helper", False)):
+            if (
+                call is not None
+                and (stack_probe_address_seen or has_materialized_metadata)
+                and not bool(getattr(summary, "stack_probe_helper", False))
+            ):
                 args = tuple(getattr(call, "args", ()) or ())
                 if args and all(not _segment_register_value_expr_8616(arg, project) for arg in args):
                     prunable_ids = {
@@ -542,7 +548,11 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
             # value, then prune it and its carrier-temp feeders.
             # Only prune stores recorded in materialized_metadata_ids for this call.
             _call_args = tuple(getattr(call, "args", ()) or ()) if call is not None else ()
-            if call is not None and _call_args and all(not _segment_register_value_expr_8616(arg, project) for arg in _call_args):
+            if (
+                call is not None
+                and _call_args
+                and all(not _segment_register_value_expr_8616(arg, project) for arg in _call_args)
+            ):
                 call_metadata_ids = set(materialized_metadata_ids.get(id(call), ())) if call is not None else set()
                 if call_metadata_ids:
                     removed = 0
@@ -589,11 +599,7 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
             if _is_plain_statement_block_8616(stmt):
                 rewrite_block(stmt, stack_probe_address_seen)
             for pair in getattr(stmt, "condition_and_nodes", ()) or ():
-                if (
-                    isinstance(pair, tuple)
-                    and len(pair) == 2
-                    and _is_plain_statement_block_8616(pair[1])
-                ):
+                if isinstance(pair, tuple) and len(pair) == 2 and _is_plain_statement_block_8616(pair[1]):
                     rewrite_block(pair[1], stack_probe_address_seen)
         return stack_probe_address_seen
 

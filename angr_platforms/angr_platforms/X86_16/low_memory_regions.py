@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 __all__ = [
     "LowMemoryAccess",
@@ -45,9 +45,7 @@ class _FieldSpec:
     label: str
 
 
-_SEG_OFF_RE = re.compile(
-    r"^(?P<seg>0x[0-9a-fA-F]+|\d+):(?P<off>0x[0-9a-fA-F]+|\d+)(?:/(?P<size>\d+))?$"
-)
+_SEG_OFF_RE = re.compile(r"^(?P<seg>0x[0-9a-fA-F]+|\d+):(?P<off>0x[0-9a-fA-F]+|\d+)(?:/(?P<size>\d+))?$")
 _LINEAR_RE = re.compile(r"^(?P<addr>0x[0-9a-fA-F]+|\d+)(?:/(?P<size>\d+))?$")
 
 _FIELD_SPECS: tuple[_FieldSpec, ...] = (
@@ -115,7 +113,7 @@ def _region_for_linear(linear: int) -> tuple[str, str]:
     if 0x0500 <= linear <= 0x07BFF:
         return "lowmem", f"lowmem+0x{linear - 0x500:x}"
     if 0x07C00 <= linear <= 0x07DFF:
-        return "boot", f"boot+0x{linear - 0x7c00:x}"
+        return "boot", f"boot+0x{linear - 0x7C00:x}"
     if 0x0A0000 <= linear <= 0x0AFFFF:
         return "video_ram", f"video_ram.a000+0x{linear - 0xA0000:x}"
     if 0x0B0000 <= linear <= 0x0B7FFF:

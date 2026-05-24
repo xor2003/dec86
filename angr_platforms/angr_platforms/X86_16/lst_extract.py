@@ -173,4 +173,6 @@ def extract_lst_metadata(lst_path: Path) -> LSTMetadata:
         source_format = "ida_lst"
     else:
         source_format = "generic_lst"
-    return LSTMetadata(data_labels=data_labels, code_labels=code_labels, code_ranges=code_ranges, source_format=source_format)
+    return LSTMetadata(
+        data_labels=data_labels, code_labels=code_labels, code_ranges=code_ranges, source_format=source_format
+    )

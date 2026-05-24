@@ -37,13 +37,14 @@ def emit_file_decompilation_summary(
         f"same_family_retry_stops={same_family_retry_stops} "
         f"fallback_family_labels={fallback_labels}"
     )
-    print(
-        "summary: "
-        f"dead_setup_candidates={int(dead_setup_candidates)} "
-        f"dead_setup_pruned={int(dead_setup_pruned)} "
-        f"dead_setup_refused={int(dead_setup_refused)} "
-        f"dead_setup_escaped={int(dead_setup_escaped)}"
-    )
+    if any((dead_setup_candidates, dead_setup_pruned, dead_setup_refused, dead_setup_escaped)):
+        print(
+            "summary: "
+            f"dead_setup_candidates={int(dead_setup_candidates)} "
+            f"dead_setup_pruned={int(dead_setup_pruned)} "
+            f"dead_setup_refused={int(dead_setup_refused)} "
+            f"dead_setup_escaped={int(dead_setup_escaped)}"
+        )
     print(f"summary: shown={shown_total} decompiled={decompiled} asm_or_detail_fallback={failed}")
 
 

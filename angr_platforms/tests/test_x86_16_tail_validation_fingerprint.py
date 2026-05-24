@@ -1,19 +1,29 @@
 import itertools
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CFunctionCall, CIndexedVariable, CStatements, CTypeCast, CUnaryOp, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CFunctionCall,
+    CIndexedVariable,
+    CStatements,
+    CTypeCast,
+    CUnaryOp,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.decompiler_postprocess_stage import (
+    _attach_tail_validation_widened_carrier_provenance_8616,
+    _deepcopy_cfunc_for_validation_8616,
+)
 from angr_platforms.X86_16.tail_validation_fingerprint import (
     _canonical_or_unresolved_stack_fingerprint_8616,
     _expr_fingerprint,
     _location_fingerprint,
-)
-from angr_platforms.X86_16.decompiler_postprocess_stage import (
-    _attach_tail_validation_widened_carrier_provenance_8616,
-    _deepcopy_cfunc_for_validation_8616,
 )
 
 
@@ -74,7 +84,9 @@ def _ss_stack_deref(project, stack_offset: int, addend: int, codegen):
 def _make_stack_word_pair_expr(project, codegen, offset: int, addend: int) -> CBinaryOp:
     deref_low = _ss_stack_deref(project, offset, addend, codegen)
     deref_high = _ss_stack_deref(project, offset, addend + 1, codegen)
-    return CBinaryOp("Or", deref_low, CBinaryOp("Mul", deref_high, _const(256, codegen), codegen=codegen), codegen=codegen)
+    return CBinaryOp(
+        "Or", deref_low, CBinaryOp("Mul", deref_high, _const(256, codegen), codegen=codegen), codegen=codegen
+    )
 
 
 def _ds_linear_deref(project, linear: int, codegen, *, wrap_operand_casts: int = 0) -> CUnaryOp:
@@ -321,7 +333,9 @@ def test_mk_fp_matches_raw_linear_segment_address_fingerprint():
     project = codegen.project
     bx = _reg(project, "bx", codegen)
 
-    raw = CBinaryOp("Add", CBinaryOp("Mul", _reg(project, "ds", codegen), _const(16, codegen), codegen=codegen), bx, codegen=codegen)
+    raw = CBinaryOp(
+        "Add", CBinaryOp("Mul", _reg(project, "ds", codegen), _const(16, codegen), codegen=codegen), bx, codegen=codegen
+    )
     helper = CFunctionCall("MK_FP", None, [_reg(project, "ds", codegen), bx], codegen=codegen)
 
     assert _expr_fingerprint(raw, project) == _expr_fingerprint(helper, project)
@@ -332,7 +346,9 @@ def test_seg_ptr_matches_raw_linear_segment_address_fingerprint():
     project = codegen.project
     bx = _reg(project, "bx", codegen)
 
-    raw = CBinaryOp("Add", CBinaryOp("Mul", _reg(project, "ds", codegen), _const(16, codegen), codegen=codegen), bx, codegen=codegen)
+    raw = CBinaryOp(
+        "Add", CBinaryOp("Mul", _reg(project, "ds", codegen), _const(16, codegen), codegen=codegen), bx, codegen=codegen
+    )
     helper = CFunctionCall("SEG_PTR", None, [_reg(project, "ds", codegen), bx], codegen=codegen)
 
     assert _expr_fingerprint(raw, project) == _expr_fingerprint(helper, project)
@@ -385,7 +401,12 @@ def test_stack_address_inside_seg_ptr_is_not_equivalent():
         None,
         [
             _reg(project, "ds", codegen),
-            CBinaryOp("Add", _const(2892, codegen), CBinaryOp("Shl", i_var, _const(1, codegen), codegen=codegen), codegen=codegen),
+            CBinaryOp(
+                "Add",
+                _const(2892, codegen),
+                CBinaryOp("Shl", i_var, _const(1, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
         ],
         codegen=codegen,
     )
@@ -451,7 +472,9 @@ def test_indexed_stack_carrier_matches_materialized_local_with_alias_map():
     )
 
     indexed = CIndexedVariable(CUnaryOp("Reference", alias_cvar, codegen=codegen), _const(4, codegen), codegen=codegen)
-    deref = CUnaryOp("Dereference", CTypeCast(SimTypeShort(False), SimTypeShort(False), indexed, codegen=codegen), codegen=codegen)
+    deref = CUnaryOp(
+        "Dereference", CTypeCast(SimTypeShort(False), SimTypeShort(False), indexed, codegen=codegen), codegen=codegen
+    )
 
     assert _expr_fingerprint(deref, project) == _expr_fingerprint(local_cvar, project)
 
@@ -470,7 +493,9 @@ def test_indexed_stack_carrier_without_alias_map_is_not_equivalent():
     codegen._inertia_stack_pointer_aliases_for_cvars = (codegen.cfunc.statements, {})
 
     indexed = CIndexedVariable(CUnaryOp("Reference", alias_cvar, codegen=codegen), _const(4, codegen), codegen=codegen)
-    deref = CUnaryOp("Dereference", CTypeCast(SimTypeShort(False), SimTypeShort(False), indexed, codegen=codegen), codegen=codegen)
+    deref = CUnaryOp(
+        "Dereference", CTypeCast(SimTypeShort(False), SimTypeShort(False), indexed, codegen=codegen), codegen=codegen
+    )
 
     assert _expr_fingerprint(deref, project) != _expr_fingerprint(local_cvar, project)
 
@@ -506,7 +531,9 @@ def test_raw_stack_plus_zero_is_not_emitted_when_alias_proof_exists():
     )
 
     indexed = CIndexedVariable(CUnaryOp("Reference", alias_cvar, codegen=codegen), _const(4, codegen), codegen=codegen)
-    deref = CUnaryOp("Dereference", CTypeCast(SimTypeShort(False), SimTypeShort(False), indexed, codegen=codegen), codegen=codegen)
+    deref = CUnaryOp(
+        "Dereference", CTypeCast(SimTypeShort(False), SimTypeShort(False), indexed, codegen=codegen), codegen=codegen
+    )
 
     fp = _expr_fingerprint(deref, project)
     assert "stack:+0x0" not in fp
@@ -529,7 +556,9 @@ def test_indexed_deref_bridge_matches_materialized_local():
     }
 
     indexed = CIndexedVariable(CUnaryOp("Reference", alias_cvar, codegen=codegen), _const(4, codegen), codegen=codegen)
-    deref = CUnaryOp("Dereference", CTypeCast(SimTypeShort(False), SimTypeShort(False), indexed, codegen=codegen), codegen=codegen)
+    deref = CUnaryOp(
+        "Dereference", CTypeCast(SimTypeShort(False), SimTypeShort(False), indexed, codegen=codegen), codegen=codegen
+    )
 
     fp = _expr_fingerprint(deref, project)
     assert fp == "stack_slot:SS:BP-0x2:size2"

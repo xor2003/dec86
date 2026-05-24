@@ -8,7 +8,6 @@ Forbidden: semantic recovery outside alias layer, type inference, C text generat
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
-    CStatements,
     CVariable,
 )
 
@@ -69,8 +68,19 @@ def _copy_propagation_8616(codegen) -> bool:
             return
         if hasattr(node, "statements"):
             walk_statements(node)
-        for attr in ("condition", "cond", "body", "else_node", "iftrue", "iffalse",
-                     "retval", "expr", "switch", "initializer", "iterator"):
+        for attr in (
+            "condition",
+            "cond",
+            "body",
+            "else_node",
+            "iftrue",
+            "iffalse",
+            "retval",
+            "expr",
+            "switch",
+            "initializer",
+            "iterator",
+        ):
             child = getattr(node, attr, None)
             if child is not None:
                 _walk_node(child)

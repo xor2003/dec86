@@ -13,6 +13,7 @@ from .tail_validation_fingerprint import _expr_fingerprint
 
 log = logging.getLogger(__name__)
 
+
 def _current_original_func_addr_8616(project, codegen) -> int | None:
     cfunc = getattr(codegen, "cfunc", None)
     func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None

@@ -143,6 +143,7 @@ def recover_natural_loops(cfg: CFGView, entry: int, blocks: Iterable[int]) -> li
 
 # ── Induction variable detection ──
 
+
 def _is_const(expr: object) -> bool:
     return hasattr(expr, "value") and isinstance(getattr(expr, "value"), int)
 
@@ -200,6 +201,7 @@ def find_loop_induction(loop: NaturalLoop, semantics: BlockSemantics) -> Inducti
 
 # ── Loop guard detection ──
 
+
 def match_loop_guard(cond: object, induction: InductionUpdate | None, guard_block: int) -> LoopGuard | None:
     """Match:  i < N, i <= N, i != N, i > N, i >= N
 
@@ -252,6 +254,7 @@ def find_loop_guard(
 
 
 # ── Final recovery API ──
+
 
 def recover_loops(
     cfg: CFGView,

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import importlib.util
+import io
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import angr
 import pytest

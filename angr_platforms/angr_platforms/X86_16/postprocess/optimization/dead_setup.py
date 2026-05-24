@@ -10,16 +10,16 @@ This pass removes setup/carrier assignments only when they are proven dead:
 - not tied to observable alias/widening-relevant storage
 """
 
-from dataclasses import dataclass
 import enum
 import os
 import re
+from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
-    CFunctionCall,
     CConstant,
+    CFunctionCall,
     CUnaryOp,
     CVariable,
 )
@@ -33,9 +33,7 @@ __all__ = [
 ]
 
 
-_STAGING_NAME_RE = re.compile(
-    r"^(?:vvar_\d+|s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|tmp_\d+|ir_\d+|arg_[0-9a-fA-F]+)$"
-)
+_STAGING_NAME_RE = re.compile(r"^(?:vvar_\d+|s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|tmp_\d+|ir_\d+|arg_[0-9a-fA-F]+)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +195,18 @@ def _iter_statement_blocks(root):
             yield node
             for stmt in list(getattr(node, "statements", ()) or ()):
                 stack.append(stmt)
-        for attr in ("condition", "cond", "body", "else_node", "iftrue", "iffalse", "true_node", "false_node", "expr", "retval"):
+        for attr in (
+            "condition",
+            "cond",
+            "body",
+            "else_node",
+            "iftrue",
+            "iffalse",
+            "true_node",
+            "false_node",
+            "expr",
+            "retval",
+        ):
             child = getattr(node, attr, None)
             if child is not None:
                 stack.append(child)
@@ -286,9 +295,17 @@ def _record_decision_counter_8616(codegen, decision: DeadSetupDecision8616) -> N
     elif decision == DeadSetupDecision8616.LIVE_STACK_CARRIER:
         setattr(codegen, "dead_setup_live_stack_carrier", int(getattr(codegen, "dead_setup_live_stack_carrier", 0)) + 1)
     elif decision == DeadSetupDecision8616.LIVE_WIDENING_CARRIER:
-        setattr(codegen, "dead_setup_live_widening_carrier", int(getattr(codegen, "dead_setup_live_widening_carrier", 0)) + 1)
+        setattr(
+            codegen,
+            "dead_setup_live_widening_carrier",
+            int(getattr(codegen, "dead_setup_live_widening_carrier", 0)) + 1,
+        )
     elif decision == DeadSetupDecision8616.LIVE_CONDITION_SOURCE:
-        setattr(codegen, "dead_setup_live_condition_source", int(getattr(codegen, "dead_setup_live_condition_source", 0)) + 1)
+        setattr(
+            codegen,
+            "dead_setup_live_condition_source",
+            int(getattr(codegen, "dead_setup_live_condition_source", 0)) + 1,
+        )
     elif decision == DeadSetupDecision8616.UNKNOWN_REFUSE:
         setattr(codegen, "dead_setup_unknown_refuse", int(getattr(codegen, "dead_setup_unknown_refuse", 0)) + 1)
 
@@ -319,7 +336,9 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
             if not stmts:
                 continue
             call_indices = {
-                idx for idx, stmt in enumerate(stmts) if any(isinstance(node, CFunctionCall) for node in _iter_c_nodes_deep_8616(stmt))
+                idx
+                for idx, stmt in enumerate(stmts)
+                if any(isinstance(node, CFunctionCall) for node in _iter_c_nodes_deep_8616(stmt))
             }
             candidates = _gather_candidates(block)
             if not candidates:
@@ -356,7 +375,9 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
                 pass_changed = True
 
         if total_candidates:
-            setattr(codegen, "dead_setup_candidates", int(getattr(codegen, "dead_setup_candidates", 0)) + total_candidates)
+            setattr(
+                codegen, "dead_setup_candidates", int(getattr(codegen, "dead_setup_candidates", 0)) + total_candidates
+            )
         if total_refused:
             setattr(codegen, "dead_setup_refused", int(getattr(codegen, "dead_setup_refused", 0)) + total_refused)
         if total_pruned:

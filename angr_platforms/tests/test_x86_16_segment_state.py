@@ -24,8 +24,14 @@ def test_segment_state_tracks_explicit_ds_and_es_writes():
             IRBlock(
                 addr=0x1000,
                 instrs=(
-                    IRInstr("MOV", IRValue(MemSpace.REG, name="ds", size=2), (IRValue(MemSpace.REG, name="ax", size=2),)),
-                    IRInstr("MOV", IRValue(MemSpace.REG, name="es", size=2), (IRValue(MemSpace.CONST, const=0xB800, size=2),)),
+                    IRInstr(
+                        "MOV", IRValue(MemSpace.REG, name="ds", size=2), (IRValue(MemSpace.REG, name="ax", size=2),)
+                    ),
+                    IRInstr(
+                        "MOV",
+                        IRValue(MemSpace.REG, name="es", size=2),
+                        (IRValue(MemSpace.CONST, const=0xB800, size=2),),
+                    ),
                 ),
             ),
         ),
@@ -45,8 +51,12 @@ def test_typed_string_effects_become_stable_from_segment_state_and_feed_array_ma
             IRBlock(
                 addr=0x2000,
                 instrs=(
-                    IRInstr("MOV", IRValue(MemSpace.REG, name="ds", size=2), (IRValue(MemSpace.REG, name="ax", size=2),)),
-                    IRInstr("MOV", IRValue(MemSpace.REG, name="es", size=2), (IRValue(MemSpace.REG, name="bx", size=2),)),
+                    IRInstr(
+                        "MOV", IRValue(MemSpace.REG, name="ds", size=2), (IRValue(MemSpace.REG, name="ax", size=2),)
+                    ),
+                    IRInstr(
+                        "MOV", IRValue(MemSpace.REG, name="es", size=2), (IRValue(MemSpace.REG, name="bx", size=2),)
+                    ),
                 ),
             ),
         ),

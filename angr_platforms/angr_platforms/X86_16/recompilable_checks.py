@@ -131,9 +131,7 @@ def compile_recompilable_c_text(c_text: str) -> subprocess.CompletedProcess[str]
         obj_path.unlink(missing_ok=True)
 
 
-def check_recompilable_c_text_shape(
-    c_text: str, case: RecompilableSubsetCase
-) -> dict[str, object]:
+def check_recompilable_c_text_shape(c_text: str, case: RecompilableSubsetCase) -> dict[str, object]:
     missing = tuple(anchor for anchor in case.expected_c_anchors if anchor not in c_text)
     forbidden = tuple(anchor for anchor in case.forbidden_c_anchors if anchor in c_text)
     return {

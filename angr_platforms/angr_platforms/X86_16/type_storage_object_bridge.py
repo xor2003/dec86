@@ -135,8 +135,7 @@ def _artifact_to_bridge(
     lowering_by_segment: dict[str, dict[str, object]] | None,
 ) -> StorageObjectBridge | None:
     facts_by_base = {
-        base_key: _fact_from_record(record, lowering_by_segment)
-        for base_key, record in artifact.records.items()
+        base_key: _fact_from_record(record, lowering_by_segment) for base_key, record in artifact.records.items()
     }
     refusal_facts = dict(artifact.refusals)
     if not facts_by_base and not refusal_facts:
@@ -166,8 +165,12 @@ def load_storage_object_bridge(
     function_addr: int | None,
     *,
     codegen: object | None = None,
-    build_access_trait_evidence_profiles: Callable[[dict[str, dict[BaseKey, object]]], EvidenceProfiles] = build_access_trait_evidence_profiles,
-    build_stable_access_object_hints: Callable[[dict[str, dict[BaseKey, object]]], StableHints] = _build_storage_object_hints,
+    build_access_trait_evidence_profiles: Callable[
+        [dict[str, dict[BaseKey, object]]], EvidenceProfiles
+    ] = build_access_trait_evidence_profiles,
+    build_stable_access_object_hints: Callable[
+        [dict[str, dict[BaseKey, object]]], StableHints
+    ] = _build_storage_object_hints,
 ) -> StorageObjectBridge | None:
     if function_addr is None:
         return None

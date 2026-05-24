@@ -11,7 +11,7 @@ class X86DirtyIN(SimProcedure):
     def run(self, size, port=None):
         try:
             # size may be a claripy BV or a Python int
-            if hasattr(size, 'concrete') or hasattr(size, 'size'):
+            if hasattr(size, "concrete") or hasattr(size, "size"):
                 sz = int(self.state.solver.eval(size))
             else:
                 sz = int(size)

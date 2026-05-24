@@ -8,30 +8,29 @@ from pyvex.lifting.util import GymratLifter, Instruction, JumpKind, ParseError
 from pyvex.lifting.util.vex_helper import Type
 
 from .arch_86_16 import Arch86_16
-from .ir.core import AddressStatus, IRCondition, IRAddress, MemSpace, SegmentOrigin
 from .emulator import Emulator
 from .instr16 import Instr16
 from .instr32 import Instr32
 from .instruction import InstrData
 from .ir.condition_ir import (
-    ConditionSource,
-    ConditionIR,
-    ConditionFailure,
-    JCC_UGE_MNEMONICS_8616,
-    JCC_UGT_MNEMONICS_8616,
-    JCC_ULE_MNEMONICS_8616,
-    JCC_ULT_MNEMONICS_8616,
+    _JCC_COMPARISON_MNEMONICS_8616,
     JCC_EQ_MNEMONICS_8616,
     JCC_NE_MNEMONICS_8616,
     JCC_SGE_MNEMONICS_8616,
     JCC_SGT_MNEMONICS_8616,
     JCC_SLE_MNEMONICS_8616,
     JCC_SLT_MNEMONICS_8616,
-    _JCC_COMPARISON_MNEMONICS_8616,
+    JCC_UGE_MNEMONICS_8616,
+    JCC_UGT_MNEMONICS_8616,
+    JCC_ULE_MNEMONICS_8616,
+    JCC_ULT_MNEMONICS_8616,
+    ConditionFailure,
+    ConditionIR,
+    ConditionSource,
     build_condition_from_cmp_8616,
     build_condition_from_test_8616,
-    deduplicate_conditions_8616,
 )
+from .ir.core import AddressStatus, IRAddress, IRCondition, MemSpace, SegmentOrigin
 from .jcc_condition import _direct_jcc_condition_from_last_condition_8616
 from .parse import CHSZ_AD, CHSZ_OP
 from .regs import reg16_t
@@ -109,7 +108,7 @@ class Instruction_ANY(Instruction):
     }
 
     # Convert everything that's not an instruction into a No-op to meet the BF spec
-    bin_format = "xxxxxxxx" # We don't care, match it all
+    bin_format = "xxxxxxxx"  # We don't care, match it all
     name = "nop"
 
     def lift(self, irsb_c, past_instructions, future_instructions):
@@ -156,7 +155,7 @@ class Instruction_ANY(Instruction):
 
     def parse(self, bitstrm):
         self.start = bitstrm.bytepos
-        raw = bytes(bitstrm[self.start * 8: self.start * 8 + 15 * 8])
+        raw = bytes(bitstrm[self.start * 8 : self.start * 8 + 15 * 8])
         cs_prefix_len = 0
         instr = list(self.arch.capstone.disasm(raw, self.addr, 1))
         if not instr:
@@ -182,8 +181,7 @@ class Instruction_ANY(Instruction):
             self.chsz_op = False
             return {"x": "00000000"}
 
-
-        self.is_mode32 = False  #emu.is_mode32()
+        self.is_mode32 = False  # emu.is_mode32()
         prefix = self.instr32.parse_prefix() if self.is_mode32 else self.instr16.parse_prefix()
         self.chsz_op = prefix & CHSZ_OP
         chsz_ad = prefix & CHSZ_AD
@@ -192,11 +190,11 @@ class Instruction_ANY(Instruction):
             instr32 = self._ensure_instr32()
             instr32.set_chsz_ad(not (self.is_mode32 ^ bool(chsz_ad)))
             instr32.parse()
-            #assert self.name == self.instr32.instrfuncs[self.instr32.instr.opcode].__name__.split('_')[0]
+            # assert self.name == self.instr32.instrfuncs[self.instr32.instr.opcode].__name__.split('_')[0]
         else:
             self.instr16.set_chsz_ad(self.is_mode32 ^ bool(chsz_ad))
             self.instr16.parse()
-            #assert self.name == self.instr16.instrfuncs[self.instr16.instr.opcode].__name__.split('_')[0]
+            # assert self.name == self.instr16.instrfuncs[self.instr16.instr.opcode].__name__.split('_')[0]
         self.bitwidth = (bitstrm.bytepos - self.start) * 8
         return {"x": "00000000"}
 
@@ -391,6 +389,7 @@ class Instruction_ANY(Instruction):
                 record_access,
                 record_access_by_block,
             )
+
             space = getattr(MemSpace, seg.upper())
             addr = IRAddress(
                 space=space,
@@ -987,10 +986,10 @@ class Instruction_ANY(Instruction):
                 self.instr16.exec()
 
             if debug_enabled:
-                if hasattr(self.emu, 'irsb') and self.emu.irsb:
+                if hasattr(self.emu, "irsb") and self.emu.irsb:
                     logger.debug("IRSB at %04x: %s", self.addr, self.emu.irsb)
-                    irsb_obj = self.emu.irsb.irsb if hasattr(self.emu.irsb, 'irsb') else self.emu.irsb
-                    if hasattr(irsb_obj, 'statements'):
+                    irsb_obj = self.emu.irsb.irsb if hasattr(self.emu.irsb, "irsb") else self.emu.irsb
+                    if hasattr(irsb_obj, "statements"):
                         for stmt in irsb_obj.statements:
                             logger.debug("Statement: %s (type: %s)", type(stmt).__name__, type(stmt))
 
@@ -1013,6 +1012,7 @@ class Instruction_ANY(Instruction):
 
     def ends_block(self):
         return self.cs.mnemonic in self._BLOCK_TERMINATORS
+
 
 class Lifter86_16(GymratLifter):
     instrs = {Instruction_ANY}

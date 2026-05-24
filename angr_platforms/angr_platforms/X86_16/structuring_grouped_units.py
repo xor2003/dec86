@@ -116,8 +116,11 @@ def build_x86_16_cross_entry_grouped_units(codegen: Any) -> CrossEntryGroupedUni
             {
                 predecessor_region_id
                 for component_region_id in component_shared_region_ids_tuple
-                for predecessor_region_id in snapshot_nodes.get(component_region_id, type("_N", (), {"predecessor_ids": ()})()).predecessor_ids
-                if predecessor_region_id not in component_shared_region_ids and predecessor_region_id in record_by_region_id
+                for predecessor_region_id in snapshot_nodes.get(
+                    component_region_id, type("_N", (), {"predecessor_ids": ()})()
+                ).predecessor_ids
+                if predecessor_region_id not in component_shared_region_ids
+                and predecessor_region_id in record_by_region_id
             }
         )
         primary_entry_region_ids = tuple(
@@ -184,15 +187,7 @@ def apply_x86_16_cross_entry_grouped_units(codegen: Any) -> bool:
     if artifact is None:
         setattr(codegen, "_inertia_cross_entry_unit_members", ())
         return False
-    member_region_ids = tuple(
-        sorted(
-            {
-                region_id
-                for unit in artifact.units
-                for region_id in unit.member_region_ids
-            }
-        )
-    )
+    member_region_ids = tuple(sorted({region_id for unit in artifact.units for region_id in unit.member_region_ids}))
     setattr(codegen, "_inertia_cross_entry_unit_members", member_region_ids)
     return bool(artifact.units)
 

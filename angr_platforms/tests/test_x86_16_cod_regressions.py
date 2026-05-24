@@ -157,7 +157,9 @@ def test_cod_biosfunc_clearkeyflags_far_word_store():
     assert result.returncode == 0, result.stderr + result.stdout
     _assert_has_all(result.stdout, ("function: 0x1000 _bios_clearkeyflags",))
     _assert_has_all(result.stdout, ("MK_FP(0x40, 0x17)",))
-    _assert_has_none(result.stdout, ("*((unsigned short *)1047)", "*((char *)(es * 16 + 1047))", "*((char *)(es * 16 + 1048))"))
+    _assert_has_none(
+        result.stdout, ("*((unsigned short *)1047)", "*((char *)(es * 16 + 1047))", "*((char *)(es * 16 + 1048))")
+    )
 
 
 def test_cod_dos_getfree_call_and_return_recovered():
@@ -262,8 +264,7 @@ def test_cod_known_object_catalog_is_exposed():
         [
             sys.executable,
             "-c",
-            "import angr_platforms.X86_16 as x; "
-            "print(x.describe_x86_16_cod_known_objects()['names'])",
+            "import angr_platforms.X86_16 as x; print(x.describe_x86_16_cod_known_objects()['names'])",
         ],
         cwd=REPO_ROOT,
         capture_output=True,
@@ -400,7 +401,7 @@ def test_cod_loadprog_uses_known_helper_signature_and_no_missing_type():
             "rin.h.al = mode",
             "rin.x.dx = (unsigned int)file",
             "err = intdos(&rin, &rout);",
-            "ERROR(\"dos_loadprog: unable to load %s at 0x%x, error 0x%x\", file, segment, err);",
+            'ERROR("dos_loadprog: unable to load %s at 0x%x, error 0x%x", file, segment, err);',
             "return err;",
         ),
     )
@@ -464,8 +465,16 @@ def test_cod_dos_getreturncode_returns_value():
 @pytest.mark.parametrize(
     ("cod_name", "proc_name", "anchors"),
     (
-        ("DOSFUNC.COD", "_dos_getfree", ("int _intdos(union REGS *in, union REGS *out);", "int _ERROR(const char *fmt, ...);")),
-        ("DOSFUNC.COD", "_dos_loadOverlay", ("int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline);",)),
+        (
+            "DOSFUNC.COD",
+            "_dos_getfree",
+            ("int _intdos(union REGS *in, union REGS *out);", "int _ERROR(const char *fmt, ...);"),
+        ),
+        (
+            "DOSFUNC.COD",
+            "_dos_loadOverlay",
+            ("int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline);",),
+        ),
         ("EGAME2.COD", "_openFileWrapper", ("int _openFile(const char *path, unsigned short mode);",)),
     ),
 )
@@ -597,7 +606,9 @@ def test_prune_dead_local_assignments_removes_unused_constant_stores():
     live_cvar = structured_c.CVariable(live_var, variable_type=SimTypeShort(False), codegen=codegen)
     statements = structured_c.CStatements(
         [
-            structured_c.CAssignment(dead_cvar, structured_c.CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            structured_c.CAssignment(
+                dead_cvar, structured_c.CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen
+            ),
             structured_c.CAssignment(
                 live_cvar,
                 structured_c.CBinaryOp(
@@ -911,10 +922,7 @@ def test_simplify_x86_16_stack_byte_pointers_rewrites_byte_walk_loop():
     )
 
     assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
-        "    while (*s++)\n"
-        "    {\n"
-        "        n += 1;\n"
-        "    }\n\n"
+        "    while (*s++)\n    {\n        n += 1;\n    }\n\n"
     )
 
 
@@ -943,8 +951,7 @@ def test_simplify_x86_16_stack_byte_pointers_rewrites_segmented_byte_pair_loads(
     )
 
     assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
-        "    x = *((unsigned short far *)MK_FP(ds, 2978)) - 1;\n"
-        "    y = *((unsigned short *)&s_4) + 1;\n"
+        "    x = *((unsigned short far *)MK_FP(ds, 2978)) - 1;\n    y = *((unsigned short *)&s_4) + 1;\n"
     )
 
 
@@ -955,8 +962,7 @@ def test_simplify_x86_16_stack_byte_pointers_rewrites_direct_ss_local_stores():
     )
 
     assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
-        "    *((char *)(&s_4 + 1)) = *((unsigned short *)&s_4) + 1 >> 8;\n"
-        "    *((unsigned short *)(&s_4 - 2)) = 0;\n"
+        "    *((char *)(&s_4 + 1)) = *((unsigned short *)&s_4) + 1 >> 8;\n    *((unsigned short *)(&s_4 - 2)) = 0;\n"
     )
 
 
@@ -968,21 +974,15 @@ def test_simplify_x86_16_stack_byte_pointers_rewrites_direct_ss_local_exprs_insi
     )
 
     assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
-        "    for (; ; *((char *)(&s_4 + 1)) = *((unsigned short *)&s_4) + 1 >> 8)\n"
-        "    {\n"
-        "    }\n"
+        "    for (; ; *((char *)(&s_4 + 1)) = *((unsigned short *)&s_4) + 1 >> 8)\n    {\n    }\n"
     )
 
 
 def test_simplify_x86_16_stack_byte_pointers_rewrites_indexed_ss_local_store_shape():
-    c_text = (
-        "    (&s_8)[16 * ss] = cs;\n"
-        "    (&s_7)[16 * ss] = cs >> 8;\n"
-    )
+    c_text = "    (&s_8)[16 * ss] = cs;\n    (&s_7)[16 * ss] = cs >> 8;\n"
 
     assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
-        "    *((char *)&s_8) = cs;\n"
-        "    *((char *)&s_7) = cs >> 8;\n"
+        "    *((char *)&s_8) = cs;\n    *((char *)&s_7) = cs >> 8;\n"
     )
 
 
@@ -1001,8 +1001,12 @@ def test_decompiler_return_compat_falls_back_when_return_expression_is_unsupport
         fake_stmt = SimpleNamespace(ret_exprs=[], copy=lambda: SimpleNamespace(ret_exprs=[]), tags={"ins_addr": 0x1000})
         fake_block = SimpleNamespace(statements=[fake_stmt], copy=lambda **kwargs: SimpleNamespace(**kwargs))
         fake_cc = SimpleNamespace(return_val=lambda _returnty: object())
-        fake_function = SimpleNamespace(prototype=SimpleNamespace(returnty=SimpleNamespace()), calling_convention=fake_cc)
-        fake_self = SimpleNamespace(function=fake_function, arch=SimpleNamespace(byte_width=2), _next_atom=lambda: 1, _new_block=None)
+        fake_function = SimpleNamespace(
+            prototype=SimpleNamespace(returnty=SimpleNamespace()), calling_convention=fake_cc
+        )
+        fake_self = SimpleNamespace(
+            function=fake_function, arch=SimpleNamespace(byte_width=2), _next_atom=lambda: 1, _new_block=None
+        )
 
         result = ReturnMaker._handle_Return(fake_self, 0, fake_stmt, fake_block)
 
@@ -1249,14 +1253,18 @@ def test_adjacent_byte_pair_alias_seed_preserves_dereferenced_source_evidence():
     high_tmp = structured_c.CVariable(high_tmp_var, variable_type=SimTypeShort(False), codegen=codegen)
     source_cvar = structured_c.CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
 
-    low_load = structured_c.CUnaryOp("Dereference", structured_c.CTypeCast(None, SimTypeShort(False), source_cvar, codegen=codegen), codegen=codegen)
+    low_load = structured_c.CUnaryOp(
+        "Dereference", structured_c.CTypeCast(None, SimTypeShort(False), source_cvar, codegen=codegen), codegen=codegen
+    )
     object.__setattr__(low_load, "_type", SimTypeChar())
     high_load = structured_c.CUnaryOp(
         "Dereference",
         structured_c.CTypeCast(
             None,
             SimTypeShort(False),
-            structured_c.CBinaryOp("Add", source_cvar, structured_c.CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            structured_c.CBinaryOp(
+                "Add", source_cvar, structured_c.CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen
+            ),
             codegen=codegen,
         ),
         codegen=codegen,

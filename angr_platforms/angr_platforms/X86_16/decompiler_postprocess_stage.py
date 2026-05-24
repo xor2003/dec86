@@ -12,8 +12,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
-from angr.analyses.decompiler.structured_codegen.c import CStatements
+from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CStatements
 from angr.sim_type import SimTypeBottom, SimTypeShort
+from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
 
 from . import decompiler_postprocess as _post
 from . import decompiler_postprocess_calls as _calls
@@ -22,32 +23,29 @@ from . import decompiler_postprocess_globals as _globals
 from . import decompiler_postprocess_jcc as _jcc
 from . import decompiler_postprocess_simplify as _simplify
 from . import segmented_memory_reasoning as _segmented_mem
-from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
-from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
-from .decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
+from .callee_name_normalization import normalize_callee_name_8616
 from .condition_trace import (
     dump_condition_trace_8616,
     materialized_condition_drift_detected_8616,
     record_ast_condition_trace_8616,
     record_tail_validation_condition_trace_8616,
 )
+from .decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
+from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+from .lowering.ss_bp_substitution import (
+    apply_stack_variable_bindings_to_c_text,
+)
 from .lowering.stack_lowering import run_stack_lowering_pass_8616
 from .lowering.stack_lowering_from_facts import (
     lower_stack_accesses_from_alias_facts_8616,
-    build_stack_variable_bindings_from_alias_facts_8616,
-)
-from .lowering.ss_bp_substitution import (
-    apply_stack_variable_bindings_to_c_text,
-    substitute_ss_bp_dereferences_with_variables,
 )
 from .pipeline.contracts import assert_pipeline_contracts_8616
 from .pipeline.errors import PipelineHardError
 from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
-from .postprocess.optimization.pass_driver import _run_optimization_passes_8616
 from .postprocess.optimization.dead_setup import _count_dead_setup_escaped_8616
-from .callee_name_normalization import normalize_callee_name_8616
+from .postprocess.optimization.pass_driver import _run_optimization_passes_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
@@ -57,7 +55,6 @@ from .tail_validation import (
     persist_x86_16_tail_validation_snapshot,
     x86_16_tail_validation_result_passed,
 )
-from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
 
 __all__ = [
     "DecompilerPostprocessPassSpec",
@@ -164,6 +161,8 @@ def _rerun_stack_lowering_consumers_after_calls_8616(project, codegen) -> bool:
 
     from inertia_decompiler.cli_c_ast_rewrites import (
         _canonicalize_stack_cvars as _rewrite_canonicalize_stack_cvars,
+    )
+    from inertia_decompiler.cli_c_ast_rewrites import (
         _rewrite_ss_stack_byte_offsets as _rewrite_stack_byte_offsets,
     )
 
@@ -203,6 +202,8 @@ def _normalize_fact_backed_stack_accesses_8616(project, codegen) -> bool:
 
     from inertia_decompiler.cli_c_ast_rewrites import (
         _canonicalize_stack_cvars as _rewrite_canonicalize_stack_cvars,
+    )
+    from inertia_decompiler.cli_c_ast_rewrites import (
         _rewrite_ss_stack_byte_offsets as _rewrite_stack_byte_offsets,
     )
 
@@ -246,12 +247,24 @@ def _build_decompiler_postprocess_passes():
             _globals._prune_unused_unnamed_memory_declarations_8616,
             False,
         ),
-        DecompilerPostprocessPassSpec("_rewrite_decoded_jcc_conditions_8616", _jcc._rewrite_decoded_jcc_conditions_8616, True),
-        DecompilerPostprocessPassSpec("_rewrite_flag_condition_pairs_8616", _flags._rewrite_flag_condition_pairs_8616, False),
-        DecompilerPostprocessPassSpec("_rewrite_flag_bit_value_uses_8616", _flags._rewrite_flag_bit_value_uses_8616, False),
-        DecompilerPostprocessPassSpec("_prune_unused_flag_assignments_8616", _flags._prune_unused_flag_assignments_8616, True),
-        DecompilerPostprocessPassSpec("_prune_overwritten_flag_assignments_8616", _flags._prune_overwritten_flag_assignments_8616, True),
-        DecompilerPostprocessPassSpec("_fix_interval_guard_conditions_8616", _flags._fix_interval_guard_conditions_8616, False),
+        DecompilerPostprocessPassSpec(
+            "_rewrite_decoded_jcc_conditions_8616", _jcc._rewrite_decoded_jcc_conditions_8616, True
+        ),
+        DecompilerPostprocessPassSpec(
+            "_rewrite_flag_condition_pairs_8616", _flags._rewrite_flag_condition_pairs_8616, False
+        ),
+        DecompilerPostprocessPassSpec(
+            "_rewrite_flag_bit_value_uses_8616", _flags._rewrite_flag_bit_value_uses_8616, False
+        ),
+        DecompilerPostprocessPassSpec(
+            "_prune_unused_flag_assignments_8616", _flags._prune_unused_flag_assignments_8616, True
+        ),
+        DecompilerPostprocessPassSpec(
+            "_prune_overwritten_flag_assignments_8616", _flags._prune_overwritten_flag_assignments_8616, True
+        ),
+        DecompilerPostprocessPassSpec(
+            "_fix_interval_guard_conditions_8616", _flags._fix_interval_guard_conditions_8616, False
+        ),
         DecompilerPostprocessPassSpec(
             "_simplify_boolean_cites_8616",
             _simplify._simplify_boolean_cites_8616,
@@ -408,10 +421,20 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
                 "_normalize_call_target_names_final_8616",
             }
         )
-    simplify_structured_enabled = os.environ.get("INERTIA_ENABLE_STRUCTURED_SIMPLIFY_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+    simplify_structured_enabled = os.environ.get("INERTIA_ENABLE_STRUCTURED_SIMPLIFY_REWRITE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if not simplify_structured_enabled:
         skip_names.add("_simplify_structured_expressions_8616")
-    simplify_boolean_enabled = os.environ.get("INERTIA_ENABLE_BOOLEAN_SIMPLIFY_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+    simplify_boolean_enabled = os.environ.get("INERTIA_ENABLE_BOOLEAN_SIMPLIFY_REWRITE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if not simplify_boolean_enabled:
         skip_names.add("_simplify_boolean_cites_8616")
 
@@ -448,7 +471,8 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
             "_normalize_recovered_call_target_names_8616",
         }
         passes = tuple(
-            spec for spec in DECOMPILER_POSTPROCESS_PASSES
+            spec
+            for spec in DECOMPILER_POSTPROCESS_PASSES
             if spec.name in wrapper_pass_names or DECOMPILER_POSTPROCESS_PASSES.index(spec) < 11
         )
         if skip_names:
@@ -606,8 +630,8 @@ def _attach_tail_validation_widened_carrier_provenance_8616(codegen, cfunc, *, f
     emitted/live semantics.
     """
     try:
-        from angr.sim_variable import SimStackVariable
         from angr.analyses.decompiler.structured_codegen.c import CVariable
+        from angr.sim_variable import SimStackVariable
 
         from .lowering.real_mode_linear import _ensure_assignment_maps_8616
         from .tail_validation_fingerprint import _expr_fingerprint
@@ -655,7 +679,9 @@ def _attach_tail_validation_widened_carrier_provenance_8616(codegen, cfunc, *, f
 
     carrier_map: dict[str, dict[str, object]] = {}
     try:
-        var_id_map, name_map, _reg_map, _multi_var, _multi_name, _multi_reg, first_name_map, _first_reg_map = _ensure_assignment_maps_8616(codegen)
+        var_id_map, name_map, _reg_map, _multi_var, _multi_name, _multi_reg, first_name_map, _first_reg_map = (
+            _ensure_assignment_maps_8616(codegen)
+        )
     except Exception as ex:
         logging.getLogger(__name__).debug(
             "Tail-validation widened-carrier provenance assignment-map build failed at function=%#x stage=baseline-canonicalization: %s",
@@ -769,11 +795,10 @@ def _prepare_tail_validation_baseline_clone_8616(project, codegen, *, function_a
     if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
         import sys as _v_sys
 
-        _v_sys.stderr.write(
-            f"[dbg] tv-baseline clone start: func={function_addr:#x} clone_id={id(codegen)}\n"
-        )
+        _v_sys.stderr.write(f"[dbg] tv-baseline clone start: func={function_addr:#x} clone_id={id(codegen)}\n")
         _v_sys.stderr.flush()
         import time as _tv_time
+
         _tv_clone_start = _tv_time.perf_counter()
 
     cloned_codegen = _clone_codegen_for_validation_summary_8616(codegen)
@@ -801,20 +826,17 @@ def _prepare_tail_validation_baseline_clone_8616(project, codegen, *, function_a
             debug_stats["validation_clone_stack_bindings"] = len(bindings)
         if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
             import time as _tv_time
+
             _pass_start = _tv_time.perf_counter()
         for spec in DECOMPILER_POSTPROCESS_PASSES:
             if spec.name == "_normalize_fact_backed_stack_accesses_8616":
                 if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
-                    _v_sys.stderr.write(
-                        f"[dbg] tv-baseline clone pass: {spec.name} already applied\n"
-                    )
+                    _v_sys.stderr.write(f"[dbg] tv-baseline clone pass: {spec.name} already applied\n")
                     _v_sys.stderr.flush()
                 continue
             if spec.name == "_rerun_stack_lowering_consumers_after_calls_8616":
                 if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
-                    _v_sys.stderr.write(
-                        f"[dbg] tv-baseline clone pass: {spec.name} skipped validation-clone replay\n"
-                    )
+                    _v_sys.stderr.write(f"[dbg] tv-baseline clone pass: {spec.name} skipped validation-clone replay\n")
                     _v_sys.stderr.flush()
                 continue
             try:
@@ -841,9 +863,7 @@ def _prepare_tail_validation_baseline_clone_8616(project, codegen, *, function_a
         )
         clone_debug = getattr(cloned_codegen, "_inertia_stack_lowering_debug", None)
         if isinstance(clone_debug, dict):
-            debug_stats["validation_clone_stack_materialized"] = int(
-                clone_debug.get("stack_slot_materialized", 0) or 0
-            )
+            debug_stats["validation_clone_stack_materialized"] = int(clone_debug.get("stack_slot_materialized", 0) or 0)
             debug_stats["validation_clone_recurrence_materialized"] = int(
                 clone_debug.get("recurrence_bound_to_materialized_local", 0) or 0
             )
@@ -861,15 +881,13 @@ def _prepare_tail_validation_baseline_clone_8616(project, codegen, *, function_a
         if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
             import sys as _v_sys
 
-            _v_sys.stderr.write(
-                f"[dbg] tv-baseline clone failed: func={function_addr:#x} err={debug_stats!r}\n"
-            )
+            _v_sys.stderr.write(f"[dbg] tv-baseline clone failed: func={function_addr:#x} err={debug_stats!r}\n")
             _v_sys.stderr.flush()
         raise
     cloned_codegen._inertia_validation_clone_debug = debug_stats
     if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
-        import time as _tv_time
         import sys as _v_sys
+        import time as _tv_time
 
         _v_sys.stderr.write(
             f"[dbg] tv-baseline clone done: func={function_addr:#x} elapsed={_tv_time.perf_counter() - _tv_clone_start:.3f}s\n"
@@ -968,7 +986,12 @@ def _debug_condition_progress_8616(project, codegen, *, function_addr: int, labe
 
 
 def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project, codegen, *, mode: str):
-    if os.environ.get("INERTIA_ENABLE_TV_BASELINE_CANONICALIZATION", "").strip().lower() not in {"1", "true", "yes", "on"}:
+    if os.environ.get("INERTIA_ENABLE_TV_BASELINE_CANONICALIZATION", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
         return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
     function_addr = getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1
     # Large functions frequently time out in baseline clone canonicalization.
@@ -976,7 +999,11 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project
     # and avoid repeated timeout churn.
     try:
         kb_funcs = getattr(getattr(project, "kb", None), "functions", None)
-        fn = kb_funcs.function(function_addr, create=False) if kb_funcs is not None and isinstance(function_addr, int) and function_addr >= 0 else None
+        fn = (
+            kb_funcs.function(function_addr, create=False)
+            if kb_funcs is not None and isinstance(function_addr, int) and function_addr >= 0
+            else None
+        )
         block_count = len(getattr(fn, "block_addrs_set", ()) or ()) if fn is not None else 0
     except Exception:
         block_count = 0
@@ -1097,9 +1124,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     if isinstance(trace_func_addr, int) and isinstance(delta, int):
         trace_func_addr = trace_func_addr + delta
     validation_enabled = bool(getattr(project, "_inertia_tail_validation_enabled", True))
-    per_pass_validation_enabled = bool(
-        getattr(project, "_inertia_postprocess_per_pass_validation_enabled", False)
-    )
+    per_pass_validation_enabled = bool(getattr(project, "_inertia_postprocess_per_pass_validation_enabled", False))
     if os.environ.get("INERTIA_DEBUG_CONDITION_TRACE") or os.environ.get("INERTIA_DEBUG_POSTPROCESS_VALIDATION"):
         per_pass_validation_enabled = True
     if os.environ.get("INERTIA_FORCE_PER_PASS_TV"):
@@ -1175,20 +1200,17 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                 ex,
             )
             return False
-        enforce_pass_validation = (
-            per_pass_validation_enabled
-            or pass_name in {
-                "_rewrite_decoded_jcc_conditions_8616",
-                "_recover_missing_direct_calls_from_evidence_8616",
-                "_normalize_fact_backed_stack_accesses_8616",
-                "_normalize_call_target_names_8616",
-                "_normalize_recovered_call_target_names_8616",
-                "_materialize_callsite_stack_arguments_8616",
-                "_materialize_callsite_prototypes_8616",
-                "_materialize_recovered_callsite_stack_arguments_8616",
-                "_recover_missing_direct_calls_final_8616",
-            }
-        )
+        enforce_pass_validation = per_pass_validation_enabled or pass_name in {
+            "_rewrite_decoded_jcc_conditions_8616",
+            "_recover_missing_direct_calls_from_evidence_8616",
+            "_normalize_fact_backed_stack_accesses_8616",
+            "_normalize_call_target_names_8616",
+            "_normalize_recovered_call_target_names_8616",
+            "_materialize_callsite_stack_arguments_8616",
+            "_materialize_callsite_prototypes_8616",
+            "_materialize_recovered_callsite_stack_arguments_8616",
+            "_recover_missing_direct_calls_final_8616",
+        }
         if validation_enabled and enforce_pass_validation:
             current_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
             validation = compare_x86_16_tail_validation_summaries(baseline_summary, current_summary)
@@ -1295,7 +1317,12 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             return accepted_changed
 
     # ── Optimization layer ──
-    optimization_enabled = os.environ.get("INERTIA_ENABLE_POSTPROCESS_OPT", "").strip().lower() in {"1", "true", "yes", "on"}
+    optimization_enabled = os.environ.get("INERTIA_ENABLE_POSTPROCESS_OPT", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if not per_pass_validation_enabled and optimization_enabled:
         # Skip optimization for now — widening passes handle
         # CStatements internally via _unwrap_statements_8616
@@ -1312,34 +1339,35 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             return accepted_changed
 
     import time as _ppt
+
     _t_pp_start = _ppt.perf_counter()
     trace_after_callsite = False
     for spec in pass_specs:
-        if (
-            spec.name == "_prune_overwritten_flag_assignments_8616"
-            and os.environ.get("INERTIA_ENABLE_FLAG_OVERWRITE_PRUNE", "").strip().lower()
-            not in {"1", "true", "yes", "on"}
-        ):
+        if spec.name == "_prune_overwritten_flag_assignments_8616" and os.environ.get(
+            "INERTIA_ENABLE_FLAG_OVERWRITE_PRUNE", ""
+        ).strip().lower() not in {"1", "true", "yes", "on"}:
+            continue
+        if spec.name == "_materialize_callsite_stack_arguments_final_8616" and os.environ.get(
+            "INERTIA_ENABLE_FINAL_CALLSITE_REMATERIALIZE", ""
+        ).strip().lower() not in {"1", "true", "yes", "on"}:
+            continue
+        if spec.name == "_normalize_call_target_names_final_8616" and os.environ.get(
+            "INERTIA_ENABLE_FINAL_CALL_TARGET_NORMALIZE", ""
+        ).strip().lower() not in {"1", "true", "yes", "on"}:
             continue
         if (
-            spec.name == "_materialize_callsite_stack_arguments_final_8616"
-            and os.environ.get("INERTIA_ENABLE_FINAL_CALLSITE_REMATERIALIZE", "").strip().lower()
-            not in {"1", "true", "yes", "on"}
+            spec.name == "_normalize_fact_backed_stack_accesses_8616"
+            and not _fact_backed_stack_normalize_enabled_8616()
         ):
-            continue
-        if (
-            spec.name == "_normalize_call_target_names_final_8616"
-            and os.environ.get("INERTIA_ENABLE_FINAL_CALL_TARGET_NORMALIZE", "").strip().lower()
-            not in {"1", "true", "yes", "on"}
-        ):
-            continue
-        if spec.name == "_normalize_fact_backed_stack_accesses_8616" and not _fact_backed_stack_normalize_enabled_8616():
             continue
         project._inertia_decompiler_stage = f"postprocess:{spec.name}"
         _t_pass = _ppt.perf_counter()
         if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
             import sys as _ppsys
-            _ppsys.stderr.write(f"[{_ppt.strftime('%H:%M:%S')}] postprocess pass: {spec.name} (+{_t_pass - _t_pp_start:.1f}s)\n")
+
+            _ppsys.stderr.write(
+                f"[{_ppt.strftime('%H:%M:%S')}] postprocess pass: {spec.name} (+{_t_pass - _t_pp_start:.1f}s)\n"
+            )
             _ppsys.stderr.flush()
         if spec.needs_project:
             step = lambda spec=spec: spec.func(project, codegen)
@@ -1365,7 +1393,9 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             if _regenerate_text_safely(codegen, context=f"{trace_func_addr:#x} stack-noise-trace:{spec.name}"):
                 _debug_stack_noise_8616(spec.name, getattr(codegen, "text", ""), trace_func_addr)
     if not codegen._inertia_postprocess_validation_failed:
-        final_context = f"{trace_func_addr:#x} postprocess:final" if isinstance(trace_func_addr, int) else "postprocess:final"
+        final_context = (
+            f"{trace_func_addr:#x} postprocess:final" if isinstance(trace_func_addr, int) else "postprocess:final"
+        )
         _regenerate_text_safely(codegen, context=final_context)
     codegen._inertia_postprocess_changed = accepted_changed
     project._inertia_decompiler_stage = "postprocess"
@@ -1474,6 +1504,7 @@ def _is_direct_callsite_helper_delta_only_8616(project, function, validation: di
     if isinstance(func_addr, int):
         try:
             from .decompiler_postprocess_calls import _cod_source_call_names_8616  # local import avoids cycle
+
             for source_name in _cod_source_call_names_8616(project, func_addr):
                 if not isinstance(source_name, str) or not source_name:
                     continue
@@ -1667,7 +1698,7 @@ def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:
 
     AGENTS rule: rewrite must not hide bad alias/type/condition recovery.
     If invariants fail, rewrite is skipped and honest partial output is emitted.
-    
+
     CRITICAL: transfer semantic alias facts from lifter/emulator to codegen
     BEFORE running invariants, so the invariant checks can see them.
     """
@@ -1794,16 +1825,20 @@ def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:
 
         formatted = format_invariant_report_8616(report)
         log = logging.getLogger(__name__)
-        log.warning("Pre-rewrite invariant gate BLOCKED rewrite for %#x (%s): %s",
-                     getattr(function, 'addr', 0),
-                     getattr(function, 'name', '?'),
-                     report.skip_reason)
+        log.warning(
+            "Pre-rewrite invariant gate BLOCKED rewrite for %#x (%s): %s",
+            getattr(function, "addr", 0),
+            getattr(function, "name", "?"),
+            report.skip_reason,
+        )
         log.warning("Invariant report:\n%s", formatted)
     else:
         log = logging.getLogger(__name__)
-        log.debug("Pre-rewrite invariant gate passed for %#x (%s)",
-                   getattr(function, 'addr', 0),
-                   getattr(function, 'name', '?'))
+        log.debug(
+            "Pre-rewrite invariant gate passed for %#x (%s)",
+            getattr(function, "addr", 0),
+            getattr(function, "name", "?"),
+        )
 
 
 def _decompile_8616(self):
@@ -1821,7 +1856,10 @@ def _decompile_8616(self):
     tv_enabled = bool(getattr(self.project, "_inertia_tail_validation_enabled", True))
     if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
         import sys as _tv_sys
-        _tv_sys.stderr.write(f"[dbg] _decompile_8616: addr={func_addr} name={func_name} codegen_is_none={self.codegen is None} tv_enabled={tv_enabled}\n")
+
+        _tv_sys.stderr.write(
+            f"[dbg] _decompile_8616: addr={func_addr} name={func_name} codegen_is_none={self.codegen is None} tv_enabled={tv_enabled}\n"
+        )
         _tv_sys.stderr.flush()
     if self.project.arch.name != "86_16" or self.codegen is None:
         return
@@ -1857,6 +1895,7 @@ def _decompile_8616(self):
 
     validation_mode = "live_out"
     import sys as _tv_sys3
+
     _tv_sys3.stderr.write(f"[dbg] _decompile_8616 ENTER validation path: addr={func_addr} id={id(self.codegen)}\n")
     _tv_sys3.stderr.flush()
     before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
@@ -1886,7 +1925,11 @@ def _decompile_8616(self):
             with contextlib.suppress(Exception):
                 _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
         setattr(self.codegen, "_inertia_postprocess_exception", repr(ex))
-        setattr(self.codegen, "_inertia_postprocess_exception_pass", getattr(self.codegen, "_inertia_last_postprocess_pass", None))
+        setattr(
+            self.codegen,
+            "_inertia_postprocess_exception_pass",
+            getattr(self.codegen, "_inertia_last_postprocess_pass", None),
+        )
     postprocess_elapsed = time.perf_counter() - postprocess_started
     function = getattr(self, "function", None) or getattr(self, "func", None)
     if function is None and getattr(getattr(self, "codegen", None), "cfunc", None) is not None:
@@ -1993,14 +2036,19 @@ def _decompile_8616(self):
         setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
     if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
         import sys as _tv_sys2
-        _tv_sys2.stderr.write(f"[dbg] _decompile_8616 persist: addr={func_addr} name={func_name} snapshot_stages={list(snapshot.keys()) if isinstance(snapshot, dict) else 'NONE'} codegen_id={id(self.codegen)}\n")
+
+        _tv_sys2.stderr.write(
+            f"[dbg] _decompile_8616 persist: addr={func_addr} name={func_name} snapshot_stages={list(snapshot.keys()) if isinstance(snapshot, dict) else 'NONE'} codegen_id={id(self.codegen)}\n"
+        )
         _tv_sys2.stderr.flush()
     log = logging.getLogger(__name__)
     if not x86_16_tail_validation_result_passed(validation):
         validation_verdict_text = str(validation.get("verdict") or validation.get("summary_text") or "")
         if "Missing source-evidenced calls" in validation_verdict_text:
             with contextlib.suppress(Exception):
-                rescue_changed = bool(_calls._recover_missing_direct_calls_from_evidence_8616(self.project, self.codegen))
+                rescue_changed = bool(
+                    _calls._recover_missing_direct_calls_from_evidence_8616(self.project, self.codegen)
+                )
                 if rescue_changed:
                     _calls._materialize_callsite_stack_arguments_8616(self.project, self.codegen)
                     _calls._normalize_call_target_names_8616(self.codegen)
@@ -2029,10 +2077,9 @@ def _decompile_8616(self):
                         after_fingerprint=rescue_after_fingerprint,
                     )
                     validation_verdict_text = str(validation.get("verdict") or validation.get("summary_text") or "")
-        allow_validation_override = (
-            str(os.environ.get("INERTIA_ALLOW_POSTPROCESS_VALIDATION_OVERRIDE", "")).strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
+        allow_validation_override = str(
+            os.environ.get("INERTIA_ALLOW_POSTPROCESS_VALIDATION_OVERRIDE", "")
+        ).strip().lower() in {"1", "true", "yes", "on"}
         recovered_call_floor = int(getattr(self.codegen, "_inertia_direct_call_floor_recovered_count", 0) or 0)
         if (
             allow_validation_override
@@ -2076,7 +2123,9 @@ def _decompile_8616(self):
             snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
             if isinstance(snapshot, dict):
                 setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
-        elif allow_validation_override and _has_recovered_source_calls_in_codegen_8616(self.project, self.codegen, function):
+        elif allow_validation_override and _has_recovered_source_calls_in_codegen_8616(
+            self.project, self.codegen, function
+        ):
             log.warning(
                 "Postprocess validation changed but keeping recovered call-floor output (source-evidenced calls present): %s",
                 validation.get("verdict"),
@@ -2095,10 +2144,7 @@ def _decompile_8616(self):
             if isinstance(snapshot, dict):
                 setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
         else:
-            if (
-                "Missing source-evidenced" in validation_verdict_text
-                and pre_postprocess_cfunc_snapshot is not None
-            ):
+            if "Missing source-evidenced" in validation_verdict_text and pre_postprocess_cfunc_snapshot is not None:
                 post_score, post_total = _expected_source_call_score_from_cfunc_8616(
                     self.project,
                     getattr(self.codegen, "cfunc", None),
@@ -2196,8 +2242,11 @@ def _decompile_8616(self):
         log.info("%s", validation["verdict"])
     self.project._inertia_decompiler_stage = "done"
     import sys as _tv_sys4
+
     tv_snap = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
-    _tv_sys4.stderr.write(f"[dbg] _decompile_8616 DONE: addr={func_addr} codegen_id={id(self.codegen)} snapshot_stages={list(tv_snap.keys()) if isinstance(tv_snap, dict) else 'NONE'} proj_fb_stages={list(getattr(self.project, '_inertia_last_tail_validation_snapshot', {}).keys())}\n")
+    _tv_sys4.stderr.write(
+        f"[dbg] _decompile_8616 DONE: addr={func_addr} codegen_id={id(self.codegen)} snapshot_stages={list(tv_snap.keys()) if isinstance(tv_snap, dict) else 'NONE'} proj_fb_stages={list(getattr(self.project, '_inertia_last_tail_validation_snapshot', {}).keys())}\n"
+    )
     _tv_sys4.stderr.flush()
 
 

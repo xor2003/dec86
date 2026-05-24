@@ -82,19 +82,21 @@ def test_rewrite_flag_condition_pairs_recovers_zero_flag_guard_without_tail_delt
                 codegen=before_codegen,
             ),
             CIfElse(
-                [(
-                    CUnaryOp(
-                        "Not",
-                        CBinaryOp(
-                            "CmpEQ",
-                            CBinaryOp("And", before_flags, _const(0x40, before_codegen), codegen=before_codegen),
-                            _const(0, before_codegen),
+                [
+                    (
+                        CUnaryOp(
+                            "Not",
+                            CBinaryOp(
+                                "CmpEQ",
+                                CBinaryOp("And", before_flags, _const(0x40, before_codegen), codegen=before_codegen),
+                                _const(0, before_codegen),
+                                codegen=before_codegen,
+                            ),
                             codegen=before_codegen,
                         ),
-                        codegen=before_codegen,
-                    ),
-                    _empty_body(before_codegen),
-                )],
+                        _empty_body(before_codegen),
+                    )
+                ],
                 codegen=before_codegen,
             ),
         ],
@@ -323,15 +325,17 @@ def test_rewrite_flag_condition_pairs_refuses_incomplete_signed_mask_recovery():
                 codegen=codegen,
             ),
             CIfElse(
-                [(
-                    CBinaryOp(
-                        "CmpNE",
-                        CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
-                        CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
-                        codegen=codegen,
-                    ),
-                    _empty_body(codegen),
-                )],
+                [
+                    (
+                        CBinaryOp(
+                            "CmpNE",
+                            CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+                            CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                            codegen=codegen,
+                        ),
+                        _empty_body(codegen),
+                    )
+                ],
                 codegen=codegen,
             ),
         ],
@@ -371,20 +375,22 @@ def test_rewrite_flag_condition_pairs_recovers_nested_flag_mask_inside_logical_a
                 codegen=codegen,
             ),
             CIfElse(
-                [(
-                    CBinaryOp(
-                        "LogicalAnd",
+                [
+                    (
                         CBinaryOp(
-                            "CmpEQ",
-                            CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
-                            CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                            "LogicalAnd",
+                            CBinaryOp(
+                                "CmpEQ",
+                                CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+                                CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                                codegen=codegen,
+                            ),
+                            other_guard,
                             codegen=codegen,
                         ),
-                        other_guard,
-                        codegen=codegen,
-                    ),
-                    _empty_body(codegen),
-                )],
+                        _empty_body(codegen),
+                    )
+                ],
                 codegen=codegen,
             ),
         ],
@@ -434,25 +440,27 @@ def test_rewrite_flag_condition_pairs_collapses_signed_gt_combo_from_zf_and_sf_o
                 codegen=codegen,
             ),
             CIfElse(
-                [(
-                    CBinaryOp(
-                        "LogicalAnd",
+                [
+                    (
                         CBinaryOp(
-                            "CmpEQ",
-                            CBinaryOp("And", flags_var, _const(0x40, codegen), codegen=codegen),
-                            _const(0, codegen),
+                            "LogicalAnd",
+                            CBinaryOp(
+                                "CmpEQ",
+                                CBinaryOp("And", flags_var, _const(0x40, codegen), codegen=codegen),
+                                _const(0, codegen),
+                                codegen=codegen,
+                            ),
+                            CBinaryOp(
+                                "CmpEQ",
+                                CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+                                CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                                codegen=codegen,
+                            ),
                             codegen=codegen,
                         ),
-                        CBinaryOp(
-                            "CmpEQ",
-                            CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
-                            CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
-                            codegen=codegen,
-                        ),
-                        codegen=codegen,
-                    ),
-                    _empty_body(codegen),
-                )],
+                        _empty_body(codegen),
+                    )
+                ],
                 codegen=codegen,
             ),
         ],
@@ -497,20 +505,22 @@ def test_rewrite_flag_condition_pairs_collapses_signed_le_combo_from_zf_or_sf_of
                 codegen=codegen,
             ),
             CIfElse(
-                [(
-                    CBinaryOp(
-                        "LogicalOr",
-                        CBinaryOp("And", flags_var, _const(0x40, codegen), codegen=codegen),
+                [
+                    (
                         CBinaryOp(
-                            "CmpNE",
-                            CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
-                            CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                            "LogicalOr",
+                            CBinaryOp("And", flags_var, _const(0x40, codegen), codegen=codegen),
+                            CBinaryOp(
+                                "CmpNE",
+                                CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+                                CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                                codegen=codegen,
+                            ),
                             codegen=codegen,
                         ),
-                        codegen=codegen,
-                    ),
-                    _empty_body(codegen),
-                )],
+                        _empty_body(codegen),
+                    )
+                ],
                 codegen=codegen,
             ),
         ],
@@ -522,9 +532,7 @@ def test_rewrite_flag_condition_pairs_collapses_signed_le_combo_from_zf_or_sf_of
     changed = _rewrite_flag_condition_pairs_8616(codegen)
 
     assert changed is True
-    after_if = next(
-        stmt for stmt in codegen.cfunc.statements.statements if type(stmt).__name__ == "CIfElse"
-    )
+    after_if = next(stmt for stmt in codegen.cfunc.statements.statements if type(stmt).__name__ == "CIfElse")
     after_condition = after_if.condition_and_nodes[0][0]
     assert isinstance(after_condition, CBinaryOp)
     assert after_condition.op == "CmpLE"
@@ -552,15 +560,17 @@ def test_rewrite_flag_condition_pairs_rewrites_when_flags_assignment_is_not_imme
             ),
             CAssignment(scratch, _const(1, codegen), codegen=codegen),
             CIfElse(
-                [(
-                    CBinaryOp(
-                        "CmpNE",
-                        CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
-                        CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
-                        codegen=codegen,
-                    ),
-                    _empty_body(codegen),
-                )],
+                [
+                    (
+                        CBinaryOp(
+                            "CmpNE",
+                            CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+                            CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                            codegen=codegen,
+                        ),
+                        _empty_body(codegen),
+                    )
+                ],
                 codegen=codegen,
             ),
         ],
@@ -572,9 +582,7 @@ def test_rewrite_flag_condition_pairs_rewrites_when_flags_assignment_is_not_imme
     changed = _rewrite_flag_condition_pairs_8616(codegen)
 
     assert changed is True
-    after_if = next(
-        stmt for stmt in codegen.cfunc.statements.statements if type(stmt).__name__ == "CIfElse"
-    )
+    after_if = next(stmt for stmt in codegen.cfunc.statements.statements if type(stmt).__name__ == "CIfElse")
     after_condition = after_if.condition_and_nodes[0][0]
     assert isinstance(after_condition, CBinaryOp)
     assert after_condition.op == "CmpNE"
@@ -591,15 +599,17 @@ def test_fix_interval_guard_conditions_rewrites_impossible_bool_cite_interval():
     codegen.cfunc.statements = CStatements(
         [
             CIfElse(
-                [(
-                    CBinaryOp(
-                        "LogicalAnd",
-                        CITE(low, _const(1, codegen), _const(0, codegen), codegen=codegen),
-                        CITE(high, _const(1, codegen), _const(0, codegen), codegen=codegen),
-                        codegen=codegen,
-                    ),
-                    _empty_body(codegen),
-                )],
+                [
+                    (
+                        CBinaryOp(
+                            "LogicalAnd",
+                            CITE(low, _const(1, codegen), _const(0, codegen), codegen=codegen),
+                            CITE(high, _const(1, codegen), _const(0, codegen), codegen=codegen),
+                            codegen=codegen,
+                        ),
+                        _empty_body(codegen),
+                    )
+                ],
                 codegen=codegen,
             )
         ],
@@ -648,10 +658,12 @@ def test_rewrite_flag_condition_pairs_strips_redundant_signed_flag_pair_when_exp
                 codegen=codegen,
             ),
             CIfElse(
-                [(
-                    CBinaryOp("LogicalAnd", raw_flag_guard, explicit_guard, codegen=codegen),
-                    _empty_body(codegen),
-                )],
+                [
+                    (
+                        CBinaryOp("LogicalAnd", raw_flag_guard, explicit_guard, codegen=codegen),
+                        _empty_body(codegen),
+                    )
+                ],
                 codegen=codegen,
             ),
         ],
@@ -687,10 +699,12 @@ def test_fix_interval_guard_conditions_strips_standalone_signed_flag_pair_when_s
     codegen.cfunc.statements = CStatements(
         [
             CIfElse(
-                [(
-                    CBinaryOp("LogicalAnd", raw_flag_guard, strict_compare, codegen=codegen),
-                    _empty_body(codegen),
-                )],
+                [
+                    (
+                        CBinaryOp("LogicalAnd", raw_flag_guard, strict_compare, codegen=codegen),
+                        _empty_body(codegen),
+                    )
+                ],
                 codegen=codegen,
             ),
         ],
@@ -713,7 +727,9 @@ def test_fix_interval_guard_conditions_simplifies_split_ordering_if_chain_with_n
     before_codegen = _codegen([])
     flags_var = _reg(project, "flags", before_codegen, var_name="flags_tmp")
     high_guard = CITE(
-        CBinaryOp("CmpLE", _reg(project, "dx", before_codegen), _reg(project, "cx", before_codegen), codegen=before_codegen),
+        CBinaryOp(
+            "CmpLE", _reg(project, "dx", before_codegen), _reg(project, "cx", before_codegen), codegen=before_codegen
+        ),
         _const(0, before_codegen),
         _const(1, before_codegen),
         codegen=before_codegen,
@@ -744,7 +760,9 @@ def test_fix_interval_guard_conditions_simplifies_split_ordering_if_chain_with_n
         codegen=before_codegen,
     )
     low_guard = CITE(
-        CBinaryOp("CmpLE", _reg(project, "ax", before_codegen), _reg(project, "bx", before_codegen), codegen=before_codegen),
+        CBinaryOp(
+            "CmpLE", _reg(project, "ax", before_codegen), _reg(project, "bx", before_codegen), codegen=before_codegen
+        ),
         _const(0, before_codegen),
         _const(1, before_codegen),
         codegen=before_codegen,
@@ -754,7 +772,10 @@ def test_fix_interval_guard_conditions_simplifies_split_ordering_if_chain_with_n
             CIfElse(
                 [
                     (high_guard, _empty_body(before_codegen)),
-                    (CBinaryOp("LogicalAnd", nested_flag_pair, low_guard, codegen=before_codegen), _empty_body(before_codegen)),
+                    (
+                        CBinaryOp("LogicalAnd", nested_flag_pair, low_guard, codegen=before_codegen),
+                        _empty_body(before_codegen),
+                    ),
                 ],
                 codegen=before_codegen,
             ),

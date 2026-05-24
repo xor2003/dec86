@@ -979,7 +979,9 @@ def _dos_arg(value: int | None, expr: str | None) -> str | None:
 
 
 def _dos_buffer_arg(call: DOSInt21Call, *, far_ptr: bool, const: bool) -> str | None:
-    cast = "const void far *" if far_ptr and const else "void far *" if far_ptr else "const void *" if const else "void *"
+    cast = (
+        "const void far *" if far_ptr and const else "void far *" if far_ptr else "const void *" if const else "void *"
+    )
     if call.dx is not None:
         return f"({cast})0x{call.dx:x}"
     if call.dx_expr is not None:
@@ -988,7 +990,9 @@ def _dos_buffer_arg(call: DOSInt21Call, *, far_ptr: bool, const: bool) -> str | 
 
 
 def _dos_si_buffer_arg(call: DOSInt21Call, *, far_ptr: bool, const: bool) -> str | None:
-    cast = "const char far *" if far_ptr and const else "char far *" if far_ptr else "const char *" if const else "char *"
+    cast = (
+        "const char far *" if far_ptr and const else "char far *" if far_ptr else "const char *" if const else "char *"
+    )
     if call.si is not None:
         return f"({cast})0x{call.si:x}"
     if call.si_expr is not None:

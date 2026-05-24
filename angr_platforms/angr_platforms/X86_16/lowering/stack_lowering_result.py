@@ -10,8 +10,6 @@ the function is marked invalid rather than silently continuing.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
-
 
 __all__ = [
     "StackLoweringResult",
@@ -68,10 +66,7 @@ class StackLoweringResult:
                 }
                 for f in self.failures
             ],
-            "materialized": [
-                {"offset": offset, "name": name}
-                for offset, name in self.materialized
-            ],
+            "materialized": [{"offset": offset, "name": name} for offset, name in self.materialized],
             "diagnostics": list(self.diagnostics),
         }
 

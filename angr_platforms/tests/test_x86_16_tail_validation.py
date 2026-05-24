@@ -11,7 +11,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CContinue,
     CDirtyExpression,
-    CExpressionStatement,
     CFunctionCall,
     CIfElse,
     CReturn,
@@ -23,13 +22,12 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from inertia_decompiler.tail_validation import tail_validation_snapshot_for_function_run
 
-from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 import angr_platforms.X86_16.tail_validation as tail_validation_module
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
-from angr_platforms.X86_16.tail_validation_fingerprint import build_x86_16_contextual_call_fingerprints
 import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
+from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.tail_validation import (
     X86_16TailValidationSummary,
     X86_16ValidationCacheDescriptor,
@@ -51,11 +49,12 @@ from angr_platforms.X86_16.tail_validation import (
     persist_x86_16_tail_validation_snapshot,
     resolve_x86_16_validation_cached_artifact,
     summarize_x86_16_tail_validation_records,
-    x86_16_tail_validation_snapshot_passed,
     x86_16_tail_validation_result_passed,
+    x86_16_tail_validation_snapshot_passed,
 )
+from angr_platforms.X86_16.tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
+from angr_platforms.X86_16.tail_validation_fingerprint import build_x86_16_contextual_call_fingerprints
 from angr_platforms.X86_16.tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
-from inertia_decompiler.tail_validation import tail_validation_snapshot_for_function_run
 
 
 class _DummyCodegen:
@@ -101,30 +100,30 @@ def _ds_deref(project, linear: int, codegen):
     ds = _reg(project, "ds", codegen)
     return CUnaryOp(
         "Dereference",
-        CBinaryOp("Add", CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen), _const(linear, codegen), codegen=codegen),
+        CBinaryOp(
+            "Add", CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen), _const(linear, codegen), codegen=codegen
+        ),
         codegen=codegen,
     )
 
 
 def _ss_stack_deref(project, stack_offset: int, addend: int, codegen):
-        ss = _reg(project, "ss", codegen)
-        return CUnaryOp(
-            "Dereference",
-            CTypeCast(
-                SimTypeShort(False),
-                SimTypeShort(False),
-                CBinaryOp(
-                    "Add",
-                    CBinaryOp("Mul", ss, _const(16, codegen), codegen=codegen),
-                    CTypeCast(
-                        SimTypeShort(False),
-                        SimTypeShort(False),
-                        CBinaryOp(
-                            "Add",
-                            CUnaryOp("Reference", _stack(stack_offset, codegen), codegen=codegen),
-                            _const(addend, codegen),
-                            codegen=codegen,
-                        ),
+    ss = _reg(project, "ss", codegen)
+    return CUnaryOp(
+        "Dereference",
+        CTypeCast(
+            SimTypeShort(False),
+            SimTypeShort(False),
+            CBinaryOp(
+                "Add",
+                CBinaryOp("Mul", ss, _const(16, codegen), codegen=codegen),
+                CTypeCast(
+                    SimTypeShort(False),
+                    SimTypeShort(False),
+                    CBinaryOp(
+                        "Add",
+                        CUnaryOp("Reference", _stack(stack_offset, codegen), codegen=codegen),
+                        _const(addend, codegen),
                         codegen=codegen,
                     ),
                     codegen=codegen,
@@ -132,7 +131,9 @@ def _ss_stack_deref(project, stack_offset: int, addend: int, codegen):
                 codegen=codegen,
             ),
             codegen=codegen,
-        )
+        ),
+        codegen=codegen,
+    )
 
 
 def test_tail_validation_summary_collects_observable_effects():
@@ -144,7 +145,10 @@ def test_tail_validation_summary_collects_observable_effects():
             CAssignment(_stack(4, codegen_stub), _const(2, codegen_stub), codegen=codegen_stub),
             CAssignment(_global(0x1234, codegen_stub), _const(3, codegen_stub), codegen=codegen_stub),
             CAssignment(_ds_deref(project, 0x234, codegen_stub), _const(4, codegen_stub), codegen=codegen_stub),
-            CReturn(CFunctionCall("print_dos_string", None, [_const(0x80, codegen_stub)], codegen=codegen_stub), codegen=codegen_stub),
+            CReturn(
+                CFunctionCall("print_dos_string", None, [_const(0x80, codegen_stub)], codegen=codegen_stub),
+                codegen=codegen_stub,
+            ),
         ],
         codegen_stub,
     )
@@ -185,16 +189,22 @@ def test_tail_validation_negative_memory_addr_is_not_counted_as_global():
 
 
 def test_tail_validation_live_out_ignores_nonsemantic_zero_stack_slot_write():
-    assert include_x86_16_tail_validation_stack_write(
-        "stack:+0x0",
-        mode="live_out",
-        observed_locations={"stack:+0x0"},
-    ) is False
-    assert include_x86_16_tail_validation_stack_write(
-        "stack:+0x4",
-        mode="live_out",
-        observed_locations={"stack:+0x4"},
-    ) is True
+    assert (
+        include_x86_16_tail_validation_stack_write(
+            "stack:+0x0",
+            mode="live_out",
+            observed_locations={"stack:+0x0"},
+        )
+        is False
+    )
+    assert (
+        include_x86_16_tail_validation_stack_write(
+            "stack:+0x4",
+            mode="live_out",
+            observed_locations={"stack:+0x4"},
+        )
+        is True
+    )
 
 
 def test_tail_validation_uses_callsite_summary_target_for_unknown_direct_call(monkeypatch):
@@ -334,7 +344,9 @@ def test_tail_validation_live_out_ignores_consumed_ss_outgoing_arg_store(monkeyp
     temp_var = CVariable(SimRegisterVariable(2, 2, name="vvar_67"), codegen=before_codegen)
     _codegen(
         [
-            CAssignment(_ss_stack_deref(project, -2, -2, before_codegen), _const(97, before_codegen), codegen=before_codegen),
+            CAssignment(
+                _ss_stack_deref(project, -2, -2, before_codegen), _const(97, before_codegen), codegen=before_codegen
+            ),
             CAssignment(
                 temp_var,
                 CBinaryOp("Sub", _stack(-2, before_codegen), _const(2, before_codegen), codegen=before_codegen),
@@ -426,7 +438,9 @@ def test_tail_validation_live_out_ignores_dynamic_dirty_ss_segment_writes():
                 SimTypeShort(False),
                 CBinaryOp(
                     "Add",
-                    CBinaryOp("Shl", _reg(project, "ss", before_codegen), _const(4, before_codegen), codegen=before_codegen),
+                    CBinaryOp(
+                        "Shl", _reg(project, "ss", before_codegen), _const(4, before_codegen), codegen=before_codegen
+                    ),
                     CBinaryOp(
                         "Sub",
                         CBinaryOp(
@@ -506,7 +520,11 @@ def test_tail_validation_diff_ignores_variable_name_churn():
         project,
         _codegen(
             [
-                CAssignment(_reg(project, "ax", before_codegen, var_name="tmp_a"), _const(1, before_codegen), codegen=before_codegen),
+                CAssignment(
+                    _reg(project, "ax", before_codegen, var_name="tmp_a"),
+                    _const(1, before_codegen),
+                    codegen=before_codegen,
+                ),
                 CReturn(_reg(project, "ax", before_codegen, var_name="tmp_a"), codegen=before_codegen),
             ],
             before_codegen,
@@ -517,7 +535,11 @@ def test_tail_validation_diff_ignores_variable_name_churn():
         project,
         _codegen(
             [
-                CAssignment(_reg(project, "ax", after_codegen, var_name="tmp_b"), _const(1, after_codegen), codegen=after_codegen),
+                CAssignment(
+                    _reg(project, "ax", after_codegen, var_name="tmp_b"),
+                    _const(1, after_codegen),
+                    codegen=after_codegen,
+                ),
                 CReturn(_reg(project, "ax", after_codegen, var_name="tmp_b"), codegen=after_codegen),
             ],
             after_codegen,
@@ -545,7 +567,11 @@ def test_tail_validation_live_out_mode_ignores_unused_temp_writes():
         project,
         _codegen(
             [
-                CAssignment(_reg(project, "cx", after_codegen, var_name="tmp_bool"), _const(1, after_codegen), codegen=after_codegen),
+                CAssignment(
+                    _reg(project, "cx", after_codegen, var_name="tmp_bool"),
+                    _const(1, after_codegen),
+                    codegen=after_codegen,
+                ),
                 CReturn(_reg(project, "ax", after_codegen), codegen=after_codegen),
             ],
             after_codegen,
@@ -556,7 +582,11 @@ def test_tail_validation_live_out_mode_ignores_unused_temp_writes():
         project,
         _codegen(
             [
-                CAssignment(_reg(project, "cx", after_codegen, var_name="tmp_bool"), _const(1, after_codegen), codegen=after_codegen),
+                CAssignment(
+                    _reg(project, "cx", after_codegen, var_name="tmp_bool"),
+                    _const(1, after_codegen),
+                    codegen=after_codegen,
+                ),
                 CReturn(_reg(project, "ax", after_codegen), codegen=after_codegen),
             ],
             after_codegen,
@@ -670,10 +700,17 @@ def test_tail_validation_live_out_ignores_register_writes_only_used_by_condition
         _codegen(
             [
                 CIfElse(
-                    [(
-                        CBinaryOp("Sub", _reg(project, "ax", before_codegen), _const(2, before_codegen), codegen=before_codegen),
-                        CStatements([], codegen=before_codegen),
-                    )],
+                    [
+                        (
+                            CBinaryOp(
+                                "Sub",
+                                _reg(project, "ax", before_codegen),
+                                _const(2, before_codegen),
+                                codegen=before_codegen,
+                            ),
+                            CStatements([], codegen=before_codegen),
+                        )
+                    ],
                     codegen=before_codegen,
                 )
             ],
@@ -691,10 +728,12 @@ def test_tail_validation_live_out_ignores_register_writes_only_used_by_condition
                     codegen=after_codegen,
                 ),
                 CIfElse(
-                    [(
-                        _reg(project, "ax", after_codegen),
-                        CStatements([], codegen=after_codegen),
-                    )],
+                    [
+                        (
+                            _reg(project, "ax", after_codegen),
+                            CStatements([], codegen=after_codegen),
+                        )
+                    ],
                     codegen=after_codegen,
                 ),
             ],
@@ -721,8 +760,12 @@ def test_tail_validation_boundary_fingerprint_is_stable_for_unchanged_shape():
 
 
 def test_tail_validation_cache_descriptor_is_deterministic():
-    first = build_x86_16_validation_cache_descriptor("tail_validation.test", {"stage": "postprocess", "mode": "live_out"})
-    second = build_x86_16_validation_cache_descriptor("tail_validation.test", {"stage": "postprocess", "mode": "live_out"})
+    first = build_x86_16_validation_cache_descriptor(
+        "tail_validation.test", {"stage": "postprocess", "mode": "live_out"}
+    )
+    second = build_x86_16_validation_cache_descriptor(
+        "tail_validation.test", {"stage": "postprocess", "mode": "live_out"}
+    )
 
     assert isinstance(first, X86_16ValidationCacheDescriptor)
     assert first == second
@@ -789,7 +832,10 @@ def test_tail_validation_cached_result_reuses_stage_comparison():
     before_codegen = _codegen([CReturn(_const(1, before_codegen), codegen=before_codegen)], before_codegen)
     after_codegen = _DummyCodegen()
     after_codegen = _codegen(
-        [CFunctionCall("helper_ping", None, [], codegen=after_codegen), CReturn(_const(1, after_codegen), codegen=after_codegen)],
+        [
+            CFunctionCall("helper_ping", None, [], codegen=after_codegen),
+            CReturn(_const(1, after_codegen), codegen=after_codegen),
+        ],
         after_codegen,
     )
     before_fp = fingerprint_x86_16_tail_validation_boundary(project, before_codegen)
@@ -912,7 +958,9 @@ def test_tail_validation_normalizes_zero_flag_compare_projection_noise():
     before_codegen = _DummyCodegen()
     after_codegen = _DummyCodegen()
 
-    before_cond = CBinaryOp("Sub", _reg(project, "ax", before_codegen), _const(2, before_codegen), codegen=before_codegen)
+    before_cond = CBinaryOp(
+        "Sub", _reg(project, "ax", before_codegen), _const(2, before_codegen), codegen=before_codegen
+    )
     after_cond = CBinaryOp(
         "CmpEQ",
         CBinaryOp(
@@ -932,11 +980,15 @@ def test_tail_validation_normalizes_zero_flag_compare_projection_noise():
 
     before = collect_x86_16_tail_validation_summary(
         project,
-        _codegen([CIfElse([(before_cond, CStatements([], codegen=before_codegen))], codegen=before_codegen)], before_codegen),
+        _codegen(
+            [CIfElse([(before_cond, CStatements([], codegen=before_codegen))], codegen=before_codegen)], before_codegen
+        ),
     )
     after = collect_x86_16_tail_validation_summary(
         project,
-        _codegen([CIfElse([(after_cond, CStatements([], codegen=after_codegen))], codegen=after_codegen)], after_codegen),
+        _codegen(
+            [CIfElse([(after_cond, CStatements([], codegen=after_codegen))], codegen=after_codegen)], after_codegen
+        ),
     )
 
     diff = compare_x86_16_tail_validation_summaries(before, after)
@@ -962,8 +1014,18 @@ def test_tail_validation_normalizes_adjacent_flag_assignment_guard_pairs():
         CBinaryOp("Mul", _reg(project, "di", after_codegen), _const(0x100, after_codegen), codegen=after_codegen),
         codegen=after_codegen,
     )
-    before_predicate = CBinaryOp("CmpEQ", CBinaryOp("Add", before_word, _const(1, before_codegen), codegen=before_codegen), _const(0, before_codegen), codegen=before_codegen)
-    after_predicate = CBinaryOp("CmpEQ", CBinaryOp("Add", after_word, _const(1, after_codegen), codegen=after_codegen), _const(0, after_codegen), codegen=after_codegen)
+    before_predicate = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("Add", before_word, _const(1, before_codegen), codegen=before_codegen),
+        _const(0, before_codegen),
+        codegen=before_codegen,
+    )
+    after_predicate = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("Add", after_word, _const(1, after_codegen), codegen=after_codegen),
+        _const(0, after_codegen),
+        codegen=after_codegen,
+    )
 
     before = collect_x86_16_tail_validation_summary(
         project,
@@ -975,19 +1037,26 @@ def test_tail_validation_normalizes_adjacent_flag_assignment_guard_pairs():
                     codegen=before_codegen,
                 ),
                 CIfElse(
-                    [(
-                        CUnaryOp(
-                            "Not",
-                            CBinaryOp(
-                                "CmpEQ",
-                                CBinaryOp("And", _reg(project, "flags", before_codegen), _const(64, before_codegen), codegen=before_codegen),
-                                _const(0, before_codegen),
+                    [
+                        (
+                            CUnaryOp(
+                                "Not",
+                                CBinaryOp(
+                                    "CmpEQ",
+                                    CBinaryOp(
+                                        "And",
+                                        _reg(project, "flags", before_codegen),
+                                        _const(64, before_codegen),
+                                        codegen=before_codegen,
+                                    ),
+                                    _const(0, before_codegen),
+                                    codegen=before_codegen,
+                                ),
                                 codegen=before_codegen,
                             ),
-                            codegen=before_codegen,
-                        ),
-                        CStatements([], codegen=before_codegen),
-                    )],
+                            CStatements([], codegen=before_codegen),
+                        )
+                    ],
                     codegen=before_codegen,
                 ),
             ],
@@ -996,7 +1065,9 @@ def test_tail_validation_normalizes_adjacent_flag_assignment_guard_pairs():
     )
     after = collect_x86_16_tail_validation_summary(
         project,
-        _codegen([CIfElse([(after_predicate, CStatements([], codegen=after_codegen))], codegen=after_codegen)], after_codegen),
+        _codegen(
+            [CIfElse([(after_predicate, CStatements([], codegen=after_codegen))], codegen=after_codegen)], after_codegen
+        ),
     )
 
     diff = compare_x86_16_tail_validation_summaries(before, after)
@@ -1080,8 +1151,12 @@ def test_tail_validation_keeps_ds_byte_pair_distinct_from_word_global_write():
         project,
         _codegen(
             [
-                CAssignment(_ds_deref(project, 0x7002, before_codegen), _const(0x34, before_codegen), codegen=before_codegen),
-                CAssignment(_ds_deref(project, 0x7003, before_codegen), _const(0x12, before_codegen), codegen=before_codegen),
+                CAssignment(
+                    _ds_deref(project, 0x7002, before_codegen), _const(0x34, before_codegen), codegen=before_codegen
+                ),
+                CAssignment(
+                    _ds_deref(project, 0x7003, before_codegen), _const(0x12, before_codegen), codegen=before_codegen
+                ),
             ],
             before_codegen,
         ),
@@ -1135,12 +1210,18 @@ def test_tail_validation_keeps_ds_word_load_distinct_from_global_word_condition(
 
     before = collect_x86_16_tail_validation_summary(
         project,
-        _codegen([CIfElse([(before_condition, CStatements([], codegen=before_codegen))], None, codegen=before_codegen)], before_codegen),
+        _codegen(
+            [CIfElse([(before_condition, CStatements([], codegen=before_codegen))], None, codegen=before_codegen)],
+            before_codegen,
+        ),
         mode="live_out",
     )
     after = collect_x86_16_tail_validation_summary(
         project,
-        _codegen([CIfElse([(after_condition, CStatements([], codegen=after_codegen))], None, codegen=after_codegen)], after_codegen),
+        _codegen(
+            [CIfElse([(after_condition, CStatements([], codegen=after_codegen))], None, codegen=after_codegen)],
+            after_codegen,
+        ),
         mode="live_out",
     )
 
@@ -1400,9 +1481,20 @@ def test_tail_validation_snapshot_for_function_run_prefers_complete_project_snap
 def test_tail_validation_snapshot_passed_rejects_non_stable_statuses():
     snapshot = {"postprocess": {"status": "stable"}}
     assert x86_16_tail_validation_snapshot_passed(snapshot, expected_stages=("postprocess",)) is True
-    assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "changed"}}, expected_stages=("postprocess",)) is False
-    assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "unknown"}}, expected_stages=("postprocess",)) is False
-    assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "uncollected"}}, expected_stages=("postprocess",)) is False
+    assert (
+        x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "changed"}}, expected_stages=("postprocess",))
+        is False
+    )
+    assert (
+        x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "unknown"}}, expected_stages=("postprocess",))
+        is False
+    )
+    assert (
+        x86_16_tail_validation_snapshot_passed(
+            {"postprocess": {"status": "uncollected"}}, expected_stages=("postprocess",)
+        )
+        is False
+    )
 
 
 def test_tail_validation_result_passed_only_accepts_stable_or_passed_status():
@@ -1470,7 +1562,9 @@ def test_tail_validation_surface_summarizes_headline_rates_and_hotspots():
                 "missing_count": 0,
                 "coverage_count": 5,
                 "mode_counts": {"live_out": 4},
-                "top_verdicts": [{"verdict": "structuring whole-tail validation [live_out] changed: guard", "count": 1}],
+                "top_verdicts": [
+                    {"verdict": "structuring whole-tail validation [live_out] changed: guard", "count": 1}
+                ],
             },
             "postprocess": {
                 "stable_count": 2,
@@ -1479,7 +1573,9 @@ def test_tail_validation_surface_summarizes_headline_rates_and_hotspots():
                 "missing_count": 0,
                 "coverage_count": 5,
                 "mode_counts": {"live_out": 4},
-                "top_verdicts": [{"verdict": "postprocess whole-tail validation [live_out] changed: helper", "count": 2}],
+                "top_verdicts": [
+                    {"verdict": "postprocess whole-tail validation [live_out] changed: helper", "count": 2}
+                ],
             },
             "changed_functions": [
                 {
@@ -2046,7 +2142,9 @@ def test_postprocess_codegen_restores_last_clean_state_on_live_out_delta(monkeyp
         codegen_arg.cfunc.state = "later"
         return True
 
-    monkeypatch.setattr(postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set())
+    monkeypatch.setattr(
+        postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set()
+    )
     monkeypatch.setattr(
         postprocess_stage._globals,
         "_coalesce_word_global_constant_stores_8616",
@@ -2097,7 +2195,9 @@ def test_postprocess_codegen_keeps_accepted_changes_when_live_out_stays_stable(m
         codegen_arg.cfunc.state = "accepted-2"
         return True
 
-    monkeypatch.setattr(postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set())
+    monkeypatch.setattr(
+        postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set()
+    )
     monkeypatch.setattr(
         postprocess_stage._globals,
         "_coalesce_word_global_constant_stores_8616",
@@ -2150,7 +2250,9 @@ def test_postprocess_codegen_rejects_non_stable_per_pass_validation_status(monke
         codegen_arg.cfunc.state = "accepted"
         return True
 
-    monkeypatch.setattr(postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set())
+    monkeypatch.setattr(
+        postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set()
+    )
     monkeypatch.setattr(
         postprocess_stage._globals,
         "_coalesce_word_global_constant_stores_8616",
@@ -2211,8 +2313,12 @@ def test_postprocess_codegen_skips_heapsort_debug_regeneration_without_env(monke
             postprocess_stage.DecompilerPostprocessPassSpec("_later_pass", lambda _codegen: False, False),
         ),
     )
-    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regen") or True)
-    monkeypatch.setattr(postprocess_stage, "_debug_heap_call_lines_8616", lambda *_args, **_kwargs: calls.append("heap"))
+    monkeypatch.setattr(
+        postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regen") or True
+    )
+    monkeypatch.setattr(
+        postprocess_stage, "_debug_heap_call_lines_8616", lambda *_args, **_kwargs: calls.append("heap")
+    )
     monkeypatch.setattr(postprocess_stage, "_debug_stack_noise_8616", lambda *_args, **_kwargs: calls.append("noise"))
 
     changed = postprocess_stage._postprocess_codegen_8616(project, codegen)

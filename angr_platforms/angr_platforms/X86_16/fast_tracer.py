@@ -14,7 +14,7 @@ class FastTraceResult:
 
 def _looks_like_16bit_function_prologue(code: bytes, offset: int) -> bool:
     window = code[offset : offset + 4]
-    return window.startswith(b"\x55\x8B\xEC")
+    return window.startswith(b"\x55\x8b\xec")
 
 
 def _looks_like_16bit_entry_byte(code: bytes, offset: int) -> bool:

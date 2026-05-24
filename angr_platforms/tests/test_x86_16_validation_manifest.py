@@ -1,3 +1,9 @@
+from angr_platforms.X86_16.structuring_grouped_refusal_report import (
+    describe_x86_16_structuring_grouped_refusal_report_surface,
+)
+from angr_platforms.X86_16.structuring_grouping_report import (
+    describe_x86_16_structuring_grouping_report_surface,
+)
 from angr_platforms.X86_16.validation_manifest import (
     VALIDATION_FAMILIES,
     VALIDATION_LAYERS,
@@ -6,17 +12,13 @@ from angr_platforms.X86_16.validation_manifest import (
     describe_x86_16_validation_layers,
     describe_x86_16_validation_triage,
 )
-from angr_platforms.X86_16.structuring_grouping_report import (
-    describe_x86_16_structuring_grouping_report_surface,
-)
-from angr_platforms.X86_16.structuring_grouped_refusal_report import (
-    describe_x86_16_structuring_grouped_refusal_report_surface,
-)
 
 
 def test_x86_16_validation_layers_cover_three_tier_discipline():
     assert [layer.name for layer in VALIDATION_LAYERS] == ["unit", "focused_corpus", "whole_program"]
-    assert describe_x86_16_validation_layers() == tuple((layer.name, layer.default_checks) for layer in VALIDATION_LAYERS)
+    assert describe_x86_16_validation_layers() == tuple(
+        (layer.name, layer.default_checks) for layer in VALIDATION_LAYERS
+    )
 
 
 def test_x86_16_validation_layers_pin_expected_focus_checks():

@@ -4,9 +4,9 @@ Integration tests for structural analysis on real corpus samples.
 This test validates cyclic pattern matching on real COD samples.
 """
 
+from types import SimpleNamespace
 
 import pytest
-from types import SimpleNamespace
 
 from angr_platforms.X86_16.structuring_analysis import StructureAnalysis
 from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType
@@ -50,8 +50,9 @@ class TestStructuringIntegration:
         assert analysis.stats.iterations > 0, "Should iterate"
         assert analysis.stats.max_iterations_reached == False, "Should complete without limit"
         # Verify some reductions occurred (loop or if-then-else reduction)
-        assert (analysis.stats.cycles_resolved > 0 or analysis.stats.regions_reduced > 0), \
+        assert analysis.stats.cycles_resolved > 0 or analysis.stats.regions_reduced > 0, (
             "Should apply some structural reductions"
+        )
 
     def test_structuring_message_passing(self):
         """Verify that event listeners receive messages."""
@@ -116,12 +117,8 @@ class TestStructuringIntegration:
         # Verify post-dominators were computed
         assert analysis.dominators is not None, "Dominators should be computed"
         # Exit region should post-dominate all nodes
-        assert analysis.dominators.post_dominates(
-            exit_region, entry
-        ), "Exit should post-dominate Entry"
-        assert analysis.dominators.post_dominates(
-            exit_region, a
-        ), "Exit should post-dominate A"
+        assert analysis.dominators.post_dominates(exit_region, entry), "Exit should post-dominate Entry"
+        assert analysis.dominators.post_dominates(exit_region, a), "Exit should post-dominate A"
 
     def test_depth_limited_structuring(self):
         """Test that max iterations limit is enforced."""
@@ -174,10 +171,7 @@ class TestStructuringIntegration:
         Test efficient reduction of large linear chains.
         """
         # Create a chain of 10 regions
-        regions = [
-            Region(block_addr=0x7000 + i * 4, region_type=RegionType.Linear)
-            for i in range(10)
-        ]
+        regions = [Region(block_addr=0x7000 + i * 4, region_type=RegionType.Linear) for i in range(10)]
 
         graph = RegionGraph()
         graph.entry = regions[0]
@@ -202,10 +196,7 @@ class TestStructuringIntegration:
         import time
 
         # Create a moderate-sized graph (20 regions)
-        regions = [
-            Region(block_addr=0x8000 + i * 4, region_type=RegionType.Linear)
-            for i in range(20)
-        ]
+        regions = [Region(block_addr=0x8000 + i * 4, region_type=RegionType.Linear) for i in range(20)]
 
         graph = RegionGraph()
         graph.entry = regions[0]

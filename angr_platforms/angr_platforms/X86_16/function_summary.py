@@ -37,10 +37,14 @@ def summarize_x86_16_function(project, function) -> FunctionSummary8616 | None:
     condition_counts = vex_ir_summary.get("condition_counts", {}) if isinstance(vex_ir_summary, dict) else {}
     register_clobbers = vex_ir_summary.get("register_clobbers", {}) if isinstance(vex_ir_summary, dict) else {}
     address_space_counts = vex_ir_summary.get("address_space_counts", {}) if isinstance(vex_ir_summary, dict) else {}
-    stable_address_space_counts = vex_ir_summary.get("stable_address_space_counts", {}) if isinstance(vex_ir_summary, dict) else {}
+    stable_address_space_counts = (
+        vex_ir_summary.get("stable_address_space_counts", {}) if isinstance(vex_ir_summary, dict) else {}
+    )
     frame_slot_count = vex_ir_summary.get("frame_slot_count") if isinstance(vex_ir_summary, dict) else None
     typed_ir_condition_kinds = tuple(sorted(str(key) for key in condition_counts))
-    typed_ir_register_clobbers = tuple(sorted(str(key) for key, count in register_clobbers.items() if isinstance(count, int) and count > 0))
+    typed_ir_register_clobbers = tuple(
+        sorted(str(key) for key, count in register_clobbers.items() if isinstance(count, int) and count > 0)
+    )
     typed_ir_address_spaces = tuple(
         sorted(str(key) for key, count in address_space_counts.items() if isinstance(count, int) and count > 0)
     )

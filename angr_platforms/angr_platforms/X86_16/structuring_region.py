@@ -7,7 +7,7 @@ structured control-flow patterns (sequence, if-then-else, loops, etc).
 
 Inspired by:
   - Reko's StructureAnalysis.cs
-  - "Native x86 Decompilation using Semantics-Preserving Structural Analysis 
+  - "Native x86 Decompilation using Semantics-Preserving Structural Analysis
      and Iterative Control-Flow Structuring"
 """
 
@@ -475,9 +475,7 @@ def compute_dominators(graph: RegionGraph) -> DominatorInfo:
         return DominatorInfo()
 
     all_regions = graph.iter_nodes()
-    dominators: dict[Region, set[Region]] = {
-        region: set(all_regions) for region in all_regions
-    }
+    dominators: dict[Region, set[Region]] = {region: set(all_regions) for region in all_regions}
     dominators[graph.entry] = {graph.entry}
 
     changed = True
@@ -491,9 +489,7 @@ def compute_dominators(graph: RegionGraph) -> DominatorInfo:
             if not preds:
                 new_dom = {region}
             else:
-                new_dom = {region} | set.intersection(
-                    *(dominators.get(p, set(all_regions)) for p in preds)
-                )
+                new_dom = {region} | set.intersection(*(dominators.get(p, set(all_regions)) for p in preds))
 
             if new_dom != dominators[region]:
                 dominators[region] = new_dom
@@ -520,16 +516,14 @@ def compute_dominators(graph: RegionGraph) -> DominatorInfo:
     # Compute post-dominators (dominators in reverse graph)
     # Identify exit nodes (regions with no successors)
     exit_nodes = [r for r in all_regions if not graph.successors(r)]
-    
+
     # Initialize post-dominators: each node post-dominates all nodes
-    post_dominators: dict[Region, set[Region]] = {
-        region: set(all_regions) for region in all_regions
-    }
-    
+    post_dominators: dict[Region, set[Region]] = {region: set(all_regions) for region in all_regions}
+
     # All exit nodes post-dominate themselves only initially
     for exit_node in exit_nodes:
         post_dominators[exit_node] = {exit_node}
-    
+
     # Iterative fixpoint for post-dominators
     changed = True
     while changed:
@@ -537,17 +531,15 @@ def compute_dominators(graph: RegionGraph) -> DominatorInfo:
         for region in all_regions:
             if region in exit_nodes:
                 continue  # Exit nodes already initialized
-            
+
             succs = graph.successors(region)
             if not succs:
                 # Unreachable or exit node
                 new_pdom = {region}
             else:
                 # Post-dominator is the intersection of post-dominators of successors
-                new_pdom = {region} | set.intersection(
-                    *(post_dominators.get(s, set(all_regions)) for s in succs)
-                )
-            
+                new_pdom = {region} | set.intersection(*(post_dominators.get(s, set(all_regions)) for s in succs))
+
             if new_pdom != post_dominators[region]:
                 post_dominators[region] = new_pdom
                 changed = True

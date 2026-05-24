@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .condition_ir import condition_compare_symbol_8616
-from .ir.core import IRAddress, IRCondition, IRValue, MemSpace, AddressStatus, SegmentOrigin
+from .ir.core import AddressStatus, IRAddress, IRCondition, IRValue, MemSpace, SegmentOrigin
 from .structuring_graph_builder import RegionGraphBuildResult, build_region_graph
 from .structuring_grouped_units import (
     CrossEntryGroupedUnitArtifact,

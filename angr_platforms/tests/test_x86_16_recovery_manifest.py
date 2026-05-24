@@ -17,7 +17,9 @@ def test_x86_16_recovery_layers_cover_current_recovery_boundary():
         "confidence_axis",
         "thin_late_rewrite_boundary",
     ]
-    assert describe_x86_16_recovery_layers() == tuple((layer.name, layer.purpose, layer.helpers) for layer in RECOVERY_LAYERS)
+    assert describe_x86_16_recovery_layers() == tuple(
+        (layer.name, layer.purpose, layer.helpers) for layer in RECOVERY_LAYERS
+    )
 
 
 def test_x86_16_recovery_layers_pin_existing_helpers():

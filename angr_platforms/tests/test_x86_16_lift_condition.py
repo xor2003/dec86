@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
 from angr_platforms.X86_16.jcc_condition import (
     _consume_last_condition_branch_8616,
@@ -106,9 +104,7 @@ def test_direct_jcc_condition_consumes_nonzero_test_artifact():
 def test_direct_jcc_condition_consumes_zero_test_artifact():
     condition = IRCondition(
         op="zero",
-        args=(
-            IRValue(MemSpace.REG, name="ax", size=2),
-        ),
+        args=(IRValue(MemSpace.REG, name="ax", size=2),),
     )
 
     result = _direct_jcc_condition_from_last_condition_8616(_FakeInstruction(), "jz", condition)

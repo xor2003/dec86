@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from .recovery_artifact_writer import RecoveryArtifactWriteResult
 from .recovery_artifact_cache import describe_x86_16_recovery_artifact_cache_surface
+from .recovery_artifact_writer import RecoveryArtifactWriteResult
 
 __all__ = [
     "RecoveryArtifactOutputSpec",

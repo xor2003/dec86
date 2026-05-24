@@ -23,6 +23,7 @@ _RAW_IR_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("ellipsis-condition", re.compile(r"\bif\s*\(\s*\.\.\.\s*\)")),
     ("raw-register-frag", re.compile(r"\b[a-z_]\w*\{r\d+\|\d+b\}")),
     ("unresolved-callee-namespace", re.compile(r"::0x[0-9a-fA-F]+::[A-Za-z_]\w*")),
+    ("stack-pointer-address-escape", re.compile(r"=\s*&sp_0\s*;")),
 )
 
 _FATAL_MARKERS = frozenset(
@@ -32,6 +33,7 @@ _FATAL_MARKERS = frozenset(
         "ellipsis-condition",
         "raw-register-frag",
         "unresolved-callee-namespace",
+        "stack-pointer-address-escape",
     }
 )
 

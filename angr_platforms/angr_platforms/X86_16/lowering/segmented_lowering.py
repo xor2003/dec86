@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Lowering
 # Responsibility: typed segmented-address classification and SS/DS/ES lowering helpers.
 # Forbidden: CLI formatting, rendered-text pattern recovery, late postprocess ownership.
-
 from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c

@@ -2,7 +2,7 @@
 Structure field merging for Inertia decompiler Phase 2.3.
 
 Merges field access patterns from multiple functions to synthesize
-common struct layouts. Detects overlapping field accesses and 
+common struct layouts. Detects overlapping field accesses and
 unifies struct type definitions across the binary.
 
 Evidence: consistent field offset patterns, matching widths, shared base pointers
@@ -248,7 +248,6 @@ class StructureFieldMerger:
                         struct1.merge_field(field)
                     merged.add(j)
 
-
     def _are_compatible(self, struct1: StructType, struct2: StructType) -> bool:
         """Check if two structs have compatible layouts."""
         if struct1.is_union != struct2.is_union:
@@ -316,7 +315,9 @@ def apply_x86_16_structure_field_merging(codegen) -> bool:
         codegen._inertia_struct_merging_typed_ir_facts = typed_ir_facts
         codegen._inertia_struct_merging_changed = bool((bridge is not None and bridge.facts_by_base) or typed_ir_facts)
         codegen._inertia_struct_merging_stats = {
-            "field_accesses": 0 if bridge is None else sum(len(fact.candidate_offsets) for fact in bridge.facts_by_base.values()),
+            "field_accesses": 0
+            if bridge is None
+            else sum(len(fact.candidate_offsets) for fact in bridge.facts_by_base.values()),
             "structs_synthesized": (0 if bridge is None else len(bridge.facts_by_base)) + len(typed_ir_facts),
             "structs_merged": 0,
             "member_facts": 0 if bridge is None else len(bridge.member_facts),

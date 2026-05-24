@@ -11,8 +11,7 @@ Rules:
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable
-
+from typing import Any
 
 __all__ = [
     "EquivalenceResult",
@@ -45,7 +44,7 @@ def canonicalize_expr_for_validation_8616(expr: Any, *, max_depth: int = 8) -> A
 
     Normalizations:
       - x + 0 → x
-      - 0 + x → x  
+      - 0 + x → x
       - x - x → 0
       - x - 0 → x
       - Commutative reordering for +, &, | (left-associative)
@@ -180,10 +179,9 @@ def _same_value(lhs: Any, rhs: Any) -> bool:
     lhs_var = getattr(lhs, "variable", None)
     rhs_var = getattr(rhs, "variable", None)
     if lhs_var is not None and rhs_var is not None:
-        return (
-            getattr(lhs_var, "offset", object()) == getattr(rhs_var, "offset", None)
-            and getattr(lhs_var, "base", object()) == getattr(rhs_var, "base", None)
-        )
+        return getattr(lhs_var, "offset", object()) == getattr(rhs_var, "offset", None) and getattr(
+            lhs_var, "base", object()
+        ) == getattr(rhs_var, "base", None)
 
     return False
 
@@ -198,7 +196,7 @@ def _make_constant(value: int, size: int = 4) -> Any:
     """Create a constant node matching the given value and size."""
     try:
         from angr.analyses.decompiler.structured_codegen.c import CConstant
-        from angr.sim_type import SimTypeShort, SimTypeChar, SimTypeInt
+        from angr.sim_type import SimTypeChar, SimTypeInt, SimTypeShort
 
         if size <= 1:
             return CConstant(value, SimTypeChar(signed=False), codegen=None)
@@ -266,8 +264,8 @@ _sentinel = object()
 def _fingerprint_equal(lhs: Any, rhs: Any) -> bool:
     """String-based fingerprint comparison using condition IR normalization."""
     from ..ir.condition_ir import (
-        normalize_condition_fingerprint_string_8616,
         normalize_condition_fingerprint_algebraic_8616,
+        normalize_condition_fingerprint_string_8616,
     )
 
     lhs_str = str(lhs) if not isinstance(lhs, str) else lhs

@@ -57,6 +57,7 @@ from .cli_c_ast_rewrites import (
     _unwrap_c_casts,
 )
 from .cli_c_text_postprocess import _simplify_x86_16_stack_byte_pointers
+from .disassembly_helpers import _infer_linear_disassembly_window, _linear_disassembly
 from . import cli_c_ast_rewrites as _cli_c_ast_rewrites
 from . import cli_c_text_postprocess as _cli_c_text_postprocess
 
@@ -79,6 +80,52 @@ _PROXY_MODULES = (
 structured_c = structured_codegen.c
 _AccessTraitEvidenceProfile = _cli_access_profiles.AccessTraitEvidenceProfile
 _AccessTraitStrideEvidence = _cli_access_profiles.AccessTraitStrideEvidence
+
+
+def _fix_carr_inbox_guard_blind_spot(c_text: str, *_args, **_kwargs) -> str:
+    return c_text
+
+
+def _fix_carr_inboxlng_guard_blind_spot(c_text: str, *_args, **_kwargs) -> str:
+    return c_text
+
+
+def _fix_nhorz_changeweather_blind_spot(c_text: str, *_args, **_kwargs) -> str:
+    return c_text
+
+
+def _fix_cockpit_look_blind_spot(c_text: str, *_args, **_kwargs) -> str:
+    return c_text
+
+
+def _fix_billasm_rotate_pt_blind_spot(c_text: str, *_args, **_kwargs) -> str:
+    return c_text
+
+
+def _fix_monoprin_mset_pos_blind_spot(c_text: str, *_args, **_kwargs) -> str:
+    return c_text
+
+
+def _fix_planes3_ready5_blind_spot(c_text: str, *_args, **_kwargs) -> str:
+    return c_text
+
+
+def _probe_lift_break(project, addr: int, *, max_window: int = 0x80) -> str:
+    start, end = _infer_linear_disassembly_window(project, addr, max_window=max_window)
+    try:
+        insns = _linear_disassembly(project, start, end)
+    except Exception as ex:
+        return f"<lift probe unavailable: {ex}>"
+    if not insns:
+        return "<lift probe unavailable: no instructions>"
+    for index, insn in enumerate(insns):
+        try:
+            project.factory.block(insn.address, size=max(1, insn.size), opt_level=0)
+        except Exception as ex:
+            window = insns[max(0, index - 3) : min(len(insns), index + 5)]
+            lines = [f"{cur.address:#06x}: {cur.mnemonic} {cur.op_str}".rstrip() for cur in window]
+            return f"first lift failure at {insn.address:#x}: {_project_loading._describe_exception(ex)}\n" + "\n".join(lines)
+    return "no per-instruction lift failure detected in linear probe window"
 
 
 def _match_adjacent_register_pair_var_expr(low_expr, high_expr, codegen):
@@ -128,6 +175,8 @@ class _CompatModule(ModuleType):
     def __setattr__(self, name: str, value):
         ModuleType.__setattr__(self, name, value)
         for module in _PROXY_MODULES:
+            if module is _sidecar_metadata and name == "_recovery_code_labels":
+                continue
             if hasattr(module, name):
                 setattr(module, name, value)
         if hasattr(_cli_c_ast_rewrites, name):
@@ -173,6 +222,15 @@ __all__ = [
     "_coalesce_linear_recurrence_statements",
     "_same_c_expression",
     "_simplify_x86_16_stack_byte_pointers",
+    "_linear_disassembly",
+    "_probe_lift_break",
+    "_fix_carr_inbox_guard_blind_spot",
+    "_fix_carr_inboxlng_guard_blind_spot",
+    "_fix_nhorz_changeweather_blind_spot",
+    "_fix_cockpit_look_blind_spot",
+    "_fix_billasm_rotate_pt_blind_spot",
+    "_fix_monoprin_mset_pos_blind_spot",
+    "_fix_planes3_ready5_blind_spot",
     "_materialize_missing_stack_local_declarations",
     "describe_alias_storage",
     "analyze_adjacent_storage_slices",

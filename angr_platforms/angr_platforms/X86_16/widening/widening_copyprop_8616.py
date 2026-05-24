@@ -4,12 +4,9 @@ from __future__ import annotations
 # Responsibility: copy propagation using proven alias storage domains.
 # Equivalent to LLVM: EarlyCSE + local copy prop (Local.cpp).
 # Forbidden: C text generation, type inference, rewrite ownership.
-
 from ..decompiler_postprocess_utils import _unwrap_statements_8616
 from ..semantics.alias_query import (
-    _storage_domain_for_expr,
     describe_alias_storage,
-    same_alias_storage_domain,
 )
 from ..semantics.expression_analysis import _unwrap_c_casts
 
@@ -87,8 +84,17 @@ def _widening_copy_propagation_8616(codegen) -> bool:
         if hasattr(node, "statements"):
             _walk_statements(node)
         for attr in (
-            "condition", "cond", "body", "else_node", "iftrue", "iffalse",
-            "retval", "expr", "switch", "initializer", "iterator",
+            "condition",
+            "cond",
+            "body",
+            "else_node",
+            "iftrue",
+            "iffalse",
+            "retval",
+            "expr",
+            "switch",
+            "initializer",
+            "iterator",
         ):
             child = getattr(node, attr, None)
             if child is not None:
@@ -125,18 +131,13 @@ def _is_same_expr(a, b) -> bool:
     if type(a) is not type(b):
         return False
     if isinstance(a, structured_c.CVariable):
-        return (
-            getattr(a, "variable", None) is getattr(b, "variable", None)
-            and getattr(a, "offset", None) == getattr(b, "offset", None)
+        return getattr(a, "variable", None) is getattr(b, "variable", None) and getattr(a, "offset", None) == getattr(
+            b, "offset", None
         )
     if isinstance(a, structured_c.CConstant):
         return getattr(a, "value", None) == getattr(b, "value", None)
     if isinstance(a, structured_c.CBinaryOp):
-        return (
-            a.op == b.op
-            and _is_same_expr(a.lhs, b.lhs)
-            and _is_same_expr(a.rhs, b.rhs)
-        )
+        return a.op == b.op and _is_same_expr(a.lhs, b.lhs) and _is_same_expr(a.rhs, b.rhs)
     if isinstance(a, structured_c.CUnaryOp):
         return a.op == b.op and _is_same_expr(a.operand, b.operand)
     return a is b

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
-import os
 from pathlib import Path
 
 from inertia_decompiler.acceptance_scorecard import build_acceptance_scorecard
@@ -208,16 +208,15 @@ def test_sortdemo_heapsort_callsites_materialized_in_c_order():
     assert result.returncode in {0, 1}, combined
     assert "function: 0x10970 HeapSort" in result.stdout
     if result.returncode == 1:
-        assert "HeapSort leaked raw stack-address syntax into final C" in combined or "HeapSort leaked unresolved stack locals into final C" in combined
+        assert (
+            "HeapSort leaked raw stack-address syntax into final C" in combined
+            or "HeapSort leaked unresolved stack locals into final C" in combined
+        )
         assert "validation=passed" not in combined
         return
     assert "validation=passed" in combined
     final_body = "short HeapSort" + result.stdout.rsplit("short HeapSort", 1)[-1]
-    assert (
-        "PercolateUp(i);" in final_body
-        or "PercolateUp(local_1);" in final_body
-        or "PercolateUp(i_2);" in final_body
-    )
+    assert "PercolateUp(i);" in final_body or "PercolateUp(local_1);" in final_body or "PercolateUp(i_2);" in final_body
     assert (
         "SwapBars(0, i);" in final_body
         or "SwapBars( 0, i );" in final_body
@@ -250,16 +249,15 @@ def test_sortdemo_heapsort_call_args_use_bp_local_i_not_address_expr():
     assert result.returncode in {0, 1}, combined
     assert "function: 0x10970 HeapSort" in result.stdout
     if result.returncode == 1:
-        assert "HeapSort leaked raw stack-address syntax into final C" in combined or "HeapSort leaked unresolved stack locals into final C" in combined
+        assert (
+            "HeapSort leaked raw stack-address syntax into final C" in combined
+            or "HeapSort leaked unresolved stack locals into final C" in combined
+        )
         assert "validation=passed" not in combined
         return
     assert "validation=passed" in combined
     final_body = "short HeapSort" + result.stdout.rsplit("short HeapSort", 1)[-1]
-    assert (
-        "PercolateUp(i);" in final_body
-        or "PercolateUp(local_1);" in final_body
-        or "PercolateUp(i_2);" in final_body
-    )
+    assert "PercolateUp(i);" in final_body or "PercolateUp(local_1);" in final_body or "PercolateUp(i_2);" in final_body
     assert (
         "SwapBars(0, i);" in final_body
         or "SwapBars( 0, i );" in final_body
@@ -304,16 +302,15 @@ def test_sortdemo_heapsort_callsite_args_survive_postprocess():
     assert result.returncode in {0, 1}, combined
     assert "function: 0x10970 HeapSort" in result.stdout
     if result.returncode == 1:
-        assert "HeapSort leaked raw stack-address syntax into final C" in combined or "HeapSort leaked unresolved stack locals into final C" in combined
+        assert (
+            "HeapSort leaked raw stack-address syntax into final C" in combined
+            or "HeapSort leaked unresolved stack locals into final C" in combined
+        )
         assert "validation=passed" not in combined
         return
     assert "validation=passed" in combined
     final_body = "short HeapSort" + result.stdout.rsplit("short HeapSort", 1)[-1]
-    assert (
-        "SwapBars(0, i);" in final_body
-        or "SwapBars( 0, i );" in final_body
-        or "SwapBars(0, i_2);" in final_body
-    )
+    assert "SwapBars(0, i);" in final_body or "SwapBars( 0, i );" in final_body or "SwapBars(0, i_2);" in final_body
     assert (
         "PercolateDown(i - 1);" in final_body
         or "PercolateDown( i - 1 );" in final_body
@@ -345,7 +342,10 @@ def test_sortdemo_heapsort_value_and_pointer_args_survive_final_output():
     assert result.returncode in {0, 1}, combined
     assert "function: 0x10970 HeapSort" in result.stdout
     if result.returncode == 1:
-        assert "HeapSort leaked raw stack-address syntax into final C" in combined or "HeapSort leaked unresolved stack locals into final C" in combined
+        assert (
+            "HeapSort leaked raw stack-address syntax into final C" in combined
+            or "HeapSort leaked unresolved stack locals into final C" in combined
+        )
         assert "validation=passed" not in combined
         return
     assert "validation=passed" in combined
@@ -355,16 +355,8 @@ def test_sortdemo_heapsort_value_and_pointer_args_survive_final_output():
         for line in final_body.splitlines()
         if any(name in line for name in ("PercolateUp(", "Swaps(", "SwapBars(", "PercolateDown("))
     )
-    assert (
-        "PercolateUp(i);" in call_lines
-        or "PercolateUp(local_1);" in call_lines
-        or "PercolateUp(i_2);" in call_lines
-    )
-    assert (
-        "SwapBars(0, i);" in call_lines
-        or "SwapBars(0, local_1);" in call_lines
-        or "SwapBars(0, i_2);" in call_lines
-    )
+    assert "PercolateUp(i);" in call_lines or "PercolateUp(local_1);" in call_lines or "PercolateUp(i_2);" in call_lines
+    assert "SwapBars(0, i);" in call_lines or "SwapBars(0, local_1);" in call_lines or "SwapBars(0, i_2);" in call_lines
     assert (
         "PercolateDown(i - 1);" in call_lines
         or "PercolateDown(local_1 - 1);" in call_lines
@@ -475,7 +467,10 @@ def test_sortdemo_quicksort_anchor_distinguishes_timeout_from_old_vexvalue_crash
     if result.returncode == 0:
         assert "Function recovery failed" not in combined
     elif result.returncode == 3:
-        assert "Timed out while recovering a function after 6s after exhausting direct-address fallback budget." in combined
+        assert (
+            "Timed out while recovering a function after 6s after exhausting direct-address fallback budget."
+            in combined
+        )
     else:
         assert "Decompilation timeout" in combined
         assert "Function recovery failed" not in combined

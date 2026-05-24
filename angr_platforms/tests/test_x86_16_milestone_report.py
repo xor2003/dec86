@@ -18,9 +18,13 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "top_fallback_kinds": [{"fallback_kind": "cfg_only", "count": 2}],
         "top_failure_stages": [{"stage": "cfg", "count": 2}],
         "top_failure_files": [{"cod_file": "A.COD", "count": 2}],
-        "top_failure_functions": [{"cod_file": "A.COD", "proc_name": "_x", "proc_kind": "NEAR", "failure_class": "cfg_failure", "count": 2}],
+        "top_failure_functions": [
+            {"cod_file": "A.COD", "proc_name": "_x", "proc_kind": "NEAR", "failure_class": "cfg_failure", "count": 2}
+        ],
         "top_fallback_files": [{"cod_file": "A.COD", "count": 2}],
-        "top_fallback_functions": [{"cod_file": "A.COD", "proc_name": "_x", "proc_kind": "NEAR", "fallback_kind": "cfg_only", "count": 2}],
+        "top_fallback_functions": [
+            {"cod_file": "A.COD", "proc_name": "_x", "proc_kind": "NEAR", "fallback_kind": "cfg_only", "count": 2}
+        ],
         "readability_clusters": [
             {"cluster": "byte_pair_arithmetic", "count": 4},
             {"cluster": "fake_locals_and_stack_noise", "count": 2},
@@ -664,7 +668,12 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         {"name": "16/32", "operand_bits": 16, "address_bits": 32},
         {"name": "32/32", "operand_bits": 32, "address_bits": 32},
     ]
-    assert [item["name"] for item in report["alias_api"]] == ["same_domain", "compatible_view", "needs_synthesis", "can_join"]
+    assert [item["name"] for item in report["alias_api"]] == [
+        "same_domain",
+        "compatible_view",
+        "needs_synthesis",
+        "can_join",
+    ]
     assert [item["name"] for item in report["widening_pipeline"]] == [
         "candidate_extraction",
         "compatibility_proof",

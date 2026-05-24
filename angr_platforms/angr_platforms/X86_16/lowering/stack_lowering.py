@@ -1,24 +1,16 @@
 from __future__ import annotations
 
-# Layer: Lowering
-# Responsibility: canonical stack/local lowering from typed alias evidence.
-# Forbidden: rendered-text parsing and CLI guessing.
-
-from collections.abc import Callable
 import logging
 import os
 
-from .stack_lowering_impl import (
-    _canonicalize_stack_cvar_expr,
-    _canonicalize_stack_cvars,
-    _materialize_stack_cvar_at_offset,
-    _resolve_stack_cvar_at_offset,
-    _resolve_stack_cvar_from_addr_expr,
-)
-from .stack_lowering_result import (
-    StackLoweringResult,
-    StackSlotFailure,
-    materialization_diagnostics_8616,
+# Layer: Lowering
+# Responsibility: canonical stack/local lowering from typed alias evidence.
+# Forbidden: rendered-text parsing and CLI guessing.
+from collections.abc import Callable
+
+from ..stack_probe_fact_trace import (
+    record_stable_ss_lowering_refusal_8616,
+    record_stable_ss_lowering_replacement_8616,
 )
 from .real_mode_linear import (
     lower_stable_ds_es_linear_global_addresses_8616,
@@ -26,13 +18,16 @@ from .real_mode_linear import (
     lower_stable_ss_linear_stack_dereferences_8616,
 )
 from .segmented_memory_lowering import apply_runtime_segment_lowering_8616
+from .stack_lowering_impl import (
+    _canonicalize_stack_cvar_expr,
+    _canonicalize_stack_cvars,
+    _materialize_stack_cvar_at_offset,
+    _resolve_stack_cvar_at_offset,
+    _resolve_stack_cvar_from_addr_expr,
+)
 from .stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
     build_typed_stack_probe_return_facts_8616,
-)
-from ..stack_probe_fact_trace import (
-    record_stable_ss_lowering_refusal_8616,
-    record_stable_ss_lowering_replacement_8616,
 )
 
 log = logging.getLogger(__name__)
@@ -64,7 +59,9 @@ def run_stack_lowering_pass_8616(
         debug_stats.setdefault("lowering_replacements", 0)
         debug_stats.setdefault("lowering_refusals", 0)
         debug_stats.setdefault("stable_ss_lowering_refusal_reasons", {})
-    typed_fact_count = len(getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}) if codegen is not None else 0
+    typed_fact_count = (
+        len(getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}) if codegen is not None else 0
+    )
     changed = False
     for _ in range(max(max_rounds, 1)):
         round_changed = False

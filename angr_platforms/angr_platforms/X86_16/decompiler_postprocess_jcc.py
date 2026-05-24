@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
 import os
+from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -17,14 +17,14 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from .decompiler_postprocess_flags import _c_expr_uses_register_8616
 from .decompiler_postprocess_utils import (
-    _replace_c_children_8616,
     _iter_c_nodes_deep_8616,
+    _replace_c_children_8616,
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
 from .ir.condition_ir import JCC_TO_COND_8616
-from .tail_validation_fingerprint import _expr_fingerprint
 from .lowering.segmented_memory_lowering import lower_runtime_segment_access_8616
+from .tail_validation_fingerprint import _expr_fingerprint
 
 __all__ = ["_rewrite_decoded_jcc_conditions_8616"]
 
@@ -96,7 +96,10 @@ def _condition_tags_8616(node) -> tuple[int, int] | None:
 
 
 def _reg_offset_8616(project, name: str) -> int | None:
-    reg = project.arch.registers.get(name.lower())
+    registers = getattr(getattr(project, "arch", None), "registers", None)
+    if not isinstance(registers, dict):
+        return None
+    reg = registers.get(name.lower())
     return None if reg is None else int(reg[0])
 
 
@@ -190,7 +193,13 @@ def _low_byte_expr_from_assignment_8616(expr):
 def _stack_slot_key_8616(insn) -> tuple[int, int] | None:
     if len(insn.operands) < 2:
         return None
-    mem = insn.operands[1].mem if insn.operands[1].type == 3 else insn.operands[0].mem if insn.operands[0].type == 3 else None
+    mem = (
+        insn.operands[1].mem
+        if insn.operands[1].type == 3
+        else insn.operands[0].mem
+        if insn.operands[0].type == 3
+        else None
+    )
     if mem is None:
         return None
     base = insn.reg_name(mem.base) if mem.base else None
@@ -320,28 +329,36 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
             lhs=None,
             rhs=None,
             op="CmpLT",
-            expr=CBinaryOp("LogicalOr", hi_lt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen),
+            expr=CBinaryOp(
+                "LogicalOr", hi_lt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen
+            ),
         )
     if jcc1 in {"jle", "jng", "jbe", "jna"} and jcc2 in {"jge", "jnl", "jae", "jnb", "jnc"}:
         return _DecodedCmpGuard8616(
             lhs=None,
             rhs=None,
             op="CmpLE",
-            expr=CBinaryOp("LogicalOr", hi_lt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen),
+            expr=CBinaryOp(
+                "LogicalOr", hi_lt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen
+            ),
         )
     if jcc1 in {"jg", "jnle", "ja", "jnbe"} and jcc2 in {"jle", "jng", "jbe", "jna"}:
         return _DecodedCmpGuard8616(
             lhs=None,
             rhs=None,
             op="CmpGT",
-            expr=CBinaryOp("LogicalOr", hi_gt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen),
+            expr=CBinaryOp(
+                "LogicalOr", hi_gt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen
+            ),
         )
     if jcc1 in {"jge", "jnl", "jae", "jnb", "jnc"} and jcc2 in {"jle", "jng", "jbe", "jna"}:
         return _DecodedCmpGuard8616(
             lhs=None,
             rhs=None,
             op="CmpGE",
-            expr=CBinaryOp("LogicalOr", hi_gt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen),
+            expr=CBinaryOp(
+                "LogicalOr", hi_gt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen
+            ),
         )
     if jcc1 in {"je", "jz"} and jcc2 in {"je", "jz", "jne", "jnz"}:
         return _DecodedCmpGuard8616(lhs=None, rhs=None, op="CmpEQ", expr=eq_expr)
@@ -412,7 +429,9 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
     jcc_index = next((idx for idx, insn in enumerate(insns) if int(insn.address) == int(jcc_addr)), None)
     if jcc_index is None or jcc_index == 0:
         if debug_jcc:
-            _log.warning("[jcc-rewrite] jcc index missing block=%#x jcc=%#x insn_count=%d", block_addr, jcc_addr, len(insns))
+            _log.warning(
+                "[jcc-rewrite] jcc index missing block=%#x jcc=%#x insn_count=%d", block_addr, jcc_addr, len(insns)
+            )
         return None
     jcc_insn = insns[jcc_index]
     cmp_insn = insns[jcc_index - 1]
@@ -442,11 +461,18 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
 
     if jcc_mnemonic not in _JCC_COMPARE_OPS_8616:
         if debug_jcc:
-            _log.warning("[jcc-rewrite] unsupported jcc mnemonic=%s block=%#x jcc=%#x", jcc_mnemonic, block_addr, jcc_addr)
+            _log.warning(
+                "[jcc-rewrite] unsupported jcc mnemonic=%s block=%#x jcc=%#x", jcc_mnemonic, block_addr, jcc_addr
+            )
         return None
     if cmp_insn.mnemonic != "cmp" or len(cmp_insn.operands) != 2:
         if debug_jcc:
-            _log.warning("[jcc-rewrite] predecessor not cmp mnemonic=%s block=%#x jcc=%#x", cmp_insn.mnemonic, block_addr, jcc_addr)
+            _log.warning(
+                "[jcc-rewrite] predecessor not cmp mnemonic=%s block=%#x jcc=%#x",
+                cmp_insn.mnemonic,
+                block_addr,
+                jcc_addr,
+            )
         return None
 
     ds_offset = _reg_offset_8616(project, "ds")
@@ -511,7 +537,9 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
             reg_name = insn.reg_name(insn.operands[0].reg).lower()
             reg_expr = reg_state.get(reg_name)
             if reg_expr is not None:
-                reg_state[reg_name] = CBinaryOp("Shl", reg_expr, _const_8616(int(insn.operands[1].imm), codegen), codegen=codegen)
+                reg_state[reg_name] = CBinaryOp(
+                    "Shl", reg_expr, _const_8616(int(insn.operands[1].imm), codegen), codegen=codegen
+                )
 
     lhs_op = cmp_insn.operands[0]
     rhs_op = cmp_insn.operands[1]
@@ -540,7 +568,9 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
     op = _JCC_COMPARE_OPS_8616.get(jcc_mnemonic)
     if op is None:
         if debug_jcc:
-            _log.warning("[jcc-rewrite] op map missing mnemonic=%s block=%#x jcc=%#x", jcc_mnemonic, block_addr, jcc_addr)
+            _log.warning(
+                "[jcc-rewrite] op map missing mnemonic=%s block=%#x jcc=%#x", jcc_mnemonic, block_addr, jcc_addr
+            )
         return None
     if debug_jcc:
         reg_state_fp = {}
@@ -656,7 +686,9 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             _log.warning(
                 "[jcc-rewrite] candidate key=%r uses_flags=%s cond_type=%s cond_op=%s",
                 key,
-                _c_expr_uses_register_8616(cond, flags_offset) if isinstance(ins_addr, int) and isinstance(block_addr, int) else _c_expr_uses_register_8616(cond, flags_offset),
+                _c_expr_uses_register_8616(cond, flags_offset)
+                if isinstance(ins_addr, int) and isinstance(block_addr, int)
+                else _c_expr_uses_register_8616(cond, flags_offset),
                 type(cond).__name__ if cond is not None else None,
                 getattr(cond, "op", None),
             )

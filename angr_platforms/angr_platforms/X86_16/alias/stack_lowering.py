@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Compatibility shim
 # Responsibility: preserve legacy alias.stack_lowering imports during migration.
 # Forbidden: semantic ownership; import lowering canonical path only.
-
 from ..lowering.stack_lowering import (
     _canonicalize_stack_cvar_expr,
     _canonicalize_stack_cvars,

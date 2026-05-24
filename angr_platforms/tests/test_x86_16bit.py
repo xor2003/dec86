@@ -63,7 +63,7 @@ def step(simgr, insn_bytes):
 def _state_ip16(state):
     for reg_name in ("ip", "eip"):
         try:
-            return state.solver.eval(getattr(state.regs, reg_name)) & 0xffff
+            return state.solver.eval(getattr(state.regs, reg_name)) & 0xFFFF
         except Exception:
             continue
     return 0
@@ -77,8 +77,9 @@ def _is_control_flow_instruction(instruction: str) -> bool:
 def prepare(arch, data):
     # Create an Angr project
     addr = 0x100  # 0x400000
-    project = angr.load_shellcode(data, arch=arch, start_offset=addr, load_address=addr, selfmodifying_code=False,
-                                  rebase_granularity=0x1000)
+    project = angr.load_shellcode(
+        data, arch=arch, start_offset=addr, load_address=addr, selfmodifying_code=False, rebase_granularity=0x1000
+    )
     # Lift the instruction to VEX
     state = project.factory.blank_state()
     # Execute the instruction
@@ -96,7 +97,7 @@ def compare_states(instruction, state32_, state16_, fallthrough32=None, fallthro
     state32_ = sorted(state32_, key=_state_ip16)
     state16_ = sorted(state16_, key=_state_ip16)
     for state32, state16 in zip(state32_, state16_):
-        state16.regs.eip &= 0xffff
+        state16.regs.eip &= 0xFFFF
         skip_regs = {"eflags", "flags", "d"}
         if not control_flow:
             skip_regs.add("eip")
@@ -113,11 +114,16 @@ def compare_states(instruction, state32_, state16_, fallthrough32=None, fallthro
             val32_ast = claripy.simplify(getattr(state32.regs, reg_name))
             try:
                 val16_ast = claripy.simplify(getattr(state16.regs, reg_name))
-                if control_flow and reg_name in {"ip", "eip"} and fallthrough32 is not None and fallthrough16 is not None:
-                    ip32 = state32.solver.eval(val32_ast) & 0xffff
-                    ip16 = state16.solver.eval(val16_ast) & 0xffff
-                    is_fallthrough32 = ip32 == (fallthrough32 & 0xffff)
-                    is_fallthrough16 = ip16 == (fallthrough16 & 0xffff)
+                if (
+                    control_flow
+                    and reg_name in {"ip", "eip"}
+                    and fallthrough32 is not None
+                    and fallthrough16 is not None
+                ):
+                    ip32 = state32.solver.eval(val32_ast) & 0xFFFF
+                    ip16 = state16.solver.eval(val16_ast) & 0xFFFF
+                    is_fallthrough32 = ip32 == (fallthrough32 & 0xFFFF)
+                    is_fallthrough16 = ip16 == (fallthrough16 & 0xFFFF)
                     if is_fallthrough32 != is_fallthrough16 or (not is_fallthrough32 and ip32 != ip16):
                         val32 = filter_symbolic(repr(val32_ast))
                         val16 = filter_symbolic(repr(val16_ast))
@@ -136,7 +142,7 @@ def compare_states(instruction, state32_, state16_, fallthrough32=None, fallthro
             except KeyError:
                 pass
                 # print(f"Register {reg_name} not found in state")
-        
+
         # To handle lazy flag calculation, print individual flags
         flags32 = {key: state32.regs.flags[bit] for key, bit in FLAGS.items()}
         flags16 = {key: state16.regs.flags[bit] for key, bit in FLAGS.items()}
@@ -361,5 +367,5 @@ def test_instructions():
     print("Success!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_instructions()

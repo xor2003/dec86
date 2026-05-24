@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
+from dataclasses import dataclass, field
 
 from .pipeline.errors import PipelineHardError
 
@@ -59,7 +59,7 @@ def _split_c_args_8616(arg_text: str) -> tuple[str, ...]:
             current = []
             continue
         current.append(ch)
-        if ch in "([{" :
+        if ch in "([{":
             depth += 1
         elif ch in ")]}" and depth > 0:
             depth -= 1

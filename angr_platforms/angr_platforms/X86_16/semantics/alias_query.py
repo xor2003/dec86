@@ -3,13 +3,12 @@ from __future__ import annotations
 # Layer: Semantics
 # Responsibility: expression-facing alias queries over typed alias storage facts.
 # Forbidden: alias-state ownership, CLI formatting, rendered-text matching.
-
 from ..alias.alias_model_impl import (
     AliasStorageFacts,
-    _StorageDomainSignature,
-    _StorageView,
     _alias_identity_for_variable,
     _storage_domain_for_variable,
+    _StorageDomainSignature,
+    _StorageView,
 )
 from .expression_analysis import _mk_fp_components, _unwrap_c_casts
 

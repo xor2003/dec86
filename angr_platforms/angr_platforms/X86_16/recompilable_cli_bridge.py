@@ -25,9 +25,7 @@ __all__ = [
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _COD_ROOT = _REPO_ROOT / "cod"
 _EVIDENCE_SUBSET_ROOT = _REPO_ROOT / ".codex_automation" / "evidence_subset" / "cod"
-_EVIDENCE_PROC_MARKER_RE = re.compile(
-    r"/\* == \d+/\d+ [^:]+ :: (?P<proc>\S+) \[(?P<kind>NEAR|FAR)\] == \*/"
-)
+_EVIDENCE_PROC_MARKER_RE = re.compile(r"/\* == \d+/\d+ [^:]+ :: (?P<proc>\S+) \[(?P<kind>NEAR|FAR)\] == \*/")
 _CORPUS_DECOMPILE_TIMEOUT = 60
 _LOADPROG_REAL_DECOMPILE_TIMEOUT = 8
 
@@ -72,9 +70,7 @@ def _extract_proc_text_from_evidence(
             saw_any_proc_marker = True
             if in_target_section:
                 break
-            in_target_section = (
-                marker.group("proc") == proc_name and marker.group("kind") == proc_kind
-            )
+            in_target_section = marker.group("proc") == proc_name and marker.group("kind") == proc_kind
             continue
         if in_target_section:
             section_lines.append(line)
@@ -148,7 +144,7 @@ def _rewrite_corpus_function_name(c_text: str, proc_name: str) -> str:
         match = re.search(r"([A-Za-z_][\\w$?@]*)\\s*$", prefix)
         if match is None or match.group(1) == proc_name:
             return c_text
-        lines[index] = f"{prefix[:match.start(1)]}{proc_name}{header[open_paren:]}"
+        lines[index] = f"{prefix[: match.start(1)]}{proc_name}{header[open_paren:]}"
         return "\n".join(lines)
     return c_text
 
@@ -190,20 +186,14 @@ def _decompile_corpus_case(
     shape_ok_evidence_text = evidence_c_text or _load_shape_ok_evidence_c_text(case)
     fallback_evidence_text = shape_ok_evidence_text or _load_evidence_c_text(case)
     fallback_shape = (
-        check_recompilable_c_text_shape(fallback_evidence_text, case)
-        if fallback_evidence_text is not None
-        else None
+        check_recompilable_c_text_shape(fallback_evidence_text, case) if fallback_evidence_text is not None else None
     )
     if case.name == "loadprog_real" and shape_ok_evidence_text is not None:
         evidence_path = _evidence_dec_path(case)
         return shape_ok_evidence_text, {
             "c_text_source": "shape_ok_evidence",
             "used_shape_ok_evidence": True,
-            "c_text_source_path": (
-                str(evidence_path.relative_to(_REPO_ROOT))
-                if evidence_path is not None
-                else None
-            ),
+            "c_text_source_path": (str(evidence_path.relative_to(_REPO_ROOT)) if evidence_path is not None else None),
             "decompile_path": "shape_ok_evidence",
             "decompile_bounded": True,
             "decompile_timeout_s": _corpus_decompile_timeout(case),

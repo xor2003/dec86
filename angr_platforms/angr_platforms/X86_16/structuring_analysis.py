@@ -13,7 +13,7 @@ The main algorithm operates iteratively:
 
 Inspired by:
   - Reko's StructureAnalysis.cs
-  - "Native x86 Decompilation using Semantics-Preserving Structural Analysis 
+  - "Native x86 Decompilation using Semantics-Preserving Structural Analysis
      and Iterative Control-Flow Structuring"
 """
 
@@ -23,16 +23,14 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
+from .structuring_graph_builder import build_region_graph
 from .structuring_loops import (
-    LoopExitClassification,
     NaturalLoopInfo,
     compute_loop_body,
     compute_loop_confidence,
     detect_natural_loop,
     is_well_structured_multi_exit,
 )
-from .structuring_graph_builder import build_region_graph
-from .structuring_sequences import merge_would_hide_cycle, sequence_merge_is_safe
 from .structuring_region import (
     DominatorInfo,
     Region,
@@ -40,6 +38,7 @@ from .structuring_region import (
     RegionType,
     compute_dominators,
 )
+from .structuring_sequences import merge_would_hide_cycle, sequence_merge_is_safe
 
 if TYPE_CHECKING:
     pass
@@ -125,8 +124,7 @@ class StructureAnalysis:
             # Check iteration limit
             if iterations > self.max_iterations:
                 logger.warning(
-                    "Structure analysis stopped due to iteration limit (%d). "
-                    "Control flow may not be fully structured.",
+                    "Structure analysis stopped due to iteration limit (%d). Control flow may not be fully structured.",
                     self.max_iterations,
                 )
                 self.stats.max_iterations_reached = True
@@ -505,7 +503,7 @@ class StructureAnalysis:
         for region, cycle_regions in self.unresolved_cycles:
             # Mark as loop but emit goto fallback for exits
             region.region_type = RegionType.Loop
-            
+
             # Find exit edges and store for goto emission
             for body_region in cycle_regions:
                 if body_region in self.graph.nodes:
@@ -515,7 +513,7 @@ class StructureAnalysis:
                             exits = region.metadata.get("unstructured_exits", [])
                             exits.append((body_region, succ))
                             region.metadata["unstructured_exits"] = exits
-            
+
             self.stats.cycles_resolved += 1
 
         # Process unresolved switches
@@ -531,9 +529,7 @@ class StructureAnalysis:
         """
         # Find all regions with multiple successors that haven't been reduced
         unstructured = [
-            r
-            for r in self.graph.nodes
-            if r.region_type == RegionType.Linear and len(self.graph.successors(r)) > 1
+            r for r in self.graph.nodes if r.region_type == RegionType.Linear and len(self.graph.successors(r)) > 1
         ]
 
         for region in unstructured:
@@ -547,9 +543,7 @@ class StructureAnalysis:
             self.stats.had_unstructured_gotos = True
 
         if unstructured:
-            logger.debug(
-                f"Applied goto refinement for {len(unstructured)} unstructured regions"
-            )
+            logger.debug(f"Applied goto refinement for {len(unstructured)} unstructured regions")
         else:
             logger.debug("No unstructured regions to refine to gotos")
 
@@ -605,18 +599,18 @@ class RegionBasedStructuringPass:
             structured_regions = []
             for region in structured.nodes:
                 if region.region_type != RegionType.Linear:
-                    structured_regions.append({
-                        "addr": region.block_addr,
-                        "type": region.region_type.value,
-                        "metadata_keys": list(region.metadata.keys()),
-                    })
+                    structured_regions.append(
+                        {
+                            "addr": region.block_addr,
+                            "type": region.region_type.value,
+                            "metadata_keys": list(region.metadata.keys()),
+                        }
+                    )
             cfunc._structuring_stats["structured_regions"] = structured_regions
 
             # Return True if any structuring occurred
             changed = (
-                self.stats.regions_reduced > 0
-                or self.stats.cycles_resolved > 0
-                or self.stats.sequences_created > 0
+                self.stats.regions_reduced > 0 or self.stats.cycles_resolved > 0 or self.stats.sequences_created > 0
             )
             return changed
         except Exception as ex:

@@ -5,26 +5,23 @@ from __future__ import annotations
 AGENTS rule: SS:BP-2 → local_*, SS:BP+4 → arg_*, no stack[x].
 """
 
-import pytest
 from types import SimpleNamespace
+
+from angr.sim_type import SimTypeShort
+
 from angr_platforms.X86_16.alias.alias_model_impl import (
-    _StackSlotIdentity,
-    _stack_storage_facts_for_segmented_address_8616,
-    _stack_slot_identity_for_variable,
-    _same_stack_slot_identity,
-    _stack_slot_identity_can_join,
-    AliasStorageFacts,
     AliasFailure,
+    AliasStorageFacts,
+    _stack_storage_facts_for_segmented_address_8616,
+    _StackSlotIdentity,
     alias_facts_for_ir_address_8616,
 )
 from angr_platforms.X86_16.ir.core import (
+    AddressStatus,
     IRAddress,
     MemSpace,
-    AddressStatus,
     SegmentOrigin,
-    is_stack_address_8616,
 )
-from angr.sim_type import SimTypeShort
 
 
 class TestStackObjectNaming:
@@ -32,26 +29,30 @@ class TestStackObjectNaming:
 
     def test_stack_object_name_negative(self):
         from angr_platforms.X86_16.lowering.stack_lowering_impl import _stack_object_name
+
         name = _stack_object_name(-2)
         assert name.startswith("local_"), f"Expected local_ prefix, got {name}"
         assert "2" in name or "fffe" in name.lower()
 
     def test_stack_object_name_positive(self):
         from angr_platforms.X86_16.lowering.stack_lowering_impl import _stack_object_name
+
         name = _stack_object_name(4)
         assert name.startswith("arg_"), f"Expected arg_ prefix, got {name}"
         assert "4" in name
 
     def test_stack_object_name_zero(self):
         from angr_platforms.X86_16.lowering.stack_lowering_impl import _stack_object_name
+
         name = _stack_object_name(0)
         assert name.startswith("arg_"), f"Expected arg_ prefix for offset 0, got {name}"
         assert "0" in name
 
     def test_unknown_positive_stack_slot_uses_local_name_in_codegen_context(self):
-        from angr_platforms.X86_16.lowering.stack_lowering_impl import _materialize_stack_cvar_at_offset
         from angr.analyses.decompiler.structured_codegen import c as structured_c
         from angr.sim_variable import SimStackVariable
+
+        from angr_platforms.X86_16.lowering.stack_lowering_impl import _materialize_stack_cvar_at_offset
 
         class _FakeCodegen:
             def __init__(self):
@@ -74,7 +75,9 @@ class TestStackObjectNaming:
         arg_var = SimStackVariable(4, 2, base="bp", name="arg", region=0x1000)
         arg_type = SimTypeShort(False)
         codegen.cfunc.arg_list = [SimpleNamespace(variable=arg_var)]
-        codegen.cfunc.variables_in_use = {arg_var: structured_c.CVariable(arg_var, variable_type=arg_type, codegen=codegen)}
+        codegen.cfunc.variables_in_use = {
+            arg_var: structured_c.CVariable(arg_var, variable_type=arg_type, codegen=codegen)
+        }
 
         materialized = _materialize_stack_cvar_at_offset(
             codegen,
@@ -236,6 +239,7 @@ class TestStackVariableMaterializationDiagnostics:
     def test_naming_convention_no_bare_stack_index(self):
         """Generated names should never be 'stack[...]'."""
         from angr_platforms.X86_16.lowering.stack_lowering_impl import _stack_object_name
+
         for offset in (-10, -2, 0, 4, 6, 8):
             name = _stack_object_name(offset)
             assert "stack[" not in name, f"Offset {offset} produced bad name: {name}"

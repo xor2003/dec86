@@ -133,7 +133,9 @@ def _parse_pat_line(
     for index in range(0, 64, 2):
         token = pattern_text[index : index + 2]
         pattern_bytes.append(None if token == ".." else int(token, 16))
-    public_names = [(int(match.group("offset"), 16), match.group("name")) for match in _PUBLIC_NAME_RE.finditer(stripped)]
+    public_names = [
+        (int(match.group("offset"), 16), match.group("name")) for match in _PUBLIC_NAME_RE.finditer(stripped)
+    ]
     tags = {match.group("key"): match.group("value") for match in _TAG_RE.finditer(stripped)}
     return pattern_bytes, public_names, tags
 

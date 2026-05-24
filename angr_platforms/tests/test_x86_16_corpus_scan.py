@@ -24,12 +24,16 @@ def test_corpus_scan_classifies_core_failure_kinds():
     assert classify_failure("load", ValueError("bad blob"))[0] == "load_failure"
     assert classify_failure("lift", RuntimeError("unsupported opcode 0f ff"))[0] == "unsupported_semantic"
     assert classify_failure("decompile", ScanTimeout("timed out"))[0] == "timeout"
-    assert classify_failure("decompile", RuntimeError("maximum recursion depth exceeded"))[0] == "recursion_or_explosion"
+    assert (
+        classify_failure("decompile", RuntimeError("maximum recursion depth exceeded"))[0] == "recursion_or_explosion"
+    )
     assert classify_failure("cfg", None)[0] == "cfg_failure"
     assert classify_failure("unknown", None)[0] == "analysis_failure"
     assert classify_failure("decompile", None, empty_codegen=True)[0] == "no_code_produced"
     assert classify_failure("decompile", None, empty_codegen=True, rewrite_failed=True)[0] == "rewrite_failure"
-    assert classify_failure("decompile", None, empty_codegen=True, regeneration_failed=True)[0] == "regeneration_failure"
+    assert (
+        classify_failure("decompile", None, empty_codegen=True, regeneration_failed=True)[0] == "regeneration_failure"
+    )
 
 
 def test_corpus_scan_summary_groups_file_health():
@@ -402,7 +406,10 @@ def test_corpus_scan_summary_aggregates_tail_validation():
                 "coverage_rate": 0.666667,
                 "mode_counts": {"live_out": 2},
                 "top_verdicts": [
-                    {"verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping", "count": 1}
+                    {
+                        "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                        "count": 1,
+                    }
                 ],
             },
         ],
@@ -412,7 +419,10 @@ def test_corpus_scan_summary_aggregates_tail_validation():
                 "changed_count": 1,
                 "changed_rate": 0.333333,
                 "top_verdicts": [
-                    {"verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping", "count": 1}
+                    {
+                        "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                        "count": 1,
+                    }
                 ],
             }
         ],
@@ -665,7 +675,10 @@ def test_corpus_scan_summary_ranks_ugly_clusters():
         semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
-        stages=[StageResult("load", True), StageResult("decompile", True, detail="skipped decompile for oversized function (512 bytes > 384); cfg ok")],
+        stages=[
+            StageResult("load", True),
+            StageResult("decompile", True, detail="skipped decompile for oversized function (512 bytes > 384); cfg ok"),
+        ],
     )
     complex_cfg = FunctionScanResult(
         cod_file="A.COD",
@@ -680,7 +693,10 @@ def test_corpus_scan_summary_ranks_ugly_clusters():
         semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
-        stages=[StageResult("load", True), StageResult("decompile", True, detail="skipped decompile for complex CFG (blocks>8 or insns>200); cfg ok")],
+        stages=[
+            StageResult("load", True),
+            StageResult("decompile", True, detail="skipped decompile for complex CFG (blocks>8 or insns>200); cfg ok"),
+        ],
     )
     relocation = FunctionScanResult(
         cod_file="B.COD",
@@ -697,7 +713,12 @@ def test_corpus_scan_summary_ranks_ugly_clusters():
         semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
-        stages=[StageResult("load", True), StageResult("cfg", False, reason="skipped_relocation", detail="contains unresolved call relocation pattern")],
+        stages=[
+            StageResult("load", True),
+            StageResult(
+                "cfg", False, reason="skipped_relocation", detail="contains unresolved call relocation pattern"
+            ),
+        ],
     )
 
     summary = summarize_results([oversized, complex_cfg, relocation], "scan-safe")
@@ -802,10 +823,21 @@ def test_scan_safe_skips_short_loop_heavy_functions():
         def __init__(self, insns):
             self.insns = insns
 
-    assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x0FFF)]), "scan-safe", 128) is True
-    assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x1010)]), "scan-safe", 128) is False
-    assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "mov", None)]), "scan-safe", 128) is False
-    assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x0FFF)]), "lift", 128) is False
+    assert (
+        _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x0FFF)]), "scan-safe", 128)
+        is True
+    )
+    assert (
+        _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x1010)]), "scan-safe", 128)
+        is False
+    )
+    assert (
+        _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "mov", None)]), "scan-safe", 128)
+        is False
+    )
+    assert (
+        _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x0FFF)]), "lift", 128) is False
+    )
 
 
 def test_scan_safe_skips_call_heavy_helpers():

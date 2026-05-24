@@ -3,8 +3,8 @@ from __future__ import annotations
 from contextlib import suppress
 
 from angr.analyses.decompiler.structured_codegen.c import (
-    CAssignment,
     CITE,
+    CAssignment,
     CBinaryOp,
     CConstant,
     CStatements,
@@ -13,6 +13,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+
 
 def _safe_assign_cfunc_statements_8616(codegen, new_root, old_root):
     """Assign new_root to codegen.cfunc.statements preserving CStatements wrapper.
@@ -438,9 +439,7 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
         return lhs.op == rhs.op and _same_c_expression_8616(lhs.operand, rhs.operand)
     if isinstance(lhs, CBinaryOp):
         return (
-            lhs.op == rhs.op
-            and _same_c_expression_8616(lhs.lhs, rhs.lhs)
-            and _same_c_expression_8616(lhs.rhs, rhs.rhs)
+            lhs.op == rhs.op and _same_c_expression_8616(lhs.lhs, rhs.lhs) and _same_c_expression_8616(lhs.rhs, rhs.rhs)
         )
     if isinstance(lhs, CITE):
         return (
@@ -456,10 +455,9 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
         if isinstance(lvar, SimRegisterVariable):
             return getattr(lvar, "reg", None) == getattr(rvar, "reg", None)
         if isinstance(lvar, SimMemoryVariable):
-            return (
-                getattr(lvar, "addr", None) == getattr(rvar, "addr", None)
-                and getattr(lvar, "size", None) == getattr(rvar, "size", None)
-            )
+            return getattr(lvar, "addr", None) == getattr(rvar, "addr", None) and getattr(
+                lvar, "size", None
+            ) == getattr(rvar, "size", None)
     return lhs is rhs
 
 

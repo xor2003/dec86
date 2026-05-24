@@ -12,11 +12,11 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 
-from .decompiler_postprocess_jcc import _condition_tags_8616, _translate_cmp_jcc_guard_8616
 from .decompiler_postprocess_flags import (
     _extract_flag_predicate_from_expr_8616,
     _extract_flag_test_info_8616,
 )
+from .decompiler_postprocess_jcc import _condition_tags_8616, _translate_cmp_jcc_guard_8616
 from .decompiler_postprocess_utils import _same_c_expression_8616
 from .tail_validation_fingerprint import _expr_fingerprint
 

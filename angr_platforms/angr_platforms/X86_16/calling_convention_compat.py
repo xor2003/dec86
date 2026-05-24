@@ -51,7 +51,9 @@ def _guess_retval_type_8616(self, cc, ret_val_size):
         return ret_type
     if not getattr(cc, "OVERFLOW_RETURN_VAL", None) or getattr(cc, "RETURN_VAL", None) is None:
         return ret_type
-    if getattr(self._function, "_argument_registers", None) or getattr(self._function, "_argument_stack_variables", None):
+    if getattr(self._function, "_argument_registers", None) or getattr(
+        self._function, "_argument_stack_variables", None
+    ):
         return ret_type
 
     for ret_block in getattr(self._function, "ret_sites", ()):
@@ -199,6 +201,3 @@ def apply_x86_16_calling_convention_compatibility() -> None:
     if getattr(_cc_analysis.CallingConventionAnalysis._guess_retval_type, "__name__", "") != "_guess_retval_type_8616":
         _guess_retval_type_8616._orig = _cc_analysis.CallingConventionAnalysis._guess_retval_type
         _cc_analysis.CallingConventionAnalysis._guess_retval_type = _guess_retval_type_8616
-
-
-

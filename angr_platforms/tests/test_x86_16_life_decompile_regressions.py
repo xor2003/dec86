@@ -6,7 +6,6 @@ import inertia_decompiler.cli as decompile
 import inertia_decompiler.sidecar_metadata as sidecar_metadata
 from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIFE_EXE = REPO_ROOT / "LIFE.EXE"
 

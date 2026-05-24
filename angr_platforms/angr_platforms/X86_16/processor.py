@@ -18,6 +18,7 @@ TYPES = {reg8_t: Type.int_8, reg16_t: Type.int_16, reg32_t: Type.int_32, sgreg_t
 
 # General-purpose register structure
 
+
 class GPRegister:
     def __init__(self):
         self.reg32 = 0  # 32-bit register value
@@ -46,7 +47,9 @@ class GPRegister:
     def reg8_h(self, value):
         self.reg32 = (self.reg32 & 0xFFFF00FF) | ((value & 0xFF) << 8)
 
+
 # Segment register cache structure
+
 
 class SGRegCache:
     def __init__(self):
@@ -54,7 +57,9 @@ class SGRegCache:
         self.limit = 0  # Limit of the segment
         self.flags = SegDescFlags()  # Flags for the segment descriptor
 
+
 # Segment descriptor flags structure
+
 
 class SegDescFlags:
     def __init__(self):
@@ -116,6 +121,7 @@ class SegDescFlags:
     def G(self, value):
         self.raw = (self.raw & ~(1 << 11)) | (value << 11)
 
+
 # Segment register structure
 class SGRegister:
     def __init__(self):
@@ -146,12 +152,14 @@ class SGRegister:
     def index(self, value):
         self.raw = (self.raw & 0x7) | ((value & 0x1FFF) << 3)
 
+
 # Descriptor table register structure
 class DTRegister:
     def __init__(self):
         self.selector = 0  # Selector for LDTR and TR
         self.base = 0  # Base address of the descriptor table
         self.limit = 0  # Limit of the descriptor table
+
 
 # Processor class
 class Processor(Eflags, CR):
@@ -242,7 +250,7 @@ class Processor(Eflags, CR):
     def get_ip(self):
         if self.lifter_instruction is None:
             return self.eip & 0xFFFF
-        offset = self.vex_offsets.get('ip', 0)
+        offset = self.vex_offsets.get("ip", 0)
         return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_16))
 
     def get_gpreg(self, n):
@@ -319,7 +327,7 @@ class Processor(Eflags, CR):
         return flags
 
     def get_dtreg_selector(self, n):
-        #assert n < dtreg_t.DTREGS_COUNT.value
+        # assert n < dtreg_t.DTREGS_COUNT.value
         return self.dtregs[n].selector
 
     def get_dtreg_base(self, n):
@@ -354,9 +362,9 @@ class Processor(Eflags, CR):
                 else:
                     value_v = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
                 if self._reg8_is_high(n):
-                    new_base = ((value_v.cast_to(Type.int_16) << 8) | (base & 0x00FF))
+                    new_base = (value_v.cast_to(Type.int_16) << 8) | (base & 0x00FF)
                 else:
-                    new_base = ((base & 0xFF00) | value_v.cast_to(Type.int_16))
+                    new_base = (base & 0xFF00) | value_v.cast_to(Type.int_16)
                 self.set_gpreg(base_reg, new_base)
                 return
 

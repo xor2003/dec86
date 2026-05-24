@@ -448,11 +448,7 @@ def test_strip_segment_scale_from_addr_expr_keeps_register_plus_offset():
         for term in terms
         if isinstance(term, _decompile.structured_c.CVariable)
     )
-    constants = sorted(
-        term.value
-        for term in terms
-        if isinstance(term, _decompile.structured_c.CConstant)
-    )
+    constants = sorted(term.value for term in terms if isinstance(term, _decompile.structured_c.CConstant))
     assert names == ["bx"]
     assert constants == [4]
 
@@ -469,10 +465,6 @@ def test_strip_segment_scale_from_addr_expr_keeps_register_plus_offset_for_shl_f
         for term in terms
         if isinstance(term, _decompile.structured_c.CVariable)
     )
-    constants = sorted(
-        term.value
-        for term in terms
-        if isinstance(term, _decompile.structured_c.CConstant)
-    )
+    constants = sorted(term.value for term in terms if isinstance(term, _decompile.structured_c.CConstant))
     assert names == ["bx"]
     assert constants == [4]

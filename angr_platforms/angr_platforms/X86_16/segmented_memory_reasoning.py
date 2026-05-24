@@ -468,9 +468,7 @@ def _recover_stack_slot_from_segmented_operand_8616(node, codegen):
 
     unified_locals = getattr(getattr(codegen, "cfunc", None), "unified_local_vars", None)
     if isinstance(unified_locals, dict):
-        unified_locals[stack_var] = {
-            (cvar, getattr(cvar, "variable_type", None) or getattr(node, "type", None))
-        }
+        unified_locals[stack_var] = {(cvar, getattr(cvar, "variable_type", None) or getattr(node, "type", None))}
 
     return cvar
 
@@ -513,9 +511,7 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
             codegen._inertia_segmented_memory_lowering = lowering
             codegen._inertia_segmented_memory_stats = {
                 "segment_assignments": len(assignments),
-                "associations_built": sum(
-                    len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")
-                ),
+                "associations_built": sum(len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")),
                 "far_pointers_detected": 0,
             }
         else:
@@ -527,7 +523,9 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
             codegen._inertia_segmented_memory_lowering = {}
 
         changed = False
-        target = str(getattr(getattr(codegen, "project", None), "_inertia_c_target", "portable-flat") or "portable-flat")
+        target = str(
+            getattr(getattr(codegen, "project", None), "_inertia_c_target", "portable-flat") or "portable-flat"
+        )
         project = getattr(codegen, "project", None)
         current_stage = str(getattr(project, "_inertia_decompiler_stage", "") or "")
         if current_stage.startswith("structuring:"):
@@ -542,6 +540,7 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
             if apply_runtime_segment_lowering_8616(codegen, target=target):
                 changed = True
         if _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer):
+
             def transform(node):
                 nonlocal changed
                 if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
@@ -578,6 +577,7 @@ def _lower_stable_ss_stack_accesses_8616(codegen) -> bool:
     """
     return _apply_segmented_memory_analysis_only_8616(codegen)
 
+
 def _apply_segmented_memory_analysis_only_8616(codegen) -> bool:
     """Run segment association analysis without transforming codegen."""
     if getattr(codegen, "cfunc", None) is None:
@@ -608,6 +608,7 @@ def _apply_segmented_memory_analysis_only_8616(codegen) -> bool:
         logger.warning("Segmented memory analysis-only pass failed: %s", ex)
         codegen._inertia_segmented_memory_error = str(ex)
         return False
+
 
 def _empty_segment_summary_8616():
     return {"stable": {}, "over_associated": {}, "unknown": {}}

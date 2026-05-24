@@ -14,7 +14,7 @@ class Emulator(Interrupt):
         self.arch = arch
         self.lifter = lifter
         self.irsb = lifter.irsb if lifter else None
-        self.vex_offsets = {r.name.lower(): r.vex_offset for r in arch.register_list if hasattr(r, 'vex_offset')}
+        self.vex_offsets = {r.name.lower(): r.vex_offset for r in arch.register_list if hasattr(r, "vex_offset")}
         self.regs = {}
 
     def chk_ring(self, dpl: int) -> bool:

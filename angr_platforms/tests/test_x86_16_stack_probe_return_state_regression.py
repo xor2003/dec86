@@ -8,15 +8,15 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.callsite_stack_metadata import _generic_stack_carrier_name_8616
+from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_calls import _materialize_callsite_stack_arguments_8616
+from angr_platforms.X86_16.decompiler_postprocess_utils import _same_c_expression_8616
+from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
     build_typed_stack_probe_return_facts_8616,
 )
-from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
-from angr_platforms.X86_16.decompiler_postprocess_utils import _same_c_expression_8616
 from angr_platforms.X86_16.stack_probe_fact_trace import format_stack_probe_fact_stats_8616
 
 
@@ -273,7 +273,9 @@ def test_stack_probe_materialized_arg_prunes_adjacent_segment_metadata_stores():
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -385,7 +387,9 @@ def test_stack_probe_materialized_arg_prunes_only_current_call_metadata():
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call_a = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [], codegen=codegen)
     call_b = CFunctionCall("displaycursor", SimpleNamespace(name="displaycursor"), [one_arg], codegen=codegen)
     stray_metadata = CAssignment(_ss_store(carrier_b), cs_reg, codegen=codegen)
@@ -487,7 +491,9 @@ def test_stack_probe_materialize_refuses_segment_metadata_without_matching_typed
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -575,8 +581,12 @@ def test_stack_probe_materialize_preserves_typed_ss_pickup_across_call_and_globa
         codegen=codegen,
     )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
-    setup_call = CExpressionStatement(CFunctionCall("settextrows", SimpleNamespace(name="settextrows"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
+    setup_call = CExpressionStatement(
+        CFunctionCall("settextrows", SimpleNamespace(name="settextrows"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [], codegen=codegen)
 
     ss_base = structured_c.CBinaryOp(
@@ -754,8 +764,12 @@ def test_stack_probe_materialize_rebinds_stale_summary_node_ids_by_callsite_addr
             codegen=codegen,
         )
 
-    probe_call = CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], tags={"ins_addr": 0x4010}, codegen=codegen)
-    call = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [], tags={"ins_addr": 0x4012}, codegen=codegen)
+    probe_call = CFunctionCall(
+        "aNchkstk", SimpleNamespace(name="aNchkstk"), [], tags={"ins_addr": 0x4010}, codegen=codegen
+    )
+    call = CFunctionCall(
+        "clearscreen", SimpleNamespace(name="clearscreen"), [], tags={"ins_addr": 0x4012}, codegen=codegen
+    )
     probe = CExpressionStatement(probe_call, codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1005,7 +1019,9 @@ def test_stack_probe_materialized_arg_prunes_dead_stack_address_carriers():
         codegen=codegen,
     )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [zero_arg], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1091,7 +1107,9 @@ def test_stack_probe_dead_carrier_pruning_keeps_later_reads():
         codegen=codegen,
     )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [zero_arg], codegen=codegen)
     live_read = CAssignment(live_out, carrier, codegen=codegen)
     codegen.cfunc.statements = CStatements(
@@ -1167,7 +1185,9 @@ def test_stack_probe_prunes_dead_register_identity_stack_carriers_without_temp_n
         codegen=codegen,
     )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [zero_arg], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [

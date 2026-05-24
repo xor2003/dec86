@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-
 
 _WIN16_RESOURCE_TYPES: dict[int, tuple[str, str]] = {
     1: ("CURSOR", ".cur"),

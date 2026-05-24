@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from archinfo import arch_from_id
 from cle.backends import Blob, register_backend
+
 from angr_platforms.X86_16.ne_resources import NEResourceTable, parse_ne_resources_bytes
 
 

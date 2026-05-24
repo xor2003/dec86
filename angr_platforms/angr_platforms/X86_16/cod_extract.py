@@ -143,11 +143,7 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
         (idx for idx in range(start_index - 1, -1, -1) if lines[idx].strip().endswith("ENDP")),
         -1,
     )
-    prelude_lines = [
-        line
-        for line in lines[previous_end_index + 1 : start_index]
-        if line.lstrip().startswith(";")
-    ]
+    prelude_lines = [line for line in lines[previous_end_index + 1 : start_index] if line.lstrip().startswith(";")]
 
     alias_re = re.compile(r"^\s*;\s*([A-Za-z_$?@][\w$?@]*)\s*=\s*(-?[0-9A-Fa-f]+)\s*$")
     entry_re = re.compile(r"\*\*\*\s+[0-9A-Fa-f]+\s+(?:[0-9A-Fa-f]{2}\s+)+(.*)$")
@@ -160,12 +156,10 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
     segment_registers = {"cs", "ds", "es", "ss", "fs", "gs"}
 
     source_lines.extend(
-        re.sub(r"^\s*;\|\*+\s*", "", line).strip()
-        for line in prelude_lines
-        if line.lstrip().startswith(";|***")
+        re.sub(r"^\s*;\|\*+\s*", "", line).strip() for line in prelude_lines if line.lstrip().startswith(";|***")
     )
 
-    for line in lines[start_index:end_index + 1]:
+    for line in lines[start_index : end_index + 1]:
         if start_marker in line:
             collect = True
             continue

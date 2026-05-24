@@ -44,11 +44,7 @@ class GroupedRegionBasedStructuringPass(RegionBasedStructuringPass):
             cfunc._structuring_stats["structured_regions"] = structured_regions
             cfunc._structuring_stats["abnormal_loop_regions"] = abnormal_loop_regions
 
-            return (
-                self.stats.regions_reduced > 0
-                or self.stats.cycles_resolved > 0
-                or self.stats.sequences_created > 0
-            )
+            return self.stats.regions_reduced > 0 or self.stats.cycles_resolved > 0 or self.stats.sequences_created > 0
         except Exception:
             return False
 

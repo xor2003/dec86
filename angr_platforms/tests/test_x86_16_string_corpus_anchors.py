@@ -4,7 +4,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MONOPRIN_COD = REPO_ROOT / "cod" / "f14" / "MONOPRIN.COD"
 MONOPRIN_DEC = REPO_ROOT / "cod" / "f14" / "MONOPRIN.dec"
@@ -41,7 +40,7 @@ def test_monoprin_fimemset_emits_string_intrinsic_fallback_anchor():
         section_end = rendered.find("/* == end 4/6 MONOPRIN.COD :: __fimemset [NEAR] == */", section_start)
         if section_end == -1:
             section_end = rendered.find("/* == 5/6", section_start)
-        section = rendered[section_start:section_end if section_end != -1 else None]
+        section = rendered[section_start : section_end if section_end != -1 else None]
         assert "/* == c (string intrinsic fallback) == */" not in section
         assert "/* -- c (string intrinsic fallback) -- */" not in section
         assert "__x86_16_stos(2);" in rendered

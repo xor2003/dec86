@@ -211,12 +211,14 @@ def _coalesce_segmented_word_store_statements(
                                 and high_class.linear == low_class.linear + 1
                             )
                             joinable_stack_alias_pair = (
-                                low_class is not None
-                                and low_class.kind == "stack"
-                                and high_class is None
+                                low_class is not None and low_class.kind == "stack" and high_class is None
                             )
                             if (
-                                (low_facts.identity is None or high_facts.identity is None or not low_facts.can_join(high_facts))
+                                (
+                                    low_facts.identity is None
+                                    or high_facts.identity is None
+                                    or not low_facts.can_join(high_facts)
+                                )
                                 and not joinable_segment_const_pair
                                 and not joinable_stack_alias_pair
                             ):
@@ -239,7 +241,9 @@ def _coalesce_segmented_word_store_statements(
                             else:
                                 resolved_lhs = resolve_stack_cvar_from_addr_expr(project, codegen, low_addr_expr)
                                 replacement = structured_c.CAssignment(
-                                    resolved_lhs if resolved_lhs is not None else make_word_dereference_from_addr_expr(codegen, project, low_addr_expr),
+                                    resolved_lhs
+                                    if resolved_lhs is not None
+                                    else make_word_dereference_from_addr_expr(codegen, project, low_addr_expr),
                                     rhs_word,
                                     codegen=codegen,
                                 )

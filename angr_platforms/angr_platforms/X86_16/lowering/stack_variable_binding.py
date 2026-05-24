@@ -3,8 +3,7 @@ from __future__ import annotations
 # Layer: Lowering (early type manifestation)
 # Responsibility: bind stable SS/BP stack accesses to named local variable identities before late rewrite.
 # Forbidden: text-pattern semantics, postprocess cleanup ownership, widening from shape alone.
-
-from ..ir.core import IRAddress, IRValue, MemSpace, AddressStatus, SegmentOrigin
+from ..ir.core import AddressStatus, IRAddress, IRValue, MemSpace, SegmentOrigin
 
 __all__ = [
     "StackVariableBinding",

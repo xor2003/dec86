@@ -6,13 +6,19 @@ from inertia_decompiler import monkeytype_tools
 
 
 def test_monkeytype_code_filter_accepts_repo_python_sources():
-    assert monkeytype_tools.is_traceable_repo_path(Path("/home/xor/vextest/inertia_decompiler/cli_access_object_hints.py"))
-    assert monkeytype_tools.is_traceable_repo_path(Path("/home/xor/vextest/angr_platforms/angr_platforms/X86_16/alias_model.py"))
+    assert monkeytype_tools.is_traceable_repo_path(
+        Path("/home/xor/vextest/inertia_decompiler/cli_access_object_hints.py")
+    )
+    assert monkeytype_tools.is_traceable_repo_path(
+        Path("/home/xor/vextest/angr_platforms/angr_platforms/X86_16/alias_model.py")
+    )
     assert monkeytype_tools.is_traceable_repo_path(Path("/home/xor/vextest/decompile.py"))
 
 
 def test_monkeytype_code_filter_rejects_external_sources():
-    assert not monkeytype_tools.is_traceable_repo_path(Path("/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py"))
+    assert not monkeytype_tools.is_traceable_repo_path(
+        Path("/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py")
+    )
     assert not monkeytype_tools.is_traceable_repo_path(Path("/tmp/random_script.py"))
 
 

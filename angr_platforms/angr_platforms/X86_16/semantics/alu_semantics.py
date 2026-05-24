@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pyvex.lifting.util.vex_helper import Type
 
+from ..addressing_helpers import type_for_bits
 from ..ir.condition_ir import build_condition_ir_8616, harmonize_condition_args_8616
 from ..ir.core import IRCondition, IRValue, MemSpace
-from ..addressing_helpers import type_for_bits
 from ..ir.regs import REG16_OFFSET_MAP, register_name_from_offset
 
 
@@ -200,7 +200,11 @@ def unary_operation(get_value, set_result, update_flags, operator):
 
 
 def masked_shift_count(emu, count, width_bits: int, mask: int = 0x1F):
-    count_v = emu.constant(count, type_for_bits(width_bits)) if isinstance(count, int) else count.cast_to(type_for_bits(width_bits))
+    count_v = (
+        emu.constant(count, type_for_bits(width_bits))
+        if isinstance(count, int)
+        else count.cast_to(type_for_bits(width_bits))
+    )
     return count_v & emu.constant(mask, type_for_bits(width_bits))
 
 

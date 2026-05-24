@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from inertia_decompiler import cli_stack_byte_offsets as rewrites
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from inertia_decompiler import cli_stack_byte_offsets as rewrites
 
 
 @dataclass(frozen=True)
@@ -116,9 +116,13 @@ def test_rewrite_ss_stack_byte_offsets_uses_vvar_alias_for_stack_slot_recovery()
         iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
         replace_c_children=decompile_replace_c_children,
         c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
-        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
         classify_segmented_dereference=lambda node, _project: classified if node is deref else None,
-        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: (
+            addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr
+        ),
         resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
         promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
         stack_type_for_size=lambda _size: SimTypeShort(False),
@@ -213,9 +217,13 @@ def test_rewrite_ss_stack_byte_offsets_resolves_dirty_virtual_variable_alias():
         iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
         replace_c_children=decompile_replace_c_children,
         c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
-        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
         classify_segmented_dereference=lambda node, _project: classified if node is deref else None,
-        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: (
+            addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr
+        ),
         resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
         promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
         stack_type_for_size=lambda _size: SimTypeShort(False),
@@ -296,7 +304,9 @@ def test_rewrite_ss_stack_byte_offsets_resolves_direct_reference_alias_chain():
         iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
         replace_c_children=decompile_replace_c_children,
         c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
-        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
         classify_segmented_dereference=lambda _node, _project: None,
         strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr,
         resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
@@ -387,7 +397,9 @@ def test_rewrite_ss_stack_byte_offsets_resolves_named_vvar_aliases_sharing_one_r
         iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
         replace_c_children=decompile_replace_c_children,
         c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
-        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
         classify_segmented_dereference=lambda _node, _project: None,
         strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr,
         resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
@@ -479,7 +491,9 @@ def test_rewrite_ss_stack_byte_offsets_resolves_dirty_assignment_alias_chain():
         iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
         replace_c_children=decompile_replace_c_children,
         c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
-        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
         classify_segmented_dereference=lambda _node, _project: None,
         strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr,
         resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
@@ -545,7 +559,11 @@ def test_rewrite_ss_stack_byte_offsets_uses_sp_virtual_register_as_stack_anchor(
         codegen=codegen,
     )
     cfunc.statements = structured_c.CStatements(
-        [structured_c.CAssignment(deref, structured_c.CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen)],
+        [
+            structured_c.CAssignment(
+                deref, structured_c.CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen
+            )
+        ],
         addr=0x10010,
         codegen=codegen,
     )
@@ -559,9 +577,13 @@ def test_rewrite_ss_stack_byte_offsets_uses_sp_virtual_register_as_stack_anchor(
         iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
         replace_c_children=decompile_replace_c_children,
         c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
-        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
         classify_segmented_dereference=lambda node, _project: classified if node is deref else None,
-        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: (
+            addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr
+        ),
         resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
         promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
         stack_type_for_size=lambda _size: SimTypeShort(False),
@@ -653,9 +675,13 @@ def test_rewrite_ss_stack_byte_offsets_handles_shl_segment_scale_alias_chain():
         iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
         replace_c_children=decompile_replace_c_children,
         c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
-        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
         classify_segmented_dereference=lambda node, _project: classified if node is deref else None,
-        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: (
+            addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr
+        ),
         resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
         promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
         stack_type_for_size=lambda _size: SimTypeShort(False),
@@ -725,7 +751,9 @@ def test_rewrite_ss_stack_byte_offsets_rewrites_for_loop_iterator_store():
     root = structured_c.CStatements([loop], addr=0x10010, codegen=codegen)
     cfunc.statements = root
 
-    classified = SimpleNamespace(kind="stack", seg_name="ss", extra_offset=1, addr_expr=iterator_deref.operand.expr, cvar=stack_base_cvar)
+    classified = SimpleNamespace(
+        kind="stack", seg_name="ss", extra_offset=1, addr_expr=iterator_deref.operand.expr, cvar=stack_base_cvar
+    )
 
     changed = rewrites._rewrite_ss_stack_byte_offsets(
         project,
@@ -734,9 +762,13 @@ def test_rewrite_ss_stack_byte_offsets_rewrites_for_loop_iterator_store():
         iter_c_nodes_deep=decompile_iter_c_nodes_deep,
         replace_c_children=decompile_replace_c_children,
         c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
-        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
         classify_segmented_dereference=lambda node, _project: classified if node is iterator_deref else None,
-        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: (
+            addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr
+        ),
         resolve_stack_cvar_at_offset=lambda _codegen, offset: stack_base_cvar if offset == -3 else None,
         promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
         stack_type_for_size=lambda _size: SimTypeShort(False),
@@ -775,7 +807,9 @@ def decompile_replace_c_children(node, transform):
             setattr(node, attr, new_child)
             changed = True
             child = new_child
-        if isinstance(child, (structured_c.CBinaryOp, structured_c.CUnaryOp, structured_c.CTypeCast, structured_c.CAssignment)):
+        if isinstance(
+            child, (structured_c.CBinaryOp, structured_c.CUnaryOp, structured_c.CTypeCast, structured_c.CAssignment)
+        ):
             changed |= decompile_replace_c_children(child, transform)
     return changed
 

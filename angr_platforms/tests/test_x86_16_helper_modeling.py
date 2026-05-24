@@ -488,7 +488,9 @@ def test_interrupt_wrapper_result_lowering_rewrites_known_output_reads():
     ah_field = _decompile.structured_c.CStructField(h_struct, 0, "ah", codegen=codegen)
     ax_field = _decompile.structured_c.CStructField(x_struct, 0, "ax", codegen=codegen)
     bx_field = _decompile.structured_c.CStructField(x_struct, 2, "bx", codegen=codegen)
-    es_field = _decompile.structured_c.CStructField(SimStruct({"es": SimTypeShort()}, name="SREGS"), 0, "es", codegen=codegen)
+    es_field = _decompile.structured_c.CStructField(
+        SimStruct({"es": SimTypeShort()}, name="SREGS"), 0, "es", codegen=codegen
+    )
 
     g_info_ref = _decompile.structured_c.CVariable(g_info.variable, variable_type=SimTypeShort(), codegen=codegen)
 
@@ -570,15 +572,16 @@ def test_interrupt_wrapper_result_lowering_rewrites_known_output_reads():
                 ),
                 codegen=codegen,
             ),
-        ]
-        ,
+        ],
         codegen=codegen,
     )
     codegen.cfunc.statements = stmts
 
     assert _decompile._lower_interrupt_wrapper_result_reads(SimpleNamespace(), codegen, "modern") is True
 
-    assignments = [stmt for stmt in codegen.cfunc.statements.statements if isinstance(stmt, _decompile.structured_c.CAssignment)]
+    assignments = [
+        stmt for stmt in codegen.cfunc.statements.statements if isinstance(stmt, _decompile.structured_c.CAssignment)
+    ]
     assert assignments[1].rhs.callee_target == "get_dos_version"
     assert assignments[3].rhs.callee_target == "FP_SEG"
     assert assignments[3].rhs.args[0].callee_target == "getvect"
@@ -830,7 +833,9 @@ def test_interrupt_helper_formatting_uses_helper_names(monkeypatch):
     function = SimpleNamespace(project=project)
 
     monkeypatch.setattr(_decompile, "collect_interrupt_service_calls", lambda _function, _binary_path=None: [call])
-    monkeypatch.setattr(_decompile, "_helper_name", lambda _project, addr: "bios_int12_memory_size" if addr == helper_addr else None)
+    monkeypatch.setattr(
+        _decompile, "_helper_name", lambda _project, addr: "bios_int12_memory_size" if addr == helper_addr else None
+    )
 
     replacements = _decompile._interrupt_call_replacement_map(project, function, "pseudo", None)
     declarations = _decompile._interrupt_helper_declarations(function, "pseudo", None)
@@ -845,7 +850,9 @@ def test_patch_interrupt_service_call_sites_handles_bios_vectors(monkeypatch):
     project = SimpleNamespace(
         is_hooked=lambda _addr: False,
         hook=lambda _addr, _proc, replace=True: None,
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=True: callee if addr == 0xFE012 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=True: callee if addr == 0xFE012 else None)
+        ),
     )
     function = SimpleNamespace(project=project, _call_sites={}, get_call_return=lambda _addr: 0x4321)
 

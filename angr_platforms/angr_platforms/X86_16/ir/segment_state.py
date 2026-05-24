@@ -67,7 +67,10 @@ def _join_register_states(states: tuple[SegmentRegisterState, ...], register: st
     if not known:
         return _unknown_state(register)
     first = known[0]
-    if all((state.value_kind, state.source, state.origin) == (first.value_kind, first.source, first.origin) for state in known[1:]):
+    if all(
+        (state.value_kind, state.source, state.origin) == (first.value_kind, first.source, first.origin)
+        for state in known[1:]
+    ):
         return first
     return SegmentRegisterState(register=register, value_kind="merged", source=None, origin=SegmentOrigin.UNKNOWN)
 
@@ -81,7 +84,9 @@ def _join_entry_state(
     if not preds:
         return {register: _unknown_state(register) for register in _SEGMENT_REGS}
     return {
-        register: _join_register_states(tuple(exit_states.get(pred, {}).get(register, _unknown_state(register)) for pred in preds), register)
+        register: _join_register_states(
+            tuple(exit_states.get(pred, {}).get(register, _unknown_state(register)) for pred in preds), register
+        )
         for register in _SEGMENT_REGS
     }
 

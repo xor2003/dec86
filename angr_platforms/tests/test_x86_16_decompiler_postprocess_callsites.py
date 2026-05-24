@@ -92,7 +92,7 @@ def test_attach_callsite_summaries_recovers_empty_direct_callsite_inventory_from
             self.address = 0x4012
             self.mnemonic = "call"
             self.size = 3
-            self.insn = SimpleNamespace(operands=( _Operand(2, 0x1544), ), size=3)
+            self.insn = SimpleNamespace(operands=(_Operand(2, 0x1544),), size=3)
 
     block = SimpleNamespace(capstone=SimpleNamespace(insns=(_Insn(),)), size=3)
     project.factory = SimpleNamespace(block=lambda addr, opt_level=0: block)
@@ -351,7 +351,9 @@ def test_attach_callsite_summaries_binds_original_project_callee_for_rebased_exa
         _inertia_original_project=SimpleNamespace(
             kb=SimpleNamespace(
                 functions=SimpleNamespace(
-                    function=lambda addr, create=False: SimpleNamespace(addr=addr, name="DrawBar") if addr == 0x106C8 else None
+                    function=lambda addr, create=False: (
+                        SimpleNamespace(addr=addr, name="DrawBar") if addr == 0x106C8 else None
+                    )
                 )
             )
         ),
@@ -363,7 +365,9 @@ def test_attach_callsite_summaries_binds_original_project_callee_for_rebased_exa
     codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root, body=root)
 
     function = SimpleNamespace(addr=0x1000, get_call_sites=lambda: [0x100E])
-    project.kb = SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x1000 else None))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x1000 else None)
+    )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
         lambda _function, callsite_addr: CallsiteSummary8616(
@@ -432,14 +436,24 @@ def test_attach_callsite_summaries_replaces_conflicting_empty_stub_name_with_sid
 def test_attach_callsite_summaries_uses_cod_source_call_order_for_repeated_non_probe_calls(monkeypatch):
     project = SimpleNamespace()
     codegen = _DummyCodegen(project)
-    probe = CFunctionCall("aNchkstk", SimpleNamespace(addr=0x1222, name="aNchkstk", block_addrs_set=()), [], codegen=codegen)
-    draw_a = CFunctionCall("DrawBar", SimpleNamespace(addr=0x1544, name="DrawBar", block_addrs_set=()), [], codegen=codegen)
-    draw_b = CFunctionCall("DrawBar", SimpleNamespace(addr=0x1544, name="DrawBar", block_addrs_set=()), [], codegen=codegen)
-    draw_c = CFunctionCall("DrawBar", SimpleNamespace(addr=0x1666, name="DrawBar", block_addrs_set=()), [], codegen=codegen)
+    probe = CFunctionCall(
+        "aNchkstk", SimpleNamespace(addr=0x1222, name="aNchkstk", block_addrs_set=()), [], codegen=codegen
+    )
+    draw_a = CFunctionCall(
+        "DrawBar", SimpleNamespace(addr=0x1544, name="DrawBar", block_addrs_set=()), [], codegen=codegen
+    )
+    draw_b = CFunctionCall(
+        "DrawBar", SimpleNamespace(addr=0x1544, name="DrawBar", block_addrs_set=()), [], codegen=codegen
+    )
+    draw_c = CFunctionCall(
+        "DrawBar", SimpleNamespace(addr=0x1666, name="DrawBar", block_addrs_set=()), [], codegen=codegen
+    )
     root = CStatements([probe, draw_a, draw_b, draw_c], addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
     function = SimpleNamespace(addr=0x4010, get_call_sites=lambda: [0x4012, 0x4015, 0x4018, 0x401B])
-    project.kb = SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x4010 else None))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x4010 else None)
+    )
 
     summaries = {
         0x4012: CallsiteSummary8616(0x4012, 0x1222, 0x4015, "direct_far", 0, (), None, None, False, True),
@@ -508,7 +522,7 @@ def test_attach_callsite_summaries_rebinds_non_entry_direct_target_to_containing
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
         lambda _function, _callsite_addr: CallsiteSummary8616(
             callsite_addr=0x4018,
-            target_addr=0x166b,
+            target_addr=0x166B,
             return_addr=0x401B,
             kind="direct_near",
             arg_count=1,
@@ -529,9 +543,9 @@ def test_attach_callsite_summaries_drops_stale_mismatched_callee_when_source_cal
     project = SimpleNamespace(
         kb=SimpleNamespace(
             functions=SimpleNamespace(
-                function=lambda addr, create=False: SimpleNamespace(addr=0x4010, get_call_sites=lambda: [0x401B])
-                if addr == 0x4010
-                else None
+                function=lambda addr, create=False: (
+                    SimpleNamespace(addr=0x4010, get_call_sites=lambda: [0x401B]) if addr == 0x4010 else None
+                )
             )
         )
     )
@@ -605,7 +619,9 @@ def test_lookup_callee_function_rejects_mismatched_exact_lookup_and_uses_contain
 def test_callsite_stats_reject_known_prototype_arg_mismatch():
     project = SimpleNamespace()
     codegen = _DummyCodegen(project)
-    call = CFunctionCall("DrawBar", SimpleNamespace(addr=0x1544, name="DrawBar", block_addrs_set={0x1544}), [], codegen=codegen)
+    call = CFunctionCall(
+        "DrawBar", SimpleNamespace(addr=0x1544, name="DrawBar", block_addrs_set={0x1544}), [], codegen=codegen
+    )
     root = CStatements([call], addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
     codegen._inertia_callsite_summaries = {
@@ -637,7 +653,9 @@ def test_callsite_stats_reject_known_prototype_arg_mismatch():
 def test_callsite_stats_ignore_summary_arg_facts_for_known_zero_arg_helper():
     project = SimpleNamespace()
     codegen = _DummyCodegen(project)
-    call = CFunctionCall("clock", SimpleNamespace(addr=0x1544, name="clock", block_addrs_set={0x1544}), [], codegen=codegen)
+    call = CFunctionCall(
+        "clock", SimpleNamespace(addr=0x1544, name="clock", block_addrs_set={0x1544}), [], codegen=codegen
+    )
     root = CStatements([call], addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
     codegen._inertia_callsite_summaries = {
@@ -668,9 +686,9 @@ def test_callsite_stats_count_stale_target_rejection(monkeypatch):
     project = SimpleNamespace(
         kb=SimpleNamespace(
             functions=SimpleNamespace(
-                function=lambda addr, create=False: SimpleNamespace(addr=0x4010, get_call_sites=lambda: [0x401B])
-                if addr == 0x4010
-                else None
+                function=lambda addr, create=False: (
+                    SimpleNamespace(addr=0x4010, get_call_sites=lambda: [0x401B]) if addr == 0x4010 else None
+                )
             )
         )
     )

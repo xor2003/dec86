@@ -30,7 +30,9 @@ class _FakeFactory:
 def _project_with_blocks(blocks, function):
     return SimpleNamespace(
         factory=_FakeFactory(blocks),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function if addr == function.addr else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: function if addr == function.addr else None)
+        ),
     )
 
 

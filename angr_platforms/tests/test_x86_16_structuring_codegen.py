@@ -84,9 +84,7 @@ class TestStructuringCodegen:
         """
         Test that rendered loop code contains 'while' keyword.
         """
-        loop_region = Region(
-            block_addr=0x3000, region_type=RegionType.Loop
-        )
+        loop_region = Region(block_addr=0x3000, region_type=RegionType.Loop)
         loop_region.metadata["loop_info"] = None
 
         graph = RegionGraph()
@@ -117,9 +115,7 @@ class TestStructuringCodegen:
         """
         Test that rendered switch code contains 'switch' keyword.
         """
-        switch_region = Region(
-            block_addr=0x4000, region_type=RegionType.IncSwitch
-        )
+        switch_region = Region(block_addr=0x4000, region_type=RegionType.IncSwitch)
         switch_region.metadata["switch_candidates"] = [
             Region(block_addr=0x1),
             Region(block_addr=0x2),

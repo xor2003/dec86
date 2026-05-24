@@ -56,7 +56,7 @@ class TestNaturalLoopDetection:
 
         # Verify results
         assert len(result_graph.nodes) <= 3, "Loop should be reduced"
-        
+
         # Find loop region
         loop_nodes = [r for r in result_graph.nodes if r.region_type == RegionType.Loop]
         assert len(loop_nodes) > 0, "Should create a loop region"
@@ -110,7 +110,7 @@ class TestNaturalLoopDetection:
     def test_loop_with_single_exit(self):
         """
         Test loop where all paths exit to same target.
-        
+
         This should have high confidence.
         """
         entry = Region(block_addr=0x3000, region_type=RegionType.Linear)
@@ -350,10 +350,10 @@ class TestConfidenceScoring:
     def test_single_back_edge_higher_confidence(self):
         """Single back-edge should score higher than multiple."""
         # Setup single back-edge
-        entry1 = Region(block_addr=0xa000, region_type=RegionType.Linear)
-        header1 = Region(block_addr=0xa001, region_type=RegionType.Linear)
-        body1 = Region(block_addr=0xa002, region_type=RegionType.Linear)
-        exit1 = Region(block_addr=0xa003, region_type=RegionType.Linear)
+        entry1 = Region(block_addr=0xA000, region_type=RegionType.Linear)
+        header1 = Region(block_addr=0xA001, region_type=RegionType.Linear)
+        body1 = Region(block_addr=0xA002, region_type=RegionType.Linear)
+        exit1 = Region(block_addr=0xA003, region_type=RegionType.Linear)
 
         graph1 = RegionGraph()
         graph1.entry = entry1
@@ -365,11 +365,11 @@ class TestConfidenceScoring:
         graph1.add_edge(header1, exit1)
 
         # Setup multiple back-edges
-        entry2 = Region(block_addr=0xb000, region_type=RegionType.Linear)
-        header2 = Region(block_addr=0xb001, region_type=RegionType.Linear)
-        body2a = Region(block_addr=0xb002, region_type=RegionType.Linear)
-        body2b = Region(block_addr=0xb003, region_type=RegionType.Linear)
-        exit2 = Region(block_addr=0xb004, region_type=RegionType.Linear)
+        entry2 = Region(block_addr=0xB000, region_type=RegionType.Linear)
+        header2 = Region(block_addr=0xB001, region_type=RegionType.Linear)
+        body2a = Region(block_addr=0xB002, region_type=RegionType.Linear)
+        body2b = Region(block_addr=0xB003, region_type=RegionType.Linear)
+        exit2 = Region(block_addr=0xB004, region_type=RegionType.Linear)
 
         graph2 = RegionGraph()
         graph2.entry = entry2
@@ -390,9 +390,7 @@ class TestConfidenceScoring:
         loop2 = analysis2._detect_natural_loop(header2)
 
         assert loop1 is not None and loop2 is not None, "Both should detect loops"
-        assert (
-            loop1.confidence >= loop2.confidence
-        ), "Single back-edge should have >= confidence as multiple"
+        assert loop1.confidence >= loop2.confidence, "Single back-edge should have >= confidence as multiple"
 
 
 if __name__ == "__main__":

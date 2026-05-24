@@ -22,15 +22,7 @@ def apply_x86_16_cross_entry_grouping(codegen: Any) -> bool:
     setattr(codegen, "_inertia_entry_fragment_ids", entry_fragment_ids)
     setattr(codegen, "_inertia_cross_entry_grouped_units", grouped_graph.grouped_units)
     member_region_ids = (
-        tuple(
-            sorted(
-                {
-                    region_id
-                    for unit in grouped_graph.grouped_units.units
-                    for region_id in unit.member_region_ids
-                }
-            )
-        )
+        tuple(sorted({region_id for unit in grouped_graph.grouped_units.units for region_id in unit.member_region_ids}))
         if grouped_graph.grouped_units is not None
         else ()
     )

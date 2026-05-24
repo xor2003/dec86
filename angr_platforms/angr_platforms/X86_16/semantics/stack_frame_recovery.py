@@ -19,8 +19,8 @@ Rule:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable, Any
+from dataclasses import dataclass
+from typing import Iterable
 
 from ..ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from ..pipeline.errors import PipelineHardError
@@ -121,6 +121,7 @@ def _looks_like_frame_evidence(obj: object) -> bool:
     """
 
     import sys
+
     sys.stderr.flush()
 
     # ── Capstone instruction (structured, NOT text) ──
@@ -252,7 +253,7 @@ def _detect_sp_proven_delta_from_blocks(project, function_addr: int) -> int | No
 
     Returns the SP delta (e.g. -8, -12) if proven, or None if not determinable.
     The delta is the function's frame size from ``sub sp, N`` after BP setup.
-    
+
     Uses VEX IRSB statement analysis, NOT text parsing.
     """
     kb = getattr(project, "kb", None) if project is not None else None
@@ -448,9 +449,7 @@ def normalize_stack_address_8616(addr: IRAddress, frame: StackFrameInfo8616) -> 
                 offset=bp_offset,
                 size=addr.size,
                 status=AddressStatus.STABLE,
-                segment_origin=addr.segment_origin
-                if addr.segment_origin is not None
-                else SegmentOrigin.PROVEN,
+                segment_origin=addr.segment_origin if addr.segment_origin is not None else SegmentOrigin.PROVEN,
                 expr=addr.expr,
             )
 
@@ -486,8 +485,7 @@ def assert_no_unresolved_stable_ss_before_alias_8616(
             continue
 
         raise PipelineHardError(
-            f"stable SS address is not BP/SP-relative before alias: "
-            f"base={addr.base} offset={addr.offset}",
+            f"stable SS address is not BP/SP-relative before alias: base={addr.base} offset={addr.offset}",
             layer="semantics.stack_frame_recovery",
         )
 

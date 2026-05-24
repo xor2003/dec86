@@ -11,7 +11,6 @@ Forbidden: semantic recovery from text, type inference, postprocess ownership.""
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
-    CConstant,
     CFunctionCall,
     CUnaryOp,
     CVariable,
@@ -159,8 +158,7 @@ def _apply_value_flow_renaming_8616(codegen) -> bool:
             return
         if hasattr(node, "statements"):
             walk_statements(node)
-        for attr in ("body", "else_node", "iftrue", "iffalse",
-                     "initializer", "iterator"):
+        for attr in ("body", "else_node", "iftrue", "iffalse", "initializer", "iterator"):
             child = getattr(node, attr, None)
             if child is not None:
                 _walk_node(child)

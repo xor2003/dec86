@@ -1,20 +1,20 @@
-from angr_platforms.X86_16.recompilable_storage_map import (
-    RecompilableStorageMapCandidate,
-    build_recompilable_storage_map,
-)
-from angr_platforms.X86_16.recompilable_storage_alias import (
-    AliasBackedStorageSeed,
-    export_recompilable_storage_map_from_alias_facts,
-)
-from angr_platforms.X86_16.recompilable_storage_map_producer import (
-    SegmentedStorageSeed,
-    export_recompilable_storage_map_from_codegen,
-)
 from angr_platforms.X86_16.alias_model import (
     AliasStorageFacts,
     _StackSlotIdentity,
     _StorageDomainSignature,
     _StorageView,
+)
+from angr_platforms.X86_16.recompilable_storage_alias import (
+    AliasBackedStorageSeed,
+    export_recompilable_storage_map_from_alias_facts,
+)
+from angr_platforms.X86_16.recompilable_storage_map import (
+    RecompilableStorageMapCandidate,
+    build_recompilable_storage_map,
+)
+from angr_platforms.X86_16.recompilable_storage_map_producer import (
+    SegmentedStorageSeed,
+    export_recompilable_storage_map_from_codegen,
 )
 
 
@@ -157,9 +157,7 @@ def test_recompilable_storage_map_producer_uses_codegen_segment_summary_and_lowe
         ),
     )
 
-    assert [(row.segment_reg, row.segment_value, row.offset) for row in artifact.rows] == [
-        ("DS", 0x2000, 0x10)
-    ]
+    assert [(row.segment_reg, row.segment_value, row.offset) for row in artifact.rows] == [("DS", 0x2000, 0x10)]
     assert len(artifact.refusals) == 1
     assert artifact.refusals[0].segment_reg == "ES"
     assert artifact.refusals[0].classification == "over_associated"
@@ -188,9 +186,7 @@ def test_recompilable_storage_map_alias_export_maps_stack_slot_to_ss():
             "over_associated": {},
             "unknown": {},
         }
-        _inertia_segmented_memory_lowering = {
-            "SS": {"classification": "const", "allow_linear_lowering": True}
-        }
+        _inertia_segmented_memory_lowering = {"SS": {"classification": "const", "allow_linear_lowering": True}}
 
     stack_facts = AliasStorageFacts(
         domain=_StorageDomainSignature(
@@ -226,9 +222,7 @@ def test_recompilable_storage_map_alias_export_requires_explicit_segment_for_mem
             "over_associated": {},
             "unknown": {},
         }
-        _inertia_segmented_memory_lowering = {
-            "DS": {"classification": "const", "allow_linear_lowering": True}
-        }
+        _inertia_segmented_memory_lowering = {"DS": {"classification": "const", "allow_linear_lowering": True}}
 
     memory_facts = AliasStorageFacts(
         domain=_StorageDomainSignature("memory", 2, _StorageView(0x40 * 8, 16)),

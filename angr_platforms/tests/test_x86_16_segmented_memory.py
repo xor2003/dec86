@@ -404,10 +404,7 @@ class TestPhase3Integration:
 
         assert result is False
         assert codegen._inertia_segmented_memory_summary["stable"]["DS"]["classification"] == "const"
-        assert (
-            codegen._inertia_segmented_memory_summary["over_associated"]["ES"]["classification"]
-            == "over_associated"
-        )
+        assert codegen._inertia_segmented_memory_summary["over_associated"]["ES"]["classification"] == "over_associated"
         assert codegen._inertia_segmented_memory_lowering["DS"]["allow_linear_lowering"] is True
         assert codegen._inertia_segmented_memory_lowering["ES"]["allow_linear_lowering"] is False
         assert codegen._inertia_segmented_memory_stats["segment_assignments"] == 4

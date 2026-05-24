@@ -85,9 +85,7 @@ def _call_comment(name: str, summary: FunctionStateSummary) -> str | None:
         return None
     inputs = tuple((*summary.gp_register_inputs, *summary.segment_register_inputs, *summary.flag_inputs))
     outputs = tuple((*summary.gp_register_outputs, *summary.segment_register_outputs, *summary.flag_outputs))
-    return (
-        f"/* io {name}: in={_join(inputs)}; out={_join(outputs)}; ret={summary.return_kind} */"
-    )
+    return f"/* io {name}: in={_join(inputs)}; out={_join(outputs)}; ret={summary.return_kind} */"
 
 
 def _prepend_header(rendered: str, header_lines: list[str]) -> str:
@@ -165,6 +163,7 @@ def apply_x86_16_function_interface_surface(project, codegen) -> bool:
     def _render_text_with_interface(_cfunc):  # noqa: ANN001
         # ── Runtime contract: facts produced must be consumed before C emission ──
         from .pipeline.contracts import assert_pipeline_contracts_8616
+
         assert_pipeline_contracts_8616(codegen)
 
         rendered = original(_cfunc)

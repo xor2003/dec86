@@ -5,7 +5,6 @@ from __future__ import annotations
 AGENTS rule: no semantic recovery — this is pure formatting/fidelity output.
 """
 
-import re
 from pathlib import Path
 
 

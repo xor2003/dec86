@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: IR
 # Responsibility: typed value-domain aliases and value IR constructors.
 # Forbidden: alias/widening ownership and late rewrite semantics.
-
 from .core import IRValue, MemSpace
 
 __all__ = ["IRValue", "MemSpace", "build_value_ir_8616"]

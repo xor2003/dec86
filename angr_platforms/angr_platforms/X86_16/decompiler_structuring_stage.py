@@ -6,30 +6,31 @@ import os
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
-from typing import Tuple, Callable
+from typing import Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles, infer_induction_summary
+from inertia_decompiler.runtime_support import timing_output_enabled
 
 from . import confidence_and_assumptions as _confidence
 from . import decompiler_postprocess_simplify as _simplify
 from . import function_interface_surface as _interface_surface
 from . import ir_confidence_markers as _ir_confidence
-from .ir import vex_import as _vex_ir
-from .ir import segment_state as _segment_state
-from .ir import string_effects as _string_effects
 from . import segmented_memory_reasoning as _segmented_mem
-from . import string_instruction_artifact as _string_instruction_artifact
 from . import string_codegen_override as _string_codegen_override
+from . import string_instruction_artifact as _string_instruction_artifact
 from . import string_instruction_lowering as _string_instruction_lowering
-from . import structuring_cross_entry as _cross_entry
-from . import structuring_grouped_pass as _grouped_structuring
 from . import structuring_codegen as _codegen
+from . import structuring_cross_entry as _cross_entry
 from . import structuring_diagnostics as _diagnostics
+from . import structuring_grouped_pass as _grouped_structuring
 from . import type_array_matching as _array_match
 from . import type_equivalence_classes as _type_equiv
 from . import type_structure_merging as _struct_merge
 from .condition_trace import record_ast_condition_trace_8616
+from .ir import segment_state as _segment_state
+from .ir import string_effects as _string_effects
+from .ir import vex_import as _vex_ir
 from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
@@ -39,7 +40,6 @@ from .tail_validation import (
     persist_x86_16_tail_validation_snapshot,
     x86_16_tail_validation_result_passed,
 )
-from inertia_decompiler.runtime_support import timing_output_enabled
 
 __all__ = [
     "DecompilerStructuringPassSpec",
@@ -175,7 +175,9 @@ def _induction_summary_artifact_8616(codegen) -> bool:
         return False
 
     summaries = []
-    for _base_key, profile in sorted(build_access_trait_evidence_profiles(traits).items(), key=lambda item: repr(item[0])):
+    for _base_key, profile in sorted(
+        build_access_trait_evidence_profiles(traits).items(), key=lambda item: repr(item[0])
+    ):
         summary = infer_induction_summary(profile)
         if summary is not None:
             summaries.append(summary)
@@ -288,8 +290,7 @@ def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
             codegen._inertia_structuring_validation_failed = True
             codegen._inertia_structuring_validation_failure_pass = spec_name
             codegen._inertia_structuring_validation_failure_error = (
-                validation.get("summary_text")
-                or f"tail-validation status={validation.get('status', 'unknown')}"
+                validation.get("summary_text") or f"tail-validation status={validation.get('status', 'unknown')}"
             )
 
     return finalize
@@ -355,6 +356,7 @@ def _structuring_codegen_8616(project, codegen) -> bool:
             from .lowering.real_mode_linear import (
                 lower_stable_ss_linear_stack_dereferences_8616,
             )
+
             lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
         except PipelineHardError:
             raise
@@ -374,6 +376,7 @@ def _structuring_codegen_8616(project, codegen) -> bool:
         try:
             from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
             from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
+
             transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
             alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
             if isinstance(alias_facts, list) and alias_facts:
@@ -398,6 +401,7 @@ def _structuring_codegen_8616(project, codegen) -> bool:
     # PipelineHardError MUST propagate — never silently caught.
     # Only non-fatal errors (import, attribute) are logged and cause structuring abort.
     from .pipeline.contracts import assert_pipeline_contracts_8616
+
     try:
         assert_pipeline_contracts_8616(codegen)
     except PipelineHardError:
@@ -436,7 +440,10 @@ def _structuring_codegen_8616(project, codegen) -> bool:
                 continue
             if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
                 import sys as _sys
-                _sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] structuring pass: {spec.name} (+{time.perf_counter() - _t_structuring_start:.1f}s)\n")
+
+                _sys.stderr.write(
+                    f"[{time.strftime('%H:%M:%S')}] structuring pass: {spec.name} (+{time.perf_counter() - _t_structuring_start:.1f}s)\n"
+                )
                 _sys.stderr.flush()
             finalize_validation = _maybe_validate_structuring_pass_8616(project, codegen, spec.name)
             if spec.needs_project:
@@ -506,7 +513,9 @@ def _decompile_structuring_8616(self):
                 structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
                 structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
                 structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
-                structuring_info["struct_merging_changed"] = bool(getattr(self.codegen, "_inertia_struct_merging_changed", False))
+                structuring_info["struct_merging_changed"] = bool(
+                    getattr(self.codegen, "_inertia_struct_merging_changed", False)
+                )
         setattr(self.codegen, "_inertia_tail_validation_snapshot", None)
         self.project._inertia_decompiler_stage = "structuring_done"
         return
@@ -583,7 +592,9 @@ def _decompile_structuring_8616(self):
             structuring_info["tail_validation_verdict"] = validation["verdict"]
             structuring_info["tail_validation_cache_hit"] = bool(validation.get("cache_hit", False))
             structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
-            structuring_info["struct_merging_changed"] = bool(getattr(self.codegen, "_inertia_struct_merging_changed", False))
+            structuring_info["struct_merging_changed"] = bool(
+                getattr(self.codegen, "_inertia_struct_merging_changed", False)
+            )
             persist_x86_16_tail_validation_snapshot(
                 function_info=info,
                 codegen=self.codegen,
@@ -612,7 +623,6 @@ def _assert_alias_complete_8616(codegen) -> None:
     """
     from .access import _inertia_module_alias_fact_cache
     from .alias.alias_model_impl import AliasFailure
-    from .ir.core import MemSpace
     from .pipeline.errors import PipelineHardError
 
     cfunc = getattr(codegen, "cfunc", None)

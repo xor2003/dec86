@@ -190,7 +190,9 @@ class DOSInt2FMultiplex(DOSInterruptHandler):
 
 def _generic_interrupt_class(vector: int):
     category = "bios" if 0x10 <= vector <= 0x1F else "dos" if 0x20 <= vector <= 0x2F else "interrupt"
-    base = BIOSInterruptHandler if category == "bios" else DOSInterruptHandler if category == "dos" else InterruptHandler
+    base = (
+        BIOSInterruptHandler if category == "bios" else DOSInterruptHandler if category == "dos" else InterruptHandler
+    )
     return type(
         f"Interrupt{vector:02X}",
         (base,),

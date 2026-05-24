@@ -8,7 +8,7 @@ If signedness cannot be expressed safely in C, use explicit helper form
 (e.g. ``s16_lt(lhs, rhs)``, ``u16_lt(lhs, rhs)``).
 """
 
-from ..ir.condition_ir import ConditionIR, ConditionFailure
+from ..ir.condition_ir import ConditionIR
 
 
 def render_condition_ir_8616(cond: ConditionIR) -> str | None:

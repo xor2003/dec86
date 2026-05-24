@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from inertia_decompiler.cli_string_timeout_fallback import try_render_x86_16_string_timeout_fallback
+
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 
 class _Memory:

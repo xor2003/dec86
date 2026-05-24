@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import logging
 import os
+from dataclasses import asdict, dataclass, field
 
 from .analysis_helpers import collect_neighbor_call_targets
 from .callee_name_normalization import normalize_callee_name_8616
@@ -28,7 +28,7 @@ class CallsiteSummary8616:
     helper_return_space: str | None = None
     helper_return_width: int | None = None
     helper_return_address_kind: str = "none"
-    push_arg_sources: tuple[tuple | None, ...] = ()
+    push_arg_sources: tuple[tuple | None, ...] = field(default=(), compare=False)
 
     def brief(self) -> str:
         return (
@@ -219,7 +219,9 @@ def _block_insns_for_callsite(function, callsite_addr: int) -> tuple:
             _debug_insns(f"capstone-window start={start_addr:#x}", capstone_insns)
             return capstone_insns
         except Exception as ex:
-            log.debug("callsite capstone-window decode failed start=%#x callsite=%#x: %s", start_addr, callsite_addr, ex)
+            log.debug(
+                "callsite capstone-window decode failed start=%#x callsite=%#x: %s", start_addr, callsite_addr, ex
+            )
             return insns
 
     candidate_addrs = [callsite_addr]
@@ -399,7 +401,11 @@ def _push_arg_source_from_context(insns: tuple, idx: int) -> tuple | None:
             if not ops:
                 return base_source
             return ("expr", base_source, tuple(reversed(ops)))
-        if mnemonic in {"add", "sub", "shl", "shr"} and len(operands) == 2 and _operand_reg_name(insn, operands[0]) == pushed_reg:
+        if (
+            mnemonic in {"add", "sub", "shl", "shr"}
+            and len(operands) == 2
+            and _operand_reg_name(insn, operands[0]) == pushed_reg
+        ):
             value = _operand_imm_value(operands[1])
             if not isinstance(value, int):
                 return None
@@ -595,6 +601,10 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
             push_arg_sources,
         )
     arg_count = len(arg_widths)
+    follow_insns = list(insns[call_idx + 1 : call_idx + 3])
+    if len(follow_insns) < 2:
+        follow_insns.extend(_next_linear_block_insns(function, callsite_addr)[: 2 - len(follow_insns)])
+    has_followup_insns = bool(follow_insns)
     return_register, return_used = _return_use_after_call(function, insns, call_idx, callsite_addr)
     helper_return_state = "none"
     helper_return_space = None
@@ -604,7 +614,7 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
         if return_register not in {None, "ax"}:
             helper_return_state = "unknown"
             helper_return_address_kind = "unknown"
-        elif return_used is True:
+        elif return_used is True or not has_followup_insns:
             helper_return_state = "stack_address"
             helper_return_space = "ss"
             helper_return_width = 2

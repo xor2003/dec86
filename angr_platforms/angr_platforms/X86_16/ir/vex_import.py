@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..analysis.alias import storage_of
+from ..analysis.stack_frame_ir import build_x86_16_ir_frame_access_artifact
 from .core import (
     AddressStatus,
     IRAddress,
@@ -15,13 +17,11 @@ from .core import (
     MemSpace,
     SegmentOrigin,
 )
-from .vex_addressing import block_segment_hints, expr_to_address
-from .vex_condition_lifting import build_condition_from_binop, expr_to_condition
 from .regs import register_name_from_offset
 from .ssa import build_x86_16_block_local_ssa
 from .ssa_function import build_x86_16_function_ssa
-from ..analysis.alias import storage_of
-from ..analysis.stack_frame_ir import build_x86_16_ir_frame_access_artifact
+from .vex_addressing import block_segment_hints, expr_to_address
+from .vex_condition_lifting import build_condition_from_binop, expr_to_condition
 
 __all__ = [
     "apply_x86_16_vex_ir_artifact",
@@ -83,11 +83,17 @@ def _expr_to_value(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
         if cond is not None:
             return IRValue(MemSpace.TMP, name=f"cond:{cond.op}", size=1, expr=(op,))
         if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
-            return IRValue(left.space, name=left.name, offset=left.offset + int(right.const), size=left.size, expr=(op,))
+            return IRValue(
+                left.space, name=left.name, offset=left.offset + int(right.const), size=left.size, expr=(op,)
+            )
         if "Sub" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
-            return IRValue(left.space, name=left.name, offset=left.offset - int(right.const), size=left.size, expr=(op,))
+            return IRValue(
+                left.space, name=left.name, offset=left.offset - int(right.const), size=left.size, expr=(op,)
+            )
         if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.REG and left.name and right.name:
-            return IRValue(MemSpace.TMP, name=f"addr:{left.name}+{right.name}", size=left.size, expr=(op, left.name, right.name))
+            return IRValue(
+                MemSpace.TMP, name=f"addr:{left.name}+{right.name}", size=left.size, expr=(op, left.name, right.name)
+            )
         if "And" in op:
             return IRValue(MemSpace.TMP, name=f"mask:{left.name or 'lhs'}", size=max(left.size, right.size), expr=(op,))
         return IRValue(MemSpace.TMP, name=f"expr:{op}", size=max(left.size, right.size), expr=(op,))
@@ -102,7 +108,10 @@ def _expr_to_value(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
         return IRValue(MemSpace.TMP, name="load", size=addr.size or _int_size(expr), expr=("load",))
     return IRValue(MemSpace.UNKNOWN, name=tag or "expr")
 
-def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions, *, segment_hints, tmp_exprs: dict[int, Any]) -> IRInstr | None:
+
+def _stmt_to_instr(
+    stmt, tmps: dict[int, IRValue], conditions, *, segment_hints, tmp_exprs: dict[int, Any]
+) -> IRInstr | None:
     tag = getattr(stmt, "tag", "")
     if tag == "Ist_WrTmp":
         data = getattr(stmt, "data", None)
@@ -171,7 +180,9 @@ def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions, *, segment_hints,
         data = _expr_to_value(getattr(stmt, "data", None), tmps, conditions)
         return IRInstr(op="STORE", dst=None, args=(addr, data), size=data.size)
     if tag == "Ist_Exit":
-        cond = expr_to_condition(getattr(stmt, "guard", None), tmps, conditions, expr_to_value=_expr_to_value, tmp_exprs=tmp_exprs)
+        cond = expr_to_condition(
+            getattr(stmt, "guard", None), tmps, conditions, expr_to_value=_expr_to_value, tmp_exprs=tmp_exprs
+        )
         target = _expr_to_value(getattr(stmt, "dst", None), tmps, conditions)
         return IRInstr(op="CJMP", dst=None, args=(cond, target), size=0)
     return None
@@ -232,7 +243,9 @@ def build_x86_16_ir_function_artifact(project, function) -> IRFunctionArtifact:
         blocks=tuple(blocks),
         refusals=tuple(refusals),
         summary=build_x86_16_ir_function_artifact_summary(
-            IRFunctionArtifact(function_addr=int(getattr(function, "addr", 0)), blocks=tuple(blocks), refusals=tuple(refusals))
+            IRFunctionArtifact(
+                function_addr=int(getattr(function, "addr", 0)), blocks=tuple(blocks), refusals=tuple(refusals)
+            )
         ),
     )
 
@@ -270,9 +283,13 @@ def build_x86_16_ir_function_artifact_summary(artifact: IRFunctionArtifact) -> d
                 if isinstance(atom, IRAddress):
                     address_space_counts[atom.space.value] = address_space_counts.get(atom.space.value, 0) + 1
                     if atom.status == AddressStatus.STABLE:
-                        stable_address_space_counts[atom.space.value] = stable_address_space_counts.get(atom.space.value, 0) + 1
+                        stable_address_space_counts[atom.space.value] = (
+                            stable_address_space_counts.get(atom.space.value, 0) + 1
+                        )
                     address_status_counts[atom.status.value] = address_status_counts.get(atom.status.value, 0) + 1
-                    segment_origin_counts[atom.segment_origin.value] = segment_origin_counts.get(atom.segment_origin.value, 0) + 1
+                    segment_origin_counts[atom.segment_origin.value] = (
+                        segment_origin_counts.get(atom.segment_origin.value, 0) + 1
+                    )
                 if storage_of(atom) is not None:
                     aliasable_values += 1
     frame = build_x86_16_ir_frame_access_artifact(artifact)

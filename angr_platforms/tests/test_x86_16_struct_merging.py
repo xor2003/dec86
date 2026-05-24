@@ -5,10 +5,11 @@ Tests field access pattern collection, struct synthesis,
 and multi-function struct layout merging.
 """
 
-import pytest
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.ir.core import IRBlock, IRAddress, IRFunctionArtifact, IRInstr, IRValue, MemSpace
+import pytest
+
+from angr_platforms.X86_16.ir.core import IRAddress, IRBlock, IRFunctionArtifact, IRInstr, IRValue, MemSpace
 from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.type_structure_merging import (
     FieldAccessCollector,
@@ -332,14 +333,18 @@ class TestPhase23Integration:
                     addr=0x1000,
                     successor_addrs=(0x1020, 0x1010),
                     instrs=(
-                        IRInstr("MOV", IRValue(MemSpace.REG, name="si", size=2), (IRValue(MemSpace.CONST, const=0),), size=2),
+                        IRInstr(
+                            "MOV", IRValue(MemSpace.REG, name="si", size=2), (IRValue(MemSpace.CONST, const=0),), size=2
+                        ),
                     ),
                 ),
                 IRBlock(
                     addr=0x1010,
                     successor_addrs=(0x1020,),
                     instrs=(
-                        IRInstr("MOV", IRValue(MemSpace.REG, name="si", size=2), (IRValue(MemSpace.CONST, const=2),), size=2),
+                        IRInstr(
+                            "MOV", IRValue(MemSpace.REG, name="si", size=2), (IRValue(MemSpace.CONST, const=2),), size=2
+                        ),
                     ),
                 ),
                 IRBlock(

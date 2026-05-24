@@ -60,7 +60,9 @@ def describe_word_global_constant_store_candidates_8616(project, codegen) -> tup
     def visit(node):
         if isinstance(node, CStatements):
             for idx in range(len(node.statements) - 1):
-                candidate = _word_global_constant_store_candidate_8616(project, node.statements[idx], node.statements[idx + 1])
+                candidate = _word_global_constant_store_candidate_8616(
+                    project, node.statements[idx], node.statements[idx + 1]
+                )
                 if candidate is not None:
                     candidates.append(candidate)
             for stmt in node.statements:

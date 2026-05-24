@@ -54,11 +54,7 @@ def _segment_value_from_summary(entry: dict[str, object], classification: str) -
 def _candidate_from_seed(codegen, seed: SegmentedStorageSeed) -> RecompilableStorageMapCandidate:
     summary_entry = _segment_summary_entry(codegen, seed.segment_reg)
     lowering_entry = _segment_lowering_entry(codegen, seed.segment_reg)
-    classification = str(
-        lowering_entry.get("classification")
-        or summary_entry.get("classification")
-        or "unknown"
-    )
+    classification = str(lowering_entry.get("classification") or summary_entry.get("classification") or "unknown")
     allow_linear_lowering = bool(lowering_entry.get("allow_linear_lowering", False))
     return RecompilableStorageMapCandidate(
         segment_reg=seed.segment_reg.upper(),

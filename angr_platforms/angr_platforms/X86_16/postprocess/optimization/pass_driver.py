@@ -10,12 +10,11 @@ Forbidden: semantic recovery, alias decisions, type inference."""
 from dataclasses import dataclass
 from typing import Callable
 
-from .const_prop import _constant_propagation_8616
-from .copy_prop import _copy_propagation_8616 as _legacy_copy_prop
-from .dce import _dead_code_elimination_8616
-from .dead_setup import _prune_dead_setup_carriers_8616
 from ...widening.widening_copyprop_8616 import _widening_copy_propagation_8616
 from ...widening.widening_memory_fold_8616 import _widening_store_to_load_forwarding_8616
+from .const_prop import _constant_propagation_8616
+from .dce import _dead_code_elimination_8616
+from .dead_setup import _prune_dead_setup_carriers_8616
 
 __all__ = [
     "OptimizationPassSpec",
@@ -32,6 +31,7 @@ __all__ = [
 # having to corrupt cfunc.statements (which needs to stay a CStatements for
 # c_repr_chunks() during C text rendering).
 from angr.analyses.decompiler.structured_codegen.c import CStatements as _CStatements
+
 if not hasattr(_CStatements, "__iter__"):
     _CStatements.__iter__ = lambda self: iter(self.statements)
 

@@ -3,12 +3,11 @@ from __future__ import annotations
 """Test the pipeline contracts: SemanticLaneState and assert_closed_loop."""
 
 import pytest
-
-from angr_platforms.angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.angr_platforms.X86_16.pipeline.contracts import (
     SemanticLaneState,
     assert_pipeline_contracts_8616,
 )
+from angr_platforms.angr_platforms.X86_16.pipeline.errors import PipelineHardError
 
 
 class TestSemanticLaneState:

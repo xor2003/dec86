@@ -88,9 +88,7 @@ def build_abnormal_loop_normalization_plan(
                 continue
             if body_region == header:
                 continue
-            external_entry_edges.append(
-                LoopEdgeRef(pred.region_id, body_region.region_id)
-            )
+            external_entry_edges.append(LoopEdgeRef(pred.region_id, body_region.region_id))
 
     exit_targets = {target for _, target in loop_info.exit_edges}
     abnormal_exit_edges: list[LoopEdgeRef] = []
@@ -104,9 +102,7 @@ def build_abnormal_loop_normalization_plan(
                 edge[1].region_id if edge[1].region_id is not None else -1,
             ),
         ):
-            abnormal_exit_edges.append(
-                LoopEdgeRef(source.region_id, target.region_id)
-            )
+            abnormal_exit_edges.append(LoopEdgeRef(source.region_id, target.region_id))
 
     header_id = header.region_id
     body_ids = tuple(region.region_id for region in _sorted_regions(body_regions))
@@ -157,12 +153,8 @@ def apply_abnormal_loop_normalization(
             (edge.source_region_id, edge.target_region_id) for edge in plan.abnormal_entries
         ]
     if plan.abnormal_exits:
-        header.metadata["unstructured_exits"] = [
-            (source, target) for source, target in loop_info.exit_edges
-        ]
-    structuring_variables = [
-        name for name in (plan.entry_variable_name, plan.exit_variable_name) if name
-    ]
+        header.metadata["unstructured_exits"] = [(source, target) for source, target in loop_info.exit_edges]
+    structuring_variables = [name for name in (plan.entry_variable_name, plan.exit_variable_name) if name]
     if structuring_variables:
         header.metadata["structuring_variables"] = structuring_variables
     return True

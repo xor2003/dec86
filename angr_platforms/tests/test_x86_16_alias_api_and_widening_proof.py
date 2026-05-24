@@ -34,13 +34,17 @@ from angr_platforms.X86_16.widening_model import (
 def _make_codegen():
     return SimpleNamespace(
         next_idx=lambda _name: 1,
-        project=SimpleNamespace(arch=SimpleNamespace(registers={"ax": (0, 2), "bx": (6, 2), "cx": (2, 2), "dx": (4, 2)})),
+        project=SimpleNamespace(
+            arch=SimpleNamespace(registers={"ax": (0, 2), "bx": (6, 2), "cx": (2, 2), "dx": (4, 2)})
+        ),
         cstyle_null_cmp=False,
     )
 
 
 def _reg(name: str, reg: int, size: int = 1):
-    return _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(reg, size, name=name), codegen=_make_codegen())
+    return _decompile.structured_c.CVariable(
+        _decompile.SimRegisterVariable(reg, size, name=name), codegen=_make_codegen()
+    )
 
 
 def test_alias_api_tracks_register_storage_identity_and_view_compatibility():

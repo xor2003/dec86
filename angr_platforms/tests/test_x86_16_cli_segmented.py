@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
+from inertia_decompiler import cli_segmented
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from inertia_decompiler import cli_segmented
 
 
 def _const(value: int, codegen):
@@ -27,7 +27,9 @@ def _flatten_add_terms(node, seen=None):
 
 def test_classify_segmented_addr_expr_treats_sp_virtual_register_as_stack_anchor():
     project = SimpleNamespace(arch=Arch86_16())
-    codegen = SimpleNamespace(project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(
+        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False
+    )
     ss_offset, ss_size = project.arch.registers["ss"]
     ss_reg = structured_c.CVariable(SimRegisterVariable(ss_offset, ss_size, name="ss"), codegen=codegen)
     sp_offset, sp_size = project.arch.registers["sp"]

@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import decompile
-from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
 from inertia_decompiler import sidecar_metadata
-
+from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
 
 LIFE_EXE = Path(__file__).resolve().parents[2] / "LIFE.EXE"
 

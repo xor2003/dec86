@@ -18,8 +18,8 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from inertia_decompiler.cli_access_profiles import (
     AccessTraitEvidenceProfile,
     AccessTraitInductionVar,
-    InductionSummary,
     AccessTraitStrideEvidence,
+    InductionSummary,
     infer_induction_variable,
 )
 
@@ -87,15 +87,17 @@ def _induction_traits(reg_offset: int, stride: int, *, conflicting_stride: int |
         )
     }
     if conflicting_stride is not None:
-        base[("induction_like", "ss", ("stack", "bp", -4), ("reg", reg_offset), conflicting_stride, 0, 2)] = AccessTraitStrideEvidence(
-            segment="ss",
-            base_key=("stack", "bp", -4),
-            index_key=("reg", reg_offset),
-            stride=conflicting_stride,
-            offset=0,
-            width=2,
-            count=2,
-            kind="induction_like",
+        base[("induction_like", "ss", ("stack", "bp", -4), ("reg", reg_offset), conflicting_stride, 0, 2)] = (
+            AccessTraitStrideEvidence(
+                segment="ss",
+                base_key=("stack", "bp", -4),
+                index_key=("reg", reg_offset),
+                stride=conflicting_stride,
+                offset=0,
+                width=2,
+                count=2,
+                kind="induction_like",
+            )
         )
     return {
         "base_const": {},

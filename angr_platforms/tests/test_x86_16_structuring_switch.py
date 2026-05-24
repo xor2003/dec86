@@ -76,10 +76,9 @@ class TestSwitchDetection:
         result = analysis.structure()
 
         # Many-way branch should be detected as switch candidate
-        assert (
-            switch_region.region_type == RegionType.IncSwitch
-            or len(analysis.unresolved_switches) > 0
-        ), "5-way branch should be strongly marked as switch"
+        assert switch_region.region_type == RegionType.IncSwitch or len(analysis.unresolved_switches) > 0, (
+            "5-way branch should be strongly marked as switch"
+        )
 
     def test_binary_branch_not_switch(self):
         """
@@ -107,9 +106,7 @@ class TestSwitchDetection:
         result = analysis.structure()
 
         # Binary if-else should NOT be marked as switch
-        assert (
-            condition.region_type != RegionType.IncSwitch
-        ), "Binary if-else should not be marked as switch"
+        assert condition.region_type != RegionType.IncSwitch, "Binary if-else should not be marked as switch"
 
     def test_nested_switch_like_structures(self):
         """
@@ -334,15 +331,15 @@ class TestIfThenElseInherent:
         Test nested if-then-else structures.
         Outer if-then-else contains another if-then-else in one branch.
         """
-        entry = Region(block_addr=0xa001, region_type=RegionType.Linear)
-        cond1 = Region(block_addr=0xa002, region_type=RegionType.Condition)
+        entry = Region(block_addr=0xA001, region_type=RegionType.Linear)
+        cond1 = Region(block_addr=0xA002, region_type=RegionType.Condition)
         # First branch of outer if
-        then1 = Region(block_addr=0xa003, region_type=RegionType.Linear)
+        then1 = Region(block_addr=0xA003, region_type=RegionType.Linear)
         # Else branch contains nested if
-        cond2 = Region(block_addr=0xa004, region_type=RegionType.Condition)
-        then2 = Region(block_addr=0xa005, region_type=RegionType.Linear)
-        else2 = Region(block_addr=0xa006, region_type=RegionType.Linear)
-        exit_region = Region(block_addr=0xa007, region_type=RegionType.Linear)
+        cond2 = Region(block_addr=0xA004, region_type=RegionType.Condition)
+        then2 = Region(block_addr=0xA005, region_type=RegionType.Linear)
+        else2 = Region(block_addr=0xA006, region_type=RegionType.Linear)
+        exit_region = Region(block_addr=0xA007, region_type=RegionType.Linear)
 
         graph = RegionGraph()
         graph.entry = entry
@@ -373,12 +370,12 @@ class TestIfThenElseInherent:
         Test that _try_sequence is called before _try_if_then patterns,
         ensuring linear chains are first collapsed.
         """
-        entry = Region(block_addr=0xb001, region_type=RegionType.Linear)
-        linear1 = Region(block_addr=0xb002, region_type=RegionType.Linear)
-        linear2 = Region(block_addr=0xb003, region_type=RegionType.Linear)
-        condition = Region(block_addr=0xb004, region_type=RegionType.Condition)
-        then_branch = Region(block_addr=0xb005, region_type=RegionType.Linear)
-        exit_region = Region(block_addr=0xb006, region_type=RegionType.Linear)
+        entry = Region(block_addr=0xB001, region_type=RegionType.Linear)
+        linear1 = Region(block_addr=0xB002, region_type=RegionType.Linear)
+        linear2 = Region(block_addr=0xB003, region_type=RegionType.Linear)
+        condition = Region(block_addr=0xB004, region_type=RegionType.Condition)
+        then_branch = Region(block_addr=0xB005, region_type=RegionType.Linear)
+        exit_region = Region(block_addr=0xB006, region_type=RegionType.Linear)
 
         graph = RegionGraph()
         graph.entry = entry
@@ -408,11 +405,11 @@ class TestIfThenElseInherent:
         Verify that simple 2-way branches are correctly handled
         (not over-merged or under-merged).
         """
-        entry = Region(block_addr=0xc001, region_type=RegionType.Linear)
-        condition = Region(block_addr=0xc002, region_type=RegionType.Condition)
-        then_branch = Region(block_addr=0xc003, region_type=RegionType.Linear)
-        else_branch = Region(block_addr=0xc004, region_type=RegionType.Linear)
-        exit_region = Region(block_addr=0xc005, region_type=RegionType.Linear)
+        entry = Region(block_addr=0xC001, region_type=RegionType.Linear)
+        condition = Region(block_addr=0xC002, region_type=RegionType.Condition)
+        then_branch = Region(block_addr=0xC003, region_type=RegionType.Linear)
+        else_branch = Region(block_addr=0xC004, region_type=RegionType.Linear)
+        exit_region = Region(block_addr=0xC005, region_type=RegionType.Linear)
 
         graph = RegionGraph()
         graph.entry = entry
@@ -433,9 +430,9 @@ class TestIfThenElseInherent:
         # Should reduce but not to a single node
         assert 1 < len(result.nodes) <= initial_node_count, "Should reduce but not collapse to 1"
         # Should indicate some reduction
-        assert (
-            analysis.stats.regions_reduced > 0 or analysis.stats.sequences_created > 0
-        ), "Should record some reduction"
+        assert analysis.stats.regions_reduced > 0 or analysis.stats.sequences_created > 0, (
+            "Should record some reduction"
+        )
 
 
 if __name__ == "__main__":

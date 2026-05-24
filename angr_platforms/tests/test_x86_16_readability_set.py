@@ -18,4 +18,3 @@ def test_x86_16_golden_readability_set_carries_anchor_counts():
     assert summary[0] == ("cod/f14/MONOPRIN.COD", "_mset_pos", 5)
     assert summary[1] == ("cod/f14/NHORZ.COD", "_ChangeWeather", 5)
     assert summary[-1] == ("angr_platforms/x16_samples/COCKPIT.COD", "_ConfigCrts", 3)
-

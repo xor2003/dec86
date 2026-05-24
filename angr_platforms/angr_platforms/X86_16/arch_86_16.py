@@ -20,18 +20,18 @@ from archinfo.arch import Arch, Endness, Register, register_arch
 
 
 class Arch86_16(Arch):
-
     def __init__(self, endness=Endness.LE):
         import logging
+
         self.logger = logging.getLogger(__name__)
         super().__init__(endness)
-        self.endness = 'Iend_LE'
+        self.endness = "Iend_LE"
         self.reg_blacklist = []
         self.reg_blacklist_offsets = []
         self.vex_archinfo = None
         self.vex_cc_regs = None
         self.vex_to_unicorn_map = None
-        #self.registers = self.register_list
+        # self.registers = self.register_list
 
         # Enforce 16-bit primary types
         self.bits = 16
@@ -39,8 +39,25 @@ class Arch86_16(Arch):
         offset = 0
         for reg in self.register_list:
             reg.vex_offset = offset
-            offset += (reg.size // 8)  # Bytes for VEX alignment
-            if reg.name in ['ax', 'cx', 'dx', 'bx', 'sp', 'bp', 'si', 'di', 'ip', 'flags', 'cs', 'ds', 'es', 'fs', 'gs', 'ss']:
+            offset += reg.size // 8  # Bytes for VEX alignment
+            if reg.name in [
+                "ax",
+                "cx",
+                "dx",
+                "bx",
+                "sp",
+                "bp",
+                "si",
+                "di",
+                "ip",
+                "flags",
+                "cs",
+                "ds",
+                "es",
+                "fs",
+                "gs",
+                "ss",
+            ]:
                 offset += 2  # Ensure 2-byte alignment for 16-bit regs, skip artificial
 
         self.logger.info("Arch86_16 init: Register offsets set (16-bit primary, sequential)")
@@ -59,19 +76,18 @@ class Arch86_16(Arch):
     ld_linux_name = None
     linux_name = None
     lib_paths = []
-    #max_inst_bytes = 4
-    #ip_offset = 0x80000000
-    #sp_offset = 16
+    # max_inst_bytes = 4
+    # ip_offset = 0x80000000
+    # sp_offset = 16
     call_pushes_ret = True
     instruction_endness = Endness.LE
     # FIXME: something in angr assumes that sizeof(long) == sizeof(return address on stack)
-    #initial_sp = 0x7fff
+    # initial_sp = 0x7fff
     call_sp_fix = 2
     instruction_alignment = 1
-    #ioreg_offset = 0x20
+    # ioreg_offset = 0x20
     memory_endness = Endness.LE
     register_endness = Endness.LE
-
 
     elf_tls = None
     if _capstone:
@@ -88,12 +104,14 @@ class Arch86_16(Arch):
     uc_prefix = "UC_X86_" if _unicorn else None
     function_prologs = {rb"\x55\x8b\xec", rb"\xc8"}  # push bp; mov bp, sp
     function_epilogs = {
-        rb"\xc9\xc3", rb"\xc9\xcb",  # leave; ret
-        rb"\x5d\xc3", rb"\x5d\xcb"}  # pop <reg>; ret
+        rb"\xc9\xc3",
+        rb"\xc9\xcb",  # leave; ret
+        rb"\x5d\xc3",
+        rb"\x5d\xcb",
+    }  # pop <reg>; ret
     ret_offset = RegisterOffset(0)  # ax - syscall return register?
     ret_instruction = b"\xc3"
     nop_instruction = b"\x90"
-
 
     register_list = [
         # Primary 16-bit registers only (size=2, no 32-bit to avoid recursion in name resolution)
@@ -131,7 +149,7 @@ class Arch86_16(Arch):
             size=2,
             alias_names=("stack_base",),
             general_purpose=True,
-            default_value=(0x7fff, True, "global"),
+            default_value=(0x7FFF, True, "global"),
             vex_offset=8,
         ),
         Register(
@@ -172,9 +190,33 @@ class Arch86_16(Arch):
         Register(name="gs", size=2, default_value=(0, False, None), concrete=False, vex_offset=28),
         Register(name="ss", size=2, vex_offset=30),
         # Flags and helpers (4-byte, artificial, no subregs)
-        Register(name="d", size=4, alias_names=("dflag",), default_value=(1, False, None), concrete=False, artificial=True, vex_offset=32),
-        Register(name="id", size=4, alias_names=("idflag",), default_value=(1, False, None), concrete=False, artificial=True, vex_offset=36),
-        Register(name="ac", size=4, alias_names=("acflag",), default_value=(0, False, None), concrete=False, artificial=True, vex_offset=40),
+        Register(
+            name="d",
+            size=4,
+            alias_names=("dflag",),
+            default_value=(1, False, None),
+            concrete=False,
+            artificial=True,
+            vex_offset=32,
+        ),
+        Register(
+            name="id",
+            size=4,
+            alias_names=("idflag",),
+            default_value=(1, False, None),
+            concrete=False,
+            artificial=True,
+            vex_offset=36,
+        ),
+        Register(
+            name="ac",
+            size=4,
+            alias_names=("acflag",),
+            default_value=(0, False, None),
+            concrete=False,
+            artificial=True,
+            vex_offset=40,
+        ),
         Register(name="cmstart", size=4, vex_offset=44),
         Register(name="cmlen", size=4, vex_offset=48),
         Register(name="nraddr", size=4, artificial=True, vex_offset=52),
@@ -189,7 +231,14 @@ class Arch86_16(Arch):
             concrete=False,
             vex_offset=64,
         ),
-        Register(name="fptag", size=8, alias_names=("fpu_tags",), floating_point=True, default_value=(0, False, None), vex_offset=128),
+        Register(
+            name="fptag",
+            size=8,
+            alias_names=("fpu_tags",),
+            floating_point=True,
+            default_value=(0, False, None),
+            vex_offset=128,
+        ),
         Register(name="fpround", size=4, floating_point=True, default_value=(0, False, None), vex_offset=136),
         Register(name="fc3210", size=4, floating_point=True, vex_offset=140),
     ]
@@ -205,8 +254,7 @@ class Arch86_16(Arch):
 
     @capstone_x86_syntax.setter
     def capstone_x86_syntax(self, new_syntax):
-        """Set the syntax that Capstone outputs for x86.
-        """
+        """Set the syntax that Capstone outputs for x86."""
         if new_syntax not in ("intel", "at&t"):
             raise ArchError('Unsupported Capstone x86 syntax. It must be either "intel" or "at&t".')
 
@@ -231,8 +279,7 @@ class Arch86_16(Arch):
 
     @keystone_x86_syntax.setter
     def keystone_x86_syntax(self, new_syntax):
-        """Set the syntax that Keystone uses for x86.
-        """
+        """Set the syntax that Keystone uses for x86."""
         if new_syntax not in ("intel", "at&t", "nasm", "masm", "gas", "radix16"):
             raise ArchError(
                 "Unsupported Keystone x86 syntax. It must be one of the following: "

@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Alias
 # Responsibility: canonical alias-state ownership.
 # Forbidden: lowering and rewrite ownership.
-
 from dataclasses import dataclass, field
 
 from .domains import DomainKey, View
@@ -37,7 +36,9 @@ class AliasState:
     def get(self, domain: DomainKey, view: View) -> AliasCell | None:
         return self._cells.get((domain, view))
 
-    def set(self, domain: DomainKey, view: View, expr: object, *, needs_synthesis: bool = False, version: int | None = None) -> AliasCell:
+    def set(
+        self, domain: DomainKey, view: View, expr: object, *, needs_synthesis: bool = False, version: int | None = None
+    ) -> AliasCell:
         if version is None:
             version = self.version_of(domain)
         cell = AliasCell(domain, view, expr, needs_synthesis=needs_synthesis, version=version)
@@ -47,7 +48,9 @@ class AliasState:
     def mark_needs_synthesis(self, domain: DomainKey, view: View) -> None:
         cell = self.get(domain, view)
         if cell is not None:
-            self._cells[(domain, view)] = AliasCell(cell.domain, cell.view, cell.expr, needs_synthesis=True, version=cell.version)
+            self._cells[(domain, view)] = AliasCell(
+                cell.domain, cell.view, cell.expr, needs_synthesis=True, version=cell.version
+            )
 
     def clear_domain(self, domain: DomainKey) -> None:
         doomed = [key for key in self._cells if key[0] == domain]

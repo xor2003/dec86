@@ -1,28 +1,17 @@
 """Tests for loop recovery: back-edges, natural loops, induction, guards."""
+
 from __future__ import annotations
 
-import pytest
 from angr_platforms.X86_16.structuring.loop_recovery import (
-    CFGView,
-    BlockSemantics,
-    InductionUpdate,
     LoopBackEdge,
-    LoopGuard,
-    NaturalLoop,
-    RecoveredLoop,
     compute_dominators,
     find_back_edges,
-    build_natural_loop,
-    recover_natural_loops,
-    match_induction_update,
-    find_loop_induction,
-    match_loop_guard,
-    find_loop_guard,
     recover_loops,
+    recover_natural_loops,
 )
 
-
 # ── Minimal CFG stub for testing ──
+
 
 class SimpleCFG:
     """Simple directed graph as CFG."""
@@ -45,6 +34,7 @@ class SimpleCFG:
 
 # ── Test 1: simple back-edge ──
 
+
 def test_simple_back_edge_forms_loop():
     """A single back-edge should create a NaturalLoop."""
     #  0 → 1 → 2 → 1  (back-edge 2 → 1)
@@ -66,6 +56,7 @@ def test_simple_back_edge_forms_loop():
 
 # ── Test 2: no dominator → no loop ──
 
+
 def test_no_dominator_no_loop():
     """A forward edge that is not a back-edge should not produce a loop."""
     #  0 → 1 → 2 → 3  (no back-edge)
@@ -78,6 +69,7 @@ def test_no_dominator_no_loop():
 
 
 # ── Test 3: induction + guard → recovered loop ──
+
 
 class FakeConst:
     def __init__(self, value: int):
@@ -152,6 +144,7 @@ def test_induction_and_guard_recovery():
 
 # ── Test 4: two induction candidates → no confident induction ──
 
+
 def test_two_induction_candidates_no_induction():
     """When two candidates exist, no single induction is returned."""
     i = FakeVar("i")
@@ -177,6 +170,7 @@ def test_two_induction_candidates_no_induction():
 
 
 # ── Test 5: unknown condition → loop recovered, guard=None ──
+
 
 def test_unknown_condition_guard_none():
     """When no recognizable guard exists, guard should be None."""
@@ -205,6 +199,7 @@ def test_unknown_condition_guard_none():
 
 # ── Test 6: dominators computed correctly ──
 
+
 def test_dominators_diamond():
     """Dominators should be correct for a diamond CFG."""
     #  0 → 1, 0 → 2, 1 → 3, 2 → 3
@@ -218,6 +213,7 @@ def test_dominators_diamond():
 
 
 # ── Test 7: Sub step (negative step) ──
+
 
 def test_negative_step_induction():
     """i = i - 1 should produce step=-1."""

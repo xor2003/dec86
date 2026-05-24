@@ -62,7 +62,10 @@ class StringInstructionArtifact:
 def _decode_linear_insns(project, start: int, end: int) -> tuple[Any, ...]:
     if end <= start:
         return ()
-    code = bytes(project.loader.memory.load(start, end - start))
+    memory = getattr(getattr(project, "loader", None), "memory", None)
+    if memory is None:
+        return ()
+    code = bytes(memory.load(start, end - start))
     capstone = project.arch.capstone
     previous_detail = getattr(capstone, "detail", False)
     try:
@@ -189,7 +192,9 @@ def _records_from_insns(insns: tuple[Any, ...]) -> StringInstructionArtifact:
 
     if not records:
         return StringInstructionArtifact(
-            refusals=(StringInstructionRefusal("no_string_signal", "instruction stream contains no x86 string instructions"),)
+            refusals=(
+                StringInstructionRefusal("no_string_signal", "instruction stream contains no x86 string instructions"),
+            )
         )
     refusals: list[StringInstructionRefusal] = []
     concrete_directions = {item.direction_mode for item in records if item.direction_mode in {"forward", "backward"}}

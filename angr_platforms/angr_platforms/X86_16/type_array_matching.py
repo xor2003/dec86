@@ -34,9 +34,9 @@ from inertia_decompiler.cli_access_profiles import (
     infer_induction_variable,
 )
 
+from .decompiler_postprocess_utils import _replace_c_children_8616, _same_c_expression_8616
 from .ir.core import IRAddress
 from .type_storage_object_bridge import load_storage_object_bridge
-from .decompiler_postprocess_utils import _replace_c_children_8616, _same_c_expression_8616
 
 if TYPE_CHECKING:
     pass
@@ -271,7 +271,9 @@ class ArrayExpressionMatcher:
         # Check for patterns like "[", "*", "+", "-"
         return any(marker in expr for marker in ["[", "mem[", "*"])
 
-    def _extract_array_pattern(self, expr: str, induction_vars: dict[str, InductionVariable]) -> Optional[ArrayAccessPattern]:
+    def _extract_array_pattern(
+        self, expr: str, induction_vars: dict[str, InductionVariable]
+    ) -> Optional[ArrayAccessPattern]:
         """Extract array pattern from expression if possible."""
         # Placeholder: would parse expression into base, index, stride, offset
         # For now, return generic pattern
@@ -367,7 +369,12 @@ def _extract_monotonic_update_8616(stmt):
     if _same_c_expression_8616(rhs.lhs, stmt.lhs) and isinstance(rhs.rhs, CConstant) and isinstance(rhs.rhs.value, int):
         delta = rhs.rhs.value if rhs.op == "Add" else -rhs.rhs.value
         return stmt.lhs, delta
-    if rhs.op == "Add" and _same_c_expression_8616(rhs.rhs, stmt.lhs) and isinstance(rhs.lhs, CConstant) and isinstance(rhs.lhs.value, int):
+    if (
+        rhs.op == "Add"
+        and _same_c_expression_8616(rhs.rhs, stmt.lhs)
+        and isinstance(rhs.lhs, CConstant)
+        and isinstance(rhs.lhs.value, int)
+    ):
         return stmt.lhs, rhs.lhs.value
     return None
 
@@ -416,7 +423,11 @@ def _expr_index_key_8616(expr) -> tuple[object, ...] | None:
         if isinstance(base_expr, CUnaryOp) and base_expr.op == "Reference":
             base_expr = base_expr.operand
         index_expr = getattr(expr, "index", None)
-        if not isinstance(base_expr, CVariable) or not isinstance(index_expr, CConstant) or not isinstance(index_expr.value, int):
+        if (
+            not isinstance(base_expr, CVariable)
+            or not isinstance(index_expr, CConstant)
+            or not isinstance(index_expr.value, int)
+        ):
             return None
         variable = getattr(base_expr, "variable", None)
         if not isinstance(variable, SimStackVariable):
@@ -431,7 +442,12 @@ def _expr_index_key_8616(expr) -> tuple[object, ...] | None:
 
 
 def _unwrap_double_negation_8616(node):
-    if isinstance(node, CUnaryOp) and node.op == "Not" and isinstance(node.operand, CUnaryOp) and node.operand.op == "Not":
+    if (
+        isinstance(node, CUnaryOp)
+        and node.op == "Not"
+        and isinstance(node.operand, CUnaryOp)
+        and node.operand.op == "Not"
+    ):
         return node.operand.operand
     return None
 
@@ -494,7 +510,9 @@ def _profile_induction_match_8616(codegen, loop_var) -> InductionVariable | None
             var_name=getattr(variable, "name", None) or f"reg_{getattr(variable, 'reg', 'unknown')}",
             stride=int(getattr(best_summary, "stride", 0) or 0),
             base_value=int(getattr(best_summary, "offset", 0) or 0),
-            loop_bound=int(getattr(best_summary, "bound_candidate", 0)) if getattr(best_summary, "bound_candidate", None) is not None else None,
+            loop_bound=int(getattr(best_summary, "bound_candidate", 0))
+            if getattr(best_summary, "bound_candidate", None) is not None
+            else None,
             element_width=int(getattr(best_summary, "width", 0) or 0),
         )
 
@@ -596,6 +614,7 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
     new_root = transform(root)
     if new_root is not root:
         from .decompiler_postprocess_utils import _safe_assign_cfunc_statements_8616
+
         root = _safe_assign_cfunc_statements_8616(codegen, new_root, root)
         if hasattr(codegen.cfunc, "body"):
             codegen.cfunc.body = codegen.cfunc.statements

@@ -7,19 +7,19 @@ from .addressing_helpers import (
     resolve_modrm32_address,
 )
 from .instruction import X86Instruction
-from .regs import coerce_reg8_t, coerce_reg16_t, coerce_reg32_t, coerce_sgreg_t, reg8_t, reg16_t, reg32_t, sgreg_t
+from .regs import coerce_reg8_t, coerce_reg16_t, coerce_reg32_t, coerce_sgreg_t, sgreg_t
 
 
 class ExecInstr(X86Instruction):
     def __init__(self, emu):
         self.instrfuncs = [None] * 0x200  # Initialize with None for all opcodes
-        #self.chsz_ad = False
+        # self.chsz_ad = False
 
     def exec(self):
         opcode = self.instr.opcode
 
-        if opcode >> 8 == 0x0f:
-            opcode = (opcode & 0xff) | 0x0100
+        if opcode >> 8 == 0x0F:
+            opcode = (opcode & 0xFF) | 0x0100
 
         if self.instrfuncs[opcode] is None:
             print(f"not implemented OPCODE 0x{opcode:02x}", file=sys.stderr)
@@ -34,7 +34,6 @@ class ExecInstr(X86Instruction):
             return
         operand = self._resolved_rm_operand(32)
         self.emu.put_data32(operand.segment, operand.offset, value)
-
 
     def get_rm32(self):
         if self.instr.modrm.mod == 3:
@@ -168,6 +167,8 @@ class ExecInstr(X86Instruction):
         return addr
 
     def calc_modrm32(self):
-        segment, addr = resolve_modrm32_address(self.emu, self.instr.modrm, self.instr.sib, self.instr.disp8, self.instr.disp32)
+        segment, addr = resolve_modrm32_address(
+            self.emu, self.instr.modrm, self.instr.sib, self.instr.disp8, self.instr.disp32
+        )
         self.instr.segment = segment.value
         return addr

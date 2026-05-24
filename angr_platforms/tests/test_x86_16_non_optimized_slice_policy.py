@@ -29,11 +29,15 @@ def test_try_decompile_non_optimized_slice_uses_exact_slice_postprocess_policy(m
         arch=SimpleNamespace(name="86_16"),
         loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\x90\xc3")),
     )
-    function = SimpleNamespace(name="SwapBars", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),), info={})
+    function = SimpleNamespace(
+        name="SwapBars", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),), info={}
+    )
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(cli, "_lst_code_region", lambda *_args, **_kwargs: (0x10768, 0x1076B))
-    monkeypatch.setattr(cli, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace(arch=SimpleNamespace(name="86_16")))
+    monkeypatch.setattr(
+        cli, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    )
     monkeypatch.setattr(cli, "_pick_function_lean", lambda *_args, **_kwargs: (SimpleNamespace(), function))
     monkeypatch.setattr(cli, "_inherit_tail_validation_runtime_policy", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)

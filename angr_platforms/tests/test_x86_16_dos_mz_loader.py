@@ -177,14 +177,14 @@ def test_medium_model_far_call_block_lifts():
 
 
 def test_simos_hooks_all_interrupt_vectors():
-    project = angr.load_shellcode(b"\xCD\x10\xC3", arch="X86_16", simos="DOS")
+    project = angr.load_shellcode(b"\xcd\x10\xc3", arch="X86_16", simos="DOS")
 
     for vector in range(INTERRUPT_VECTOR_COUNT):
         assert project.is_hooked(interrupt_addr(vector))
 
 
 def test_shellcode_interrupt_targets_match_vector_number():
-    project = _blob_project(b"\xCD\x10\xC3")
+    project = _blob_project(b"\xcd\x10\xc3")
 
     block = project.factory.block(0x1000, opt_level=0)
 
@@ -196,16 +196,12 @@ def test_shellcode_interrupt_targets_match_vector_number():
 def test_bios_and_dos_interrupt_handlers_have_basic_semantics():
     bios_project = angr.load_shellcode(b"\x90", arch="X86_16", simos="DOS")
     bios_state = bios_project.factory.call_state(addr=interrupt_addr(0x12), ret_addr=0)
-    bios_result = bios_project.factory.callable(
-        interrupt_addr(0x12), concrete_only=True, base_state=bios_state
-    )()
+    bios_result = bios_project.factory.callable(interrupt_addr(0x12), concrete_only=True, base_state=bios_state)()
 
     dos_project = angr.load_shellcode(b"\x90", arch="X86_16", simos="DOS")
     dos_state = dos_project.factory.call_state(addr=interrupt_addr(0x21), ret_addr=0)
     dos_state.regs.ah = 0x30
-    dos_result = dos_project.factory.callable(
-        interrupt_addr(0x21), concrete_only=True, base_state=dos_state
-    )()
+    dos_result = dos_project.factory.callable(interrupt_addr(0x21), concrete_only=True, base_state=dos_state)()
 
     assert isinstance(bios_project.hooked_by(interrupt_addr(0x12)), BIOSInt12MemorySize)
     assert bios_result.concrete_value == 640

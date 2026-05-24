@@ -32,7 +32,9 @@ def _make_codegen():
 
 
 def test_storage_domain_classifier_distinguishes_variable_domains():
-    stack = _decompile._storage_domain_for_variable(_decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000))
+    stack = _decompile._storage_domain_for_variable(
+        _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
+    )
     reg = _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="v14"))
     mem = _decompile._storage_domain_for_variable(_decompile.SimMemoryVariable(0x2000, 2, name="v15"))
 
@@ -61,9 +63,15 @@ def test_storage_domain_classifier_preserves_far_pointer_segment_and_offset_iden
 
 
 def test_storage_domain_classifier_distinguishes_subregister_widths():
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="al")).view == _StorageView(0, 8)
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="ah")).view == _StorageView(8, 8)
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="ax")).view == _StorageView(0, 16)
+    assert _decompile._storage_domain_for_variable(
+        _decompile.SimRegisterVariable(30, 1, name="al")
+    ).view == _StorageView(0, 8)
+    assert _decompile._storage_domain_for_variable(
+        _decompile.SimRegisterVariable(30, 1, name="ah")
+    ).view == _StorageView(8, 8)
+    assert _decompile._storage_domain_for_variable(
+        _decompile.SimRegisterVariable(30, 2, name="ax")
+    ).view == _StorageView(0, 16)
 
 
 def test_storage_domain_classifier_joins_adjacent_views():

@@ -7,7 +7,17 @@ and type constraint collection for improved type inference.
 
 import pytest
 
-from angr_platforms.X86_16.ir.core import AddressStatus, IRAddress, IRBlock, IRCondition, IRFunctionArtifact, IRInstr, IRValue, MemSpace, SegmentOrigin
+from angr_platforms.X86_16.ir.core import (
+    AddressStatus,
+    IRAddress,
+    IRBlock,
+    IRCondition,
+    IRFunctionArtifact,
+    IRInstr,
+    IRValue,
+    MemSpace,
+    SegmentOrigin,
+)
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact, SSAIncomingValue, SSAPhiNode
 from angr_platforms.X86_16.type_equivalence_classes import (
     EquivalenceClass,
@@ -308,7 +318,13 @@ class TestPhase2Integration:
                                 "CJMP",
                                 None,
                                 (
-                                    IRCondition("eq", (IRValue(MemSpace.REG, name="ax", size=2), IRValue(MemSpace.REG, name="bx", size=2))),
+                                    IRCondition(
+                                        "eq",
+                                        (
+                                            IRValue(MemSpace.REG, name="ax", size=2),
+                                            IRValue(MemSpace.REG, name="bx", size=2),
+                                        ),
+                                    ),
                                     IRValue(MemSpace.CONST, const=0x1010, size=2),
                                 ),
                             ),
@@ -372,8 +388,28 @@ class TestPhase2Integration:
             _inertia_vex_ir_artifact = IRFunctionArtifact(
                 function_addr=0x3000,
                 blocks=(
-                    IRBlock(addr=0x3000, instrs=(IRInstr("MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=1, size=2),), size=2),)),
-                    IRBlock(addr=0x3010, instrs=(IRInstr("MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=2, size=2),), size=2),)),
+                    IRBlock(
+                        addr=0x3000,
+                        instrs=(
+                            IRInstr(
+                                "MOV",
+                                IRValue(MemSpace.REG, name="ax", size=2),
+                                (IRValue(MemSpace.CONST, const=1, size=2),),
+                                size=2,
+                            ),
+                        ),
+                    ),
+                    IRBlock(
+                        addr=0x3010,
+                        instrs=(
+                            IRInstr(
+                                "MOV",
+                                IRValue(MemSpace.REG, name="ax", size=2),
+                                (IRValue(MemSpace.CONST, const=2, size=2),),
+                                size=2,
+                            ),
+                        ),
+                    ),
                 ),
             )
             _inertia_vex_ir_function_ssa = SSAFunctionArtifact(

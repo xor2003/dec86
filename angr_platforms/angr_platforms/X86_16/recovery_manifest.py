@@ -120,9 +120,7 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
     RecoveryLayerSpec(
         name="confidence_axis",
         purpose="Expose evidence, assumptions, diagnostics, and scan-safe classification as first-class output.",
-        helpers=(
-            "describe_x86_16_recovery_confidence_axes",
-        ),
+        helpers=("describe_x86_16_recovery_confidence_axes",),
     ),
     RecoveryLayerSpec(
         name="thin_late_rewrite_boundary",

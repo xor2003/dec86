@@ -18,9 +18,9 @@ __all__ = [
     "assert_final_c_quality_8616",
 ]
 
-from ..validation_semantics import assert_known_call_semantics_8616
 import os
 
+from ..validation_semantics import assert_known_call_semantics_8616
 
 FORBIDDEN_NORMAL_PATHS: set[str] = {
     "collect_semantic_alias_facts_from_project_8616",

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
-import re
 
 from .condition_ir import build_condition_ir_8616, harmonize_condition_args_8616, normalize_condition_op_8616
 from .core import IRCondition, IRValue
@@ -415,7 +415,9 @@ def _flag_formula_condition(expr, conditions, tmp_exprs: dict[int, object] | Non
     return build_condition_ir_8616(cond_op, lhs, rhs, expr=("flag_jcc_formula", cond_op))
 
 
-def _try_expr_to_condition(expr, tmps, conditions, *, expr_to_value: Callable, tmp_exprs: dict[int, object] | None = None) -> IRCondition | None:
+def _try_expr_to_condition(
+    expr, tmps, conditions, *, expr_to_value: Callable, tmp_exprs: dict[int, object] | None = None
+) -> IRCondition | None:
     tag = getattr(expr, "tag", "")
     if tag == "Iex_RdTmp":
         tmp_id = int(getattr(expr, "tmp"))
@@ -423,7 +425,9 @@ def _try_expr_to_condition(expr, tmps, conditions, *, expr_to_value: Callable, t
         if cond is not None:
             return cond
         if tmp_exprs is not None and tmp_id in tmp_exprs:
-            return _try_expr_to_condition(tmp_exprs[tmp_id], tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs)
+            return _try_expr_to_condition(
+                tmp_exprs[tmp_id], tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs
+            )
         return None
     if tag == "Iex_Binop":
         formula_cond = _flag_formula_condition(expr, conditions, tmp_exprs)
@@ -435,9 +439,13 @@ def _try_expr_to_condition(expr, tmps, conditions, *, expr_to_value: Callable, t
             return None
         lowered = op.lower()
         if "and" in lowered:
-            return _logical_condition("and", args[0], args[1], tmps, conditions, expr_to_value=expr_to_value, source=op, tmp_exprs=tmp_exprs)
+            return _logical_condition(
+                "and", args[0], args[1], tmps, conditions, expr_to_value=expr_to_value, source=op, tmp_exprs=tmp_exprs
+            )
         if "or" in lowered:
-            return _logical_condition("or", args[0], args[1], tmps, conditions, expr_to_value=expr_to_value, source=op, tmp_exprs=tmp_exprs)
+            return _logical_condition(
+                "or", args[0], args[1], tmps, conditions, expr_to_value=expr_to_value, source=op, tmp_exprs=tmp_exprs
+            )
         left = expr_to_value(args[0], tmps, conditions)
         right = expr_to_value(args[1], tmps, conditions)
         return build_condition_from_binop(op, left, right)
@@ -457,7 +465,17 @@ def _try_expr_to_condition(expr, tmps, conditions, *, expr_to_value: Callable, t
     return None
 
 
-def _logical_condition(op: str, lhs, rhs, tmps, conditions, *, expr_to_value: Callable, source: str, tmp_exprs: dict[int, object] | None = None) -> IRCondition | None:
+def _logical_condition(
+    op: str,
+    lhs,
+    rhs,
+    tmps,
+    conditions,
+    *,
+    expr_to_value: Callable,
+    source: str,
+    tmp_exprs: dict[int, object] | None = None,
+) -> IRCondition | None:
     lhs_cond = _try_expr_to_condition(lhs, tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs)
     rhs_cond = _try_expr_to_condition(rhs, tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs)
     if lhs_cond is None or rhs_cond is None:
@@ -465,7 +483,9 @@ def _logical_condition(op: str, lhs, rhs, tmps, conditions, *, expr_to_value: Ca
     return build_condition_ir_8616(op, lhs_cond, rhs_cond, expr=(source,))
 
 
-def expr_to_condition(expr, tmps, conditions, *, expr_to_value: Callable, tmp_exprs: dict[int, object] | None = None) -> IRCondition:
+def expr_to_condition(
+    expr, tmps, conditions, *, expr_to_value: Callable, tmp_exprs: dict[int, object] | None = None
+) -> IRCondition:
     tag = getattr(expr, "tag", "")
     if tag == "Iex_RdTmp":
         tmp_id = int(getattr(expr, "tmp"))

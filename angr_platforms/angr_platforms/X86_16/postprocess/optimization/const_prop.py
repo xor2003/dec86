@@ -3,12 +3,10 @@ from __future__ import annotations
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
-    CITE,
     CStatements,
     CUnaryOp,
-    CVariable,
 )
-from angr.sim_type import SimTypeInt, SimTypeShort
+from angr.sim_type import SimTypeInt
 
 from ...decompiler_postprocess_utils import _c_constant_value_8616
 

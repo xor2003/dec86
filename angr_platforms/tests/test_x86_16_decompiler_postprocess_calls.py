@@ -20,13 +20,17 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_stack_metadata import _prune_dead_stack_carrier_assignments_8616
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
-    _attach_callsite_summaries_8616,
-    _materialize_callsite_stack_arguments_8616,
-    _materialize_callsite_prototypes_8616,
     _align_cod_call_names_8616,
+    _attach_callsite_summaries_8616,
+    _materialize_callsite_prototypes_8616,
+    _materialize_callsite_stack_arguments_8616,
     _normalize_call_target_names_8616,
 )
-from angr_platforms.X86_16.decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _match_bp_stack_load_8616, _same_c_expression_8616
+from angr_platforms.X86_16.decompiler_postprocess_utils import (
+    _iter_c_nodes_deep_8616,
+    _match_bp_stack_load_8616,
+    _same_c_expression_8616,
+)
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
@@ -188,7 +192,9 @@ def test_attach_callsite_summaries_prefers_sidecar_labels_for_sub_targets(monkey
     function = SimpleNamespace(get_call_sites=lambda: (0x4012,))
     project.kb = SimpleNamespace(
         functions=SimpleNamespace(
-            function=lambda addr, create=False: function if addr == 0x4010 else SimpleNamespace(addr=addr, name="sub_104d")
+            function=lambda addr, create=False: (
+                function if addr == 0x4010 else SimpleNamespace(addr=addr, name="sub_104d")
+            )
         )
     )
     codegen = _empty_codegen(project)
@@ -222,7 +228,11 @@ def test_attach_callsite_summaries_matches_unaddressed_calls_by_target_instead_o
     function = SimpleNamespace(get_call_sites=lambda: (0x4010, 0x4012))
     project.kb = SimpleNamespace(
         functions=SimpleNamespace(
-            function=lambda addr, create=False: function if addr == 0x4010 else SimpleNamespace(addr=addr, name={0x1001: "aNchkstk", 0x14A0: "outp"}.get(addr, f"sub_{addr:x}"))
+            function=lambda addr, create=False: (
+                function
+                if addr == 0x4010
+                else SimpleNamespace(addr=addr, name={0x1001: "aNchkstk", 0x14A0: "outp"}.get(addr, f"sub_{addr:x}"))
+            )
         )
     )
     codegen = _empty_codegen(project)
@@ -292,9 +302,7 @@ def test_align_cod_call_names_rewrites_unknown_call_by_source_order(monkeypatch)
     codegen.cfunc.body = codegen.cfunc.statements
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls._cod_metadata_for_function_8616",
-        lambda _project, _addr: SimpleNamespace(
-            call_names=("aNchkstk", "InitBars", "InitMenu", "RunMenu")
-        ),
+        lambda _project, _addr: SimpleNamespace(call_names=("aNchkstk", "InitBars", "InitMenu", "RunMenu")),
     )
 
     changed = _align_cod_call_names_8616(project, codegen)
@@ -587,7 +595,9 @@ def test_materialize_callsite_stack_arguments_infers_one_arg_after_stack_probe_h
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DrawBar", SimpleNamespace(name="DrawBar"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -611,8 +621,8 @@ def test_materialize_callsite_stack_arguments_infers_one_arg_after_stack_probe_h
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
             helper_return_state="stack_address",
             helper_return_space="ss",
         ),
@@ -626,7 +636,7 @@ def test_materialize_callsite_stack_arguments_infers_one_arg_after_stack_probe_h
             stack_cleanup=0,
             return_register=None,
             return_used=False,
-        )
+        ),
     }
 
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
@@ -716,7 +726,9 @@ def test_materialize_callsite_stack_arguments_infers_multi_args_after_stack_prob
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("SwapBars", SimpleNamespace(name="SwapBars"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -756,7 +768,7 @@ def test_materialize_callsite_stack_arguments_infers_multi_args_after_stack_prob
             stack_cleanup=0,
             return_register=None,
             return_used=False,
-        )
+        ),
     }
 
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
@@ -814,7 +826,9 @@ def test_materialize_callsite_stack_arguments_keeps_generic_ss_backtracking_with
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DemoCall", SimpleNamespace(name="DemoCall"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -839,10 +853,10 @@ def test_materialize_callsite_stack_arguments_keeps_generic_ss_backtracking_with
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_state="stack_address",
-        helper_return_space="ss",
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_state="stack_address",
+            helper_return_space="ss",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
         ),
         id(call): CallsiteSummary8616(
             callsite_addr=0x4012,
@@ -908,7 +922,9 @@ def test_materialize_callsite_stack_arguments_accepts_virtual_dirty_ss_carrier_w
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DemoCall", SimpleNamespace(name="DemoCall"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -933,10 +949,10 @@ def test_materialize_callsite_stack_arguments_accepts_virtual_dirty_ss_carrier_w
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_state="stack_address",
-        helper_return_space="ss",
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_state="stack_address",
+            helper_return_space="ss",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
         ),
         id(call): CallsiteSummary8616(
             callsite_addr=0x4012,
@@ -1012,7 +1028,9 @@ def test_materialize_callsite_stack_arguments_matches_same_register_with_renamed
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DemoCall", SimpleNamespace(name="DemoCall"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1074,10 +1092,7 @@ def test_materialize_callsite_stack_arguments_matches_same_register_with_renamed
     assert isinstance(getattr(arg, "variable", None), SimStackVariable)
     assert isinstance(getattr(getattr(arg, "variable", None), "offset", None), int)
     assert not any(
-        (
-            getattr(getattr(node, "variable", None), "name", None)
-            or getattr(node, "name", None)
-        ) in {"ax", "ax_7"}
+        (getattr(getattr(node, "variable", None), "name", None) or getattr(node, "name", None)) in {"ax", "ax_7"}
         for node in (arg, *_iter_c_nodes_deep_8616(arg))
     )
 
@@ -1137,7 +1152,9 @@ def test_materialize_callsite_stack_arguments_walks_same_register_chain_across_s
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DemoCall", SimpleNamespace(name="DemoCall"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1207,10 +1224,8 @@ def test_materialize_callsite_stack_arguments_walks_same_register_chain_across_s
     arg = only_call_stmt.expr.args[0]
     assert any(_same_c_expression_8616(node, row_index) for node in (arg, *_iter_c_nodes_deep_8616(arg)))
     assert not any(
-        (
-            getattr(getattr(node, "variable", None), "name", None)
-            or getattr(node, "name", None)
-        ) in {"ax", "ax_7", "ax_9"}
+        (getattr(getattr(node, "variable", None), "name", None) or getattr(node, "name", None))
+        in {"ax", "ax_7", "ax_9"}
         for node in (arg, *_iter_c_nodes_deep_8616(arg))
     )
 
@@ -1272,7 +1287,9 @@ def test_materialize_callsite_stack_arguments_rewrites_nested_indexed_pointer_of
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("Swaps", SimpleNamespace(name="Swaps"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1331,10 +1348,7 @@ def test_materialize_callsite_stack_arguments_rewrites_nested_indexed_pointer_of
     assert -3 in stack_offsets
     assert -2 in stack_offsets
     assert not any(
-        (
-            getattr(getattr(node, "variable", None), "name", None)
-            or getattr(node, "name", None)
-        ) == "s_6"
+        (getattr(getattr(node, "variable", None), "name", None) or getattr(node, "name", None)) == "s_6"
         for nodes in arg_nodes
         for node in nodes
     )
@@ -1390,7 +1404,9 @@ def test_materialize_callsite_stack_arguments_falls_back_to_recent_dirty_value_c
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DemoCall", SimpleNamespace(name="DemoCall"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1474,10 +1490,7 @@ def test_materialize_callsite_stack_arguments_falls_back_to_recent_dirty_value_c
     arg = only_call_stmt.expr.args[0]
     assert any(_same_c_expression_8616(node, row_index) for node in (arg, *_iter_c_nodes_deep_8616(arg)))
     assert not any(
-        (
-            getattr(getattr(node, "variable", None), "name", None)
-            or getattr(node, "name", None)
-        ) in {"ax_6", "ax_7"}
+        (getattr(getattr(node, "variable", None), "name", None) or getattr(node, "name", None)) in {"ax_6", "ax_7"}
         for node in (arg, *_iter_c_nodes_deep_8616(arg))
     )
 
@@ -1537,7 +1550,9 @@ def test_materialize_callsite_stack_arguments_prefers_named_dirty_value_carrier_
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DemoCall", SimpleNamespace(name="DemoCall"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1635,10 +1650,7 @@ def test_materialize_callsite_stack_arguments_prefers_named_dirty_value_carrier_
     arg = only_call_stmt.expr.args[0]
     assert any(_same_c_expression_8616(node, row_index) for node in (arg, *_iter_c_nodes_deep_8616(arg)))
     assert not any(
-        (
-            getattr(getattr(node, "variable", None), "name", None)
-            or getattr(node, "name", None)
-        ) == "s_fffa_2"
+        (getattr(getattr(node, "variable", None), "name", None) or getattr(node, "name", None)) == "s_fffa_2"
         for node in (arg, *_iter_c_nodes_deep_8616(arg))
     )
 
@@ -1672,7 +1684,9 @@ def test_materialize_callsite_stack_arguments_accepts_vvar_carrier_store_with_ty
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DrawBar", SimpleNamespace(name="DrawBar"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1762,7 +1776,9 @@ def test_materialize_callsite_stack_arguments_prefers_typed_probe_stores_over_pu
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DrawBar", SimpleNamespace(name="DrawBar"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1853,7 +1869,9 @@ def test_materialize_callsite_stack_arguments_prefers_generic_probe_stores_over_
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DrawBar", SimpleNamespace(name="DrawBar"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -1944,7 +1962,9 @@ def test_materialize_callsite_stack_arguments_rematerializes_typed_probe_call_ev
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     ds_expr = structured_c.CVariable(
         SimRegisterVariable(project.arch.registers["ds"][0], 2, name="ds"),
         variable_type=SimTypeShort(False),
@@ -1954,7 +1974,12 @@ def test_materialize_callsite_stack_arguments_rematerializes_typed_probe_call_ev
         "DrawBar",
         SimpleNamespace(name="DrawBar"),
         [
-            CFunctionCall("SEG_PTR", None, [ds_expr, structured_c.CConstant(3, SimTypeShort(False), codegen=codegen)], codegen=codegen),
+            CFunctionCall(
+                "SEG_PTR",
+                None,
+                [ds_expr, structured_c.CConstant(3, SimTypeShort(False), codegen=codegen)],
+                codegen=codegen,
+            ),
         ],
         codegen=codegen,
     )
@@ -2093,7 +2118,9 @@ def test_materialize_callsite_stack_arguments_allows_temp_carrier_between_store_
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     carrier = structured_c.CVariable(
         SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_72"),
         variable_type=SimTypeShort(False),
@@ -2133,8 +2160,8 @@ def test_materialize_callsite_stack_arguments_allows_temp_carrier_between_store_
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
             helper_return_state="stack_address",
             helper_return_space="ss",
         ),
@@ -2456,7 +2483,9 @@ def test_materialize_callsite_stack_arguments_scans_past_value_assignments_betwe
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("Swaps", SimpleNamespace(name="Swaps"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -2534,8 +2563,8 @@ def test_materialize_callsite_stack_arguments_scans_past_value_assignments_betwe
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
             helper_return_state="stack_address",
             helper_return_space="ss",
         ),
@@ -2613,7 +2642,9 @@ def test_materialize_callsite_stack_arguments_upgrades_undercounted_probe_summar
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("Swaps", SimpleNamespace(name="Swaps"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -2680,8 +2711,8 @@ def test_materialize_callsite_stack_arguments_upgrades_undercounted_probe_summar
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
             helper_return_state="stack_address",
             helper_return_space="ss",
         ),
@@ -2746,7 +2777,9 @@ def test_materialize_callsite_stack_arguments_carries_probe_evidence_into_loop_b
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("Swaps", SimpleNamespace(name="Swaps"), [], codegen=codegen)
     loop_body = CStatements(
         [
@@ -2816,7 +2849,9 @@ def test_materialize_callsite_stack_arguments_does_not_promote_segment_carrier_a
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("RunMenu", SimpleNamespace(name="RunMenu"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -2889,7 +2924,9 @@ def test_materialize_callsite_stack_arguments_skips_segment_metadata_store():
             codegen=codegen,
         )
 
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("clearscreen", SimpleNamespace(name="clearscreen"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -2946,8 +2983,8 @@ def test_materialize_callsite_stack_arguments_skips_segment_metadata_store():
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
             helper_return_state="stack_address",
             helper_return_space="ss",
         ),
@@ -3002,7 +3039,9 @@ def test_materialize_callsite_stack_arguments_refuses_unnamed_segment_register_a
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("RunMenu", SimpleNamespace(name="RunMenu"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [
@@ -3204,7 +3243,9 @@ def test_materialize_callsite_stack_arguments_accepts_ss_shift_linear_store_shap
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DrawBar", SimpleNamespace(name="DrawBar"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [probe, CAssignment(outgoing, arg_slot, codegen=codegen), CExpressionStatement(call, codegen=codegen)],
@@ -3224,8 +3265,8 @@ def test_materialize_callsite_stack_arguments_accepts_ss_shift_linear_store_shap
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
             helper_return_state="stack_address",
             helper_return_space="ss",
         ),
@@ -3284,7 +3325,9 @@ def test_materialize_callsite_stack_arguments_refuses_dirty_probe_offset_store_s
         ),
         codegen=codegen,
     )
-    probe = CExpressionStatement(CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen)
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
     call = CFunctionCall("DrawBar", SimpleNamespace(name="DrawBar"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements(
         [probe, CAssignment(outgoing, arg_slot, codegen=codegen), CExpressionStatement(call, codegen=codegen)],
@@ -3304,8 +3347,8 @@ def test_materialize_callsite_stack_arguments_refuses_dirty_probe_offset_store_s
             return_register="ax",
             return_used=True,
             stack_probe_helper=True,
-        helper_return_width=2,
-        helper_return_address_kind="stack",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
             helper_return_state="stack_address",
             helper_return_space="ss",
         ),
@@ -3967,7 +4010,9 @@ def test_materialize_callsite_stack_arguments_normalizes_bp_slot_values_and_poin
     codegen.cfunc.statements = CStatements(
         [
             CAssignment(local_i, structured_c.CConstant(7, SimTypeShort(False), codegen=codegen), codegen=codegen),
-            CAssignment(outgoing_first, structured_c.CConstant(2892, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            CAssignment(
+                outgoing_first, structured_c.CConstant(2892, SimTypeShort(False), codegen=codegen), codegen=codegen
+            ),
             CAssignment(
                 outgoing_second,
                 structured_c.CBinaryOp(
@@ -4012,8 +4057,7 @@ def test_materialize_callsite_stack_arguments_normalizes_bp_slot_values_and_poin
     assert final_stmt.expr.args[1].callee_target == "SEG_PTR"
     offset_expr = final_stmt.expr.args[1].args[1]
     assert not any(
-        _match_bp_stack_load_8616(node, project) is not None
-        for node in _iter_c_nodes_deep_8616(offset_expr)
+        _match_bp_stack_load_8616(node, project) is not None for node in _iter_c_nodes_deep_8616(offset_expr)
     )
 
     assert _normalize_call_target_names_8616(codegen) is False
@@ -4114,9 +4158,9 @@ def test_tail_validation_call_fingerprint_prefers_resolved_function_addr_for_nam
     project = _project()
     project.kb = SimpleNamespace(
         functions=SimpleNamespace(
-            function=lambda addr=None, name=None, create=False: SimpleNamespace(addr=0x104D, name="InitMenu")
-            if name == "InitMenu"
-            else None
+            function=lambda addr=None, name=None, create=False: (
+                SimpleNamespace(addr=0x104D, name="InitMenu") if name == "InitMenu" else None
+            )
         )
     )
     codegen = _empty_codegen(project)
@@ -4143,12 +4187,16 @@ def test_tail_validation_stays_stable_for_unknown_to_named_call_when_callsite_ma
     )
     before_codegen = _empty_codegen(project)
     before_call = CFunctionCall(None, None, [], codegen=before_codegen)
-    before_codegen.cfunc.statements = CStatements([before_call, CReturn(None, codegen=before_codegen)], addr=0x4010, codegen=before_codegen)
+    before_codegen.cfunc.statements = CStatements(
+        [before_call, CReturn(None, codegen=before_codegen)], addr=0x4010, codegen=before_codegen
+    )
     before_codegen.cfunc.body = before_codegen.cfunc.statements
 
     after_codegen = _empty_codegen(project)
     after_call = CFunctionCall("InitMenu", None, [], codegen=after_codegen)
-    after_codegen.cfunc.statements = CStatements([after_call, CReturn(None, codegen=after_codegen)], addr=0x4010, codegen=after_codegen)
+    after_codegen.cfunc.statements = CStatements(
+        [after_call, CReturn(None, codegen=after_codegen)], addr=0x4010, codegen=after_codegen
+    )
     after_codegen.cfunc.body = after_codegen.cfunc.statements
 
     diff = compare_x86_16_tail_validation_summaries(
@@ -4180,7 +4228,9 @@ def test_prune_dead_stack_carriers_only_recurses_into_plain_statement_blocks():
                 structured_c.CUnaryOp("Reference", local_slot, codegen=codegen),
                 codegen=codegen,
             ),
-            CExpressionStatement(CFunctionCall("Inner", SimpleNamespace(name="Inner"), [], codegen=codegen), codegen=codegen),
+            CExpressionStatement(
+                CFunctionCall("Inner", SimpleNamespace(name="Inner"), [], codegen=codegen), codegen=codegen
+            ),
         ],
         addr=0x4020,
         codegen=codegen,

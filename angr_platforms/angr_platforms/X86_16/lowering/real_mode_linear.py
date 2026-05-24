@@ -259,6 +259,7 @@ def _same_variable_storage_8616(lhs, rhs) -> bool:
 
 # ── Precomputed maps (built once per lowering pass) ──
 
+
 def _build_assignment_maps_8616(codegen):
     """Precompute assignment maps used by lowering and validation fingerprinting."""
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
@@ -355,9 +356,7 @@ def _build_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
     project = getattr(codegen, "project", None)
     sp_reg, _sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
     facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}
-    has_ss_facts = any(
-        getattr(fact, "segment_space", None) == "ss" for fact in facts.values()
-    )
+    has_ss_facts = any(getattr(fact, "segment_space", None) == "ss" for fact in facts.values())
     deltas: dict[int, int] = {}
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
     if root is None:
@@ -457,6 +456,7 @@ def _ensure_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
 
 # ── O(1) lookup wrappers ──
 
+
 def _single_assignment_rhs_8616(codegen, target):
     if not isinstance(target, structured_c.CVariable):
         return None
@@ -544,9 +544,16 @@ def _lhs_name_8616(lhs) -> str | None:
 
 
 def _single_assignment_rhs_for_virtual_name_8616(codegen, target_name: str, *, allow_multi: bool = False):
-    _unused_var_id_map, name_map, _unused_reg_map, _unused_multi_var, multi_name, _unused_multi_reg, first_name_map, _first_reg_map = (
-        _ensure_assignment_maps_8616(codegen)
-    )
+    (
+        _unused_var_id_map,
+        name_map,
+        _unused_reg_map,
+        _unused_multi_var,
+        multi_name,
+        _unused_multi_reg,
+        first_name_map,
+        _first_reg_map,
+    ) = _ensure_assignment_maps_8616(codegen)
     if allow_multi:
         # O(1) lookup from precomputed first-assignment map
         return first_name_map.get(target_name)
@@ -637,9 +644,7 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         # Fallback: try name-based lookup for virtual variables (vvar_*, tmp_*, ir_*)
         node_name = getattr(node, "name", None) or getattr(variable, "name", None)
         if isinstance(node_name, str) and (
-            node_name.startswith("vvar_")
-            or node_name.startswith("tmp_")
-            or node_name.startswith("ir_")
+            node_name.startswith("vvar_") or node_name.startswith("tmp_") or node_name.startswith("ir_")
         ):
             rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, node_name)
             if rhs is not None:
@@ -781,19 +786,31 @@ def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealMode
         if const is not None:
             offset_total += sign * const
             continue
-        offset_terms.append(term if sign == 1 else structured_c.CBinaryOp("Sub", structured_c.CConstant(0, SimTypeInt(16, signed=False), codegen=codegen), term, codegen=codegen))
+        offset_terms.append(
+            term
+            if sign == 1
+            else structured_c.CBinaryOp(
+                "Sub", structured_c.CConstant(0, SimTypeInt(16, signed=False), codegen=codegen), term, codegen=codegen
+            )
+        )
 
     if segment_name != "ss" or len(offset_terms) > 1:
         _log_refusal_8616(codegen, "segment_or_terms", segment=segment_name, terms=len(offset_terms))
         return None
-    
+
     if len(offset_terms) == 0:
         base_offset = 0
     else:
         base_offset = _stack_offset_from_expr_8616(offset_terms[0], project, codegen)
-        
+
     if base_offset is None:
-        _log_refusal_8616(codegen, "offset_unresolved", segment=segment_name, offset_expr_type=type(offset_terms[0]).__name__ if offset_terms else "None", const_offset=offset_total)
+        _log_refusal_8616(
+            codegen,
+            "offset_unresolved",
+            segment=segment_name,
+            offset_expr_type=type(offset_terms[0]).__name__ if offset_terms else "None",
+            const_offset=offset_total,
+        )
         return None
     displacement = base_offset + offset_total
     width_bits = getattr(getattr(node, "type", None), "size", None)
@@ -947,17 +964,19 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
                         region=getattr(codegen.cfunc, "addr", None),
                     )
                     replacement_type = getattr(cvar, "variable_type", None) or target_type
-                    replacement_cvar = structured_c.CVariable(replacement, variable_type=replacement_type, codegen=codegen)
+                    replacement_cvar = structured_c.CVariable(
+                        replacement, variable_type=replacement_type, codegen=codegen
+                    )
                     variables_in_use.pop(variable, None)
                     variables_in_use[replacement] = replacement_cvar
                     unified = getattr(codegen.cfunc, "unified_local_vars", None)
                     if isinstance(unified, dict):
                         unified.pop(variable, None)
-                        unified[replacement] = {
-                            (replacement_cvar, getattr(replacement_cvar, "variable_type", None))
-                        }
+                        unified[replacement] = {(replacement_cvar, getattr(replacement_cvar, "variable_type", None))}
                     return replacement_cvar
-        variable = SimMemoryVariable(addr, scalar_width, name=f"mem_{addr:04X}", region=getattr(codegen.cfunc, "addr", None))
+        variable = SimMemoryVariable(
+            addr, scalar_width, name=f"mem_{addr:04X}", region=getattr(codegen.cfunc, "addr", None)
+        )
         cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
         if isinstance(variables_in_use, dict):
             variables_in_use[variable] = cvar
@@ -1017,7 +1036,18 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
                 continue
             _seen.add(node_id)
 
-            for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
+            for attr in (
+                "statements",
+                "lhs",
+                "rhs",
+                "operand",
+                "expr",
+                "init",
+                "condition",
+                "iteration",
+                "body",
+                "else_node",
+            ):
                 if not hasattr(node, attr):
                     continue
                 try:
@@ -1158,7 +1188,18 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
                 continue
             _seen.add(node_id)
 
-            for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
+            for attr in (
+                "statements",
+                "lhs",
+                "rhs",
+                "operand",
+                "expr",
+                "init",
+                "condition",
+                "iteration",
+                "body",
+                "else_node",
+            ):
                 if not hasattr(node, attr):
                     continue
                 try:
@@ -1256,7 +1297,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
             displacement,
             access.width or 1,
             base="bp",
-            name=f"s_{displacement & 0xffff:x}",
+            name=f"s_{displacement & 0xFFFF:x}",
             region=getattr(codegen.cfunc, "addr", None),
         )
         cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
@@ -1282,6 +1323,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
 
     _node_count = [0]
     _seen = set()
+
     def replace_children(node) -> bool:
         if node is None or not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
             return False
@@ -1292,7 +1334,18 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
             return False
         _seen.add(id(node))
         local_changed = False
-        for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
+        for attr in (
+            "statements",
+            "lhs",
+            "rhs",
+            "operand",
+            "expr",
+            "init",
+            "condition",
+            "iteration",
+            "body",
+            "else_node",
+        ):
             if not hasattr(node, attr):
                 continue
             value = getattr(node, attr)

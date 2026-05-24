@@ -3,20 +3,16 @@ from __future__ import annotations
 # Layer: Structuring
 # Responsibility: lower typed IRCondition objects into structured-codegen C condition nodes.
 # Forbidden: semantic recovery ownership, text-pattern semantics.
-
 from typing import TYPE_CHECKING
 
-from ..ir.core import IRCondition, IRValue, MemSpace
 from ..ir.condition_ir import (
-    ConditionOp,
     condition_compare_symbol_8616,
     is_condition_compare_family_8616,
-    is_condition_truth_test_8616,
-    is_signed_condition_8616,
 )
+from ..ir.core import IRCondition, IRValue, MemSpace
 
 if TYPE_CHECKING:
-    from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CUnaryOp, CVariable
+    from angr.analyses.decompiler.structured_codegen.c import CConstant, CVariable
 
 __all__ = [
     "lower_typed_condition_to_c_expr_8616",

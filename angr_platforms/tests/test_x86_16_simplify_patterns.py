@@ -88,9 +88,7 @@ class TestIdentitySimplifications:
             codegen=codegen,
         )
         # Create LogicalAnd with same variable on both sides
-        expr = _decompile.structured_c.CBinaryOp(
-            "LogicalAnd", var, var, codegen=codegen
-        )
+        expr = _decompile.structured_c.CBinaryOp("LogicalAnd", var, var, codegen=codegen)
 
         from angr_platforms.X86_16.decompiler_postprocess_simplify import (
             _simplify_structured_expressions_8616,
@@ -113,9 +111,7 @@ class TestIdentitySimplifications:
             codegen=codegen,
         )
         # Create LogicalOr with same variable on both sides
-        expr = _decompile.structured_c.CBinaryOp(
-            "LogicalOr", var, var, codegen=codegen
-        )
+        expr = _decompile.structured_c.CBinaryOp("LogicalOr", var, var, codegen=codegen)
 
         from angr_platforms.X86_16.decompiler_postprocess_simplify import (
             _simplify_structured_expressions_8616,

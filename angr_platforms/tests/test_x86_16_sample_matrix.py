@@ -260,7 +260,9 @@ def test_cod_access_traits_are_collected_for_segmented_proc():
     function_traits = traits.get(function.addr)
     assert function_traits is not None
     assert function_traits["base_stride"]
-    assert any(key[0] == "ss" and key[2] == 16 and key[3] == 0 and key[4] == 2 for key in function_traits["base_stride"])
+    assert any(
+        key[0] == "ss" and key[2] == 16 and key[3] == 0 and key[4] == 2 for key in function_traits["base_stride"]
+    )
     assert function_traits["induction_evidence"]
     assert any(
         evidence.index_key == ("reg", 30)
@@ -272,8 +274,7 @@ def test_cod_access_traits_are_collected_for_segmented_proc():
     )
     assert function_traits["member_evidence"]
     assert any(
-        key[0] == ("reg", 6) and key[1] in {782, 783} and key[2] in {1, 2}
-        for key in function_traits["member_evidence"]
+        key[0] == ("reg", 6) and key[1] in {782, 783} and key[2] in {1, 2} for key in function_traits["member_evidence"]
     )
 
 

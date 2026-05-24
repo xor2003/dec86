@@ -4,7 +4,6 @@ import contextlib
 
 from pyvex.lifting.util.vex_helper import Type
 
-from .ir.core import IRCondition, IRValue, MemSpace
 from .ir.condition_ir import (
     _JCC_COMPARISON_MNEMONICS_8616,
     JCC_EQ_MNEMONICS_8616,
@@ -18,6 +17,7 @@ from .ir.condition_ir import (
     JCC_ULE_MNEMONICS_8616,
     JCC_ULT_MNEMONICS_8616,
 )
+from .ir.core import IRCondition, IRValue, MemSpace
 
 __all__ = [
     "_condition_value_from_ir_value_8616",
@@ -63,7 +63,23 @@ def _condition_value_from_ir_value_8616(instruction, value: IRValue):
 def _direct_jcc_condition_from_last_condition_8616(instruction, kind: str, condition: IRCondition):
     args = tuple(getattr(condition, "args", ()) or ())
     op = str(getattr(condition, "op", ""))
-    if op in {"compare", "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge", "masked_zero", "zero", "masked_nonzero", "nonzero"}:
+    if op in {
+        "compare",
+        "eq",
+        "ne",
+        "slt",
+        "sle",
+        "sgt",
+        "sge",
+        "ult",
+        "ule",
+        "ugt",
+        "uge",
+        "masked_zero",
+        "zero",
+        "masked_nonzero",
+        "nonzero",
+    }:
         if len(args) not in {1, 2}:
             return None
         if op in {"masked_zero", "zero"}:
@@ -123,8 +139,16 @@ def _direct_jcc_condition_from_last_condition_8616(instruction, kind: str, condi
             return None
         zero = instruction.constant(0, Type.int_16)
         if op == "zero":
-            return value == zero if kind in JCC_EQ_MNEMONICS_8616 else value != zero if kind in JCC_NE_MNEMONICS_8616 else None
-        return value != zero if kind in JCC_EQ_MNEMONICS_8616 else value == zero if kind in JCC_NE_MNEMONICS_8616 else None
+            return (
+                value == zero
+                if kind in JCC_EQ_MNEMONICS_8616
+                else value != zero
+                if kind in JCC_NE_MNEMONICS_8616
+                else None
+            )
+        return (
+            value != zero if kind in JCC_EQ_MNEMONICS_8616 else value == zero if kind in JCC_NE_MNEMONICS_8616 else None
+        )
 
     return None
 

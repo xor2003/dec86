@@ -91,7 +91,11 @@ def test_ir_function_artifact_to_dict_keeps_summary_and_refusals():
             ),
         ),
         refusals=(IRRefusal("unsupported_stmt", "Ist_Dirty", 0x4010),),
-        summary={"block_count": 1, "address_status_counts": {"provisional": 1}, "segment_origin_counts": {"defaulted": 1}},
+        summary={
+            "block_count": 1,
+            "address_status_counts": {"provisional": 1},
+            "segment_origin_counts": {"defaulted": 1},
+        },
     )
 
     rendered = artifact.to_dict()

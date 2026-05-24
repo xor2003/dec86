@@ -3,8 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.lst_extract import LSTMetadata
-
 from inertia_decompiler import cli
 from inertia_decompiler.x86_16_exact_slice import (
     SAFE_X86_16_SLICE_BASE,
@@ -12,6 +10,8 @@ from inertia_decompiler.x86_16_exact_slice import (
     mark_function_original_addr,
     plan_x86_16_exact_slice,
 )
+
+from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 
 def test_plan_x86_16_exact_slice_rebases_high_linear_addresses() -> None:

@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Compatibility shim
 # Responsibility: preserve flat widening_model import surface during widening package migration.
 # Forbidden: semantic ownership; import canonical widening.stack_widening only.
-
 from .widening import stack_widening as _stack_widening
 
 _register_version_for_expr = _stack_widening._register_version_for_expr
@@ -66,7 +65,9 @@ globals().update(
     {
         name: getattr(_stack_widening, name)
         for name in dir(_stack_widening)
-        if not name.startswith("__") and name not in {
+        if not name.startswith("__")
+        and name
+        not in {
             "prove_adjacent_storage_slices",
             "analyze_adjacent_storage_slices",
             "can_join_adjacent_storage_slices",

@@ -85,12 +85,12 @@ def test_grouped_region_graph_builder_materializes_typed_ir_condition_metadata_w
                         "CJMP",
                         None,
                         (
-                                IRCondition(
-                                    op="eq",
-                                    args=(
-                                        IRValue(MemSpace.REG, name="ax", size=2),
-                                        IRValue(MemSpace.CONST, const=0, size=2),
-                                    ),
+                            IRCondition(
+                                op="eq",
+                                args=(
+                                    IRValue(MemSpace.REG, name="ax", size=2),
+                                    IRValue(MemSpace.CONST, const=0, size=2),
+                                ),
                                 expr=("update_eflags_sub",),
                             ),
                         ),

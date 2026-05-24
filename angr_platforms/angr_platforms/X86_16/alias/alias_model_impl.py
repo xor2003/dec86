@@ -222,7 +222,12 @@ class AliasStorageFacts:
         return self.domain.is_mixed() or self.domain.is_unknown()
 
     def can_join(self, other: "AliasStorageFacts") -> bool:
-        return self.same_domain(other) and self.compatible_view(other) and not self.needs_synthesis() and not other.needs_synthesis()
+        return (
+            self.same_domain(other)
+            and self.compatible_view(other)
+            and not self.needs_synthesis()
+            and not other.needs_synthesis()
+        )
 
 
 @dataclass(frozen=True)
@@ -354,6 +359,7 @@ class AliasFailure:
 
     AGENTS rule: proven SS must become stack slot, never silently fallback to memory.
     """
+
     reason: str
     address: "object | None" = None
     space: str | None = None
@@ -374,7 +380,7 @@ def alias_facts_for_ir_address_8616(addr: "object") -> AliasStorageFacts | Alias
 
     AGENTS rule #1: Must not guess. If SS is proven but unresolvable, fail hard.
     """
-    from ..ir.core import IRAddress, MemSpace, AddressStatus, SegmentOrigin, is_stack_address_8616
+    from ..ir.core import AddressStatus, IRAddress, MemSpace, is_stack_address_8616
     from ..pipeline.errors import PipelineHardError
 
     if not isinstance(addr, IRAddress):
@@ -426,7 +432,9 @@ def alias_facts_for_ir_address_8616(addr: "object") -> AliasStorageFacts | Alias
             domain=_StorageDomainSignature(
                 "memory",
                 addr.size,
-                _StorageView(addr.offset * 8 if isinstance(addr.offset, int) else 0, addr.size * 8 if addr.size else None),
+                _StorageView(
+                    addr.offset * 8 if isinstance(addr.offset, int) else 0, addr.size * 8 if addr.size else None
+                ),
             ),
             identity=("memory", addr.offset) if isinstance(addr.offset, int) else None,
         )
@@ -492,7 +500,9 @@ def describe_x86_16_alias_recovery_api() -> tuple[tuple[str, str, tuple[str, ...
     return tuple((spec.name, spec.purpose, spec.helpers) for spec in ALIAS_RECOVERY_API)
 
 
-def _merge_storage_domains(existing: _StorageDomainSignature | None, incoming: _StorageDomainSignature) -> _StorageDomainSignature:
+def _merge_storage_domains(
+    existing: _StorageDomainSignature | None, incoming: _StorageDomainSignature
+) -> _StorageDomainSignature:
     if existing is None:
         return incoming
     if existing == incoming:

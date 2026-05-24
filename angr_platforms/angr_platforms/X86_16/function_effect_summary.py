@@ -29,9 +29,7 @@ class FunctionEffectSummary:
     helper_return_address_kind: str = "none"
 
     def frame_only_stack(self) -> bool:
-        return bool(self.frame_stack_reads or self.frame_stack_writes) and not (
-            self.memory_reads or self.memory_writes
-        )
+        return bool(self.frame_stack_reads or self.frame_stack_writes) and not (self.memory_reads or self.memory_writes)
 
     def has_indirect_control(self) -> bool:
         return self.indirect_call_count > 0 or self.indirect_branch_count > 0
@@ -105,10 +103,14 @@ def _count(source: Any, name: str) -> int:
 def summarize_x86_16_function_effects(source: Any) -> FunctionEffectSummary:
     helper_return_space = _value(source, "helper_return_space", None)
     helper_return_space_str = (
-        str(helper_return_space).strip() if isinstance(helper_return_space, str) and str(helper_return_space).strip() else None
+        str(helper_return_space).strip()
+        if isinstance(helper_return_space, str) and str(helper_return_space).strip()
+        else None
     )
     helper_return_width = _value(source, "helper_return_width", None)
-    helper_return_width_int = helper_return_width if isinstance(helper_return_width, int) and helper_return_width > 0 else None
+    helper_return_width_int = (
+        helper_return_width if isinstance(helper_return_width, int) and helper_return_width > 0 else None
+    )
     helper_return_address_kind = _value(source, "helper_return_address_kind", "none")
     helper_return_address_kind_str = (
         str(helper_return_address_kind).strip()

@@ -107,7 +107,11 @@ def _write_decl_and_name(api_style: str) -> tuple[str, str, str]:
     api_style = normalize_api_style(api_style)
     spec = INT21_SERVICE_SPECS[0x40]
     if api_style == "pseudo":
-        return spec.pseudo_decl or "int dos_write(int handle, const void *buffer, unsigned int count);", spec.pseudo_name, ""
+        return (
+            spec.pseudo_decl or "int dos_write(int handle, const void *buffer, unsigned int count);",
+            spec.pseudo_name,
+            "",
+        )
     if api_style in {"dos", "msc", "compiler"}:
         return (
             spec.dos_decl or "int _dos_write(unsigned short handle, const void far *buffer, unsigned short count);",
@@ -183,7 +187,9 @@ def _match_lookup_then_stderr_write(project, function) -> StructuredHelperRender
     return StructuredHelperRender(c_text=c_text, family="lookup_then_stderr_write")
 
 
-def try_render_x86_16_structured_helper_c(project, function, *, api_style: str = "modern") -> StructuredHelperRender | None:
+def try_render_x86_16_structured_helper_c(
+    project, function, *, api_style: str = "modern"
+) -> StructuredHelperRender | None:
     if getattr(project.arch, "name", None) != "86_16":
         return None
     api_style = normalize_api_style(api_style)

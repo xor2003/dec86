@@ -82,10 +82,10 @@ def _render_tail_validation_lines(surface: Mapping[str, object]) -> list[str]:
 
     lines.append(f"severity={severity} merge_gate={'pass' if merge_gate else 'hold'}")
     if isinstance(baseline_status, str) and baseline_status:
-        lines.append(f"baseline={baseline_status} unexpected={baseline_unexpected_count} missing={baseline_missing_count}")
-    lines.append(
-        f"coverage={coverage_count} missing={missing_stage_total} unknown={unknown_stage_total}"
-    )
+        lines.append(
+            f"baseline={baseline_status} unexpected={baseline_unexpected_count} missing={baseline_missing_count}"
+        )
+    lines.append(f"coverage={coverage_count} missing={missing_stage_total} unknown={unknown_stage_total}")
     for item in top_uncollected_functions[:3]:
         proc_name = item.get("proc_name")
         proc_kind = item.get("proc_kind")
@@ -459,16 +459,11 @@ def build_x86_16_milestone_report(
         "corpus": corpus_name,
         "corpus_slice": corpus_slice or scan_summary.get("slice", "active"),
         "scan_summary": dict(scan_summary),
-        "validation_layers": [
-            {"name": name, "default_checks": list(checks)} for name, checks in validation_layers
-        ],
-        "validation_families": [
-            {"name": name, "default_checks": list(checks)} for name, checks in validation_families
-        ],
+        "validation_layers": [{"name": name, "default_checks": list(checks)} for name, checks in validation_layers],
+        "validation_families": [{"name": name, "default_checks": list(checks)} for name, checks in validation_families],
         "validation_triage": validation_triage,
         "alias_api": [
-            {"name": name, "purpose": purpose, "helpers": list(helpers)}
-            for name, purpose, helpers in alias_api
+            {"name": name, "purpose": purpose, "helpers": list(helpers)} for name, purpose, helpers in alias_api
         ],
         "decode_width_matrix": [
             {"name": name, "operand_bits": operand_bits, "address_bits": address_bits}
@@ -477,25 +472,19 @@ def build_x86_16_milestone_report(
         "mixed_width_extension_surface": mixed_width_extension_surface,
         "mixed_width_instruction_surface": mixed_width_instruction_surface,
         "widening_pipeline": [
-            {"name": name, "purpose": purpose, "helpers": list(helpers)}
-            for name, purpose, helpers in widening_pipeline
+            {"name": name, "purpose": purpose, "helpers": list(helpers)} for name, purpose, helpers in widening_pipeline
         ],
         "recovery_layers": [
-            {"name": name, "purpose": purpose, "helpers": list(helpers)}
-            for name, purpose, helpers in recovery_layers
+            {"name": name, "purpose": purpose, "helpers": list(helpers)} for name, purpose, helpers in recovery_layers
         ],
         "recovery_confidence_axes": [
-            {"status": status, "meaning": meaning}
-            for status, meaning in recovery_confidence_axes
+            {"status": status, "meaning": meaning} for status, meaning in recovery_confidence_axes
         ],
         "object_recovery_focus": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in object_recovery_focus
         ],
-        "projection_cleanup_rules": [
-            {"name": name, "purpose": purpose}
-            for name, purpose in projection_cleanup_rules
-        ],
+        "projection_cleanup_rules": [{"name": name, "purpose": purpose} for name, purpose in projection_cleanup_rules],
         "readability_goals": [
             {
                 "step": step,
@@ -528,10 +517,20 @@ def build_x86_16_milestone_report(
         "corpus_rates": {
             "success_rate": _success_rate(scan_summary),
             "failure_rate": round(1.0 - _success_rate(scan_summary), 6),
-            "full_decompile_rate": round(int(scan_summary.get("full_decompile_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6),
-            "cfg_only_rate": round(int(scan_summary.get("cfg_only_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6),
-            "lift_only_rate": round(int(scan_summary.get("lift_only_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6),
-            "block_lift_rate": round(int(scan_summary.get("block_lift_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6),
+            "full_decompile_rate": round(
+                int(scan_summary.get("full_decompile_count", 0) or 0)
+                / max(int(scan_summary.get("scanned", 0) or 0), 1),
+                6,
+            ),
+            "cfg_only_rate": round(
+                int(scan_summary.get("cfg_only_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6
+            ),
+            "lift_only_rate": round(
+                int(scan_summary.get("lift_only_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6
+            ),
+            "block_lift_rate": round(
+                int(scan_summary.get("block_lift_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6
+            ),
         },
         "blind_spot_budget": blind_spot_budget,
         "debt": debt,
@@ -619,9 +618,9 @@ def build_x86_16_milestone_report(
             "fallback_counts": fallback_counts,
             "top_failure_classes": top_failure_classes,
             "top_fallback_kinds": top_fallback_kinds,
-        "top_failure_stages": top_failure_stages,
-        "timeout_stage_counts": timeout_stage_counts,
-        "top_failure_files": top_failure_files,
+            "top_failure_stages": top_failure_stages,
+            "timeout_stage_counts": timeout_stage_counts,
+            "top_failure_files": top_failure_files,
             "top_failure_functions": top_failure_functions,
             "top_fallback_files": top_fallback_files,
             "top_fallback_functions": top_fallback_functions,

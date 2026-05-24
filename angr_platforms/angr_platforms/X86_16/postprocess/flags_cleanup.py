@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Postprocess
 # Responsibility: normalize already-recovered flag/condition expressions.
 # Forbidden: primary semantic recovery ownership for branch meaning.
-
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
     CAssignment,
@@ -145,6 +144,7 @@ def _extract_flag_test_info_8616(node):
             if isinstance(expr.rhs, CConstant) and isinstance(expr.rhs.value, int) and isinstance(expr.lhs, CVariable):
                 return expr.rhs.value, expr.lhs
             return None, None
+
         bit1, var1 = extract_bit_and_var(lhs)
         bit2, var2 = extract_bit_and_var(rhs)
         if bit1 is not None and bit2 is not None and var1 is not None and var2 is not None:
@@ -267,7 +267,8 @@ def _rewrite_flag_bit_value_expr_8616(node, assignments, codegen):
 
 
 def _rewrite_flag_bit_value_uses_8616(codegen) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None or getattr(cfunc, "statements", None) is None:
         return False
 
     changed = False
@@ -333,7 +334,7 @@ def _rewrite_flag_bit_value_uses_8616(codegen) -> bool:
             if _is_flags_assignment(assign_stmt):
                 local_assignments.append((assign_stmt, assign_container))
 
-    visit_block(codegen.cfunc.statements, [])
+    visit_block(cfunc.statements, [])
     return changed
 
 
@@ -496,11 +497,7 @@ def _compare_matches_or_swapped_8616(compare_info, other_info) -> bool:
         "CmpLT": "CmpGT",
         "CmpLE": "CmpGE",
     }.get(op)
-    return (
-        swapped == other_op
-        and _same_c_expression_8616(lhs, other_rhs)
-        and _same_c_expression_8616(rhs, other_lhs)
-    )
+    return swapped == other_op and _same_c_expression_8616(lhs, other_rhs) and _same_c_expression_8616(rhs, other_lhs)
 
 
 def _maybe_strip_redundant_signed_flag_pair_guard_8616(node, flag_var, flag_expr):
@@ -575,10 +572,20 @@ def _extract_nested_flag_bit_predicate_8616(node):
         return None
     zero = None
     masked = None
-    if isinstance(node.lhs, CBinaryOp) and node.lhs.op == "And" and isinstance(node.rhs, CConstant) and node.rhs.value == 0:
+    if (
+        isinstance(node.lhs, CBinaryOp)
+        and node.lhs.op == "And"
+        and isinstance(node.rhs, CConstant)
+        and node.rhs.value == 0
+    ):
         masked = node.lhs
         zero = node.rhs
-    elif isinstance(node.rhs, CBinaryOp) and node.rhs.op == "And" and isinstance(node.lhs, CConstant) and node.lhs.value == 0:
+    elif (
+        isinstance(node.rhs, CBinaryOp)
+        and node.rhs.op == "And"
+        and isinstance(node.lhs, CConstant)
+        and node.lhs.value == 0
+    ):
         masked = node.rhs
         zero = node.lhs
     if masked is None or zero is None:
@@ -671,7 +678,9 @@ def _split_ordering_if_chain_replacement_condition_8616(prev_cond, curr_cond, co
             return None
         if not _same_compare_direction_family_8616(prev_compare, low_compare):
             return None
-        if _same_c_expression_8616(prev_compare.lhs, low_compare.lhs) and _same_c_expression_8616(prev_compare.rhs, low_compare.rhs):
+        if _same_c_expression_8616(prev_compare.lhs, low_compare.lhs) and _same_c_expression_8616(
+            prev_compare.rhs, low_compare.rhs
+        ):
             return None
         return low_guard
 
@@ -769,7 +778,8 @@ def _c_expr_uses_var_8616(node, target) -> bool:
 
 
 def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None or getattr(cfunc, "statements", None) is None:
         return False
 
     changed = False
@@ -891,7 +901,7 @@ def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
             node.statements = new_statements
         return node
 
-    root = codegen.cfunc.statements
+    root = cfunc.statements
     transform(root)
     return changed
 
@@ -1037,10 +1047,12 @@ def _fix_interval_guard_conditions_8616(codegen) -> bool:
 
 
 def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+    cfunc = getattr(codegen, "cfunc", None)
+    registers = getattr(getattr(project, "arch", None), "registers", None)
+    if cfunc is None or getattr(cfunc, "statements", None) is None or not isinstance(registers, dict):
         return False
 
-    flags_offset = project.arch.registers.get("flags", (None, None))[0]
+    flags_offset = registers.get("flags", (None, None))[0]
     if flags_offset is None:
         return False
 
@@ -1073,7 +1085,19 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
                         used_registers.add(unified.reg)
                 continue
 
-            for attr in ("rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "callee_target", "else_node", "retval"):
+            for attr in (
+                "rhs",
+                "expr",
+                "operand",
+                "condition",
+                "cond",
+                "body",
+                "iffalse",
+                "iftrue",
+                "callee_target",
+                "else_node",
+                "retval",
+            ):
                 child = getattr(node, attr, None)
                 if _structured_codegen_node_8616(child):
                     traversal_stack.append((child, False))
@@ -1103,11 +1127,11 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
                     if _structured_codegen_node_8616(body):
                         traversal_stack.append((body, False))
 
-    collect_reads(codegen.cfunc.statements)
+    collect_reads(cfunc.statements)
 
     changed = False
 
-    stack = [codegen.cfunc.statements]
+    stack = [cfunc.statements]
     seen: set[int] = set()
     while stack:
         node = stack.pop()
@@ -1129,7 +1153,11 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
                     variable = getattr(stmt.lhs, "variable", None)
                     unified = getattr(stmt.lhs, "unified_variable", None)
                     if (
-                        all(id(candidate) not in used_variables for candidate in (variable, unified) if candidate is not None)
+                        all(
+                            id(candidate) not in used_variables
+                            for candidate in (variable, unified)
+                            if candidate is not None
+                        )
                         and flags_offset not in used_registers
                     ):
                         changed = True
@@ -1173,7 +1201,20 @@ def _c_expr_uses_register_8616(node, reg_offset: int) -> bool:
                 return True
             continue
 
-        for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iftrue", "iffalse", "callee_target", "else_node", "retval"):
+        for attr in (
+            "lhs",
+            "rhs",
+            "expr",
+            "operand",
+            "condition",
+            "cond",
+            "body",
+            "iftrue",
+            "iffalse",
+            "callee_target",
+            "else_node",
+            "retval",
+        ):
             child = getattr(current, attr, None)
             if _structured_codegen_node_8616(child):
                 traversal_stack.append(child)
@@ -1249,16 +1290,18 @@ def _stmt_reads_reg_before_write_8616(stmt, reg_offset: int) -> tuple[bool, bool
 
 
 def _prune_overwritten_flag_assignments_8616(project, codegen) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+    cfunc = getattr(codegen, "cfunc", None)
+    registers = getattr(getattr(project, "arch", None), "registers", None)
+    if cfunc is None or getattr(cfunc, "statements", None) is None or not isinstance(registers, dict):
         return False
 
-    flags_offset = project.arch.registers.get("flags", (None, None))[0]
+    flags_offset = registers.get("flags", (None, None))[0]
     if flags_offset is None:
         return False
 
     changed = False
 
-    stack = [codegen.cfunc.statements]
+    stack = [cfunc.statements]
     seen: set[int] = set()
     while stack:
         node = stack.pop()

@@ -60,7 +60,10 @@ def _enable_line_buffered_stdio() -> None:
                 pass
 
 
-_ensure_project_venv()
+# Only trampoline into the project venv when invoked as the entrypoint script.
+# Tests import this module for helper access and must not exec-replace the process.
+if __name__ == "__main__":
+    _ensure_project_venv()
 _install_early_log_levels()
 _enable_line_buffered_stdio()
 

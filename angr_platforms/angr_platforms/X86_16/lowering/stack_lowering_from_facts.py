@@ -18,9 +18,7 @@ from __future__ import annotations
 #
 # Contract:
 #   bindings_count > 0 and materialized_count == 0 is PipelineHardError.
-
 import contextlib
-from dataclasses import dataclass
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -256,7 +254,8 @@ def lower_stack_accesses_from_alias_facts_8616(
     bindings = build_stack_variable_bindings_from_alias_facts_8616(alias_facts)
     stable_stack_fact_count = len(
         [
-            fact for fact in alias_facts
+            fact
+            for fact in alias_facts
             if isinstance(getattr(fact, "identity", None), tuple)
             and len(getattr(fact, "identity", None)) >= 2
             and getattr(fact, "identity", None)[0] == "stack"
@@ -264,7 +263,8 @@ def lower_stack_accesses_from_alias_facts_8616(
     )
     stable_bp_fact_count = len(
         [
-            fact for fact in alias_facts
+            fact
+            for fact in alias_facts
             if isinstance(getattr(fact, "identity", None), tuple)
             and len(getattr(fact, "identity", None)) >= 2
             and getattr(fact, "identity", None)[0] == "stack"
@@ -329,7 +329,9 @@ def lower_stack_accesses_from_alias_facts_8616(
             )
             materialized_name = getattr(getattr(cvar, "variable", None), "name", None) or getattr(cvar, "name", None)
             materialized_count += 1
-            materialized.append((int(offset), str(materialized_name or _stack_object_name(int(offset), codegen=codegen))))
+            materialized.append(
+                (int(offset), str(materialized_name or _stack_object_name(int(offset), codegen=codegen)))
+            )
         except Exception as exc:
             fallback_offset = _canonical_stack_offset_8616(
                 getattr(binding, "bp_offset", None) or getattr(binding, "offset", 0)
@@ -364,6 +366,7 @@ def lower_stack_accesses_from_alias_facts_8616(
     # ── HARD CONTRACT: bindings > 0 && materialized == 0 → PipelineHardError ──
     if len(bindings) > 0 and materialized_count == 0:
         from ..pipeline.errors import PipelineHardError
+
         raise PipelineHardError(
             "stable stack slots not materialized",
             layer="stack_lowering",
@@ -376,9 +379,7 @@ def lower_stack_accesses_from_alias_facts_8616(
         failures=failures_list,
         materialized=materialized,
         diagnostics=[
-            "stack_lowering_source=alias_facts "
-            f"bindings={len(bindings)} "
-            f"materialized={materialized_count}",
+            f"stack_lowering_source=alias_facts bindings={len(bindings)} materialized={materialized_count}",
             f"stable_stack_fact_count={stable_stack_fact_count}",
             f"stable_bp_fact_count={stable_bp_fact_count}",
         ],

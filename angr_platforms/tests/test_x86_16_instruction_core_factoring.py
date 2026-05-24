@@ -133,7 +133,11 @@ def test_x86_16_instruction_core_uses_string_helpers_for_32bit_string_compare_ac
 
 
 def test_x86_16_instruction_core_uses_decode_width_api_for_far_pointer_paths():
-    source = inspect.getsource(instr16.Instr16._load_far_pointer) + inspect.getsource(instr32.Instr32.callf_m16_32) + inspect.getsource(instr32.Instr32.jmpf_m16_32)
+    source = (
+        inspect.getsource(instr16.Instr16._load_far_pointer)
+        + inspect.getsource(instr32.Instr32.callf_m16_32)
+        + inspect.getsource(instr32.Instr32.jmpf_m16_32)
+    )
 
     assert "effective_address_bits(" in source
     assert "address_width_bits(" not in source
@@ -290,7 +294,11 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_base_return_and_jump_con
 
 
 def test_x86_16_emu_runtime_uses_shared_far_frame_helpers_by_mode():
-    source = inspect.getsource(emu_mod.EmuInstr.callf) + inspect.getsource(emu_mod.EmuInstr.retf) + inspect.getsource(emu_mod.EmuInstr.iret)
+    source = (
+        inspect.getsource(emu_mod.EmuInstr.callf)
+        + inspect.getsource(emu_mod.EmuInstr.retf)
+        + inspect.getsource(emu_mod.EmuInstr.iret)
+    )
 
     assert "push_far_return_frame16(" in source
     assert "push_far_return_frame32(" in source

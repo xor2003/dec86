@@ -6,7 +6,6 @@ import archinfo
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
-
 from angr_platforms.angr_platforms.X86_16.postprocess.optimization.dead_setup import (
     _count_dead_setup_escaped_8616,
     _prune_dead_setup_carriers_8616,

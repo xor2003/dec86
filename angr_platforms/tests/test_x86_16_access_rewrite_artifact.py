@@ -4,9 +4,7 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
-
-from inertia_decompiler.cli_access_object_hints import AccessTraitObjectHint
-from inertia_decompiler.cli_access_object_hints import _build_stable_access_object_hints
+from inertia_decompiler.cli_access_object_hints import AccessTraitObjectHint, _build_stable_access_object_hints
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles
 from inertia_decompiler.cli_access_rewrite_artifact import (
     AccessRewriteArtifact,
@@ -41,12 +39,15 @@ def test_access_rewrite_artifact_loader_uses_cache_without_raw_traits():
     )
 
     assert artifact is not None
-    assert has_access_rewrite_artifact(
-        project,
-        0x4010,
-        build_access_trait_evidence_profiles=lambda _traits: {},
-        build_stable_access_object_hints=lambda _traits: {},
-    ) is True
+    assert (
+        has_access_rewrite_artifact(
+            project,
+            0x4010,
+            build_access_trait_evidence_profiles=lambda _traits: {},
+            build_stable_access_object_hints=lambda _traits: {},
+        )
+        is True
+    )
     assert ("stack", "bp", -4) in artifact.object_hints
 
 

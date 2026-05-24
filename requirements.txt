@@ -1,7 +1,10 @@
-angr
-archinfo
-capstone
-jsonpickle
-keystone-engine
-pyvex
+angr==9.2.205
+archinfo==9.2.205
+cle==9.2.205
+claripy==9.2.205
+pyvex==9.2.205
+capstone==5.0.6
+keystone-engine==0.9.2
 textual==8.2.1
+z3-solver==4.13.0.0
+jsonpickle

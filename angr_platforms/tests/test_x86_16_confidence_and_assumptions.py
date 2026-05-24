@@ -102,15 +102,9 @@ class TestConfidenceTracker:
     def test_add_multiple_markers(self):
         """Test adding multiple markers."""
         tracker = ConfidenceTracker()
-        tracker.add_marker(
-            "struct", "struct A", ConfidenceLevel.HIGH, evidence_count=3
-        )
-        tracker.add_marker(
-            "array", "array buf", ConfidenceLevel.MEDIUM, evidence_count=2
-        )
-        tracker.add_marker(
-            "pointer", "ptr field", ConfidenceLevel.LOW, evidence_count=1
-        )
+        tracker.add_marker("struct", "struct A", ConfidenceLevel.HIGH, evidence_count=3)
+        tracker.add_marker("array", "array buf", ConfidenceLevel.MEDIUM, evidence_count=2)
+        tracker.add_marker("pointer", "ptr field", ConfidenceLevel.LOW, evidence_count=1)
         assert tracker.total_count() == 3
         assert tracker.high_count() == 1
         assert tracker.medium_count() == 1
@@ -120,17 +114,11 @@ class TestConfidenceTracker:
         """Test counting per confidence level."""
         tracker = ConfidenceTracker()
         for _ in range(4):
-            tracker.add_marker(
-                "struct", "s", ConfidenceLevel.HIGH, evidence_count=1
-            )
+            tracker.add_marker("struct", "s", ConfidenceLevel.HIGH, evidence_count=1)
         for _ in range(3):
-            tracker.add_marker(
-                "array", "a", ConfidenceLevel.MEDIUM, evidence_count=1
-            )
+            tracker.add_marker("array", "a", ConfidenceLevel.MEDIUM, evidence_count=1)
         for _ in range(2):
-            tracker.add_marker(
-                "pointer", "p", ConfidenceLevel.LOW, evidence_count=1
-            )
+            tracker.add_marker("pointer", "p", ConfidenceLevel.LOW, evidence_count=1)
         assert tracker.high_count() == 4
         assert tracker.medium_count() == 3
         assert tracker.low_count() == 2
@@ -139,12 +127,8 @@ class TestConfidenceTracker:
     def test_to_dict(self):
         """Test conversion to dictionary."""
         tracker = ConfidenceTracker()
-        tracker.add_marker(
-            "struct", "struct X", ConfidenceLevel.HIGH, evidence_count=2
-        )
-        tracker.add_marker(
-            "array", "array Y", ConfidenceLevel.LOW, evidence_count=1
-        )
+        tracker.add_marker("struct", "struct X", ConfidenceLevel.HIGH, evidence_count=2)
+        tracker.add_marker("array", "array Y", ConfidenceLevel.LOW, evidence_count=1)
         d = tracker.to_dict()
         assert d["high_count"] == 1
         assert d["medium_count"] == 0
@@ -196,9 +180,7 @@ class TestFunctionConfidenceReport:
         """Test overall confidence HIGH."""
         tracker = ConfidenceTracker()
         for _ in range(8):
-            tracker.add_marker(
-                "struct", "s", ConfidenceLevel.HIGH, evidence_count=1
-            )
+            tracker.add_marker("struct", "s", ConfidenceLevel.HIGH, evidence_count=1)
         tracker.add_marker("array", "a", ConfidenceLevel.MEDIUM, evidence_count=1)
         report = FunctionConfidenceReport(
             func_addr=0x1000,
@@ -225,9 +207,7 @@ class TestFunctionConfidenceReport:
         tracker = ConfidenceTracker()
         tracker.add_marker("struct", "s", ConfidenceLevel.HIGH, evidence_count=1)
         for _ in range(4):
-            tracker.add_marker(
-                "pointer", "p", ConfidenceLevel.LOW, evidence_count=1
-            )
+            tracker.add_marker("pointer", "p", ConfidenceLevel.LOW, evidence_count=1)
         report = FunctionConfidenceReport(
             func_addr=0x3000,
             func_name="func",
@@ -239,9 +219,7 @@ class TestFunctionConfidenceReport:
         """Test overall confidence LOW from critical unknowns."""
         tracker = ConfidenceTracker()
         for _ in range(5):
-            tracker.add_marker(
-                "struct", "s", ConfidenceLevel.HIGH, evidence_count=1
-            )
+            tracker.add_marker("struct", "s", ConfidenceLevel.HIGH, evidence_count=1)
         report = FunctionConfidenceReport(
             func_addr=0x4000,
             func_name="func",
@@ -311,9 +289,7 @@ class TestScanConfidenceSummary:
         """Test adding high-confidence function."""
         tracker = ConfidenceTracker()
         for _ in range(5):
-            tracker.add_marker(
-                "struct", "s", ConfidenceLevel.HIGH, evidence_count=1
-            )
+            tracker.add_marker("struct", "s", ConfidenceLevel.HIGH, evidence_count=1)
         report = FunctionConfidenceReport(
             func_addr=0x1000,
             func_name="func1",
@@ -332,17 +308,13 @@ class TestScanConfidenceSummary:
         t1 = ConfidenceTracker()
         for _ in range(4):
             t1.add_marker("struct", "s", ConfidenceLevel.HIGH, evidence_count=1)
-        r1 = FunctionConfidenceReport(
-            func_addr=0x1000, func_name="f1", confidence_tracker=t1
-        )
+        r1 = FunctionConfidenceReport(func_addr=0x1000, func_name="f1", confidence_tracker=t1)
         summary.add_function_report(r1)
         # Add low-confidence function
         t2 = ConfidenceTracker()
         for _ in range(4):
             t2.add_marker("pointer", "p", ConfidenceLevel.LOW, evidence_count=1)
-        r2 = FunctionConfidenceReport(
-            func_addr=0x2000, func_name="f2", confidence_tracker=t2
-        )
+        r2 = FunctionConfidenceReport(func_addr=0x2000, func_name="f2", confidence_tracker=t2)
         summary.add_function_report(r2)
         assert summary.total_functions == 2
         assert summary.high_confidence_count == 1
@@ -432,6 +404,7 @@ class TestIntegration:
 
     def test_apply_pass_basic(self):
         """Test applying confidence pass to mock codegen."""
+
         class MockCFunc:
             addr = 0x1000
             name = "test_func"
@@ -449,6 +422,7 @@ class TestIntegration:
 
     def test_apply_pass_with_none_cfunc(self):
         """Test applying pass with None cfunc."""
+
         class MockCodegen:
             cfunc = None
 
@@ -458,6 +432,7 @@ class TestIntegration:
 
     def test_build_function_with_markers(self):
         """Test building function with markers."""
+
         class MockCFunc:
             addr = 0x2000
             name = "marked_func"

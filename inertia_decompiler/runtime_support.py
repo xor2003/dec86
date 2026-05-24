@@ -297,19 +297,20 @@ def install_angr_variable_recovery_binop_sub_size_guard(
         typevars_module = angr_typevars
 
     original_handle_binop_sub = engine_cls._handle_binop_Sub
-    original_handle_binop_mul = engine_cls._handle_binop_Mul
+    original_handle_binop_mul = getattr(engine_cls, "_handle_binop_Mul", None)
     engine_cls._handle_binop_Sub = build_guarded_handle_binop_sub_8616(
         richr_cls=richr_cls,
         typevars_module=typevars_module,
         project=project,
         context_suffix=(_project_current_function_context, _project_current_function_context_suffix),
     )
-    engine_cls._handle_binop_Mul = build_guarded_handle_binop_mul_8616(
-        richr_cls=richr_cls,
-        typevars_module=typevars_module,
-        project=project,
-        context_suffix=(_project_current_function_context, _project_current_function_context_suffix),
-    )
+    if original_handle_binop_mul is not None:
+        engine_cls._handle_binop_Mul = build_guarded_handle_binop_mul_8616(
+            richr_cls=richr_cls,
+            typevars_module=typevars_module,
+            project=project,
+            context_suffix=(_project_current_function_context, _project_current_function_context_suffix),
+        )
     return original_handle_binop_sub, original_handle_binop_mul
 
 
@@ -371,7 +372,8 @@ def guard_angr_variable_recovery_binop_sub_size_mismatch(project=None):
         yield
     finally:
         engine_cls._handle_binop_Sub = original_handle_binop_sub
-        engine_cls._handle_binop_Mul = original_handle_binop_mul
+        if original_handle_binop_mul is not None:
+            engine_cls._handle_binop_Mul = original_handle_binop_mul
 
 
 @contextlib.contextmanager
@@ -762,14 +764,23 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
         num_threads = len(self._threads)
         if num_threads < self._max_workers:
             thread_name = "%s_%d" % (self._thread_name_prefix or self, num_threads)
-            t = threading.Thread(
-                name=thread_name,
-                target=_worker,
-                args=(
+            if hasattr(self, "_create_worker_context"):
+                worker_args = (
                     weakref.ref(self, weakref_cb),
                     self._create_worker_context(),
                     self._work_queue,
-                ),
+                )
+            else:
+                worker_args = (
+                    weakref.ref(self, weakref_cb),
+                    self._work_queue,
+                    self._initializer,
+                    self._initargs,
+                )
+            t = threading.Thread(
+                name=thread_name,
+                target=_worker,
+                args=worker_args,
                 daemon=True,
             )
             t.start()

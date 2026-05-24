@@ -5,7 +5,15 @@ import angr
 import keystone as ks
 from angr import options as o
 from angr.analyses.decompiler.structured_codegen.c import CVariable
-from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
+from angr.sim_type import (
+    SimTypeBottom,
+    SimTypeChar,
+    SimTypeFunction,
+    SimTypeInt,
+    SimTypeLong,
+    SimTypePointer,
+    SimTypeShort,
+)
 from angr.sim_variable import SimStackVariable
 from decompile import _resolve_stack_cvar_at_offset
 
@@ -424,11 +432,19 @@ def test_lock_prefix_add_executes_like_unlocked_add():
     locked_state = _run(locked, bytes.fromhex("f00107"))
 
     assert locked.factory.block(0x1000, opt_level=0).capstone.insns[0].mnemonic == "lock add"
-    assert unlocked_state.solver.eval(unlocked_state.memory.load(0x0200, 2, endness=unlocked_state.arch.memory_endness)) == 0x68AC
-    assert locked_state.solver.eval(locked_state.memory.load(0x0200, 2, endness=locked_state.arch.memory_endness)) == 0x68AC
+    assert (
+        unlocked_state.solver.eval(unlocked_state.memory.load(0x0200, 2, endness=unlocked_state.arch.memory_endness))
+        == 0x68AC
+    )
+    assert (
+        locked_state.solver.eval(locked_state.memory.load(0x0200, 2, endness=locked_state.arch.memory_endness))
+        == 0x68AC
+    )
     assert unlocked_state.solver.eval(unlocked_state.regs.ax) == locked_state.solver.eval(locked_state.regs.ax)
     for bit in (0, 2, 6, 7, 11):
-        assert unlocked_state.solver.eval(unlocked_state.regs.flags[bit]) == locked_state.solver.eval(locked_state.regs.flags[bit])
+        assert unlocked_state.solver.eval(unlocked_state.regs.flags[bit]) == locked_state.solver.eval(
+            locked_state.regs.flags[bit]
+        )
 
 
 def test_into_lifts_as_conditional_interrupt_call():
@@ -507,7 +523,11 @@ def test_single_word_arg_signature_and_return_type():
 
     assert dec.codegen is not None
     _assert_word_signature(func, 1)
-    assert "return a0 + 1;" in dec.codegen.text or "return v0 + 1;" in dec.codegen.text or "return v2 + 1;" in dec.codegen.text
+    assert (
+        "return a0 + 1;" in dec.codegen.text
+        or "return v0 + 1;" in dec.codegen.text
+        or "return v2 + 1;" in dec.codegen.text
+    )
 
 
 def test_no_arg_frame_function_does_not_gain_phantom_arg():
@@ -523,9 +543,7 @@ def test_no_arg_frame_function_does_not_gain_phantom_arg():
 
 
 def test_three_word_args_signature():
-    project = _project_from_asm(
-        "push bp; mov bp, sp; mov ax, [bp+4]; add ax, [bp+6]; add ax, [bp+8]; pop bp; ret"
-    )
+    project = _project_from_asm("push bp; mov bp, sp; mov ax, [bp+4]; add ax, [bp+6]; add ax, [bp+8]; pop bp; ret")
 
     cfg = project.analyses.CFGFast(normalize=True)
     func = cfg.functions[0x1000]
@@ -771,13 +789,19 @@ def test_known_helper_signatures_are_applied_before_decompilation():
 def test_source_decl_updates_return_type_while_preserving_recovered_arg_widths():
     project = _project_from_asm("ret")
     func = project.kb.functions.function(addr=0x1000, create=True)
-    func.prototype = SimTypeFunction([SimTypeShort(False)], SimTypeShort(False), arg_names=("value",)).with_arch(project.arch)
+    func.prototype = SimTypeFunction([SimTypeShort(False)], SimTypeShort(False), arg_names=("value",)).with_arch(
+        project.arch
+    )
     changed = apply_x86_16_metadata_annotations(
         project,
         func_addr=0x1000,
         cod_metadata=SimpleNamespace(
             call_names=(),
-            source_lines=("void Demo(short value)", "{", "}",),
+            source_lines=(
+                "void Demo(short value)",
+                "{",
+                "}",
+            ),
             stack_aliases={},
         ),
     )

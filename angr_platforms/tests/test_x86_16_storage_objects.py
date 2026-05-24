@@ -11,6 +11,7 @@ from inertia_decompiler.cli_storage_objects import (
     build_storage_object_records_from_hints,
     storage_object_record_for_key,
 )
+
 from angr_platforms.X86_16.type_storage_object_bridge import load_storage_object_bridge
 
 

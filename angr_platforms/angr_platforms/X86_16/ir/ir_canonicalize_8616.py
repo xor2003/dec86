@@ -4,7 +4,6 @@ from __future__ import annotations
 # Responsibility: local algebraic normalization (lossless, preserves semantics).
 # Equivalent to LLVM: tiny subset of InstCombine/Reassociate.
 # Forbidden: cross-block propagation, variable merging, alias assumptions.
-
 from dataclasses import dataclass
 from typing import Any
 
@@ -375,8 +374,8 @@ def _rebuild_binary_8616(template: Any, op: str, lhs: Any, rhs: Any) -> Any:
 
 def _make_const_8616(value: int, template: Any | None = None) -> Any:
     from angr.analyses.decompiler.structured_codegen import c as structured_c
-
     from angr.sim_type import SimTypeInt
+
     type_ = getattr(template, "type", None)
     if type_ is None:
         type_ = SimTypeInt(signed=False, label="int")

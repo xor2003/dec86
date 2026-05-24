@@ -8,8 +8,8 @@ from .function_state_summary import FunctionStateSummary, summarize_x86_16_funct
 from .helper_effect_summary import HelperEligibilitySummary, summarize_x86_16_helper_eligibility
 from .ir_readiness import IRReadinessSummary, summarize_x86_16_ir_readiness
 from .ir_recovery_summary import IRRecoverySummary, summarize_x86_16_ir_recovery
-from .runtime_trace_refinement import RuntimeTraceRefinementSummary, summarize_x86_16_runtime_trace_refinement
 from .recovery_confidence import RecoveryConfidenceSummary, classify_x86_16_recovery_confidence
+from .runtime_trace_refinement import RuntimeTraceRefinementSummary, summarize_x86_16_runtime_trace_refinement
 
 __all__ = [
     "CorpusRecoveryArtifact",

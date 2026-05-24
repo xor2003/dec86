@@ -3,7 +3,6 @@ from __future__ import annotations
 # Layer: Lowering
 # Responsibility: stable object/array lowering and segment-scale removal helpers from typed address evidence.
 # Forbidden: rendered-text pattern recovery and CLI formatting ownership.
-
 from dataclasses import dataclass
 from typing import Any, Callable, TypeAlias
 
@@ -56,7 +55,9 @@ def _match_segment_register_based_dereference(
         if c_constant_value(inner) is not None:
             continue
 
-        if isinstance(inner, structured_c.CVariable) and isinstance(getattr(inner, "variable", None), SimRegisterVariable):
+        if isinstance(inner, structured_c.CVariable) and isinstance(
+            getattr(inner, "variable", None), SimRegisterVariable
+        ):
             base_terms.append(inner)
             continue
 
@@ -117,7 +118,12 @@ def _match_ss_stack_reference(node, project, *, project_rewrite_cache, classify_
         return cache[key]
 
     classified = classify_segmented_dereference(node, project)
-    if classified is not None and classified.kind == "stack" and classified.stack_var is not None and classified.cvar is not None:
+    if (
+        classified is not None
+        and classified.kind == "stack"
+        and classified.stack_var is not None
+        and classified.cvar is not None
+    ):
         result = (classified.stack_var, classified.cvar, classified.extra_offset)
         cache[key] = result
         return result

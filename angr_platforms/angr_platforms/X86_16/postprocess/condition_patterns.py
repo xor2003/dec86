@@ -68,7 +68,7 @@ def _canonicalize_cmp_sub_8616(cond: object) -> object | None:
         return None
 
     # Build strengthened comparison: CmpOP(x, N) or CmpOP(x, y)
-    cn = type(left) if hasattr(type(left), 'left') else type(cond)
+    cn = type(left) if hasattr(type(left), "left") else type(cond)
 
     return type(cond)(
         left=sub_left,

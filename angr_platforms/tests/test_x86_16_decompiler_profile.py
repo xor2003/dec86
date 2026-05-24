@@ -134,7 +134,9 @@ def test_tiny_wrapper_like_postprocess_keeps_argument_normalization():
         info={"x86_16_decompilation_profile": {"wrapper_like": True}},
     )
     project = SimpleNamespace(
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function if addr == function.addr else None))
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: function if addr == function.addr else None)
+        )
     )
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=function.addr))
 
@@ -166,7 +168,9 @@ def test_call_heavy_small_function_postprocess_keeps_full_pass_list():
         info={"x86_16_decompilation_profile": {"wrapper_like": False}},
     )
     project = SimpleNamespace(
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function if addr == function.addr else None))
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: function if addr == function.addr else None)
+        )
     )
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=function.addr))
 
@@ -229,7 +233,9 @@ def test_normalize_function_prototype_arg_names_pass_updates_duplicates():
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, prototype=prototype))
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
 
     changed = _normalize_function_prototype_arg_names_8616(project, codegen)
@@ -288,7 +294,9 @@ def test_apply_annotations_deduplicates_stack_variable_names():
     )
     func = SimpleNamespace(info={"x86_16_annotations": {"stack_vars": {4: {"name": "s"}}}})
     project = SimpleNamespace(
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None))
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        )
     )
 
     changed = _apply_annotations_8616(project, codegen)
@@ -302,6 +310,7 @@ def test_apply_annotations_deduplicates_stack_variable_names():
 
 def test_materialize_missing_register_local_declarations_recovers_unified_locals():
     register = SimRegisterVariable(0, 2, name="a1", region=0x1000)
+
     class _HashableCVar(SimpleNamespace):
         __hash__ = object.__hash__
 
@@ -356,7 +365,9 @@ def test_apply_annotations_resolves_direct_bp_stack_loads_to_annotated_slots(mon
 
     project_stub = SimpleNamespace(arch=SimpleNamespace())
     stack_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
-    stack_cvar = structured_c.CVariable(stack_var, variable_type=SimTypeShort(False), codegen=_FakeCodegen(project_stub))
+    stack_cvar = structured_c.CVariable(
+        stack_var, variable_type=SimTypeShort(False), codegen=_FakeCodegen(project_stub)
+    )
     bp_stack_load = structured_c.CUnaryOp(
         "Dereference",
         structured_c.CConstant(0, SimTypeShort(False), codegen=_FakeCodegen(project_stub)),
@@ -371,7 +382,9 @@ def test_apply_annotations_resolves_direct_bp_stack_loads_to_annotated_slots(mon
     )
     func = SimpleNamespace(info={"x86_16_annotations": {"stack_vars": {4: {"name": "s"}}}})
     project = SimpleNamespace(
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None))
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        )
     )
 
     monkeypatch.setattr(
@@ -421,7 +434,9 @@ def test_apply_annotations_materializes_stack_arguments_from_annotations():
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None))
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
 
     changed = _apply_annotations_8616(project, codegen)
@@ -469,7 +484,9 @@ def test_apply_annotations_shrinks_overguessed_stack_arguments():
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None))
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
 
     changed = _apply_annotations_8616(project, codegen)
@@ -502,7 +519,9 @@ def test_simplify_structured_expressions_rewrites_far_pointer_stack_pairs_to_mk_
     segment_source_cvar = structured_c.CVariable(segment_source, variable_type=SimTypeShort(False), codegen=codegen)
     stmts = structured_c.CStatements(
         [
-            structured_c.CAssignment(offset_cvar, structured_c.CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            structured_c.CAssignment(
+                offset_cvar, structured_c.CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen
+            ),
             structured_c.CAssignment(segment_cvar, segment_source_cvar, codegen=codegen),
             structured_c.CAssignment(
                 slot_cvar,

@@ -337,10 +337,10 @@ def _branch_rel(emu, condition, displacement, instruction_size: int, target_widt
     if hasattr(condition, "cast_to"):
         condition = condition.cast_to(Type.int_1)
     target = (
-        emu.get_gpreg(reg16_t.IP)
-        if target_width_bits == 16
-        else emu.get_eip()
-    ) + emu.constant(displacement, Type.int_16 if target_width_bits == 16 else Type.int_32) + emu.constant(instruction_size, Type.int_16 if target_width_bits == 16 else Type.int_32)
+        (emu.get_gpreg(reg16_t.IP) if target_width_bits == 16 else emu.get_eip())
+        + emu.constant(displacement, Type.int_16 if target_width_bits == 16 else Type.int_32)
+        + emu.constant(instruction_size, Type.int_16 if target_width_bits == 16 else Type.int_32)
+    )
     if isinstance(condition, bool):
         if not condition:
             return None

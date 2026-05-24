@@ -38,7 +38,7 @@ GOLDEN_READABILITY_SET: tuple[GoldenReadabilityCase, ...] = (
         proc_name="_start",
         anchors=(
             "dos_get_version()",
-            "dos_print_dollar_string(\"DOS sample\")",
+            'dos_print_dollar_string("DOS sample")',
             "dos_exit(0)",
         ),
     ),

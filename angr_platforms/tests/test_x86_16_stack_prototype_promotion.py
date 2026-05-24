@@ -67,7 +67,9 @@ def test_bp_stack_prototype_promotion_rejects_mixed_stack_regions(monkeypatch):
 
     fake_nodes = [object(), object()]
     monkeypatch.setattr(postprocess, "_iter_c_nodes_deep_8616", lambda _retval: iter(fake_nodes))
-    monkeypatch.setattr(postprocess, "_match_bp_stack_load_8616", lambda node, _project: 4 if node is fake_nodes[0] else 6)
+    monkeypatch.setattr(
+        postprocess, "_match_bp_stack_load_8616", lambda node, _project: 4 if node is fake_nodes[0] else 6
+    )
 
     assert not postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen)
 
@@ -91,7 +93,9 @@ def test_bp_stack_prototype_promotion_uses_annotated_stack_vars():
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1000, statements=SimpleNamespace(statements=[]), variables_in_use={})
@@ -125,7 +129,9 @@ def test_bp_stack_prototype_promotion_preserves_pointer_evidence():
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(
@@ -162,7 +168,9 @@ def test_bp_stack_prototype_promotion_preserves_pointer_evidence_without_annotat
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(
@@ -214,7 +222,9 @@ def test_bp_stack_prototype_promotion_respects_scalar_source_decl_over_weak_poin
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
         project=project,
@@ -228,7 +238,7 @@ def test_bp_stack_prototype_promotion_respects_scalar_source_decl_over_weak_poin
             variables_in_use={stack_var: stack_cvar},
             arg_list=[None, stack_cvar],
             functy=func.prototype,
-        )
+        ),
     )
     stack_cvar.codegen = codegen
 
@@ -256,7 +266,9 @@ def test_bp_stack_prototype_promotion_shrinks_overguessed_stack_arguments():
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(
@@ -283,7 +295,9 @@ def test_bp_stack_prototype_promotion_counts_only_real_stack_arguments():
     func = SimpleNamespace(prototype=prototype, is_prototype_guessed=True, info={})
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1000, statements=SimpleNamespace(statements=[]), variables_in_use={})
@@ -323,10 +337,14 @@ def test_bp_stack_return_address_pruning_keeps_annotated_arguments():
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
-        cfunc=SimpleNamespace(addr=0x1000, arg_list=[arg_cvar], statements=structured_c.CStatements([], codegen=c_codegen))
+        cfunc=SimpleNamespace(
+            addr=0x1000, arg_list=[arg_cvar], statements=structured_c.CStatements([], codegen=c_codegen)
+        )
     )
 
     changed = postprocess._prune_return_address_stack_arguments_8616(project, codegen)
@@ -346,7 +364,9 @@ def test_classify_return_shape_promotes_scalar_returns_from_void_prototypes():
     func = SimpleNamespace(prototype=prototype, is_prototype_guessed=True, info={})
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([ret], codegen=c_codegen))
@@ -373,9 +393,13 @@ def test_classify_return_shape_uses_source_return_lines_when_returns_are_missing
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([], codegen=c_codegen)))
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([], codegen=c_codegen))
+    )
 
     changed = postprocess._classify_return_shape_8616(project, codegen)
 
@@ -392,16 +416,24 @@ def test_classify_return_shape_uses_void_source_decl_when_returns_are_missing():
         is_prototype_guessed=True,
         info={
             ANNOTATION_KEY: {
-                "source_lines": ("void ReInitBars()", "{", "}",),
+                "source_lines": (
+                    "void ReInitBars()",
+                    "{",
+                    "}",
+                ),
                 "source_return_lines": (),
             }
         },
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([], codegen=c_codegen)))
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([], codegen=c_codegen))
+    )
 
     changed = postprocess._classify_return_shape_8616(project, codegen)
 
@@ -416,9 +448,13 @@ def test_classify_return_shape_treats_explicit_void_returns_as_void():
     func = SimpleNamespace(prototype=prototype, is_prototype_guessed=True, info={})
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([ret], codegen=c_codegen)))
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([ret], codegen=c_codegen))
+    )
 
     changed = postprocess._classify_return_shape_8616(project, codegen)
 
@@ -444,7 +480,9 @@ def test_classify_return_shape_promotes_far_pointer_returns_from_void_prototypes
     func = SimpleNamespace(prototype=prototype, is_prototype_guessed=True, info={})
     project = SimpleNamespace(
         arch=Arch86_16(),
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([ret], codegen=c_codegen))

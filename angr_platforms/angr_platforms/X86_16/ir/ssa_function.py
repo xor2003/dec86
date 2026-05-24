@@ -54,7 +54,9 @@ class SSAFunctionArtifact:
             "function_addr": self.function_addr,
             "blocks": [block.to_dict() for block in self.blocks],
             "phi_nodes": [phi.to_dict() for phi in self.phi_nodes],
-            "predecessor_map": {hex(addr): [hex(pred) for pred in preds] for addr, preds in sorted(self.predecessor_map.items())},
+            "predecessor_map": {
+                hex(addr): [hex(pred) for pred in preds] for addr, preds in sorted(self.predecessor_map.items())
+            },
             "summary": dict(self.summary),
         }
 
@@ -100,7 +102,9 @@ def _distinct_incoming_values(values: tuple[SSAIncomingValue, ...]) -> bool:
     return len(seen) > 1
 
 
-def _make_phi_target(block_addr: int, key: tuple[str, str | None, int], incoming: tuple[SSAIncomingValue, ...]) -> IRValue:
+def _make_phi_target(
+    block_addr: int, key: tuple[str, str | None, int], incoming: tuple[SSAIncomingValue, ...]
+) -> IRValue:
     max_version = max((item.value.version or 0) for item in incoming)
     return IRValue(
         space=MemSpace(key[0]),

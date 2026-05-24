@@ -12,13 +12,10 @@ Forbidden: semantic recovery, alias decisions beyond liveness, type inference.
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
-    CConstant,
     CFunctionCall,
-    CReturn,
-    CStatements,
+    CStructField,
     CUnaryOp,
     CVariable,
-    CStructField,
 )
 
 from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616

@@ -25,18 +25,27 @@ def test_structuring_stage_records_validation_for_semantic_passes(monkeypatch):
             "mode": kwargs["mode"],
         },
     )
-    monkeypatch.setattr(stage, "build_x86_16_tail_validation_verdict", lambda pass_name, _validation: f"{pass_name}: stable")
-    monkeypatch.setattr(stage, "_decompiler_structuring_passes_for_function", lambda _project, _codegen: (
-        stage.DecompilerStructuringPassSpec("_segmented_memory_reasoning_8616", lambda _codegen: False, False),
-        stage.DecompilerStructuringPassSpec("_induction_summary_artifact_8616", lambda _codegen: False, False),
-    ))
+    monkeypatch.setattr(
+        stage, "build_x86_16_tail_validation_verdict", lambda pass_name, _validation: f"{pass_name}: stable"
+    )
+    monkeypatch.setattr(
+        stage,
+        "_decompiler_structuring_passes_for_function",
+        lambda _project, _codegen: (
+            stage.DecompilerStructuringPassSpec("_segmented_memory_reasoning_8616", lambda _codegen: False, False),
+            stage.DecompilerStructuringPassSpec("_induction_summary_artifact_8616", lambda _codegen: False, False),
+        ),
+    )
 
     changed = stage._structuring_codegen_8616(project, codegen)
 
     assert changed is False
     validation = codegen._inertia_structuring_pass_validation
     assert validation["_segmented_memory_reasoning_8616"]["stage"] == "structuring:_segmented_memory_reasoning_8616"
-    assert validation["_segmented_memory_reasoning_8616"]["verdict"] == "structuring:_segmented_memory_reasoning_8616: stable"
+    assert (
+        validation["_segmented_memory_reasoning_8616"]["verdict"]
+        == "structuring:_segmented_memory_reasoning_8616: stable"
+    )
     assert "_induction_summary_artifact_8616" not in validation
 
 
@@ -70,7 +79,9 @@ def test_structuring_stage_rejects_non_stable_validation_status(monkeypatch):
             "mode": kwargs["mode"],
         },
     )
-    monkeypatch.setattr(stage, "build_x86_16_tail_validation_verdict", lambda pass_name, _validation: f"{pass_name}: unknown")
+    monkeypatch.setattr(
+        stage, "build_x86_16_tail_validation_verdict", lambda pass_name, _validation: f"{pass_name}: unknown"
+    )
     monkeypatch.setattr(
         stage,
         "_decompiler_structuring_passes_for_function",

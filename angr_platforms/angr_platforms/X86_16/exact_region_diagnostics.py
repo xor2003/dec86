@@ -5,9 +5,8 @@ from __future__ import annotations
 Responsibility: exact-region recovery coverage diagnostics and region_split classification.
 Forbidden: semantic recovery, postprocess ownership, text-pattern semantics."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping, Sequence
-
 
 __all__ = [
     "ExactRegionDiagnostics",

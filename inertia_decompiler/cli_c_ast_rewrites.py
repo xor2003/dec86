@@ -1453,7 +1453,8 @@ def _simplify_basic_algebraic_identities(codegen) -> bool:
     return changed
 
 def _simplify_structured_c_expressions(codegen) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None or getattr(cfunc, "statements", None) is None:
         return False
 
     protected_dereference_addr_expr_ids: set[int] = set()
@@ -1464,7 +1465,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         for protected_node in _iter_c_nodes_deep(expr):
             protected_dereference_addr_expr_ids.add(id(protected_node))
 
-    for walk_node in _iter_c_nodes_deep(getattr(codegen.cfunc, "statements", None)):
+    for walk_node in _iter_c_nodes_deep(getattr(cfunc, "statements", None)):
         if not isinstance(walk_node, structured_c.CUnaryOp) or walk_node.op != "Dereference":
             if isinstance(walk_node, structured_c.CFunctionCall):
                 callee_target = getattr(walk_node, "callee_target", None)
@@ -1705,7 +1706,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         )
 
     variable_use_counts: dict[int, int] = {}
-    for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+    for walk_node in _iter_c_nodes_deep(cfunc.statements):
         if not isinstance(walk_node, structured_c.CVariable):
             continue
         variable = getattr(walk_node, "variable", None)

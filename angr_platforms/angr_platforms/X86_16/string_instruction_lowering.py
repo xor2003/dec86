@@ -123,9 +123,7 @@ def build_x86_16_string_intrinsic_artifact(artifact: StringInstructionArtifact) 
     mixed_movs = _mixed_movs_family(artifact.records)
     if artifact.refusals and mixed_movs is None:
         return StringIntrinsicArtifact(
-            refusals=tuple(
-                StringIntrinsicRefusal(item.kind, item.detail) for item in artifact.refusals
-            )
+            refusals=tuple(StringIntrinsicRefusal(item.kind, item.detail) for item in artifact.refusals)
         )
     if not artifact.records:
         return StringIntrinsicArtifact(

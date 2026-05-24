@@ -80,7 +80,10 @@ def test_grouped_structuring_pass_annotates_typed_ir_support_on_regions():
                         "CJMP",
                         None,
                         (
-                            IRCondition("eq", (IRValue(MemSpace.REG, name="ax", size=2), IRValue(MemSpace.REG, name="bx", size=2))),
+                            IRCondition(
+                                "eq",
+                                (IRValue(MemSpace.REG, name="ax", size=2), IRValue(MemSpace.REG, name="bx", size=2)),
+                            ),
                             IRValue(MemSpace.CONST, const=0x1010, size=2),
                         ),
                     ),

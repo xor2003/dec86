@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-
 __all__ = [
     "InvariantStatus",
     "InvariantCheck",
@@ -53,9 +52,7 @@ class InvariantReport:
 
     @property
     def all_passed(self) -> bool:
-        return not self.rewrite_blocked and all(
-            c.status != InvariantStatus.FAILED for c in self.checks
-        )
+        return not self.rewrite_blocked and all(c.status != InvariantStatus.FAILED for c in self.checks)
 
     @property
     def failed_checks(self) -> list[InvariantCheck]:
@@ -132,10 +129,7 @@ def validate_before_rewrite_8616(
     failed = report.failed_checks
     if failed:
         report.rewrite_blocked = True
-        report.skip_reason = (
-            f"{len(failed)} invariant(s) failed: "
-            + ", ".join(c.name for c in failed)
-        )
+        report.skip_reason = f"{len(failed)} invariant(s) failed: " + ", ".join(c.name for c in failed)
 
     return report
 
@@ -166,6 +160,7 @@ def format_invariant_report_8616(report: InvariantReport) -> str:
 def _check_no_ss_linear_expr(c_text: str, report: InvariantReport) -> None:
     """Check: no ``(ss << 4)`` linear expressions in generated C."""
     import re
+
     pattern = re.compile(r"\(\s*ss\s*<<\s*4\s*\)", re.IGNORECASE)
     matches = pattern.findall(c_text) if c_text else []
     if matches:
@@ -178,14 +173,13 @@ def _check_no_ss_linear_expr(c_text: str, report: InvariantReport) -> None:
             )
         )
     else:
-        report.checks.append(
-            InvariantCheck(name="no_ss_linear_expr", status=InvariantStatus.PASSED)
-        )
+        report.checks.append(InvariantCheck(name="no_ss_linear_expr", status=InvariantStatus.PASSED))
 
 
 def _check_no_stack_indexing(c_text: str, report: InvariantReport) -> None:
     """Check: no ``stack[...]`` syntax in output — all SS:BP mapped to named variables."""
     import re
+
     pattern = re.compile(r"stack\[", re.IGNORECASE)
     matches = pattern.findall(c_text) if c_text else []
     if matches:
@@ -198,21 +192,19 @@ def _check_no_stack_indexing(c_text: str, report: InvariantReport) -> None:
             )
         )
     else:
-        report.checks.append(
-            InvariantCheck(name="no_stack_indexing", status=InvariantStatus.PASSED)
-        )
+        report.checks.append(InvariantCheck(name="no_stack_indexing", status=InvariantStatus.PASSED))
 
 
 def _check_no_tmp_conditions(c_text: str, codegen: Any, report: InvariantReport) -> None:
     """Check: no ``if (tmp_*)`` when typed ConditionIR is available."""
     import re
+
     pattern = re.compile(r"tmp_\d+", re.IGNORECASE)
     matches = pattern.findall(c_text) if c_text else []
 
     # Check if typed conditions exist in the function
     has_typed_conditions = bool(
-        getattr(codegen, "_inertia_typed_conditions", None)
-        or getattr(codegen, "_inertia_condition_facts", None)
+        getattr(codegen, "_inertia_typed_conditions", None) or getattr(codegen, "_inertia_condition_facts", None)
     )
 
     if matches and has_typed_conditions:
@@ -233,14 +225,13 @@ def _check_no_tmp_conditions(c_text: str, codegen: Any, report: InvariantReport)
             )
         )
     else:
-        report.checks.append(
-            InvariantCheck(name="no_tmp_conditions", status=InvariantStatus.PASSED)
-        )
+        report.checks.append(InvariantCheck(name="no_tmp_conditions", status=InvariantStatus.PASSED))
 
 
 def _check_no_raw_flag_conditions(c_text: str, report: InvariantReport) -> None:
     """Check: no ``if (flags & ...)`` raw flag conditions."""
     import re
+
     pattern = re.compile(r"\b(flags|eflags)\s*&", re.IGNORECASE)
     matches = pattern.findall(c_text) if c_text else []
     if matches:
@@ -253,9 +244,7 @@ def _check_no_raw_flag_conditions(c_text: str, report: InvariantReport) -> None:
             )
         )
     else:
-        report.checks.append(
-            InvariantCheck(name="no_raw_flag_conditions", status=InvariantStatus.PASSED)
-        )
+        report.checks.append(InvariantCheck(name="no_raw_flag_conditions", status=InvariantStatus.PASSED))
 
 
 def _check_validation_not_uncollected(codegen: Any, report: InvariantReport) -> None:
@@ -323,9 +312,7 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
             if "provisional" in fact.reason.lower():
                 provisional_count += 1
                 continue
-            failures.append(
-                f"SS offset={fact.offset} reason={fact.reason}"
-            )
+            failures.append(f"SS offset={fact.offset} reason={fact.reason}")
         elif isinstance(fact, AliasStorageFacts):
             if fact.identity and fact.identity[0] == "stack":
                 # Stack slot identified — check if it's been materialized
@@ -336,6 +323,7 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
                     variables = getattr(cfunc, "variables_in_use", {}) if cfunc else {}
                     # Check if any variable matches this offset
                     from angr.sim_variable import SimStackVariable
+
                     found = any(
                         isinstance(v, SimStackVariable)
                         and _canonical_stack_offset_8616(getattr(v, "offset", None)) == offset
@@ -356,9 +344,7 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
             )
         )
     else:
-        report.checks.append(
-            InvariantCheck(name="stack_slots_materialized", status=InvariantStatus.PASSED)
-        )
+        report.checks.append(InvariantCheck(name="stack_slots_materialized", status=InvariantStatus.PASSED))
 
 
 def _check_stack_facts_consumed(codegen: Any, report: InvariantReport) -> None:
@@ -421,10 +407,7 @@ def _check_condition_facts_consumed(codegen: Any, report: InvariantReport) -> No
             InvariantCheck(
                 name="condition_facts_consumed",
                 status=InvariantStatus.FAILED,
-                detail=(
-                    f"condition_facts={condition_facts} but condition_materialized=0 "
-                    f"— facts NOT consumed"
-                ),
+                detail=(f"condition_facts={condition_facts} but condition_materialized=0 — facts NOT consumed"),
                 evidence=(),
             )
         )

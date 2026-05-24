@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from ..string_instruction_artifact import StringInstructionArtifact, StringInstructionRecord
+from .core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 
 __all__ = [
     "IRStringEffectArtifact",

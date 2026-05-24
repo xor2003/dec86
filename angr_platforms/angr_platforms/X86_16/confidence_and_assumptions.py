@@ -242,9 +242,7 @@ class ScanConfidenceSummary:
             return "empty"
 
         high_ratio = self.high_confidence_ratio()
-        low_ratio = (
-            self.low_confidence_count / self.total_functions if self.total_functions > 0 else 0
-        )
+        low_ratio = self.low_confidence_count / self.total_functions if self.total_functions > 0 else 0
 
         if high_ratio >= 0.8 and low_ratio == 0 and self.total_critical_unknowns == 0:
             return "strong"
@@ -267,9 +265,7 @@ class ScanConfidenceSummary:
         }
 
 
-def build_function_with_confidence_markers(
-    cfunc, confidence_report: FunctionConfidenceReport, *, codegen=None
-) -> bool:
+def build_function_with_confidence_markers(cfunc, confidence_report: FunctionConfidenceReport, *, codegen=None) -> bool:
     """
     Attach confidence markers to decompiled function.
 
@@ -339,9 +335,7 @@ def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
                     for struct in struct_info.structs:
                         # Struct from multi-function agreement = HIGH confidence
                         struct_name = getattr(struct, "name", "unknown_struct")
-                        evidence_count = len(
-                            getattr(struct, "functions", [])
-                        )  # Number of functions using it
+                        evidence_count = len(getattr(struct, "functions", []))  # Number of functions using it
                         confidence = ConfidenceLevel.HIGH if evidence_count >= 2 else ConfidenceLevel.MEDIUM
                         tracker.add_marker(
                             fact_kind="struct",
@@ -359,9 +353,7 @@ def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
                         # Array with stride pattern = MEDIUM to HIGH confidence
                         array_name = getattr(array, "array_name", "unknown_array")
                         pattern_count = len(getattr(array, "access_patterns", []))
-                        confidence = (
-                            ConfidenceLevel.HIGH if pattern_count >= 3 else ConfidenceLevel.MEDIUM
-                        )
+                        confidence = ConfidenceLevel.HIGH if pattern_count >= 3 else ConfidenceLevel.MEDIUM
                         tracker.add_marker(
                             fact_kind="array",
                             fact_detail=f"array {array_name}",
@@ -393,9 +385,7 @@ def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
                         )
 
             # Build report
-            report = FunctionConfidenceReport(
-                func_addr=func_addr, func_name=func_name, confidence_tracker=tracker
-            )
+            report = FunctionConfidenceReport(func_addr=func_addr, func_name=func_name, confidence_tracker=tracker)
 
             # Add assumptions from analysis
             for assumption in get_codegen_sequence_attr(codegen, cfunc, "_assumptions"):

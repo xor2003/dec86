@@ -9,6 +9,7 @@ from .regs import sgreg_t
 IDTR = 1
 TR = 3
 
+
 class Interrupt(DataAccess):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

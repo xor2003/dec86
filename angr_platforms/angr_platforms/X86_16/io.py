@@ -48,7 +48,7 @@ class IO:
         if isinstance(addr, int):
             port_val = addr
         elif isinstance(addr, PyVexConst):
-            port_val = getattr(getattr(addr, 'con', addr), 'value', None)
+            port_val = getattr(getattr(addr, "con", addr), "value", None)
         if port_val is not None and self.get_portio_base(port_val) is None:
             return self.constant(0xFFFFFFFF & ((1 << 32) - 1), Type.int_32)
         addr = self._port_arg(addr)
@@ -59,7 +59,7 @@ class IO:
         if isinstance(addr, int):
             port_val = addr
         elif isinstance(addr, PyVexConst):
-            port_val = getattr(getattr(addr, 'con', addr), 'value', None)
+            port_val = getattr(getattr(addr, "con", addr), "value", None)
         if port_val is not None and self.get_portio_base(port_val) is None:
             return self.constant(0xFFFF & ((1 << 16) - 1), Type.int_16)
         addr = self._port_arg(addr)
@@ -70,7 +70,7 @@ class IO:
         if isinstance(addr, int):
             port_val = addr
         elif isinstance(addr, PyVexConst):
-            port_val = getattr(getattr(addr, 'con', addr), 'value', None)
+            port_val = getattr(getattr(addr, "con", addr), "value", None)
         if port_val is not None and self.get_portio_base(port_val) is None:
             return self.constant(0xFF & ((1 << 8) - 1), Type.int_8)
         addr = self._port_arg(addr)

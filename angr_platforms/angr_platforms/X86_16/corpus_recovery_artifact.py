@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .corpus_scan import extract_cod_functions, scan_function
-from .recovery_artifacts import build_x86_16_corpus_recovery_artifact
 from .recovery_artifact_writer import RecoveryArtifactWriteResult, write_x86_16_corpus_recovery_artifact
+from .recovery_artifacts import build_x86_16_corpus_recovery_artifact
 
 __all__ = [
     "CorpusCodRecoveryArtifactResult",

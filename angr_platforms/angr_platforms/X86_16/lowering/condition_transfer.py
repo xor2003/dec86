@@ -23,15 +23,15 @@ __all__ = [
     "transfer_typed_conditions_from_emulator_8616",
 ]
 
+import logging
+import os
+
+from ..condition_trace import record_classified_conditions_trace_8616
 from ..ir.condition_ir import (
     ConditionIR,
-    ConditionFailure,
     deduplicate_conditions_8616,
 )
 from ..ir.core import IRValue
-from ..condition_trace import record_classified_conditions_trace_8616
-import logging
-import os
 
 log = logging.getLogger(__name__)
 
@@ -80,9 +80,11 @@ def collect_typed_conditions_from_emulator_8616(
     # Read from the module-level cache populated during the initial lift
     try:
         from ..lift_86_16 import Instruction_ANY
+
         module_cache = Instruction_ANY._inertia_module_condition_cache
     except Exception as ex:
         import logging
+
         logging.getLogger(__name__).warning(
             "condition transfer import failed: %s: %s",
             type(ex).__name__,
@@ -189,7 +191,7 @@ def transfer_typed_conditions_to_codegen_8616(
     # materialized = 0 (filled by postprocess typed conditions pass)
     codegen._inertia_condition_lane = SemanticLaneState(
         name="condition",
-        raw=len(conditions),       # raw facts = all ConditionIR from lifting
+        raw=len(conditions),  # raw facts = all ConditionIR from lifting
         normalized=len(conditions),
         classified=classified_count,
         bound=0,
