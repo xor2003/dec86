@@ -1147,6 +1147,10 @@ def _validated_generated_c_acceptance_8616(
         return _validation_fail("Source-evidenced call order mismatch/missing: " + ", ".join(call_order[:6]))
     if _loop_presence_violation_8616(payload):
         return _validation_fail("Source-evidenced loop structure missing from emitted C.")
+    if _loop_hoisted_call_violation_8616(payload):
+        return _validation_fail("Source-evidenced loop call was hoisted outside loop in emitted C.")
+    if _unreachable_calls_after_return_violation_8616(payload):
+        return _validation_fail("Unreachable call statements present after return in emitted C.")
     if _side_effect_floor_violation_8616(payload):
         return _validation_fail("Source-evidenced side-effect floor not met (missing non-prologue calls).")
     if _stack_slot_evidence_violation_8616(payload):
@@ -1414,6 +1418,43 @@ def _loop_presence_violation_8616(emitted_c: str) -> bool:
         if isinstance(function_name, str) and f"{function_name}(" in body:
             return False
     return actual_loops < expected_loops
+
+
+def _unreachable_calls_after_return_violation_8616(emitted_c: str) -> bool:
+    body = _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
+    if not isinstance(body, str) or not body.strip():
+        return False
+    first_return = body.find("return;")
+    if first_return < 0:
+        return False
+    tail = body[first_return + len("return;") :]
+    if not isinstance(tail, str) or not tail.strip():
+        return False
+    for name in _CALL_TOKEN_RE.findall(tail):
+        if name in {"if", "for", "while", "switch", "return", "sizeof"}:
+            continue
+        return True
+    return False
+
+
+def _loop_hoisted_call_violation_8616(emitted_c: str) -> bool:
+    body = _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
+    if not isinstance(body, str) or not body.strip():
+        return False
+    # Detect empty loop body followed by a call at top level. This indicates
+    # call hoisting out of the loop and is semantically unsafe.
+    for match in re.finditer(
+        r"(?:for|while)\s*\(.*?\)\s*\{\s*\}\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        body,
+        flags=re.S,
+    ):
+        call_name = match.group(1)
+        if not isinstance(call_name, str) or not call_name:
+            continue
+        if call_name in {"if", "for", "while", "switch", "return", "sizeof"}:
+            continue
+        return True
+    return False
 
 
 def _side_effect_floor_violation_8616(emitted_c: str) -> bool:
