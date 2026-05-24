@@ -588,7 +588,7 @@ def _direct_addr_wall_clock_budget(
     if explicit_timeout:
         # Explicit timeout should stay deterministic and bounded, but still
         # leave room for one fallback lane and validation emission.
-        return max(4, base + min(12, max(4, base // 2)))
+        return max(8, base + min(14, max(8, base + 4)))
     return max(2, base + _bounded_non_optimized_timeout(base) + 2)
 
 def _prepare_ranked_binary_preview_items(
@@ -1166,13 +1166,7 @@ def _validated_generated_c_acceptance_8616(
                 stage_details.append(f"{stage_name}=unclassified")
         detail = "; ".join(stage_details) if stage_details else "no stage data"
         return _validation_fail(f"Tail validation {display_status} ({detail}).")
-    skip_gcc_recompile_check = os.environ.get("INERTIA_SKIP_GCC_RECOMPILE_CHECK", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if c_target == "portable-flat" and not skip_gcc_recompile_check:
+    if c_target == "portable-flat":
         recompilation = check_c_recompiles_8616(payload, target=c_target)
         if not recompilation.passed:
             stderr = (recompilation.stderr or recompilation.stdout or "").strip()
@@ -4144,15 +4138,6 @@ def main(argv: list[str] | None = None) -> int:
         and args.binary.suffix.lower() == ".exe"
         and project.arch.name == "86_16"
     )
-    if (
-        args.addr is not None
-        and isinstance(args.timeout, int)
-        and args.timeout <= 6
-        and os.environ.get("INERTIA_SKIP_GCC_RECOMPILE_CHECK", "").strip() == ""
-    ):
-        # Fast direct-address probes should prioritize semantic validation and
-        # avoid GCC subprocess overhead that can exceed caller time budgets.
-        os.environ["INERTIA_SKIP_GCC_RECOMPILE_CHECK"] = "1"
     setattr(
         project,
         "_inertia_fast_direct_probe",
