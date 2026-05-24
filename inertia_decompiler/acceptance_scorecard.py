@@ -14,6 +14,8 @@ _FLAGS_RE = re.compile(r"\bflags(?:_[A-Za-z0-9]+)?\b")
 _VVAR_RE = re.compile(r"\bvvar_[A-Za-z0-9]+\b")
 _SUB_RE = re.compile(r"\bsub_[0-9a-fA-F]+\b")
 _TAIL_VALIDATION_METADATA_RE = re.compile(r"@@INERTIA_TAIL_VALIDATION@@\s+(\{.*\})")
+_DS_HELPER_LINEAR_RE = re.compile(r"\b(?:SEG_PTR|MK_FP|SEG_U8|SEG_U16|SEG_U32)\s*\(\s*ds\s*,")
+_SS_LINEAR_RE = re.compile(r"\bss\s*\*\s*16\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,8 +98,8 @@ def build_acceptance_scorecard(
     return AcceptanceScorecard(
         function_name=function_name,
         raw_flags_count=len(_FLAGS_RE.findall(recovered_output)),
-        raw_ss_linear_count=recovered_output.count("ss << 4"),
-        raw_ds_linear_count=recovered_output.count("ds << 4"),
+        raw_ss_linear_count=recovered_output.count("ss << 4") + len(_SS_LINEAR_RE.findall(recovered_output)),
+        raw_ds_linear_count=recovered_output.count("ds << 4") + len(_DS_HELPER_LINEAR_RE.findall(recovered_output)),
         vvar_count=len(_VVAR_RE.findall(recovered_output)),
         anonymous_sub_count=len(_SUB_RE.findall(recovered_output)),
         recovery_mode=_recovery_mode_from_output(recovered_output),

@@ -22,6 +22,7 @@ _RAW_IR_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("missing-type", re.compile(r"<missing-type>")),
     ("ellipsis-condition", re.compile(r"\bif\s*\(\s*\.\.\.\s*\)")),
     ("raw-register-frag", re.compile(r"\b[a-z_]\w*\{r\d+\|\d+b\}")),
+    ("unresolved-callee-namespace", re.compile(r"::0x[0-9a-fA-F]+::[A-Za-z_]\w*")),
 )
 
 _FATAL_MARKERS = frozenset(
@@ -30,6 +31,7 @@ _FATAL_MARKERS = frozenset(
         "missing-type",
         "ellipsis-condition",
         "raw-register-frag",
+        "unresolved-callee-namespace",
     }
 )
 

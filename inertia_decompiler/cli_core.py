@@ -772,6 +772,22 @@ def _function_work_cache_lookup(
             cached_tail_validation if isinstance(cached_tail_validation, dict) else None,
             expected_stages=expected_validation_stages,
         ):
+            cached_payload = str(cached_result.get("payload", ""))
+            cached_quality = assess_decompiled_c_text(cached_payload)
+            if cached_quality.reject_as_decompiled:
+                marker_summary = ", ".join(cached_quality.markers[:3]) if cached_quality.markers else "unresolved"
+                if len(cached_quality.markers) > 3:
+                    marker_summary += ", ..."
+                return (
+                    None,
+                    (
+                        f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
+                        f"{getattr(item.function, 'name', 'sub')} quality={marker_summary}\n"
+                    ),
+                    cache_key,
+                    tail_validation_enabled,
+                    expected_validation_stages,
+                )
             cache_validation_status = (
                 "uncollected"
                 if not tail_validation_enabled
@@ -781,7 +797,7 @@ def _function_work_cache_lookup(
                 FunctionWorkResult(
                     index=item.index,
                     status=cached_status,
-                    payload=str(cached_result.get("payload", "")),
+                    payload=cached_payload,
                     partial_payload=None,
                     debug_output=(
                         f"[dbg] cache hit for {getattr(item.function, 'addr', 0):#x} "
@@ -856,8 +872,12 @@ def _run_function_work_item(
     decompile_cfg = item.function_cfg
     decompile_function = item.function
     failure_family_state = FailureFamilyState()
+    fast_direct_probe = bool(getattr(decompile_project, "_inertia_fast_direct_probe", False))
 
-    if isinstance(getattr(decompile_function, "name", None), str):
+    if (
+        not fast_direct_probe
+        and isinstance(getattr(decompile_function, "name", None), str)
+    ):
         helper_outcome = _try_decompile_non_optimized_known_function(
             decompile_project,
             decompile_cfg,
@@ -1119,7 +1139,13 @@ def _validated_generated_c_acceptance_8616(
                 stage_details.append(f"{stage_name}=unclassified")
         detail = "; ".join(stage_details) if stage_details else "no stage data"
         return _validation_fail(f"Tail validation {display_status} ({detail}).")
-    if c_target == "portable-flat":
+    skip_gcc_recompile_check = os.environ.get("INERTIA_SKIP_GCC_RECOMPILE_CHECK", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if c_target == "portable-flat" and not skip_gcc_recompile_check:
         recompilation = check_c_recompiles_8616(payload, target=c_target)
         if not recompilation.passed:
             stderr = (recompilation.stderr or recompilation.stdout or "").strip()
@@ -2086,13 +2112,28 @@ def main(argv: list[str] | None = None) -> int:
     precise_sidecar_regions = metadata_has_precise_code_regions(lst_metadata)
     if args.addr is not None:
         print("/* recovering function... */", flush=True)
+        fast_direct_probe_requested = os.environ.get("INERTIA_FAST_DIRECT_PROBE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        fast_direct_probe = bool(
+            fast_direct_probe_requested
+            and timeout_was_explicit
+            and isinstance(args.timeout, int)
+            and args.timeout <= 6
+        )
         direct_budget_timeout = args.timeout
-        if project.arch.name == "86_16":
+        if project.arch.name == "86_16" and not fast_direct_probe:
             # 86_16 direct-address recovery may require repeated internal
             # structuring/materialization attempts even for tiny functions.
             # Keep enough wall-clock budget so a successful candidate is not
             # discarded by wrapper timeout.
-            direct_budget_timeout = max(direct_budget_timeout, 48)
+            if timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6:
+                direct_budget_timeout = args.timeout
+            else:
+                direct_budget_timeout = max(direct_budget_timeout, 48)
         direct_addr_deadline = time.monotonic() + _direct_addr_wall_clock_budget(
             args.timeout,
             effective_timeout=direct_budget_timeout,
@@ -2109,7 +2150,9 @@ def main(argv: list[str] | None = None) -> int:
                         or budget_fallback_name
                         or f"sub_{budget_fallback_addr:x}"
                     )
+                    print(f"/* Decompilation timeout: Timed out after {args.timeout}s. */")
                     print("/* Function recovery timed out; using sidecar-bounded asm fallback. */")
+                    print("/* non-optimized fallback failed: unavailable after recovery-timeout budget exhaustion */")
                     print(f"/* binary: {args.binary} */")
                     print(f"/* arch: {project.arch.name} */")
                     print(f"/* entry: {project.entry:#x} */")
@@ -2923,7 +2966,7 @@ def main(argv: list[str] | None = None) -> int:
             known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
             # Cap heavy fallback fan-out per function to keep direct-addr mode
             # deterministic and prevent minute-long retry storms.
-            heavy_fallback_budget = 2 if direct_result.status == "validation_failed" else 4
+            heavy_fallback_budget = 0 if fast_direct_probe else (2 if direct_result.status == "validation_failed" else 4)
 
             def _consume_heavy_fallback_budget() -> bool:
                 nonlocal heavy_fallback_budget
@@ -2959,10 +3002,13 @@ def main(argv: list[str] | None = None) -> int:
                 # recoverable clinic/core failure class for helper routines.
                 exact_retry_blocked = False
             if (
+                not fast_direct_probe
+                and (
                 direct_result.status == "validation_failed"
                 and precise_sidecar_regions
                 and not using_rebased_direct_slice
                 and lst_metadata is not None
+                )
             ):
                 sidecar_region = _lst_code_region(lst_metadata, direct_display_addr)
                 if sidecar_region is not None:
@@ -3053,6 +3099,8 @@ def main(argv: list[str] | None = None) -> int:
                 (not exact_retry_blocked)
                 or (direct_result.status in {"timeout", "validation_failed"})
             )
+            if fast_direct_probe:
+                allow_known_nonopt = False
             if partial_payload is None:
                 if allow_known_nonopt:
                     if not _consume_heavy_fallback_budget():
@@ -3133,7 +3181,7 @@ def main(argv: list[str] | None = None) -> int:
                 # semantics. Allow exact sidecar retry even when the failure
                 # family repeats so richer bounded slices can be considered.
                 exact_retry_blocked = False
-            if precise_sidecar_regions and not using_rebased_direct_slice:
+            if not fast_direct_probe and precise_sidecar_regions and not using_rebased_direct_slice:
                 if not exact_retry_blocked:
                     _dbg_region = _lst_code_region(lst_metadata, direct_display_addr) if lst_metadata is not None else None
                     print(
@@ -3276,6 +3324,8 @@ def main(argv: list[str] | None = None) -> int:
                     direct_result.tail_validation,
                     binary_path=args.binary,
                 )
+                print(f"/* Decompilation timeout: Timed out after {args.timeout}s. */")
+                print("/* non-optimized fallback failed: unavailable after partial timeout */")
                 _emit_optional_source_sidecar_c_block(
                     args.binary,
                     func.name,
@@ -3283,7 +3333,7 @@ def main(argv: list[str] | None = None) -> int:
                     alternate_source_c=bool(args.alternate_source_c),
                     c_header="\n/* == c (partial timeout) == */",
                 )
-                return 0
+                return 6 if direct_result.status == "error" else 4
             sidecar_region = None
             if lst_metadata is not None and not using_rebased_direct_slice:
                 sidecar_region = _lst_code_region(lst_metadata, direct_display_addr)
@@ -3361,7 +3411,7 @@ def main(argv: list[str] | None = None) -> int:
         _emit_optional_source_sidecar_c_block(
             args.binary,
             func.name,
-            payload,
+            direct_result.payload,
             alternate_source_c=bool(args.alternate_source_c),
             c_header="\n/* == c == */",
         )
@@ -4004,6 +4054,26 @@ def main(argv: list[str] | None = None) -> int:
         args.addr is None
         and args.binary.suffix.lower() == ".exe"
         and project.arch.name == "86_16"
+    )
+    if (
+        args.addr is not None
+        and isinstance(args.timeout, int)
+        and args.timeout <= 6
+        and os.environ.get("INERTIA_SKIP_GCC_RECOMPILE_CHECK", "").strip() == ""
+    ):
+        # Fast direct-address probes should prioritize semantic validation and
+        # avoid GCC subprocess overhead that can exceed caller time budgets.
+        os.environ["INERTIA_SKIP_GCC_RECOMPILE_CHECK"] = "1"
+    setattr(
+        project,
+        "_inertia_fast_direct_probe",
+        bool(
+            args.addr is not None
+            and os.environ.get("INERTIA_FAST_DIRECT_PROBE", "").strip().lower() in {"1", "true", "yes", "on"}
+            and timeout_was_explicit
+            and isinstance(args.timeout, int)
+            and args.timeout <= 6
+        ),
     )
 
     if force_isolated_function_projects:

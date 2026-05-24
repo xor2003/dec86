@@ -8,6 +8,45 @@ _LOCK = threading.Lock()
 _APPLIED = False
 
 
+class _InstructionWindow:
+    """
+    Zero-copy view over an instruction list slice.
+    Used to avoid per-instruction list allocations in GymratLifter._lift.
+    """
+
+    __slots__ = ("_seq", "_start", "_end")
+
+    def __init__(self, seq, start: int, end: int):
+        self._seq = seq
+        self._start = start
+        self._end = end
+
+    def reset(self, start: int, end: int) -> None:
+        self._start = start
+        self._end = end
+
+    def __bool__(self) -> bool:
+        return self._start < self._end
+
+    def __len__(self) -> int:
+        return self._end - self._start
+
+    def __getitem__(self, idx):
+        length = self._end - self._start
+        if isinstance(idx, slice):
+            lo, hi, step = idx.indices(length)
+            return [self[i] for i in range(lo, hi, step)]
+        if idx < 0:
+            idx += length
+        if idx < 0 or idx >= length:
+            raise IndexError(idx)
+        return self._seq[self._start + idx]
+
+    def __iter__(self):
+        for i in range(self._start, self._end):
+            yield self._seq[i]
+
+
 def apply_pyvex_runtime_compatibility() -> None:
     global _APPLIED
     if _APPLIED:
@@ -68,12 +107,13 @@ def apply_pyvex_runtime_compatibility() -> None:
             log = lifter_helper.log
 
             def _inertia_safe_lift(self):
-                self.thedata = (
-                    self.data[: self.max_bytes]
-                    if isinstance(self.data, (bytes, bytearray, memoryview))
-                    else self.data[: self.max_bytes].encode()
-                )
-                if log.isEnabledFor(logging.DEBUG):
+                debug_enabled = log.isEnabledFor(logging.DEBUG)
+                data = self.data
+                if isinstance(data, (bytes, bytearray, memoryview)):
+                    self.thedata = data[: self.max_bytes]
+                else:
+                    self.thedata = data[: self.max_bytes].encode()
+                if debug_enabled:
                     log.debug(repr(self.thedata))
                 instructions = self.decode()
 
@@ -81,15 +121,25 @@ def apply_pyvex_runtime_compatibility() -> None:
                     self.disassembly = [instr.disassemble() for instr in instructions]
                 self.irsb.jumpkind = JumpKind.Invalid
                 irsb_c = IRSBCustomizer(self.irsb)
-                if log.isEnabledFor(logging.DEBUG):
+                if debug_enabled:
                     log.debug("Decoding complete.")
-                for i, instr in enumerate(instructions[: self.max_inst]):
-                    if log.isEnabledFor(logging.DEBUG):
+                max_inst = self.max_inst
+                if max_inst is None or max_inst <= 0:
+                    max_inst = len(instructions)
+                else:
+                    max_inst = min(max_inst, len(instructions))
+                past_window = _InstructionWindow(instructions, 0, 0)
+                future_window = _InstructionWindow(instructions, 1, len(instructions))
+                for i in range(max_inst):
+                    instr = instructions[i]
+                    if debug_enabled:
                         log.debug("Lifting instruction %s", instr.name)
-                    instr(irsb_c, instructions[:i], instructions[i + 1 :])
+                    past_window.reset(0, i)
+                    future_window.reset(i + 1, len(instructions))
+                    instr(irsb_c, past_window, future_window)
                     if irsb_c.irsb.jumpkind != JumpKind.Invalid:
                         break
-                    if (i + 1) == self.max_inst:
+                    if (i + 1) == max_inst:
                         instr.jump(None, irsb_c.irsb.addr + irsb_c.irsb.size)
                         break
                 else:
@@ -99,7 +149,7 @@ def apply_pyvex_runtime_compatibility() -> None:
                     dst = irsb_c.irsb.addr + irsb_c.irsb.size
                     dst_ty = vex_int_class(irsb_c.irsb.arch.bits).type
                     irsb_c.irsb.next = irsb_c.mkconst(dst, dst_ty)
-                if log.isEnabledFor(logging.DEBUG):
+                if debug_enabled:
                     log.debug("%s", self.irsb)
                 if self.dump_irsb:
                     self.irsb.pp()
