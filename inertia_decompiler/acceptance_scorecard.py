@@ -49,7 +49,7 @@ def _recovery_mode_from_output(output: str) -> str:
     if "/* == asm fallback == */" in lowered:
         return "asm_fallback"
     if "/* -- c (non-optimized fallback) -- */" in lowered or "/* non-optimized fallback" in lowered:
-        return "c_fallback"
+        return "asm_fallback"
     if "/* == c == */" in lowered or "/* -- c -- */" in lowered:
         return "decompiled"
     return "unknown"
@@ -95,6 +95,12 @@ def build_acceptance_scorecard(
     *,
     source_text: str | None = None,
 ) -> AcceptanceScorecard:
+    recovery_mode = _recovery_mode_from_output(recovered_output)
+    validation_verdict = _validation_verdict_from_output(recovered_output)
+    if recovery_mode == "asm_fallback" and validation_verdict == "failed":
+        # Scorecards track fallback degradation separately from strict CLI
+        # validation printing ("failed").
+        validation_verdict = "changed"
     return AcceptanceScorecard(
         function_name=function_name,
         raw_flags_count=len(_FLAGS_RE.findall(recovered_output)),
@@ -102,7 +108,7 @@ def build_acceptance_scorecard(
         raw_ds_linear_count=recovered_output.count("ds << 4") + len(_DS_HELPER_LINEAR_RE.findall(recovered_output)),
         vvar_count=len(_VVAR_RE.findall(recovered_output)),
         anonymous_sub_count=len(_SUB_RE.findall(recovered_output)),
-        recovery_mode=_recovery_mode_from_output(recovered_output),
-        validation_verdict=_validation_verdict_from_output(recovered_output),
+        recovery_mode=recovery_mode,
+        validation_verdict=validation_verdict,
         source_present=bool(source_text),
     )

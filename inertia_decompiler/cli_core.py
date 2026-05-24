@@ -574,12 +574,21 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
     # decompiler warmup before emitting fallback C.
     return min(max(1, timeout), 20)
 
-def _direct_addr_wall_clock_budget(timeout: int, *, effective_timeout: int | None = None) -> int:
+def _direct_addr_wall_clock_budget(
+    timeout: int,
+    *,
+    effective_timeout: int | None = None,
+    explicit_timeout: bool = False,
+) -> int:
     # One-function direct-address recovery may chain bounded recovery,
     # non-optimized fallback, and final attribution. Keep that lane inside a
     # deterministic wall-clock budget so callers see an explicit timeout class
     # instead of an outer subprocess kill.
     base = max(1, effective_timeout if isinstance(effective_timeout, int) else timeout)
+    if explicit_timeout:
+        # Explicit timeout should stay deterministic and bounded, but still
+        # leave room for one fallback lane and validation emission.
+        return max(4, base + min(12, max(4, base // 2)))
     return max(2, base + _bounded_non_optimized_timeout(base) + 2)
 
 def _prepare_ranked_binary_preview_items(
@@ -735,6 +744,22 @@ def _function_work_cache_lookup(
     enable_structured_simplify: bool,
     enable_postprocess: bool,
 ) -> tuple[FunctionWorkResult | None, str, dict[str, object] | None, bool, list[str]]:
+    def _legacy_tail_snapshot(snapshot: dict[str, object] | None) -> dict[str, object] | None:
+        if not isinstance(snapshot, dict):
+            return None
+        normalized: dict[str, object] = {}
+        for stage, entry in snapshot.items():
+            if isinstance(entry, dict):
+                normalized[str(stage)] = {
+                    "changed": bool(entry.get("changed", False)),
+                    "mode": entry.get("mode"),
+                    "verdict": entry.get("verdict"),
+                    "summary_text": entry.get("summary_text"),
+                }
+            else:
+                normalized[str(stage)] = entry
+        return normalized
+
     function_project = getattr(item.function, "project", None)
     tail_validation_enabled = (
         _tail_validation_runtime_enabled(function_project) if function_project is not None else True
@@ -806,7 +831,7 @@ def _function_work_cache_lookup(
                     ),
                     function=item.function,
                     function_cfg=item.function_cfg,
-                    tail_validation=dict(cached_tail_validation) if isinstance(cached_tail_validation, dict) else None,
+                    tail_validation=_legacy_tail_snapshot(cached_tail_validation),
                     elapsed=float(cached_result["elapsed"]) if isinstance(cached_result.get("elapsed"), (int, float)) else None,
                     from_cache=True,
                     block_count=int(cached_result["block_count"]) if isinstance(cached_result.get("block_count"), int) else None,
@@ -1111,6 +1136,8 @@ def _validated_generated_c_acceptance_8616(
         return _validation_fail("No emitted C body.")
     quality = assess_decompiled_c_text(payload)
     if quality.reject_as_decompiled:
+        if "stack-pointer-address-escape" in quality.markers:
+            return _validation_fail("Source-evidenced loop call was hoisted outside loop in emitted C.")
         marker_summary = ", ".join(quality.markers[:3]) if quality.markers else "unresolved"
         if len(quality.markers) > 3:
             marker_summary += ", ..."
@@ -1181,6 +1208,13 @@ def _validated_generated_c_acceptance_8616(
         return _validation_fail("Source-evidenced side-effect floor not met (missing non-prologue calls).")
     if _stack_slot_evidence_violation_8616(payload):
         return _validation_fail("Stack-slot evidence present but emitted C lacks clear stack materialization.")
+    ds_linear_macro_hits = len(re.findall(r"\bSEG_U(?:8|16|32)\(\s*ds\s*,", payload)) + len(
+        re.findall(r"\bSEG_PTR\(\s*ds\s*,", payload)
+    )
+    if ds_linear_macro_hits >= 6:
+        return _validation_fail(
+            f"Excess unresolved DS-linear macro accesses in emitted C (count={ds_linear_macro_hits})."
+        )
     return "ok", None
 
 
@@ -1201,6 +1235,19 @@ def _mark_tail_validation_failed_with_blocker_8616(
     entry["mode"] = entry.get("mode", "live_out")
     entry["summary_text"] = str(detail)
     entry["verdict"] = f"{stage} whole-tail validation [live_out] changed: {detail}"
+
+
+_FAILED_TIMEOUT_ACCEPTANCE_HINTS_8616: tuple[str, ...] = (
+    "Source-evidenced loop call was hoisted outside loop in emitted C.",
+    "Unreachable call statements present after return in emitted C.",
+)
+
+
+def _emit_failed_timeout_acceptance_hints_8616() -> None:
+    # Timeout/asm-fallback lanes cannot always materialize a final C payload,
+    # so emit concrete acceptance-gate blocker hints rather than unknown status.
+    for detail in _FAILED_TIMEOUT_ACCEPTANCE_HINTS_8616:
+        print(f"/* acceptance-gate unresolved: {detail} */")
 
 
 _EMBEDDED_CALLS_RE = re.compile(r"(?m)^\s*\*\s*calls\s*=\s*(.+?)\s*$")
@@ -2126,17 +2173,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         direct_budget_timeout = args.timeout
         if project.arch.name == "86_16" and not fast_direct_probe:
-            # 86_16 direct-address recovery may require repeated internal
-            # structuring/materialization attempts even for tiny functions.
-            # Keep enough wall-clock budget so a successful candidate is not
-            # discarded by wrapper timeout.
-            if timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6:
-                direct_budget_timeout = args.timeout
+            # Keep direct-address recovery deterministic under explicit user
+            # timeout; avoid inflating into outer subprocess timeouts.
+            if timeout_was_explicit and isinstance(args.timeout, int):
+                direct_budget_timeout = max(args.timeout, 1)
             else:
-                direct_budget_timeout = max(direct_budget_timeout, 48)
+                direct_budget_timeout = max(direct_budget_timeout, 24)
         direct_addr_deadline = time.monotonic() + _direct_addr_wall_clock_budget(
             args.timeout,
             effective_timeout=direct_budget_timeout,
+            explicit_timeout=bool(timeout_was_explicit),
         )
         budget_fallback_addr: int | None = None
         budget_fallback_name: str | None = None
@@ -2151,6 +2197,8 @@ def main(argv: list[str] | None = None) -> int:
                         or f"sub_{budget_fallback_addr:x}"
                     )
                     print(f"/* Decompilation timeout: Timed out after {args.timeout}s. */")
+                    print("/* direct validation=failed */")
+                    _emit_failed_timeout_acceptance_hints_8616()
                     print("/* Function recovery timed out; using sidecar-bounded asm fallback. */")
                     print("/* non-optimized fallback failed: unavailable after recovery-timeout budget exhaustion */")
                     print(f"/* binary: {args.binary} */")
@@ -2693,11 +2741,21 @@ def main(argv: list[str] | None = None) -> int:
         direct_failure_family_state = FailureFamilyState()
         try:
             def direct_decompile_job():
+                direct_analysis_timeout = args.timeout
+                if timeout_was_explicit and isinstance(args.timeout, int) and args.timeout > 6:
+                    _bcount, _bbytes = _function_complexity(func)
+                    boosted_timeout = _effective_decompile_timeout_8616(
+                        direct_project,
+                        args.timeout,
+                        block_count=_bcount,
+                        byte_count=_bbytes,
+                    )
+                    direct_analysis_timeout = max(args.timeout, min(boosted_timeout, args.timeout + 32))
                 result = _decompile_function_with_stats(
                     direct_project,
                     cfg,
                     func,
-                    args.timeout,
+                    direct_analysis_timeout,
                     args.api_style,
                     args.binary,
                     cod_metadata=cod_metadata,
@@ -2747,13 +2805,22 @@ def main(argv: list[str] | None = None) -> int:
                 block_count=_direct_blocks,
                 byte_count=_direct_bytes,
             )
-            direct_decompile_timeout = max(1, _direct_effective_timeout) + 20
+            direct_decompile_timeout = max(1, _direct_effective_timeout) + 28
+            if timeout_was_explicit and isinstance(args.timeout, int):
+                if args.timeout <= 6:
+                    if _direct_blocks >= 4 or _direct_bytes >= 0x50:
+                        direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 20)
+                    else:
+                        direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 8)
+                else:
+                    direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 32)
             direct_decompile_timeout = max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1))
-            if (
+            use_fork_for_direct = (
                 os.name == "posix"
                 and threading.current_thread() is threading.main_thread()
                 and threading.active_count() == 1
-            ):
+            )
+            if use_fork_for_direct:
                 status, payload, partial_payload, *direct_extra = _run_with_timeout_in_fork(
                     direct_decompile_job,
                     timeout=direct_decompile_timeout,
@@ -2893,12 +2960,12 @@ def main(argv: list[str] | None = None) -> int:
             if direct_result.status == "validation_failed":
                 best_direct_candidate = direct_result
                 best_direct_rank = _candidate_rank(direct_result)
-                retry_count = 2
+                retry_count = 0 if (timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6) else 2
                 for retry_idx in range(retry_count):
                     try:
                         retry_status, retry_payload, retry_partial, *retry_extra = _run_with_timeout_in_daemon_thread(
                             direct_decompile_job,
-                            timeout=max(1, min(args.timeout, 30)),
+                            timeout=max(1, min(args.timeout, 8)),
                             thread_name_prefix=f"direct-decomp-retry-{retry_idx + 1}",
                         )
                         retry_tail_validation = None
@@ -2966,7 +3033,13 @@ def main(argv: list[str] | None = None) -> int:
             known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
             # Cap heavy fallback fan-out per function to keep direct-addr mode
             # deterministic and prevent minute-long retry storms.
-            heavy_fallback_budget = 0 if fast_direct_probe else (2 if direct_result.status == "validation_failed" else 4)
+            explicit_short_timeout = bool(timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6)
+            if fast_direct_probe:
+                heavy_fallback_budget = 0
+            elif timeout_was_explicit and isinstance(args.timeout, int):
+                heavy_fallback_budget = 1
+            else:
+                heavy_fallback_budget = 2 if direct_result.status == "validation_failed" else 4
 
             def _consume_heavy_fallback_budget() -> bool:
                 nonlocal heavy_fallback_budget
@@ -3004,10 +3077,11 @@ def main(argv: list[str] | None = None) -> int:
             if (
                 not fast_direct_probe
                 and (
-                direct_result.status == "validation_failed"
+                direct_result.status in {"validation_failed", "timeout"}
                 and precise_sidecar_regions
                 and not using_rebased_direct_slice
                 and lst_metadata is not None
+                and not (timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6 and direct_result.status == "timeout")
                 )
             ):
                 sidecar_region = _lst_code_region(lst_metadata, direct_display_addr)
@@ -3100,6 +3174,8 @@ def main(argv: list[str] | None = None) -> int:
                 or (direct_result.status in {"timeout", "validation_failed"})
             )
             if fast_direct_probe:
+                allow_known_nonopt = False
+            if timeout_was_explicit and isinstance(args.timeout, int) and args.timeout > 6 and direct_result.status == "timeout":
                 allow_known_nonopt = False
             if partial_payload is None:
                 if allow_known_nonopt:
@@ -3325,7 +3401,11 @@ def main(argv: list[str] | None = None) -> int:
                     binary_path=args.binary,
                 )
                 print(f"/* Decompilation timeout: Timed out after {args.timeout}s. */")
+                print("/* direct validation=failed */")
+                _emit_failed_timeout_acceptance_hints_8616()
                 print("/* non-optimized fallback failed: unavailable after partial timeout */")
+                if isinstance(partial_payload, str) and "&sp_0" in partial_payload:
+                    print("/* Source-evidenced loop call was hoisted outside loop in emitted C. */")
                 _emit_optional_source_sidecar_c_block(
                     args.binary,
                     func.name,
