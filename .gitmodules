@@ -1,3 +1,0 @@
-[submodule "angr_platforms"]
-	path = angr_platforms
-	url = https://github.com/xor2003/angr-platforms.git
