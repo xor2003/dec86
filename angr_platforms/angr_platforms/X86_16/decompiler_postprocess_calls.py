@@ -1393,18 +1393,32 @@ def _cod_source_call_names_8616(project, func_addr: int) -> tuple[str, ...]:
     cod_metadata = _cod_metadata_for_function_8616(project, func_addr)
     if cod_metadata is None:
         return ()
+    # Evidence policy: prefer binary-derived call metadata (call_names) over
+    # source-level call_sources for semantic recovery. Source-only wrappers can
+    # diverge from emitted binary calls (e.g. GetRandom vs rand) and must not
+    # drive call-floor materialization.
     names: list[str] = []
+    seen: set[str] = set()
+    for raw_name in getattr(cod_metadata, "call_names", ()) or ():
+        normalized = normalize_callee_name_8616(raw_name)
+        if not (isinstance(normalized, str) and normalized and not normalized.startswith("sub_")):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        names.append(normalized)
+    if names:
+        return tuple(names)
     for item in getattr(cod_metadata, "call_sources", ()) or ():
         if not isinstance(item, tuple) or len(item) != 2:
             continue
         normalized = normalize_callee_name_8616(item[0])
-        if isinstance(normalized, str) and normalized and not normalized.startswith("sub_"):
-            names.append(normalized)
-    if not names:
-        for raw_name in getattr(cod_metadata, "call_names", ()) or ():
-            normalized = normalize_callee_name_8616(raw_name)
-            if isinstance(normalized, str) and normalized and not normalized.startswith("sub_"):
-                names.append(normalized)
+        if not (isinstance(normalized, str) and normalized and not normalized.startswith("sub_")):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        names.append(normalized)
     return tuple(names)
 
 

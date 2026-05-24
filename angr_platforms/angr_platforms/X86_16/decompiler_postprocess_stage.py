@@ -1835,7 +1835,23 @@ def _decompile_8616(self):
     # Snapshot pre-postprocess codegen for semantic gate
     pre_postprocess_cfunc_snapshot = _snapshot_codegen_cfunc(self.codegen)
     postprocess_started = time.perf_counter()
-    changed = _postprocess_codegen_8616(self.project, self.codegen)
+    postprocess_exception: Exception | None = None
+    try:
+        changed = _postprocess_codegen_8616(self.project, self.codegen)
+    except Exception as ex:  # pragma: no cover - defensive stage-finalization path
+        postprocess_exception = ex
+        changed = False
+        logging.getLogger(__name__).warning(
+            "86_16 postprocess pipeline raised; restoring pre-postprocess snapshot for function=%#x: %s",
+            int(func_addr) if isinstance(func_addr, int) else -1,
+            ex,
+            exc_info=True,
+        )
+        if pre_postprocess_cfunc_snapshot is not None:
+            with contextlib.suppress(Exception):
+                _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
+        setattr(self.codegen, "_inertia_postprocess_exception", repr(ex))
+        setattr(self.codegen, "_inertia_postprocess_exception_pass", getattr(self.codegen, "_inertia_last_postprocess_pass", None))
     postprocess_elapsed = time.perf_counter() - postprocess_started
     function = getattr(self, "function", None) or getattr(self, "func", None)
     if function is None and getattr(getattr(self, "codegen", None), "cfunc", None) is not None:
@@ -1870,6 +1886,10 @@ def _decompile_8616(self):
         before_summary=before_summary,
         after_summary=after_summary,
     )
+    if postprocess_exception is not None:
+        validation["changed"] = True
+        validation["status"] = "changed"
+        validation["summary_text"] = f"postprocess exception: {type(postprocess_exception).__name__}"
     validation_compare_elapsed = time.perf_counter() - validation_started
     validation_timings = {
         "collect_before_ms": round(before_collect_elapsed * 1000.0, 3),
@@ -2105,34 +2125,34 @@ def _decompile_8616(self):
                 restored_after_summary = collect_x86_16_tail_validation_summary(
                     self.project,
                     self.codegen,
-                mode=validation_mode,
-            )
-            restored_after_fingerprint = fingerprint_x86_16_tail_validation_boundary(
-                self.project,
-                self.codegen,
-                mode=validation_mode,
-            )
-            validation = build_x86_16_tail_validation_cached_result(
-                owner=snapshot_function_info,
-                stage="postprocess",
-                mode=validation_mode,
-                before_fingerprint=before_fingerprint,
-                after_fingerprint=restored_after_fingerprint,
-                before_summary=before_summary,
-                after_summary=restored_after_summary,
-            )
-            validation["timings"] = validation_timings
-            validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
-            persist_x86_16_tail_validation_snapshot(
-                function_info=snapshot_function_info,
-                codegen=self.codegen,
-                stage="postprocess",
-                validation=validation,
-            )
-            snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
-            if isinstance(snapshot, dict):
-                setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
-            log.info("%s", validation["verdict"])
+                    mode=validation_mode,
+                )
+                restored_after_fingerprint = fingerprint_x86_16_tail_validation_boundary(
+                    self.project,
+                    self.codegen,
+                    mode=validation_mode,
+                )
+                validation = build_x86_16_tail_validation_cached_result(
+                    owner=snapshot_function_info,
+                    stage="postprocess",
+                    mode=validation_mode,
+                    before_fingerprint=before_fingerprint,
+                    after_fingerprint=restored_after_fingerprint,
+                    before_summary=before_summary,
+                    after_summary=restored_after_summary,
+                )
+                validation["timings"] = validation_timings
+                validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
+                persist_x86_16_tail_validation_snapshot(
+                    function_info=snapshot_function_info,
+                    codegen=self.codegen,
+                    stage="postprocess",
+                    validation=validation,
+                )
+                snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+                if isinstance(snapshot, dict):
+                    setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
+                log.info("%s", validation["verdict"])
     else:
         log.info("%s", validation["verdict"])
     self.project._inertia_decompiler_stage = "done"
