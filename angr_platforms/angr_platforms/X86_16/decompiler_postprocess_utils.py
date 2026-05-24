@@ -139,10 +139,9 @@ def _iter_c_node_children_8616(value, seen_values: set[int] | None = None):
                 stack.extend(tuple(current))
             continue
 
-        if hasattr(current, "__iter__"):
-            with suppress(Exception, TypeError, AttributeError):
-                stack.extend(tuple(current))
-            continue
+        # Do not traverse arbitrary iterables here. Some structured-codegen
+        # objects expose iterable adapters that are not part of the emitted AST
+        # body, which can leak detached nodes into analyses.
 
 
 def _c_constant_value_8616(node) -> int | None:
