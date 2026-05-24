@@ -279,6 +279,11 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
+            "_materialize_stdlib_call_chains_8616",
+            _calls._materialize_stdlib_call_chains_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_materialize_callsite_prototypes_8616",
             _calls._materialize_callsite_prototypes_8616,
             True,
@@ -1139,7 +1144,17 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             return False
         enforce_pass_validation = (
             per_pass_validation_enabled
-            or pass_name == "_rewrite_decoded_jcc_conditions_8616"
+            or pass_name in {
+                "_rewrite_decoded_jcc_conditions_8616",
+                "_recover_missing_direct_calls_from_evidence_8616",
+                "_normalize_fact_backed_stack_accesses_8616",
+                "_normalize_call_target_names_8616",
+                "_normalize_recovered_call_target_names_8616",
+                "_materialize_callsite_stack_arguments_8616",
+                "_materialize_callsite_prototypes_8616",
+                "_materialize_recovered_callsite_stack_arguments_8616",
+                "_recover_missing_direct_calls_final_8616",
+            }
         )
         if validation_enabled and enforce_pass_validation:
             current_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
@@ -1159,7 +1174,17 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                     "Source-evidenced side-effect floor not met",
                 )
                 is_blocking_delta = any(marker in summary_text for marker in blocking_markers)
-                if pass_name == "_rewrite_decoded_jcc_conditions_8616":
+                if pass_name in {
+                    "_rewrite_decoded_jcc_conditions_8616",
+                    "_recover_missing_direct_calls_from_evidence_8616",
+                    "_normalize_fact_backed_stack_accesses_8616",
+                    "_normalize_call_target_names_8616",
+                    "_normalize_recovered_call_target_names_8616",
+                    "_materialize_callsite_stack_arguments_8616",
+                    "_materialize_callsite_prototypes_8616",
+                    "_materialize_recovered_callsite_stack_arguments_8616",
+                    "_recover_missing_direct_calls_final_8616",
+                }:
                     is_blocking_delta = True
                 if not is_blocking_delta:
                     # Non-blocking per-pass delta: keep pass result and continue.

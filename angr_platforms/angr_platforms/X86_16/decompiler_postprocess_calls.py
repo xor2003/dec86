@@ -49,6 +49,7 @@ from .pipeline.errors import PipelineHardError
 __all__ = [
     "_attach_callsite_summaries_8616",
     "_recover_missing_direct_calls_from_evidence_8616",
+    "_materialize_stdlib_call_chains_8616",
     "_materialize_callsite_stack_arguments_8616",
     "_materialize_callsite_prototypes_8616",
     "_normalize_call_target_names_8616",
@@ -63,6 +64,63 @@ _CALL_TOKEN_RE_8616 = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 def _structured_root_8616(cfunc):
     return getattr(cfunc, "body", None) or getattr(cfunc, "statements", None) or cfunc
+
+
+def _materialize_stdlib_call_chains_8616(project, codegen) -> bool:
+    cfunc = getattr(codegen, "cfunc", None)
+    root = _structured_root_8616(cfunc)
+    statements = getattr(root, "statements", None)
+    if not isinstance(statements, list):
+        return False
+
+    def _call_name(stmt) -> str | None:
+        expr = getattr(stmt, "expr", None)
+        if not isinstance(expr, CFunctionCall):
+            return None
+        name = normalize_callee_name_8616(_call_node_name_8616(expr))
+        return name if isinstance(name, str) and name else None
+
+    def _is_zero_constant(expr) -> bool:
+        value = getattr(expr, "value", None)
+        if isinstance(value, int):
+            return value == 0
+        return type(expr).__name__ == "CConstant" and getattr(expr, "value", None) == 0
+
+    def _is_zero_arg_call(stmt, target_name: str) -> bool:
+        expr = getattr(stmt, "expr", None)
+        if not isinstance(expr, CFunctionCall):
+            return False
+        name = _call_name(stmt)
+        if name != target_name:
+            return False
+        args = tuple(getattr(expr, "args", ()) or ())
+        return len(args) == 1 and _is_zero_constant(args[0])
+
+    changed = False
+    idx = 0
+    while idx + 1 < len(statements):
+        first = statements[idx]
+        second = statements[idx + 1]
+        # Recover common C stdlib seeding chain when argument materialization
+        # lost producer-consumer linkage between time() and srand().
+        if _is_zero_arg_call(first, "srand") and _is_zero_arg_call(second, "time"):
+            srand_call = getattr(first, "expr", None)
+            time_call = getattr(second, "expr", None)
+            if isinstance(srand_call, CFunctionCall) and isinstance(time_call, CFunctionCall):
+                srand_call.args = [time_call]
+                del statements[idx + 1]
+                changed = True
+                continue
+        if _is_zero_arg_call(first, "time") and _is_zero_arg_call(second, "srand"):
+            srand_call = getattr(second, "expr", None)
+            time_call = getattr(first, "expr", None)
+            if isinstance(srand_call, CFunctionCall) and isinstance(time_call, CFunctionCall):
+                srand_call.args = [time_call]
+                del statements[idx]
+                changed = True
+                continue
+        idx += 1
+    return changed
 
 
 def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
