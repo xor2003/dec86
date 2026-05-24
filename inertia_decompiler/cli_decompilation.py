@@ -813,7 +813,12 @@ def _under_recovered_call_heavy_codegen_8616(
     expected_non_prologue = [str(name).lstrip("_") for name in expected if str(name).lstrip("_") not in {"aNchkstk"}]
     if len(expected_non_prologue) < 2:
         return False
-    body = rendered_text.split("{", 1)[-1] if "{" in rendered_text else rendered_text
+    text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered_text, flags=re.S)
+    text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+    text_wo_comments = "\n".join(
+        line for line in text_wo_comments.splitlines() if not line.lstrip().startswith("///")
+    )
+    body = text_wo_comments.split("{", 1)[-1] if "{" in text_wo_comments else text_wo_comments
     call_token_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
     found = [name for name in call_token_re.findall(body) if name not in {"if", "for", "while", "switch", "return"}]
     found_non_prologue = [name for name in found if name not in {"aNchkstk"}]
@@ -831,6 +836,9 @@ def _expected_call_presence_score_8616(rendered_text: str, cod_metadata: CODProc
     # Evaluate call presence on executable body text only.
     text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered_text, flags=re.S)
     text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+    text_wo_comments = "\n".join(
+        line for line in text_wo_comments.splitlines() if not line.lstrip().startswith("///")
+    )
     body = text_wo_comments.split("{", 1)[-1] if "{" in text_wo_comments else text_wo_comments
     call_token_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
     found_calls = {
@@ -855,6 +863,9 @@ def _missing_expected_calls_from_cod_metadata_8616(rendered_text: str, cod_metad
         return []
     text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered_text, flags=re.S)
     text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+    text_wo_comments = "\n".join(
+        line for line in text_wo_comments.splitlines() if not line.lstrip().startswith("///")
+    )
     body = text_wo_comments.split("{", 1)[-1] if "{" in text_wo_comments else text_wo_comments
     found_calls = {
         name
@@ -1793,6 +1804,7 @@ def _decompile_function(
         )
     if changed:
         cached_rendered_text = _snapshot_codegen_text(dec.codegen)
+        live_call_baseline_text = _live_snapshot if isinstance(_live_snapshot, str) else ""
         recurrence_rebound = bool(
             getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False)
         ) or bool(
@@ -1837,6 +1849,11 @@ def _decompile_function(
             rendered_score = _expected_call_presence_score_8616(rendered_text, effective_cod_metadata)
             if cached_score > rendered_score:
                 rendered_text = cached_rendered_text
+        if isinstance(live_call_baseline_text, str) and live_call_baseline_text.strip():
+            baseline_score = _expected_call_presence_score_8616(live_call_baseline_text, effective_cod_metadata)
+            rendered_score = _expected_call_presence_score_8616(rendered_text, effective_cod_metadata)
+            if baseline_score > rendered_score:
+                rendered_text = live_call_baseline_text
     else:
         rendered_text = _snapshot_codegen_text(dec.codegen)
     debug_call_addr = function_original_addr(function)
@@ -1873,6 +1890,7 @@ def _decompile_function(
     _debug_dump_calls_8616("post-recovered-callsite-prototypes", rendered_text, debug_call_addr)
     if api_style in ("msc", "compiler"):
         emit_msc51_diagnostic(dec.codegen)
+    _pre_helper_format_text = rendered_text
     formatted = _format_known_helper_calls(
         project,
         function,
@@ -1881,6 +1899,11 @@ def _decompile_function(
         binary_path,
         cod_metadata=effective_cod_metadata,
     )
+    if effective_cod_metadata is not None:
+        pre_score = _expected_call_presence_score_8616(_pre_helper_format_text, effective_cod_metadata)
+        post_score = _expected_call_presence_score_8616(formatted, effective_cod_metadata)
+        if post_score < pre_score:
+            formatted = _pre_helper_format_text
     _debug_dump_calls_8616("post-helper-call-format", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-helper-call-format", formatted)
     formatted = _normalize_boolean_conditions(formatted)
@@ -1990,6 +2013,23 @@ def _decompile_function(
     formatted = _materialize_missing_direct_call_prototypes_text(formatted)
     formatted = _prune_weaker_conflicting_prototypes_text(formatted)
     _debug_dump_calls_8616("post-final-dedup", formatted, debug_call_addr)
+    if effective_cod_metadata is not None:
+        # Evidence-first final text selection: later text-only cleanup passes may
+        # accidentally degrade call-floor evidence. Keep the strongest candidate.
+        fallback_candidates = [formatted, rendered_text, _pre_helper_format_text]
+
+        def _semantic_rank(text: str) -> tuple[int, int]:
+            if not isinstance(text, str) or not text.strip():
+                return (-10**9, 0)
+            return (
+                _expected_call_presence_score_8616(text, effective_cod_metadata),
+                len(text),
+            )
+
+        best_text = max(fallback_candidates, key=_semantic_rank)
+        if _semantic_rank(best_text) > _semantic_rank(formatted):
+            formatted = best_text
+
     _emit_c_stage_trace(project, function, "final-emitted-c", formatted)
     quality = assess_decompiled_c_text(formatted)
     if quality.reject_as_decompiled:

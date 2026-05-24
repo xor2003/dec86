@@ -1608,14 +1608,24 @@ def _normalize_portable_flat_main_signature_text(
         brace_depth += lines[body_end].count("{") - lines[body_end].count("}")
         body_end += 1
 
+    saw_explicit_return = False
     for index in range(body_end - 2, body_start - 1, -1):
         stripped = lines[index].strip()
         if not stripped or stripped.startswith("//"):
             continue
+        if stripped.startswith("return"):
+            saw_explicit_return = True
         if stripped == "return;":
             indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
             lines[index] = f"{indent}return 0;"
+            saw_explicit_return = True
         break
+
+    if not saw_explicit_return and body_end - 1 < len(lines):
+        closing_line = lines[body_end - 1]
+        closing_indent = closing_line[: len(closing_line) - len(closing_line.lstrip())]
+        return_indent = closing_indent + "    " if "}" in closing_line else "    "
+        lines.insert(body_end - 1, f"{return_indent}return 0;")
 
     normalized = "\n".join(lines)
     if c_text.endswith("\n"):
