@@ -211,6 +211,15 @@ def _normalize_fact_backed_stack_accesses_8616(project, codegen) -> bool:
     return changed
 
 
+def _fact_backed_stack_normalize_enabled_8616() -> bool:
+    return os.environ.get("INERTIA_ENABLE_FACT_BACKED_STACK_NORMALIZE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class DecompilerPostprocessPassSpec:
     name: str
@@ -361,12 +370,11 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
     skip_names: set[str] = set()
     if isinstance(skip_env, str) and skip_env.strip():
         skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
-    if os.environ.get("INERTIA_ENABLE_FACT_BACKED_STACK_NORMALIZE", "").strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
+    if not _fact_backed_stack_normalize_enabled_8616():
+        skip_names.add("_normalize_fact_backed_stack_accesses_8616")
+    if not _fact_backed_stack_normalize_enabled_8616():
+        skip_names.add("_normalize_fact_backed_stack_accesses_8616")
+    if not _fact_backed_stack_normalize_enabled_8616():
         skip_names.add("_normalize_fact_backed_stack_accesses_8616")
     callsite_rewrite_env = os.environ.get("INERTIA_ENABLE_CALLSITE_REWRITE")
     if callsite_rewrite_env is None or not callsite_rewrite_env.strip():
@@ -772,7 +780,8 @@ def _prepare_tail_validation_baseline_clone_8616(project, codegen, *, function_a
             debug_stats["validation_clone_stack_alias_facts"] = len(alias_facts)
             if alias_facts:
                 lower_stack_accesses_from_alias_facts_8616(cloned_codegen, alias_facts)
-        _normalize_fact_backed_stack_accesses_8616(project, cloned_codegen)
+        if _fact_backed_stack_normalize_enabled_8616():
+            _normalize_fact_backed_stack_accesses_8616(project, cloned_codegen)
         bindings = getattr(cloned_codegen, "_inertia_stack_variable_bindings", None)
         if isinstance(bindings, tuple | list):
             debug_stats["validation_clone_stack_bindings"] = len(bindings)
@@ -1041,7 +1050,8 @@ def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> 
         from .lowering.real_mode_linear import lower_stable_ds_es_linear_global_dereferences_8616
 
         lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
-        _normalize_fact_backed_stack_accesses_8616(project, codegen)
+        if _fact_backed_stack_normalize_enabled_8616():
+            _normalize_fact_backed_stack_accesses_8616(project, codegen)
     except Exception as ex:
         logging.getLogger(__name__).debug(
             "Pre-validation stack semantics priming failed at function=%#x stage=pre-validation-baseline: %s",
@@ -1084,6 +1094,8 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     skip_names: set[str] = set()
     if isinstance(skip_env, str) and skip_env.strip():
         skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
+    if not _fact_backed_stack_normalize_enabled_8616():
+        skip_names.add("_normalize_fact_backed_stack_accesses_8616")
     pass_timeout_seconds: int | None = None
     pass_timeout_raw = os.environ.get("INERTIA_POSTPROCESS_PASS_TIMEOUT_SEC", "").strip()
     if not pass_timeout_raw:
@@ -1307,11 +1319,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             not in {"1", "true", "yes", "on"}
         ):
             continue
-        if (
-            spec.name == "_normalize_fact_backed_stack_accesses_8616"
-            and os.environ.get("INERTIA_ENABLE_FACT_BACKED_STACK_NORMALIZE", "").strip().lower()
-            not in {"1", "true", "yes", "on"}
-        ):
+        if spec.name == "_normalize_fact_backed_stack_accesses_8616" and not _fact_backed_stack_normalize_enabled_8616():
             continue
         project._inertia_decompiler_stage = f"postprocess:{spec.name}"
         _t_pass = _ppt.perf_counter()
@@ -1401,9 +1409,9 @@ def _is_direct_callsite_helper_delta_only_8616(project, function, validation: di
         return False
     added = tuple(helper_delta.get("added") or ())
     removed = tuple(helper_delta.get("removed") or ())
-    # Accept one-sided helper-call deltas (added-only or removed-only). Mixed
-    # add+remove sets remain suspicious and should not be auto-accepted.
-    if (not added and not removed) or (added and removed):
+    # Mixed add/remove helper-call deltas can still be semantically neutral
+    # when they are target-name/address normalization artifacts.
+    if not added and not removed:
         if os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"):
             logging.getLogger(__name__).warning(
                 "[call-recover-accept] reject=added-removed added=%r removed=%r",

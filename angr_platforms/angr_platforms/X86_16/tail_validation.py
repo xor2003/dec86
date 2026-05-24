@@ -276,6 +276,28 @@ def _call_summary_target_addr_8616(project, summary) -> int | None:
     return _normalized_call_target_addr_8616(project, getattr(summary, "target_addr", None))
 
 
+def _normalize_helper_call_fingerprint_8616(project, token: str | None) -> str | None:
+    if not isinstance(token, str) or not token:
+        return token
+    if token.startswith("addr:"):
+        raw = token[5:]
+        try:
+            value = int(raw, 16) if raw.lower().startswith("0x") else int(raw, 0)
+        except ValueError:
+            return token
+        normalized = _normalized_call_target_addr_8616(project, value)
+        return f"addr:{normalized:#x}" if isinstance(normalized, int) else token
+    if token.startswith("name:addr:"):
+        raw = token[10:]
+        try:
+            value = int(raw, 16) if raw.lower().startswith("0x") else int(raw, 0)
+        except ValueError:
+            return token
+        normalized = _normalized_call_target_addr_8616(project, value)
+        return f"name:addr:{normalized:#x}" if isinstance(normalized, int) else token
+    return token
+
+
 def _node_callsite_addr_8616(node) -> int | None:
     tags = getattr(node, "tags", None)
     if isinstance(tags, dict):
@@ -1949,7 +1971,7 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
                 call_name = _call_target_name(node, project)
                 if isinstance(call_name, str) and call_name:
                     call_fingerprint = f"name:{call_name}"
-            helper_calls.add(call_fingerprint or "<unknown-call>")
+            helper_calls.add(_normalize_helper_call_fingerprint_8616(project, call_fingerprint) or "<unknown-call>")
         elif isinstance(node, CReturn):
             returns.add(_expr_fingerprint(getattr(node, "retval", None), project))
             control_flow_effects.add("return")
