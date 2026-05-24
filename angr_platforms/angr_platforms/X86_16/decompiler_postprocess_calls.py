@@ -61,6 +61,15 @@ _RUNTIME_SEGMENT_HELPERS_8616 = frozenset({"SEG_U8", "SEG_U16", "SEG_U32", "MK_F
 _CALL_TOKEN_RE_8616 = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
+def _source_call_floor_enabled_8616() -> bool:
+    return os.environ.get("INERTIA_ENABLE_SOURCE_CALL_FLOOR_RECOVERY", "").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 def _structured_root_8616(cfunc):
     return getattr(cfunc, "body", None) or getattr(cfunc, "statements", None) or cfunc
 
@@ -173,12 +182,14 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             expected_summary_by_name.setdefault(normalized_name, []).append(summary)
     # Optional sidecar/COD evidence: adds call floor when call-target recovery is
     # incomplete in structured output.
-    source_call_names = list(_cod_source_call_names_8616(project, func_addr))
-    if not source_call_names:
-        source_call_names = list(_cod_source_call_names_for_symbol_8616(project, getattr(cfunc, "name", None)))
-    for source_name in source_call_names:
-        if isinstance(source_name, str) and source_name:
-            expected_names.append(source_name)
+    source_call_names: list[str] = []
+    if _source_call_floor_enabled_8616():
+        source_call_names = list(_cod_source_call_names_8616(project, func_addr))
+        if not source_call_names:
+            source_call_names = list(_cod_source_call_names_for_symbol_8616(project, getattr(cfunc, "name", None)))
+        for source_name in source_call_names:
+            if isinstance(source_name, str) and source_name:
+                expected_names.append(source_name)
 
     if not expected_names:
         if debug_enabled:
@@ -1156,7 +1167,9 @@ def _normalize_call_target_names_8616(codegen) -> bool:
         summary_map = {}
     else:
         _refresh_callsite_summary_node_ids_8616(codegen, summary_map)
-    source_call_names = _cod_source_call_names_8616(project, getattr(cfunc, "addr", None))
+    source_call_names: tuple[str, ...] = ()
+    if _source_call_floor_enabled_8616():
+        source_call_names = _cod_source_call_names_8616(project, getattr(cfunc, "addr", None))
     source_call_idx = 0
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CFunctionCall):
