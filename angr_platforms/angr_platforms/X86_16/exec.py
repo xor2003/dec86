@@ -25,7 +25,7 @@ class ExecInstr(X86Instruction):
             print(f"not implemented OPCODE 0x{opcode:02x}", file=sys.stderr)
             return False
 
-        self.instrfuncs[opcode]()
+        self.instrfuncs[opcode](self)
         return True
 
     def set_rm32(self, value):

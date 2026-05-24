@@ -636,10 +636,6 @@ def preferred_known_helper_signature_decl(name: str) -> str | None:
             stripped = name.lstrip("_")
             if stripped and stripped in KNOWN_HELPER_SIGNATURE_DECLS:
                 return KNOWN_HELPER_SIGNATURE_DECLS[stripped]
-        if not name.startswith("_"):
-            underscored = f"_{name}"
-            if underscored in KNOWN_HELPER_SIGNATURE_DECLS:
-                return KNOWN_HELPER_SIGNATURE_DECLS[underscored]
         return KNOWN_HELPER_SIGNATURE_DECLS[name]
     if not name.startswith("_"):
         underscored = f"_{name}"

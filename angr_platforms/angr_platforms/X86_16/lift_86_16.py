@@ -59,9 +59,10 @@ class _LifterInstructionFacade:
         self._instruction = instruction
 
     def __getattr__(self, name: str) -> Any:
-        if hasattr(self._instruction, name):
+        try:
             return getattr(self._instruction, name)
-        return getattr(self._irsb_c, name)
+        except AttributeError:
+            return getattr(self._irsb_c, name)
 
 
 class Instruction_ANY(Instruction):
@@ -91,6 +92,20 @@ class Instruction_ANY(Instruction):
         "int",
         "int3",
         "hlt",
+    }
+    _REG_OFFSETS = {
+        reg16_t.AX: 0,
+        reg16_t.CX: 2,
+        reg16_t.DX: 4,
+        reg16_t.BX: 6,
+        reg16_t.BP: 10,
+        reg16_t.SI: 12,
+        reg16_t.DI: 14,
+        reg16_t.FLAGS: 18,
+        20: 20,  # SS offset
+        22: 22,  # CS offset
+        reg16_t.IP: 24,
+        reg16_t.SP: 8,
     }
 
     # Convert everything that's not an instruction into a No-op to meet the BF spec
@@ -126,26 +141,18 @@ class Instruction_ANY(Instruction):
         self.emu._inertia_current_block_addr = addr
         self.emu._inertia_current_function_addr = addr
         self.instr16 = Instr16(self.emu, self.instr)
-        self.instr32 = Instr32(self.emu, self.instr)
+        self.instr32 = None
         self.emu.set_lifter_instruction(None)
         self.emu.set_bitstream(bitstrm)
         self.simple_semantics = None
         super().__init__(bitstrm, arch, addr)
 
-        self.reg_offsets = {
-            reg16_t.AX: 0,
-            reg16_t.CX: 2,
-            reg16_t.DX: 4,
-            reg16_t.BX: 6,
-            reg16_t.BP: 10,
-            reg16_t.SI: 12,
-            reg16_t.DI: 14,
-            reg16_t.FLAGS: 18,
-            20: 20,  # SS offset
-            22: 22,  # CS offset
-            reg16_t.IP: 24,
-            reg16_t.SP: 8,
-        }
+        self.reg_offsets = self._REG_OFFSETS
+
+    def _ensure_instr32(self):
+        if self.instr32 is None:
+            self.instr32 = Instr32(self.emu, self.instr)
+        return self.instr32
 
     def parse(self, bitstrm):
         self.start = bitstrm.bytepos
@@ -182,8 +189,9 @@ class Instruction_ANY(Instruction):
         chsz_ad = prefix & CHSZ_AD
 
         if self.is_mode32 ^ bool(self.chsz_op):
-            self.instr32.set_chsz_ad(not (self.is_mode32 ^ bool(chsz_ad)))
-            self.instr32.parse()
+            instr32 = self._ensure_instr32()
+            instr32.set_chsz_ad(not (self.is_mode32 ^ bool(chsz_ad)))
+            instr32.parse()
             #assert self.name == self.instr32.instrfuncs[self.instr32.instr.opcode].__name__.split('_')[0]
         else:
             self.instr16.set_chsz_ad(self.is_mode32 ^ bool(chsz_ad))
@@ -969,14 +977,16 @@ class Instruction_ANY(Instruction):
 
     def compute_result(self):
         try:
-            if logger.isEnabledFor(logging.DEBUG):
+            debug_enabled = logger.isEnabledFor(logging.DEBUG)
+            if debug_enabled:
                 logger.debug("Lifting instruction at %04x: %s %s", self.addr, self.cs.mnemonic, self.cs.op_str)
+            instr32 = self.instr32
             if self.is_mode32 ^ bool(self.chsz_op):
-                self.instr32.exec()
+                instr32.exec()
             else:
                 self.instr16.exec()
 
-            if logger.isEnabledFor(logging.DEBUG):
+            if debug_enabled:
                 if hasattr(self.emu, 'irsb') and self.emu.irsb:
                     logger.debug("IRSB at %04x: %s", self.addr, self.emu.irsb)
                     irsb_obj = self.emu.irsb.irsb if hasattr(self.emu.irsb, 'irsb') else self.emu.irsb
@@ -1012,16 +1022,19 @@ class Lifter86_16(GymratLifter):
             self.create_bitstrm()
             instructions = []
             addr = self.irsb.addr
-            bytepos = self.bitstrm.bytepos
+            bitstrm = self.bitstrm
+            decode_next = self._decode_next_instruction
+            bytepos = bitstrm.bytepos
 
-            while not _bitstream_is_empty(self.bitstrm):
-                instr = self._decode_next_instruction(addr)
+            while not _bitstream_is_empty(bitstrm):
+                instr = decode_next(addr)
                 if not instr:
                     break
                 instructions.append(instr)
-                addr += self.bitstrm.bytepos - bytepos
-                bytepos = self.bitstrm.bytepos
-                if getattr(instr, "ends_block", None) and instr.ends_block():
+                curr_bytepos = bitstrm.bytepos
+                addr += curr_bytepos - bytepos
+                bytepos = curr_bytepos
+                if instr.ends_block():
                     break
             return instructions
         except Exception as exc:

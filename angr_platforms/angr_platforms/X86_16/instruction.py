@@ -25,6 +25,8 @@ MAX_OPCODE = 0x200
 
 # ModR/M byte structure
 class ModRM:
+    __slots__ = ("rm", "reg", "mod")
+
     def __init__(self):
         self.rm = 0  # Register/memory operand
         self.reg = 0  # Register operand or opcode extension
@@ -32,6 +34,8 @@ class ModRM:
 
 # SIB byte structure
 class SIB:
+    __slots__ = ("base", "index", "scale")
+
     def __init__(self):
         self.base = 0  # Base register
         self.index = 0  # Index register
@@ -39,6 +43,32 @@ class SIB:
 
 # X86Instruction data structure
 class InstrData:
+    __slots__ = (
+        "prefix",
+        "pre_segment",
+        "pre_repeat",
+        "segment",
+        "opcode",
+        "modrm",
+        "sib",
+        "disp8",
+        "disp16",
+        "disp32",
+        "imm8",
+        "imm16",
+        "imm32",
+        "ptr16",
+        "moffs",
+        "prefix_len",
+        "size",
+        "operand_bits",
+        "address_bits",
+        "displacement_bits",
+        "repeat_class",
+        "control_flow_class",
+        "width_case",
+    )
+
     def __init__(self):
         self.prefix = 0  # X86Instruction prefix
         self.pre_segment = None  # Segment override prefix
@@ -93,6 +123,8 @@ def describe_x86_16_instruction_metadata_surface() -> dict[str, object]:
 
 # Base class for instruction handlers
 class X86Instruction:
+    __slots__ = ("emu", "instr", "mode32", "chsz_ad")
+
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):
         self.emu = emu
         self.instr = instr
@@ -132,6 +164,8 @@ class X86Instruction:
 # Class for executing instructions
 
 class InstrFlags:
+    __slots__ = ("modrm", "imm32", "imm16", "imm8", "ptr16", "moffs", "moffs8")
+
     def __init__(self):
         self.modrm = False
         self.imm32 = False

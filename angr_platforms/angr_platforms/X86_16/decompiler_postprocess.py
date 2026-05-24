@@ -928,7 +928,6 @@ def _apply_annotations_8616(project, codegen) -> bool:
             if stripped_decl not in existing:
                 codegen._inertia_callsite_prototype_decls = existing + (stripped_decl,)
                 changed = True
-
     helper_decl = preferred_known_helper_signature_decl(func_name)
     if helper_decl is not None:
         annotate_function(project, func_addr, name=func_name, c_decl=helper_decl)
