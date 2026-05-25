@@ -169,7 +169,13 @@ def _sorted_unique(values: set[str]) -> tuple[str, ...]:
 
 
 def _json_fingerprint(payload: object) -> str:
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    def _json_default(value: object) -> str:
+        # Validation cache fingerprinting must never crash on rich AST objects.
+        # Keep fallback deterministic and side-effect free.
+        return f"<{type(value).__name__}>"
+
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json_default)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -> set[str]:

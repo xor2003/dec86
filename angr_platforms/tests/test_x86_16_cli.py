@@ -140,6 +140,41 @@ def test_sidecar_metadata_cache_sources_do_not_include_cli():
     assert "omf_pat.py" in sources
 
 
+def test_count_unresolved_ds_linear_macro_hits_ignores_pointer_param_accesses():
+    payload = """
+int Swaps(void *lhs, void *rhs)
+{
+    unsigned short ds;
+    unsigned short bx;
+    unsigned short bx_2;
+    unsigned short ax;
+    bx = rhs;
+    bx_2 = lhs;
+    ax = SEG_U8(ds, lhs) | SEG_U8(ds, lhs + 1) * 0x100;
+    SEG_U8(ds, bx) = ax;
+    SEG_U8(ds, bx + 1) = ax >> 8;
+    SEG_U8(ds, bx_2) = ax;
+    SEG_U8(ds, bx_2 + 1) = ax >> 8;
+}
+"""
+    assert decompile._count_unresolved_ds_linear_macro_hits_8616(payload) == 0
+
+
+def test_count_unresolved_ds_linear_macro_hits_counts_non_pointer_offsets():
+    payload = """
+int Foo(void)
+{
+    unsigned short ds;
+    unsigned short tmp;
+    tmp = SEG_U8(ds, 0x200) | SEG_U8(ds, 0x201) * 0x100;
+    SEG_U8(ds, tmp) = 0;
+    SEG_U8(ds, stack_base + 2) = 1;
+}
+"""
+    # 0x200, 0x201, tmp, stack_base+2 are unresolved by pointer-arg evidence.
+    assert decompile._count_unresolved_ds_linear_macro_hits_8616(payload) == 4
+
+
 def test_emit_function_timing_summary_ignores_cached_timings(capsys):
     function_cached = SimpleNamespace(addr=0x1000, name="cached")
     function_current = SimpleNamespace(addr=0x2000, name="current")

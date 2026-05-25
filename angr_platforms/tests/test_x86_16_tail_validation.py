@@ -772,6 +772,24 @@ def test_tail_validation_cache_descriptor_is_deterministic():
     assert first.cache_key == f"{first.namespace}:{first.fingerprint}"
 
 
+def test_tail_validation_cache_descriptor_handles_non_json_payload_members():
+    class _Opaque:
+        pass
+
+    first = build_x86_16_validation_cache_descriptor(
+        "tail_validation.test",
+        {"stage": "postprocess", "opaque": _Opaque()},
+    )
+    second = build_x86_16_validation_cache_descriptor(
+        "tail_validation.test",
+        {"stage": "postprocess", "opaque": _Opaque()},
+    )
+
+    assert isinstance(first, X86_16ValidationCacheDescriptor)
+    assert first == second
+    assert first.cache_key == f"{first.namespace}:{first.fingerprint}"
+
+
 def test_tail_validation_cached_artifact_helper_reuses_shared_key_space():
     cache = {}
     descriptor = build_x86_16_validation_cache_descriptor("tail_validation.test", {"value": 7})
