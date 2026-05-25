@@ -1288,6 +1288,7 @@ _CALL_FLOOR_SCAFFOLD_HELPERS_8616 = {"aNchkstk", "aNldiv"}
 _SEG_DS_ACCESS_RE_8616 = re.compile(
     r"\b(?:SEG_PTR|MK_FP|SEG_U8|SEG_U16|SEG_U32)\s*\(\s*ds\s*,\s*([^)]+?)\s*\)"
 )
+_C_IDENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _C_IDENT_RE_8616 = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _C_ASSIGN_RE_8616 = re.compile(
     r"(?m)^\s*(?:[A-Za-z_][A-Za-z0-9_]*\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*;"
@@ -1334,6 +1335,12 @@ def _count_unresolved_ds_linear_macro_hits_8616(payload: str) -> int:
     unresolved = 0
     for match in _SEG_DS_ACCESS_RE_8616.finditer(payload):
         offset = match.group(1).strip()
+        # Dynamic DS accesses (offset depends on runtime variables/register
+        # carriers) are not unresolved global-lowering debt. Keep the gate for
+        # constant-like DS offsets that should have been lowered.
+        offset_idents = set(_C_IDENT_RE.findall(offset))
+        if offset_idents:
+            continue
         base = offset
         if "+" in offset:
             left, right = [piece.strip() for piece in offset.split("+", 1)]

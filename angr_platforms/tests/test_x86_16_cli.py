@@ -172,7 +172,22 @@ int Foo(void)
 }
 """
     # 0x200, 0x201, tmp, stack_base+2 are unresolved by pointer-arg evidence.
-    assert decompile._count_unresolved_ds_linear_macro_hits_8616(payload) == 4
+    assert decompile._count_unresolved_ds_linear_macro_hits_8616(payload) == 2
+
+
+def test_count_unresolved_ds_linear_macro_hits_ignores_dynamic_variable_indexed_offsets():
+    payload = """
+void aFfdivs(void)
+{
+    unsigned short ds;
+    unsigned short si;
+    unsigned short bx_2;
+    (void)SEG_U8(ds, 6 + si);
+    (void)SEG_U8(ds, 665 + bx_2);
+    (void)SEG_U8(ds, si);
+}
+"""
+    assert decompile._count_unresolved_ds_linear_macro_hits_8616(payload) == 0
 
 
 def test_emit_function_timing_summary_ignores_cached_timings(capsys):
