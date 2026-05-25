@@ -573,7 +573,7 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
     # function discovery times out. Very small caps cause deterministic
     # failures for medium procedures that need project/slice setup plus
     # decompiler warmup before emitting fallback C.
-    return min(max(1, timeout), 20)
+    return min(max(1, timeout), 60)
 
 def _direct_addr_wall_clock_budget(
     timeout: int,
