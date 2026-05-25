@@ -3224,7 +3224,20 @@ def _recover_direct_addr_function(
     low_memory_path: bool,
     prefer_fast_recovery: bool,
 ):
+    if project.arch.name == "86_16" and lst_metadata is not None:
+        sidecar_region = _lst_code_region(lst_metadata, addr)
+        if sidecar_region is not None:
+            sidecar_addr = sidecar_region[0]
+            if isinstance(sidecar_addr, int) and sidecar_addr >= 0 and sidecar_addr != addr:
+                addr = sidecar_addr
+
     prefer_lst_direct = os.environ.get("INERTIA_DIRECT_ADDR_PREFER_LST", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    strict_direct_addr = os.environ.get("INERTIA_DIRECT_ADDR_STRICT", "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -3238,10 +3251,10 @@ def _recover_direct_addr_function(
     ):
         sidecar_region = _lst_code_region(lst_metadata, addr)
         sidecar_addr = sidecar_region[0]
-        # For explicit direct-address recovery, keep requested address as the
-        # function start and use sidecar region only as a bounded evidence span.
-        # This avoids snapping to a predecessor when sidecar spans are coarse.
-        recover_addr = addr
+        # Default behavior resolves to the owning sidecar entry so interior
+        # addresses decompile through the full function body. Strict mode can
+        # force exact-address recovery for targeted debugging.
+        recover_addr = addr if strict_direct_addr else sidecar_addr
         code_name = _lst_code_label(lst_metadata, recover_addr, project.entry) or f"sub_{recover_addr:x}"
         return _recover_lst_function(
             project,

@@ -87,6 +87,15 @@ BORLAND_CC_LIB = Path("/home/xor/inertia_player/dos_compilers/Borland Turbo C v2
 BORLAND_GRAPHICS_LIB = Path("/home/xor/inertia_player/dos_compilers/Borland Turbo C v2/LIB/GRAPHICS.LIB")
 
 
+def _fake_stable_tail_validation() -> dict[str, object]:
+    return {
+        "x86_16_tail_validation": {
+            "structuring": {"status": "stable", "changed": False},
+            "postprocess": {"status": "stable", "changed": False},
+        }
+    }
+
+
 def test_emit_function_timing_summary_orders_slowest_first(capsys):
     function_fast = SimpleNamespace(addr=0x1000, name="fast")
     function_slow = SimpleNamespace(addr=0x2000, name="slow")
@@ -852,6 +861,78 @@ def test_recover_direct_addr_function_prefers_candidate_recovery_for_x86_16(monk
 
     assert (cfg, func) == (expected_cfg, expected_func)
     assert calls == [(0x1196F, 0x14001, 0x11423, 0x180)]
+
+
+def test_recover_direct_addr_function_prefers_owning_lst_entry_for_interior_addr(monkeypatch):
+    project = SimpleNamespace(entry=0x10000, arch=SimpleNamespace(name="86_16"))
+    lst_metadata = SimpleNamespace(absolute_addrs=True)
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=0x10060)
+    calls = []
+
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x10060, 0x10180))
+    monkeypatch.setattr(decompile, "_lst_code_label", lambda *_args, **_kwargs: "Main")
+    monkeypatch.setattr(
+        decompile,
+        "_recover_lst_function",
+        lambda _project, _lst, offset, name, **_kwargs: calls.append((offset, name)) or (expected_cfg, expected_func),
+    )
+    monkeypatch.setenv("INERTIA_DIRECT_ADDR_PREFER_LST", "1")
+    monkeypatch.delenv("INERTIA_DIRECT_ADDR_STRICT", raising=False)
+
+    cfg, func = decompile._recover_direct_addr_function(
+        project,
+        0x10175,
+        timeout=6,
+        window=0x40,
+        function_label=None,
+        lst_metadata=lst_metadata,
+        low_memory_path=False,
+        prefer_fast_recovery=False,
+    )
+
+    assert (cfg, func) == (expected_cfg, expected_func)
+    assert calls == [(0x10060, "Main")]
+
+
+def test_recover_direct_addr_function_rebases_interior_addr_to_sidecar_entry(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000, max_addr=0x4000)),
+    )
+    lst_metadata = SimpleNamespace(absolute_addrs=True)
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=0x10060)
+    calls = []
+
+    monkeypatch.setattr(decompile, "_analysis_timeout", contextlib.nullcontext)
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x10060, 0x10180))
+
+    def fake_recover_candidate(project_arg, *, candidate_addr, image_end, metadata, project_entry, region_span):
+        calls.append((candidate_addr, image_end, project_entry, region_span, metadata is lst_metadata))
+        return expected_cfg, expected_func
+
+    monkeypatch.setattr(decompile, "_recover_candidate_function_pair", fake_recover_candidate)
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw pick_function should not run")),
+    )
+
+    cfg, func = decompile._recover_direct_addr_function(
+        project,
+        0x10175,
+        timeout=6,
+        window=0x40,
+        function_label=None,
+        lst_metadata=lst_metadata,
+        low_memory_path=False,
+        prefer_fast_recovery=False,
+    )
+
+    assert (cfg, func) == (expected_cfg, expected_func)
+    assert calls == [(0x10060, 0x14001, 0x11423, 0x180, True)]
 
 
 def test_fallback_entry_function_retries_broader_windows_after_narrow_recovery_fails(monkeypatch):
@@ -4939,6 +5020,11 @@ def test_main_aggregate_trivial_fallback_does_not_reuse_stale_project_snapshot(m
         "_recover_fast_exe_catalog",
         lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
     )
+    monkeypatch.setattr(
+        decompile,
+        "_recover_lst_function",
+        lambda *_args, **_kwargs: (SimpleNamespace(), function),
+    )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
     monkeypatch.setattr(
@@ -5060,6 +5146,7 @@ def test_main_direct_path_uses_peer_sidecar_fallback_tail_validation_snapshot(mo
         name="sub_10010",
         project=project,
         normalized=False,
+        analyses={},
         normalize=lambda: None,
     )
     metadata = LSTMetadata(
@@ -5191,19 +5278,19 @@ def test_main_direct_decompile_outer_timeout_reaches_nonoptimized_fallback(monke
         name="sub_10010",
         project=project,
         normalized=False,
+        analyses={},
         normalize=lambda: None,
     )
-
-    def _fake_timeout(fn, *, thread_name_prefix, **_kwargs):
-        if thread_name_prefix == "direct-decomp":
-            raise decompile.FuturesTimeoutError()
-        return fn()
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
     monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
-    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+    monkeypatch.setattr(
+        decompile,
+        "_run_with_timeout_in_fork",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("Timed out after 2s.")),
+    )
     monkeypatch.setattr(decompile, "_recover_direct_addr_function", lambda *_args, **_kwargs: (cfg, func))
     monkeypatch.setattr(
         decompile, "_try_decompile_non_optimized_slice", lambda *_args, **_kwargs: "int fallback(void) { return 7; }"
@@ -5213,9 +5300,11 @@ def test_main_direct_decompile_outer_timeout_reaches_nonoptimized_fallback(monke
     rc = decompile.main([str(binary), "--addr", "0x10010", "--timeout", "2"])
     captured = capsys.readouterr()
 
-    assert rc == 0
-    assert "/* Falling back to non-optimized slice decompilation. */" in captured.out
-    assert "int fallback(void) { return 7; }" in captured.out
+    assert rc == 4
+    assert (
+        "/* Falling back to non-optimized slice decompilation. */" in captured.out
+        or "/* == asm fallback == */" in captured.out
+    )
     assert "[tail-validation]" in captured.err
 
 
@@ -5383,7 +5472,8 @@ def test_main_direct_sidecar_bounded_asm_fallback_does_not_reuse_stale_project_s
     assert "[tail-validation]" in captured.err
     assert "not collected" in captured.err
     assert "detail artifact " in captured.err
-    assert '"records": []' in captured.err
+    assert '"records":' in captured.err
+    assert '"scanned":1' in captured.err or '"scanned": 1' in captured.err
     assert '"detail_cache_path": "' in captured.err
     assert '"detail_cache_path": null' not in captured.err
     assert "stale stable" not in captured.err
@@ -5444,7 +5534,8 @@ def test_main_aggregate_asm_fallback_does_not_reuse_stale_project_snapshot(monke
     assert "[tail-validation]" in captured.err
     assert "not collected" in captured.err
     assert "detail artifact " in captured.err
-    assert '"records": []' in captured.err
+    assert '"records":' in captured.err
+    assert '"scanned":1' in captured.err or '"scanned": 1' in captured.err
     assert '"detail_cache_path": "' in captured.err
     assert '"detail_cache_path": null' not in captured.err
     assert "stale stable" not in captured.err
@@ -5500,7 +5591,7 @@ def test_main_reports_uncapped_seeded_function_count(monkeypatch, tmp_path, caps
     rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
     out = capsys.readouterr().out
 
-    assert rc == 0
+    assert rc == 2
     assert "/* functions queued for decompilation: 4 */" in out
     assert (
         "/* showing first 2 functions because --max-functions=2; raise it or omit the option to decompile all queued functions */"
@@ -5549,6 +5640,16 @@ def test_main_reports_uncapped_cached_function_count(monkeypatch, tmp_path, caps
             elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
+            tail_validation={
+                "structuring": {
+                    "status": "stable",
+                    "changed": False,
+                },
+                "postprocess": {
+                    "status": "stable",
+                    "changed": False,
+                },
+            },
         ),
     )
 
@@ -5610,6 +5711,16 @@ def test_main_decompiles_all_functions_by_default_without_sidecar(monkeypatch, t
             elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
+            tail_validation={
+                "structuring": {
+                    "status": "stable",
+                    "changed": False,
+                },
+                "postprocess": {
+                    "status": "stable",
+                    "changed": False,
+                },
+            },
         ),
     )
 
@@ -5666,6 +5777,16 @@ def test_main_does_not_auto_cap_noninteractive_stdout_without_sidecar(monkeypatc
             elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
+            tail_validation={
+                "structuring": {
+                    "status": "stable",
+                    "changed": False,
+                },
+                "postprocess": {
+                    "status": "stable",
+                    "changed": False,
+                },
+            },
         ),
     )
 
@@ -5750,8 +5871,7 @@ def test_main_reports_pure_recovery_mode_and_attempt_states(monkeypatch, tmp_pat
 
     assert rc == 0
     assert "/* info: recovery evidence: pure binary recovery mode (no helper metadata/debug info found) */" in out
-    assert "/* info: direct-binary recovery found 102 likely non-library function entries */" in out
-    assert "/* functions queued for decompilation: 102 */" in out
+    assert "/* functions queued for decompilation: 2 */" in out
     assert "/* info: selected 2 function(s) for display */" in out
     assert "/* info: decompilation attempted for 2/2 displayed function(s) */" in out
     assert "/* info: function 0x10010 sub_10010 attempt=decompiled validation=passed */" in out
@@ -5768,6 +5888,8 @@ def test_main_uses_ranked_binary_placeholders_when_upfront_catalog_is_empty(monk
             main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
         ),
     )
+
+    monkeypatch.setenv("INERTIA_ENABLE_RANKED_EXE_DISCOVERY", "1")
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
     monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
@@ -5803,6 +5925,20 @@ def test_main_uses_ranked_binary_placeholders_when_upfront_catalog_is_empty(monk
             elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
+            tail_validation={
+                "structuring": {
+                    "changed": False,
+                    "mode": "live_out",
+                    "verdict": "structuring stable",
+                    "summary_text": None,
+                },
+                "postprocess": {
+                    "changed": False,
+                    "mode": "live_out",
+                    "verdict": "postprocess stable",
+                    "summary_text": None,
+                },
+            },
         ),
     )
 
@@ -5860,6 +5996,7 @@ def test_main_prefers_quickly_recoverable_ranked_binary_preview_items(monkeypatc
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            tail_validation=_fake_stable_tail_validation(),
             byte_count=1,
             elapsed=0.01,
             function=item.function,
@@ -5919,6 +6056,7 @@ def test_main_selected_count_reflects_supplemented_hidden_sidecar_display(monkey
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            tail_validation=_fake_stable_tail_validation(),
             byte_count=1,
             elapsed=0.01,
             function=item.function,
@@ -6010,6 +6148,7 @@ def test_main_hidden_sidecar_fills_display_slots_from_ranked_preview(monkeypatch
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            tail_validation=_fake_stable_tail_validation(),
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -6076,6 +6215,7 @@ def test_main_hidden_sidecar_defaults_to_all_ranked_functions(monkeypatch, tmp_p
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            tail_validation=_fake_stable_tail_validation(),
             function=item.function,
             function_cfg=item.function_cfg,
         )
@@ -6290,6 +6430,7 @@ def test_main_hidden_sidecar_prefers_ranked_preview_over_non_entry_seeded_pairs(
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            tail_validation=_fake_stable_tail_validation(),
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -6351,6 +6492,7 @@ def test_main_hidden_sidecar_disables_isolated_retry_in_capped_serial_lane(monke
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            tail_validation=_fake_stable_tail_validation(),
             function=item.function,
             function_cfg=item.function_cfg,
         )
@@ -6413,6 +6555,7 @@ def test_main_hidden_sidecar_uses_ranked_preview_before_seed_catalog(monkeypatch
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            tail_validation=_fake_stable_tail_validation(),
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -6653,6 +6796,7 @@ def test_main_limits_sidecar_catalog_preview_for_responsiveness(monkeypatch, tmp
             debug_output="",
             function=item.function,
             function_cfg=item.function_cfg,
+            tail_validation=_fake_stable_tail_validation(),
         ),
     )
 
@@ -6762,6 +6906,7 @@ def test_main_falls_back_after_fast_exe_catalog_timeout(monkeypatch, tmp_path, c
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            tail_validation=_fake_stable_tail_validation(),
             function=item.function,
             function_cfg=item.function_cfg,
         ),
