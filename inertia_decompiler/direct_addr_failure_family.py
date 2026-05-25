@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-def _token(value: object | None, *, default: str = "unknown") -> str:
+def _token(value: object | None, *, default: str) -> str:
     if value is None:
         return default
     text = str(value).strip()
@@ -77,13 +77,13 @@ def build_failure_family_snapshot(
     """Build a deterministic family snapshot from one attempt."""
 
     return FailureFamilySnapshot(
-        status=_token(status),
-        failure_stage=_token(failure_stage),
-        sidecar_verdict=_token(sidecar_verdict),
-        non_optimized_verdict=_token(non_optimized_verdict),
-        fallback_kind=_token(fallback_kind),
-        tail_validation_verdict=_token(tail_validation_verdict),
-        artifact_path=_token(artifact_path, default=""),
+        status=_token(status, default="not_set"),
+        failure_stage=_token(failure_stage, default="not_set"),
+        sidecar_verdict=_token(sidecar_verdict, default="not_attempted"),
+        non_optimized_verdict=_token(non_optimized_verdict, default="not_attempted"),
+        fallback_kind=_token(fallback_kind, default="not_set"),
+        tail_validation_verdict=_token(tail_validation_verdict, default="not_collected"),
+        artifact_path=_token(artifact_path, default="none"),
     )
 
 

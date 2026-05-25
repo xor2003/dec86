@@ -1203,18 +1203,17 @@ def _validated_generated_c_acceptance_8616(
                 stage_details.append(f"{stage_name}=unclassified")
         detail = "; ".join(stage_details) if stage_details else "no stage data"
         return _validation_fail(f"Tail validation {display_status} ({detail}).")
-    if c_target == "portable-flat":
-        recompilation = check_c_recompiles_8616(payload, target=c_target)
-        if not recompilation.passed:
-            stderr = (recompilation.stderr or recompilation.stdout or "").strip()
-            lines = stderr.splitlines()
-            detail = lines[0] if lines else "gcc syntax check failed"
-            if len(lines) > 1:
-                detail += "; " + "; ".join(line.strip() for line in lines[1:3] if line.strip())
-            source_path = getattr(recompilation, "source_path", None)
-            if isinstance(source_path, str) and source_path:
-                detail = f"{detail} [source: {source_path}]"
-            return _validation_fail(f"gcc syntax check failed: {detail}")
+    recompilation = check_c_recompiles_8616(payload, target=c_target)
+    if not recompilation.passed:
+        stderr = (recompilation.stderr or recompilation.stdout or "").strip()
+        lines = stderr.splitlines()
+        detail = lines[0] if lines else "gcc syntax check failed"
+        if len(lines) > 1:
+            detail += "; " + "; ".join(line.strip() for line in lines[1:3] if line.strip())
+        source_path = getattr(recompilation, "source_path", None)
+        if isinstance(source_path, str) and source_path:
+            detail = f"{detail} [source: {source_path}]"
+        return _validation_fail(f"gcc syntax check failed: {detail}")
     missing_calls = _missing_expected_calls_from_embedded_evidence_8616(payload)
     if missing_calls:
         return _validation_fail("Missing source-evidenced calls in emitted C: " + ", ".join(missing_calls[:6]))
@@ -2955,8 +2954,8 @@ def main(argv: list[str] | None = None) -> int:
                 },
             }
             print(
-                "[dbg] direct failure family: status=ok stage=unknown sidecar=unknown nonopt=unknown "
-                "fallback=direct_addr validation=passed"
+                "[dbg] direct failure family: status=ok stage=helper_model sidecar=not_applicable "
+                "nonopt=not_needed fallback=direct_addr validation=passed"
             )
             _emit_tail_validation_snapshot_or_uncollected(
                 cfg,
@@ -4421,6 +4420,16 @@ def main(argv: list[str] | None = None) -> int:
         and args.binary.suffix.lower() == ".exe"
         and args.max_functions > 0
         and args.max_functions <= 2
+        and lst_metadata is not None
+        and include_library_functions
+    ):
+        workers = 1
+    if (
+        args.addr is None
+        and args.binary.suffix.lower() == ".exe"
+        and args.max_functions > 0
+        and args.max_functions <= 2
+        and low_memory_path
     ):
         workers = 1
     if (
@@ -5127,6 +5136,44 @@ def main(argv: list[str] | None = None) -> int:
                     expired = [future for future in pending if now >= deadlines[future]]
                     for future in expired:
                         item = future_map[future]
+                        if not future.done():
+                            done_now, _ = wait({future}, timeout=0.0, return_when=FIRST_COMPLETED)
+                            if done_now or future.done():
+                                try:
+                                    result_map[item.index] = future.result()
+                                except Exception as ex:
+                                    result_map[item.index] = FunctionWorkResult(
+                                        index=item.index,
+                                        status="error",
+                                        payload=str(ex),
+                                        debug_output="",
+                                        function=item.function,
+                                        function_cfg=item.function_cfg,
+                                    )
+                                result = result_map.get(item.index)
+                                if result is not None and item.index not in emitted_indexes:
+                                    d, f = _emit_function_result(
+                                        item,
+                                        result,
+                                        project=project,
+                                        args=args,
+                                        lst_metadata=lst_metadata,
+                                        cod_metadata=cod_metadata,
+                                        synthetic_globals=synthetic_globals,
+                                        precise_sidecar_regions=precise_sidecar_regions,
+                                        allow_heavy_fallbacks=allow_heavy_fallbacks,
+                                        interactive_stdout=interactive_stdout,
+                                        use_serial_fork_per_function=use_serial_fork_per_function,
+                                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                                    )
+                                    decompiled += d
+                                    failed += f
+                                    emitted_indexes.add(item.index)
+                                    if f and args.addr is not None:
+                                        _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                                        return 2
+                                pending.discard(future)
+                                continue
                         if future.done():
                             try:
                                 result_map[item.index] = future.result()
