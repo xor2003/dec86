@@ -389,7 +389,9 @@ def _effective_decompile_timeout_8616(
         elif byte_count >= 160 or block_count >= 24:
             effective_timeout = max(effective_timeout, 24)
         elif byte_count >= 64 or block_count >= 8:
-            effective_timeout = max(effective_timeout, 14)
+            # Mid-sized 16-bit procedures frequently need more than 14s once
+            # structuring + postprocess + validation are all enabled.
+            effective_timeout = max(effective_timeout, 24)
     return effective_timeout
 
 def _apply_binary_specific_annotations(
@@ -768,6 +770,9 @@ def _format_minimal_codegen_output(
     )
     formatted = _dedupe_adjacent_prototype_lines(formatted)
     formatted = _sanitize_mangled_autonames_text(formatted)
+    # Keep partial/timeout payloads syntactically and semantically diagnosable
+    # by applying the same unresolved-token normalization used in full output.
+    formatted = normalize_unresolved_c_text(formatted)
     return formatted
 
 def _apply_known_cod_object_annotations(
@@ -1319,18 +1324,17 @@ def _decompile_function(
             setattr(project, "_inertia_skip_clinic_simplify_block", prev_skip_clinic_simplify_block)
             setattr(project, "_inertia_disable_peephole_expr_guard", prev_disable_peephole_expr_guard)
 
-    if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS"):
-        try:
-            messages = _analysis_log_messages(dec)
-        except Exception:
-            messages = []
-        if messages:
-            print(
-                f"[dbg] decompiler.errors for {function_original_addr(function):#x} {function.name}: "
-                + " | ".join(messages[:6]),
-                file=sys.stderr,
-                flush=True,
-            )
+    try:
+        messages = _analysis_log_messages(dec)
+    except Exception:
+        messages = []
+    if messages:
+        print(
+            f"[dbg] decompiler.errors for {function_original_addr(function):#x} {function.name}: "
+            + " | ".join(messages[:6]),
+            file=sys.stderr,
+            flush=True,
+        )
 
     if dec.codegen is None:
         messages = _analysis_log_messages(dec)
@@ -2167,6 +2171,9 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
 
     if getattr(getattr(project, "arch", None), "name", None) != "86_16":
         return 0
+    measure_single_function_context = _single_function_context_measuring_enabled()
+    metric_candidates = 0
+    metric_start = time.perf_counter() if measure_single_function_context else 0.0
     main_object = getattr(getattr(project, "loader", None), "main_object", None)
     linked_base = getattr(main_object, "linked_base", None)
     max_addr = getattr(main_object, "max_addr", None)
@@ -2317,6 +2324,8 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
             fallback_call_name = cod_call_names[cod_call_name_index]
             cod_call_name_index += 1
 
+        if measure_single_function_context:
+            metric_candidates += len(candidates)
         for candidate in candidates:
             if candidate in seen:
                 continue
@@ -2378,7 +2387,40 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
                     ex,
                 )
                 continue
+    if measure_single_function_context:
+        _emit_single_function_context_metric(
+            function,
+            kind="direct-callee-stubs",
+            candidates=metric_candidates,
+            created=created,
+            elapsed_ms=int((time.perf_counter() - metric_start) * 1000),
+        )
     return created
+
+
+def _single_function_context_measuring_enabled() -> bool:
+    return (
+        os.environ.get("INERTIA_MEASURE_SINGLE_FUNCTION_CONTEXT", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
+
+def _emit_single_function_context_metric(
+    function,
+    *,
+    kind: str,
+    candidates: int = 0,
+    created: int = 0,
+    elapsed_ms: int = 0,
+) -> None:
+    if not _single_function_context_measuring_enabled():
+        return
+    print(
+        f"[metric] fn={getattr(function, 'addr', -1):#x} kind={kind} "
+        f"candidates={candidates} created={created} elapsed_ms={elapsed_ms}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 def _prepare_function_for_decompilation(
     project: angr.Project,

@@ -1105,6 +1105,9 @@ def _function_complexity_local(function) -> tuple[int, int]:
         return len(block_addrs), 0
     return 0, 0
 
+
+_function_complexity = _function_complexity_local
+
 def _rank_function_cfg_pairs_for_display(
     project: angr.Project,
     function_cfg_pairs: list[tuple[object, object]],
@@ -2653,7 +2656,15 @@ def _recover_lst_function(
     if project.arch.name == "86_16" and exact_region is not None:
         exact_region_size = max(0, exact_region[1] - exact_region[0])
         slice_plan = plan_x86_16_exact_slice(*exact_region)
+        enable_rebased_exact_slice = os.environ.get("INERTIA_ENABLE_REBASED_EXACT_SLICE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         use_rebased_exact_slice = (
+            enable_rebased_exact_slice
+            and
             slice_plan.needs_rebased_slice
             and 0x40 <= exact_region_size <= 0x280
         )
@@ -3213,8 +3224,15 @@ def _recover_direct_addr_function(
     low_memory_path: bool,
     prefer_fast_recovery: bool,
 ):
+    prefer_lst_direct = os.environ.get("INERTIA_DIRECT_ADDR_PREFER_LST", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if (
-        lst_metadata is not None
+        prefer_lst_direct
+        and lst_metadata is not None
         and project.arch.name == "86_16"
         and _lst_code_region(lst_metadata, addr) is not None
     ):

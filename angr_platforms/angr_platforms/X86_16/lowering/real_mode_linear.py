@@ -739,6 +739,24 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
                 return resolved_direct
         lhs = _stack_offset_from_expr_8616(node.lhs, project, codegen, seen)
         rhs = _stack_offset_from_expr_8616(node.rhs, project, codegen, seen)
+        # Evidence-backed fallback: when one side is unresolved but the other
+        # side is a constant, try to recover a stack-probe carrier delta from
+        # the unresolved sub-expression itself (works for CDirty/CVariable
+        # carrier shapes that do not normalize to plain CVariable nodes).
+        if lhs is None and isinstance(node, structured_c.CBinaryOp):
+            rhs_const = _constant_value_8616(node.rhs)
+            lhs_delta = _stack_probe_carrier_delta_8616(_strip_casts_8616(node.lhs), codegen)
+            if isinstance(rhs_const, int) and isinstance(lhs_delta, int):
+                resolved = lhs_delta + (rhs_const if node.op == "Add" else -rhs_const)
+                offset_cache[node_id] = resolved
+                return resolved
+        if rhs is None and node.op == "Add" and isinstance(node, structured_c.CBinaryOp):
+            lhs_const = _constant_value_8616(node.lhs)
+            rhs_delta = _stack_probe_carrier_delta_8616(_strip_casts_8616(node.rhs), codegen)
+            if isinstance(lhs_const, int) and isinstance(rhs_delta, int):
+                resolved = lhs_const + rhs_delta
+                offset_cache[node_id] = resolved
+                return resolved
         if lhs is None and _constant_value_8616(node.rhs) is not None:
             offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
             return None
