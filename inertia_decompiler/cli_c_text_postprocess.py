@@ -1426,11 +1426,176 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
     return normalized
 
 
-def _materialize_missing_synthetic_global_declarations_text(c_text: str) -> str:
+def _materialize_missing_synthetic_global_declarations_text(
+    c_text: str,
+    metadata: CODProcMetadata | None = None,
+    synthetic_globals: dict[int, tuple[str, int]] | None = None,
+) -> str:
     lines = c_text.splitlines()
     if not lines:
         return c_text
-    declared = {
+
+    body_text = "\n".join(lines)
+
+    def _strip_comments_and_strings(text: str) -> str:
+        text = re.sub(r"(?s)/\*.*?\*/", " ", text)
+        text = re.sub(r"//.*?$", " ", text, flags=re.M)
+        text = re.sub(r"^\s*#.*?$", " ", text, flags=re.M)
+        text = re.sub(r'"(?:\\.|[^"\\])*"', " ", text)
+        text = re.sub(r"'(?:\\.|[^'\\])'", " ", text)
+        return text
+
+    def _collect_declared_identifiers(text_lines: list[str]) -> set[str]:
+        declared: set[str] = set()
+        function_sig_re = re.compile(
+            r"^\s*[A-Za-z_][\w\s\*\[\]]*\s+(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^)]*)\)\s*\{?$"
+        )
+        decl_stmt_re = re.compile(
+            r"^\s*(?:extern\s+|static\s+)?[A-Za-z_][\w\s\*\[\]<>]*\b(?P<name>[A-Za-z_][\w$?@]*)(?:\s*[\[,;=]|\s*\()"
+        )
+
+        for raw_line in text_lines:
+            line = raw_line.strip()
+            if not line or line.startswith(("//", "*", "/*", "///")):
+                continue
+
+            sig_match = function_sig_re.match(line)
+            if sig_match is not None:
+                declared.add(sig_match.group("name"))
+                args = sig_match.group("args")
+                for arg in re.split(r",", args):
+                    arg = arg.strip()
+                    if not arg:
+                        continue
+                    arg_match = re.search(r"(?<![A-Za-z_])([A-Za-z_][\w$?@]*)(?![A-Za-z0-9_])$", arg)
+                    if arg_match:
+                        declared.add(arg_match.group(1))
+                continue
+
+            decl_match = decl_stmt_re.match(line)
+            if decl_match is None:
+                continue
+            name = decl_match.group("name")
+            if not name:
+                continue
+            declared.add(name)
+
+            if "," not in line:
+                continue
+            continuation = line.split(",")
+            for segment in continuation[1:]:
+                segment = segment.strip()
+                if not segment:
+                    continue
+                nested = re.match(r"(?P<name>[A-Za-z_][\w$?@]*)", segment)
+                if nested is not None:
+                    declared.add(nested.group("name"))
+
+        return declared
+
+    def _is_known_compiler_temp(name: str) -> bool:
+        return bool(re.match(r"^(?:vvar_\d+|s_[0-9a-fA-F]+(?:_[0-9a-fA-F]*)*|tmp_\d+|ir_\d+|arg_[0-9a-fA-F]+)$", name))
+
+    def _collect_global_usage_candidates_from_body(text: str, declared: set[str]) -> list[str]:
+        candidates: list[str] = []
+        work = _strip_comments_and_strings(text)
+
+        def _safe_finditer(pattern: str, text_value: str):
+            try:
+                return re.finditer(pattern, text_value)
+            except re.error:
+                return ()
+
+        function_like = {
+            m.group("name")
+            for m in _safe_finditer(r"(?<![A-Za-z_])(?P<name>[A-Za-z_][\w$?@]*)(?=\s*\()", work)
+        }
+
+        candidates.extend(
+            [
+                m.group("name")
+                for m in _safe_finditer(r"(?<![A-Za-z_])(?P<name>[A-Za-z_][\w$?@]*)\s*\[", work)
+                if m.group("name") not in function_like
+            ]
+        )
+        candidates.extend(
+            [
+                m.group("name")
+                for m in _safe_finditer(r"(?<![A-Za-z_])(?P<name>[A-Za-z_][\w$?@]*)\.[A-Za-z_][\w$?@]*", work)
+                if m.group("name") not in function_like
+            ]
+        )
+        for match in _safe_finditer(
+            r"(?<![A-Za-z_])(?P<name>[A-Za-z_][\w$?@]*)(?:\+\+|--)(?![A-Za-z0-9_])|(?:\+\+|--)(?P<name2>[A-Za-z_][\w$?@]*)(?![A-Za-z0-9_])",
+            work,
+        ):
+            name = match.group("name") or match.group("name2")
+            if name:
+                candidates.append(name)
+
+        candidates.extend(
+            [
+                m.group("name")
+                for m in _safe_finditer(r"&\s*(?P<name>[A-Za-z_][\w$?@]*)", work)
+                if m.group("name") not in function_like
+            ]
+        )
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for name in candidates:
+            if name in seen:
+                continue
+            if name in declared or _is_known_compiler_temp(name):
+                continue
+            if name in {"if", "for", "while", "switch", "return", "sizeof", "case", "else", "struct"}:
+                continue
+            if name in {"stdint", "stdbool", "time", "stddef"}:
+                continue
+            seen.add(name)
+            ordered.append(name)
+        return ordered
+
+    def _sanitize_identifier(name: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_]", "_", name)
+
+    def _infer_decl_for_global(name: str, width: int | None) -> list[str]:
+        body = "\n".join(lines)
+        escaped = re.escape(name)
+
+        members = {
+            match.group("field")
+            for match in re.finditer(
+                rf"(?<![A-Za-z_]){escaped}\s*\[[^\]]+\]\s*\.\s*(?P<field>[A-Za-z_][A-Za-z0-9_]*)",
+                body,
+            )
+        }
+
+        has_indexed_use = re.search(rf"(?<![A-Za-z_]){escaped}\s*\[", body) is not None
+
+        declared_type = "char" if width == 1 else "short" if width in {2, None} else "long"
+        c_decl_type = f"unsigned {declared_type}"
+
+        if members:
+            struct_name = f"_inertia_global_{_sanitize_identifier(name)}"
+            field_names = sorted(field for field in members if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field))
+            if not field_names:
+                field_names = ["value"]
+            declarations = [
+                f"    struct {struct_name} {{",
+                *[f"        {c_decl_type} {field};" for field in field_names],
+                f"    }};",
+                f"    extern struct {struct_name} {name}[1];",
+            ]
+            return declarations
+
+        if has_indexed_use:
+            return [f"    extern {c_decl_type} {name}[1];"]
+
+        return [f"    extern {c_decl_type} {name};"]
+
+    declared = _collect_declared_identifiers(lines)
+    declared |= {
         match.group("name")
         for line in lines
         for match in (
@@ -1442,6 +1607,36 @@ def _materialize_missing_synthetic_global_declarations_text(c_text: str) -> str:
         )
         if match is not None
     }
+
+    global_names = {
+        name
+        for name in getattr(metadata, "global_names", ())
+        if isinstance(name, str) and name
+    }
+    synthetic_names = {
+        global_name
+        for _addr, (global_name, _width) in (synthetic_globals or {}).items()
+        if isinstance(global_name, str) and global_name
+    }
+    candidate_names = global_names | synthetic_names
+
+    name_to_width: dict[str, int] = {}
+    if synthetic_globals:
+        for _addr, (global_name, width) in synthetic_globals.items():
+            if not isinstance(global_name, str) or not global_name or not isinstance(width, int):
+                continue
+            name_to_width[global_name] = max(name_to_width.get(global_name, 0), width)
+
+    if body_text:
+        candidate_names.update(_collect_global_usage_candidates_from_body(body_text, declared))
+
+    missing_synthetic = sorted(
+        name
+        for name in candidate_names
+        if name not in declared
+        and re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", body_text) is not None
+    )
+
     used: list[str] = []
     for line in lines:
         stripped = line.strip()
@@ -1451,10 +1646,38 @@ def _materialize_missing_synthetic_global_declarations_text(c_text: str) -> str:
             name = match.group("name")
             if name not in declared and name not in used:
                 used.append(name)
+
+        for name in missing_synthetic:
+            if name in used:
+                continue
+            if re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", line) is not None:
+                used.append(name)
+
+    for name in list(candidate_names):
+        if name in used or name in declared:
+            continue
+        if re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", "\n".join(lines)) is not None:
+            used.append(name)
+
+    if not used:
+        for name in sorted(candidate_names):
+            if name in declared:
+                continue
+            if re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", body_text) is None:
+                continue
+            used.append(name)
     if not used:
         return c_text
+
     insert_at = 0
+    function_found = False
     for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("/*", "//", "*")):
+            continue
+        function_found = True
         if re.match(r"\s*[A-Za-z_][\w\s\*]*\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*\{", line):
             insert_at = index
             break
@@ -1465,9 +1688,17 @@ def _materialize_missing_synthetic_global_declarations_text(c_text: str) -> str:
             if lookahead < len(lines) and lines[lookahead].strip().startswith("{"):
                 insert_at = index
                 break
-    else:
+
+    if not function_found:
         return c_text
-    declarations = [f"extern char {name};" for name in used]
+
+    declarations: list[str] = []
+    for name in used:
+        if name not in candidate_names:
+            continue
+        width = name_to_width.get(name)
+        declarations.extend(_infer_decl_for_global(name, width))
+
     if insert_at > 0 and lines[insert_at - 1].strip():
         declarations.append("")
     lines[insert_at:insert_at] = declarations
@@ -1494,23 +1725,22 @@ def _normalize_scalar_gb_array_declarations_text(c_text: str) -> str:
     if not names:
         return c_text
 
+    body_without_gb_decls = "\n".join(line for line in lines if decl_re.match(line) is None)
     changed = False
     for name, (idx, _size) in names.items():
         # Scalar usage evidence: arithmetic on the symbol itself (not indexing)
         scalar_use_re = re.compile(
-            rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+|-|\*|/|>>|<<|==|!=|<=|>=|<|>)"
-            rf"|(?:\+\+|--)\s*(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])"
-            rf"|(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+\+|--)"
+            rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])\s*(?:=|\+|-|\*|/|>>|<<|\||&|\^|==|!=|<=|>=|<|>)"
+            rf"|(?:\+\+|--)\s*(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])"
+            rf"|(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])\s*(?:\+\+|--)"
         )
-        indexed_use_re = re.compile(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*\[")
-        if indexed_use_re.search(c_text):
+        indexed_use_re = re.compile(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])\s*\[")
+        if indexed_use_re.search(body_without_gb_decls):
             continue
-        if scalar_use_re.search(c_text):
-            lines[idx] = re.sub(
-                rf"\bextern\s+char\s+{re.escape(name)}\s*\[\d+\]\s*;",
-                f"extern unsigned short {name};",
-                lines[idx],
-            )
+        assignment_use_re = re.compile(rf"(?m)^\s*{re.escape(name)}\s*=")
+        if scalar_use_re.search(body_without_gb_decls) or assignment_use_re.search(body_without_gb_decls):
+            indent = re.match(r"^\s*", lines[idx]).group(0)
+            lines[idx] = f"{indent}extern unsigned short {name};"
             changed = True
     if not changed:
         return c_text
@@ -1717,6 +1947,58 @@ def _repair_missing_cod_function_header_text(c_text: str, function, metadata: CO
         normalized += "\n"
     return normalized
 
+
+def _align_function_header_with_cod_source_decl_text(c_text: str, function, metadata: CODProcMetadata | None) -> str:
+    if metadata is None or function is None:
+        return c_text
+    func_name = getattr(function, "name", None)
+    if not isinstance(func_name, str) or not func_name:
+        return c_text
+    source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
+    if not source_decl:
+        return c_text
+
+    decl_match = re.match(
+        r"^(?P<ret>.+?)\s+(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^()]*)\)\s*;?\s*$",
+        source_decl.strip(),
+    )
+    if decl_match is None:
+        return c_text
+
+    source_name = decl_match.group("name").strip()
+    if source_name not in {func_name, func_name.lstrip("_")}:
+        return c_text
+
+    return_type = decl_match.group("ret").strip()
+    args = decl_match.group("args").strip()
+    if args == "void":
+        args = "void"
+    args = args.replace("const char*", "const char *").replace("char*", "char *")
+    return_type = return_type.replace("FAR *", "*").replace("FAR*", "*")
+    return_type = re.sub(r"\buint16\b", "unsigned short", return_type)
+    return_type = re.sub(r"\bint16\b", "short", return_type)
+    return_type = re.sub(r"\buint8\b", "unsigned char", return_type)
+    signature = f"{return_type} {func_name}({args})"
+
+    header_with_brace_re = re.compile(
+        rf"^(?P<indent>\s*)[A-Za-z_][\w\s\*\[\]]*?\s+{re.escape(func_name)}\s*\([^)]*\)\s*\{{\s*$",
+        re.MULTILINE,
+    )
+    match = header_with_brace_re.search(c_text)
+    if match is not None:
+        replacement = f"{match.group('indent')}{signature}\n{match.group('indent')}{{"
+        return c_text[: match.start()] + replacement + c_text[match.end() :]
+
+    header_re = re.compile(
+        rf"^(?P<indent>\s*)[A-Za-z_][\w\s\*\[\]]*?\s+{re.escape(func_name)}\s*\([^)]*\)\s*$",
+        re.MULTILINE,
+    )
+    match = header_re.search(c_text)
+    if match is None:
+        return c_text
+    replacement = f"{match.group('indent')}{signature}"
+    return c_text[: match.start()] + replacement + c_text[match.end() :]
+
 def _render_cod_source_function_text(function, metadata: CODProcMetadata | None) -> str | None:
     if metadata is None or function is None:
         return None
@@ -1773,6 +2055,10 @@ def _render_cod_source_function_text(function, metadata: CODProcMetadata | None)
             continue
         if idx == source_decl_index:
             stripped = re.sub(rf"\b{re.escape(source_name)}\b", func_name, stripped, count=1)
+            stripped = re.sub(rf"\b{re.escape(func_name)}\s+\(", f"{func_name}(", stripped, count=1)
+            if func_name.startswith("_"):
+                stripped = re.sub(rf"^\s*{re.escape(func_name)}\s*\(", f"int {func_name}(", stripped, count=1)
+                stripped = re.sub(r"\(\s*\)", "(void)", stripped, count=1)
         rebuilt_function_lines.append(stripped)
     return "\n".join(rebuilt_function_lines) + "\n"
 
@@ -2181,12 +2467,17 @@ def _materialize_opaque_pointer_typedefs_text(c_text: str) -> str:
     return normalized
 
 def _sanitize_mangled_autonames_text(c_text: str) -> str:
-    token_re = re.compile(r"\b(?:(?P<sub>sub_[0-9a-f]+)sub_[0-9a-f]+|(?P<dos>dos_int[0-9]+)sub_[0-9a-f]+)\b")
+    token_re = re.compile(
+        r"\b(?:(?P<sub>sub_[0-9a-f]+)sub_[0-9a-f]+|(?P<dos>dos_int[0-9]+)sub_[0-9a-f]+|(?P<dos_dup>dos_int[0-9]+)_[0-9]+)\b"
+    )
 
     def _replace(match: re.Match[str]) -> str:
-        return match.group("sub") or match.group("dos") or match.group(0)
+        return match.group("sub") or match.group("dos") or match.group("dos_dup") or match.group(0)
 
     return token_re.sub(_replace, c_text)
+
+def _strip_register_fragment_suffixes_text(c_text: str) -> str:
+    return re.sub(r"(?<![A-Za-z_])([A-Za-z_]\w*)\{r\d+\|\d+b\}(?![A-Za-z0-9_])", r"\1", c_text)
 
 
 def _align_unknown_call_names_from_cod_evidence_text(c_text: str) -> str:
@@ -3440,9 +3731,18 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
         assign_re = re.compile(
             rf"^(?P<indent>\s*)(?P<name>{staging_name_pattern})(?:\{{[^}}]+\}})?\s*=\s*(?P<rhs>[^;]+);\s*$"
         )
+        generic_assign_re = re.compile(
+            r"^(?P<indent>\s*)(?P<name>[A-Za-z_]\w*)(?:\{[^}]+\})?\s*=\s*(?P<rhs>[^;]+);\s*$"
+        )
+        raw_register_frag_re = re.compile(r"\{r\d+\|\d+b\}")
         self_addr_assign_re = re.compile(
             r"^\s*(?P<name>[A-Za-z_]\w*)\s*=\s*&\s*(?P=name)\s*;\s*$"
         )
+        ident_re = re.compile(r"\b[A-Za-z_]\w*\b")
+        ident_use_counts: dict[str, int] = {}
+        for line in lines:
+            for ident in ident_re.findall(line):
+                ident_use_counts[ident] = ident_use_counts.get(ident, 0) + 1
         used_names: dict[str, int] = {}
         for line in lines:
             if staging_name_re.search(line) is None:
@@ -3472,6 +3772,14 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
                 continue
             match = assign_re.match(stripped)
             if match is None:
+                generic_match = generic_assign_re.match(stripped)
+                if generic_match is not None and raw_register_frag_re.search(generic_match.group("rhs")) is not None:
+                    lhs_name = generic_match.group("name")
+                    # If the assignment's LHS never appears elsewhere, this is
+                    # a dead carrier of raw register-fragment text.
+                    if ident_use_counts.get(lhs_name, 0) <= 2:
+                        changed = True
+                        continue
                 kept_lines.append(line)
                 continue
             name = match.group("name")
@@ -3484,6 +3792,121 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
         if not changed or updated == current:
             return updated
         current = updated
+
+def _prune_parameter_shadow_declarations_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    header_re = re.compile(
+        r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
+    )
+    decl_re = re.compile(
+        r"^(?P<indent>\s*)(?:[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?://.*)?$"
+    )
+    out = list(lines)
+    idx = 0
+    changed = False
+    while idx < len(out):
+        m = header_re.match(out[idx])
+        if m is None:
+            idx += 1
+            continue
+        arg_names: set[str] = set()
+        args_text = m.group("args").strip()
+        if args_text and args_text != "void":
+            for part in args_text.split(","):
+                part = part.strip()
+                mm = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", part)
+                if mm is not None:
+                    arg_names.add(mm.group(1))
+        if not arg_names:
+            idx += 1
+            continue
+        brace_idx = idx
+        while brace_idx < len(out) and "{" not in out[brace_idx]:
+            brace_idx += 1
+        if brace_idx >= len(out):
+            idx += 1
+            continue
+        body_start = brace_idx + 1
+        body_end = body_start
+        depth = out[brace_idx].count("{") - out[brace_idx].count("}")
+        while body_end < len(out) and depth > 0:
+            depth += out[body_end].count("{") - out[body_end].count("}")
+            body_end += 1
+        scan = body_start
+        while scan < body_end:
+            stripped = out[scan].strip()
+            if not stripped:
+                scan += 1
+                continue
+            dm = decl_re.match(out[scan])
+            if dm is None:
+                break
+            name = dm.group("name")
+            if name in arg_names:
+                del out[scan]
+                body_end -= 1
+                changed = True
+                continue
+            scan += 1
+        idx = body_end
+    if not changed:
+        return c_text
+    normalized = "\n".join(out)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+def _prune_undefined_fragment_carrier_assignments_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    ident_re = re.compile(r"\b[A-Za-z_]\w*\b")
+    assign_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z_]\w*)\s*=\s*(?P<rhs>vvar_\d+(?:\{r\d+\|\d+b\})?)\s*;\s*$"
+    )
+    decl_re = re.compile(
+        r"^(?P<indent>\s*)(?:[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?://.*)?$"
+    )
+    declared: set[str] = set()
+    for line in lines:
+        dm = decl_re.match(line)
+        if dm is not None:
+            declared.add(dm.group("name"))
+    lhs_assign_re = re.compile(r"^\s*(?P<lhs>[A-Za-z_]\w*)\s*=\s*.*;\s*$")
+    read_usage: dict[str, int] = {}
+    for line in lines:
+        dm = decl_re.match(line)
+        if dm is not None:
+            continue
+        lhs_name: str | None = None
+        lm = lhs_assign_re.match(line)
+        if lm is not None:
+            lhs_name = lm.group("lhs")
+        for name in ident_re.findall(line):
+            if lhs_name is not None and name == lhs_name:
+                continue
+            read_usage[name] = read_usage.get(name, 0) + 1
+    out: list[str] = []
+    changed = False
+    for line in lines:
+        am = assign_re.match(line.strip())
+        if am is None:
+            out.append(line)
+            continue
+        lhs = am.group("lhs")
+        rhs = am.group("rhs").split("{", 1)[0]
+        if rhs not in declared and read_usage.get(lhs, 0) == 0:
+            changed = True
+            continue
+        out.append(line)
+    if not changed:
+        return c_text
+    normalized = "\n".join(out)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
 
 
 def _prune_non_lvalue_arithmetic_assignments(c_text: str) -> str:
@@ -3510,6 +3933,49 @@ def _prune_non_lvalue_arithmetic_assignments(c_text: str) -> str:
             continue
         kept.append(line)
     return "\n".join(kept)
+
+
+def _normalize_seg_offset_void_pointer_args_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    header_re = re.compile(
+        r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>\{?)\s*$"
+    )
+    changed = False
+    for idx, line in enumerate(lines):
+        m = header_re.match(line)
+        if m is None:
+            continue
+        args = m.group("args")
+        if "void*" not in args:
+            continue
+        body = "\n".join(lines[idx + 1 :])
+        rewritten = args
+        for am in re.finditer(r"\bvoid\s*\*\s*(?P<arg>[A-Za-z_]\w*)\b", args):
+            arg_name = am.group("arg")
+            used_as_seg_off = re.search(
+                rf"\bSEG_U(?:8|16|32)\s*\([^,\n]+,\s*[^)\n]*\b{re.escape(arg_name)}\b",
+                body,
+            )
+            if used_as_seg_off is None:
+                continue
+            rewritten = re.sub(
+                rf"\bvoid\s*\*\s*{re.escape(arg_name)}\b",
+                f"unsigned short {arg_name}",
+                rewritten,
+            )
+        if rewritten == args:
+            continue
+        suffix = m.group("suffix")
+        lines[idx] = f"{m.group('indent')}{m.group('ret')} {m.group('name')}({rewritten}){(' ' + suffix) if suffix else ''}"
+        changed = True
+    if not changed:
+        return c_text
+    normalized = "\n".join(lines)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
 
 
 def _normalize_shift_add_precedence_in_assignments(c_text: str) -> str:
@@ -3881,10 +4347,17 @@ def _format_known_helper_calls(
     if declarations:
         c_text = "\n".join(declarations) + "\n\n" + c_text
     c_text = _rewrite_known_helper_signature_text(c_text, function)
+    c_text = _align_function_header_with_cod_source_decl_text(c_text, function, cod_metadata)
     c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
-    return _repair_missing_fallthrough_returns(c_text)
+    return _repair_missing_fallthrough_returns(c_text).rstrip("\n")
 
 def _repair_missing_fallthrough_returns(c_text: str) -> str:
+    c_text = re.sub(
+        r"(?m)^(?P<indent>\s*)if \((?P<cond>[^\n]+)\)\s*(?=\n\s*(?:\}|$))",
+        r"\g<indent>if (\g<cond>);",
+        c_text,
+    )
+
     header_re = re.compile(
         r"^(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^;]*)\)\s*(?:\{)?$"
     )
@@ -3993,10 +4466,15 @@ def _normalize_boolean_conditions(c_text: str) -> str:
 
     rewritten = compound_pattern.sub(_rewrite_compound, rewritten)
 
-    # Repair empty if-body rendering gap: if (false) with no body before } or EOF
+    # Repair empty if-body rendering gaps before } or EOF.
     rewritten = re.sub(
         r"(?m)^(?P<indent>\s*)if \(false\)\s*$",
         r"\g<indent>if (0);",
+        rewritten,
+    )
+    rewritten = re.sub(
+        r"(?m)^(?P<indent>\s*)if \((?P<cond>[^\n]+)\)\s*(?=\n\s*(?:\}|$))",
+        r"\g<indent>if (\g<cond>);",
         rewritten,
     )
     return rewritten

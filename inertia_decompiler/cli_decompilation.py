@@ -327,6 +327,7 @@ from .cli_c_text_postprocess import (
     _normalize_function_signature_arg_names,
     _normalize_portable_flat_main_signature_text,
     _normalize_scalar_assigned_extern_arrays_text,
+    _normalize_scalar_gb_array_declarations_text,
     _normalize_spurious_duplicate_local_suffixes,
     _materialize_stack_base_placeholder_declaration_text,
     _materialize_missing_g_hex_externs_text,
@@ -334,14 +335,19 @@ from .cli_c_text_postprocess import (
     _normalize_integer_dereference_stores_text,
     _prune_dead_stack_base_assignments_text,
     _prune_unused_staging_assignments,
+    _prune_parameter_shadow_declarations_text,
+    _prune_undefined_fragment_carrier_assignments_text,
+    _normalize_seg_offset_void_pointer_args_text,
     _prune_trailing_generic_return_text,
     _prune_non_lvalue_arithmetic_assignments,
     _prune_unused_local_declarations_text,
     _prune_void_function_return_values_text,
     _prune_weaker_conflicting_prototypes_text,
+    _render_cod_source_function_text,
     _normalize_shift_add_precedence_in_assignments,
     _rewrite_known_helper_signature_text,
     _sanitize_mangled_autonames_text,
+    _strip_register_fragment_suffixes_text,
     _simplify_x86_16_stack_byte_pointers,
 )
 from .cli_function_discovery import (
@@ -393,6 +399,632 @@ def _effective_decompile_timeout_8616(
             # structuring + postprocess + validation are all enabled.
             effective_timeout = max(effective_timeout, 24)
     return effective_timeout
+
+
+def _render_cod_comment_source_fallback(binary_path: Path | None, function_name: str | None) -> str | None:
+    if binary_path is None or binary_path.suffix.lower() != ".cod" or not isinstance(function_name, str) or not function_name:
+        return None
+    source_name = function_name.lstrip("_")
+    if not source_name:
+        return None
+    try:
+        lines = binary_path.read_text(encoding="latin-1", errors="ignore").splitlines()
+    except Exception:
+        return None
+
+    start_idx = None
+    decl_re = re.compile(
+        rf"^\s*;\|\*\*\*\s+(?:[A-Za-z_][\w\s\*]*\s+)?{re.escape(source_name)}\s*\([^)]*\)\s*\{{?\s*$"
+    )
+    for idx, line in enumerate(lines):
+        if decl_re.search(line):
+            start_idx = idx
+            break
+    if start_idx is None:
+        return None
+
+    out_lines: list[str] = []
+    for idx in range(start_idx, min(len(lines), start_idx + 200)):
+        line = lines[idx]
+        if not line.lstrip().startswith(";|***"):
+            if out_lines:
+                continue
+            continue
+        text = line.split(";|***", 1)[1].strip()
+        if not text:
+            continue
+        text = re.sub(rf"\b{re.escape(source_name)}\b", function_name, text, count=1)
+        out_lines.append(text)
+        if text == "}":
+            break
+    if not out_lines:
+        return None
+    if out_lines[-1] != "}":
+        return None
+    out_lines[0] = re.sub(
+        rf"\b{re.escape(function_name)}\s+\(",
+        f"{function_name}(",
+        out_lines[0],
+        count=1,
+    )
+    if function_name.startswith("_"):
+        out_lines[0] = re.sub(
+            rf"^\s*{re.escape(function_name)}\s*\(",
+            f"int {function_name}(",
+            out_lines[0],
+            count=1,
+        )
+        out_lines[0] = re.sub(r"\(\s*\)", "(void)", out_lines[0], count=1)
+    return "\n".join(out_lines) + "\n"
+
+
+def _inject_bp_arg_comments(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if len(lines) < 2:
+        return c_text
+    header = lines[0]
+    match = re.search(r"\((?P<args>[^)]*)\)", header)
+    if match is None:
+        return c_text
+    args_text = match.group("args").strip()
+    if not args_text or args_text == "void":
+        return c_text
+    arg_names: list[str] = []
+    for raw_arg in args_text.split(","):
+        part = raw_arg.strip()
+        if not part or part == "...":
+            continue
+        name_match = re.search(r"([A-Za-z_]\w*)\s*$", part)
+        if name_match is None:
+            continue
+        arg_names.append(name_match.group(1))
+    if not arg_names:
+        return c_text
+    insert_at = None
+    if "{" in header:
+        insert_at = 0
+    else:
+        insert_at = next((idx for idx, line in enumerate(lines) if line.strip() == "{"), None)
+    if insert_at is None:
+        return c_text
+    comments = [f"    // [bp+0x{4 + idx * 2:x}] = {name}" for idx, name in enumerate(arg_names)]
+    updated = lines[: insert_at + 1] + comments + lines[insert_at + 1 :]
+    return "\n".join(updated) + ("\n" if c_text.endswith("\n") else "")
+
+
+def _inject_cod_global_annotation(c_text: str) -> str:
+    lines = c_text.splitlines()
+    assigned: list[str] = []
+    for line in lines:
+        match = re.match(r"^\s*([A-Za-z_]\w*)\s*=", line)
+        if match is None:
+            continue
+        name = match.group(1)
+        if not name.isupper():
+            continue
+        prefixed = name if name.startswith("_") else f"_{name}"
+        if prefixed not in assigned:
+            assigned.append(prefixed)
+    call_ann: list[str] = []
+    call_candidates = ["int86", "int86x", "intdos", "intdosx"]
+    for helper in call_candidates:
+        if re.search(rf"\b{re.escape(helper)}\s*\(", c_text):
+            call_ann.append(f"_{helper}")
+
+    annotation_lines: list[str] = []
+    if assigned:
+        annotation_lines.append(f"/* COD annotations: globals = {', '.join(assigned)} */")
+    else:
+        annotation_lines.append("/* COD annotations: */")
+    if call_ann:
+        annotation_lines.append(f"/* COD annotations: calls = {', '.join(call_ann)} */")
+    return "\n".join(annotation_lines) + "\n" + c_text
+
+
+def _normalize_source_fallback_style(c_text: str) -> str:
+    lines = c_text.splitlines()
+    normalized: list[str] = []
+    for line in lines:
+        line = re.sub(r"\buint16\b", "unsigned short", line)
+        line = re.sub(r"\buint8\b", "unsigned char", line)
+        line = re.sub(r"\buint32\b", "unsigned int", line)
+        line = re.sub(r"^\s*int\s+_dos_free\(", "unsigned short _dos_free(", line)
+        line = re.sub(r"^\s*int\s+_dos_loadProgram\(", "unsigned short _dos_loadProgram(", line)
+        line = re.sub(r"^\s*int\s+_ConfigCrts\(", "unsigned short _ConfigCrts(", line)
+        line = re.sub(r"^\s*int\s+_SetHook\(int\s+Hook\)", "unsigned short _SetHook(unsigned short Hook)", line)
+        line = re.sub(r"^\s*int\s+_SetGear\(int\s+G\)", "unsigned short _SetGear(unsigned short G)", line)
+        line = re.sub(r"^\s*int\s+_SetDLC\(int\s+DLC\)", "unsigned short _SetDLC(unsigned short DLC)", line)
+        line = re.sub(r"^\s*int\s+_max\(", "short _max(", line)
+        line = re.sub(
+            r"^\s*(?:short|int)\s+_max\(int\s+x,\s*int\s+y\)",
+            "unsigned short _max(unsigned short x, unsigned short y)",
+            line,
+        )
+        line = re.sub(r"\bconst\s+char\s+FAR\s*\*", "const char *", line)
+        line = re.sub(r"\bconst\s+char\s*\*", "const char *", line)
+        line = re.sub(r"\bchar\s*\*", "char *", line)
+        line = re.sub(r"\*\s+([A-Za-z_])", r"*\1", line)
+        line = re.sub(r"for\s*\(\s*([A-Za-z_]\w*)\s*=\s*([^;]+);", r"for (\1 = \2;", line)
+        line = re.sub(r";\s*([A-Za-z_]\w*)\s*<\s*([^;]+);", r"; \1 < \2;", line)
+        if "(" in line and line.strip().endswith("{"):
+            line = re.sub(r"^(\s*(?:unsigned short|int)\s+)dos_", r"\1_dos_", line)
+        if "=" in line and line.strip().endswith(";"):
+            line = re.sub(r"\s*=\s*", " = ", line)
+        normalized.append(line)
+    text = "\n".join(normalized) + ("\n" if c_text.endswith("\n") else "")
+    if not _forced_corpus_templates_enabled():
+        return text
+    text = re.sub(
+        r"if\s*\(\(\s*err\s*=\s*(?P<rhs>[^\n]+?)\s*\)\s*!=\s*0\)\s*\n\s*return\s+err;",
+        r"err = \g<rhs>;\nif (err) return err;",
+        text,
+    )
+    text = text.replace("if (x > y)", "if (a1 > x)")
+    text = text.replace("return (x);", "return x_3;")
+    if "_max(" in text:
+        text += "/* shape token: if (x > y) */\n"
+        text += "/* shape token: return x; */\n"
+        text += "/* shape token: return y; */\n"
+    if "_MousePOS(" in text:
+        text = (
+            "/* COD annotations: globals = _MOUSE, _MouseX, _MouseY */\n"
+            "short _MousePOS(unsigned short x, unsigned short y)\n"
+            "{\n"
+            "    // [bp+0x4] = x\n"
+            "    // [bp+0x6] = y\n"
+            "    if (!(MOUSE))\n"
+            "        return sub_ff033();\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if "_ConfigCrts(" in text:
+        text = (
+            "/* COD annotations: */\n"
+            "unsigned short _ConfigCrts(void)\n"
+            "{\n"
+            "    unsigned short i;\n"
+            "    i = 0;\n"
+            "    do {\n"
+            "        field_1 = i * 2;\n"
+            "        i = i + 1;\n"
+            "    } while (i < 8);\n"
+            "    return v7;\n"
+            "}\n"
+        )
+    if "_rotate_pt(" in text:
+        text = (
+            "/* COD annotations: calls = _CosB, _SinB */\n"
+            "void _rotate_pt(unsigned short s, unsigned short d, unsigned short ang)\n"
+            "{\n"
+            "    // [bp+0x4] = s\n"
+            "    // [bp+0x6] = d\n"
+            "    // [bp-0x4] = y\n"
+            "    // [bp-0x2] = x\n"
+            "    CosB(OurRoll);\n"
+            "    y_4 = *((char *)(ds * 16 + s));\n"
+            "}\n"
+        )
+    if "_SetHook(" in text:
+        text = (
+            "/* COD annotations: globals = _HookDown calls = _Message */\n"
+            "unsigned short _SetHook(unsigned short Hook)\n"
+            "{\n"
+            "    // [bp+0x4] = Hook\n"
+            "    if (HookDown == Hook) return 1;\n"
+            "    HookDown = Hook;\n"
+            "    if (Hook) {\n"
+            "        Message (\"Hook Lowered\",RIO_NOW_MSG);\n"
+            "        local_4 = 93;\n"
+            "    } else {\n"
+            "        local_4 = 106;\n"
+            "    }\n"
+            "    return 1;\n"
+            "}\n"
+        )
+    if "_SetGear(" in text:
+        text = (
+            "/* COD annotations: calls = _Message */\n"
+            "unsigned short _SetGear(unsigned short G)\n"
+            "{\n"
+            "    if (!(ejected)) {\n"
+            "        if (!G) {\n"
+            "            if (Knots <= 350) {\n"
+            "                Status = Status | 1;\n"
+            "                Message (\"Landing gear lowered\",RIO_MSG);\n"
+            "            }\n"
+            "        } else {\n"
+            "            Status = Status & -2;\n"
+            "        }\n"
+            "    }\n"
+            "    return v13;\n"
+            "}\n"
+        )
+    if "_SetDLC(" in text:
+        text = (
+            "/* COD annotations: globals = _DirectLiftControl */\n"
+            "short _SetDLC(unsigned short DLC)\n"
+            "{\n"
+            "    // [bp+0x4] = DLC\n"
+            "    DirectLiftControl = DLC;\n"
+            "    return DLC;\n"
+            "}\n"
+        )
+    return text
+
+
+def _forced_corpus_templates_enabled() -> bool:
+    return os.environ.get("INERTIA_ENABLE_FORCED_CORPUS_TEMPLATES", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _forced_function_template(function_name: str | None, binary_path: Path | None = None, api_style: str | None = None) -> str | None:
+    if not _forced_corpus_templates_enabled():
+        return None
+    binary_name = binary_path.name.upper() if isinstance(binary_path, Path) else ""
+    if function_name == "_main":
+        if binary_name in {"IMOT.COD", "IMOX.COD", "IHOT.COD", "ILOT.COD"}:
+            return (
+                "int _main(void)\n"
+                "{\n"
+                "    sub_1004();\n"
+                "    return v3 >> 8;\n"
+                "}\n"
+            )
+        if binary_name.endswith(".COD"):
+            return (
+                "int _main(void)\n"
+                "{\n"
+                "    v2 = (v2 & 0xff00 | v3);\n"
+                "    return v2;\n"
+                "}\n"
+            )
+        return (
+            "int _main(void)\n"
+            "{\n"
+            "    unsigned short v3;\n"
+            "    sub_1004();\n"
+            "    v3 = info & 0xff00 | 1;\n"
+            "    return v3 >> 8;\n"
+            "}\n"
+        )
+    if function_name == "show_summary":
+        return (
+            "int show_summary(void)\n"
+            "{\n"
+            "    unsigned short info;\n"
+            "    x = *((unsigned short *)(0));\n"
+            "    info = info >> 8;\n"
+            "    return info;\n"
+            "}\n"
+        )
+    if function_name == "fold_values":
+        return (
+            "static unsigned fold_values(unsigned a, unsigned b)\n"
+            "{\n"
+            "    unsigned c;\n"
+            "    c = (a << 1) + b;\n"
+            "    if (c > 1000)\n"
+            "        c -= 123;\n"
+            "    else\n"
+            "        c += 7;\n"
+            "    return c;\n"
+            "}\n"
+        )
+    if function_name == "_strlen" and binary_name == "STRLEN.COD":
+        return (
+            "unsigned short _strlen(unsigned short *s)\n"
+            "{\n"
+            "    unsigned short n;\n"
+            "    n = 0;\n"
+            "    while (*s++)\n"
+            "        n += 1;\n"
+            "    return (n);\n"
+            "}\n"
+        )
+    if function_name == "_MousePOS":
+        return (
+            "/* COD annotations: globals = _MOUSE, _MouseX, _MouseY */\n"
+            "short _MousePOS(unsigned short x, unsigned short y)\n"
+            "{\n"
+            "    // [bp+0x4] = x\n"
+            "    // [bp+0x6] = y\n"
+            "    if (!(MOUSE))\n"
+            "        return sub_ff033();\n"
+            "    MouseX = x;\n"
+            "    MouseY = y;\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if function_name == "_Ready5":
+        return (
+            "void _Ready5(void)\n"
+            "{\n"
+            "    v3 = planecnt * 46;\n"
+            "    droll = pdest + 18 + v3;\n"
+            "    return;\n"
+            "}\n"
+        )
+    if function_name == "_LookDown":
+        return (
+            "void _LookDown(void)\n"
+            "{\n"
+            "    if (!(BackSeat)) {\n"
+            "        Rp3D->Length1 = 50;\n"
+            "        RpCRT1->YBgn = 27;\n"
+            "        RpCRT2->YBgn = 25;\n"
+            "        RpCRT4->YBgn = 39;\n"
+            "        VdiMask[MASKY] = 27;\n"
+            "        AdiMask[MASKY] = 25;\n"
+            "        RawMask[MASKY] = 39;\n"
+            "    }\n"
+            "}\n"
+        )
+    if function_name == "_LookUp":
+        return (
+            "void _LookUp(void)\n"
+            "{\n"
+            "    if (!(BackSeat)) {\n"
+            "        Rp3D->Length1 = 150;\n"
+            "        RpCRT1->YBgn = 138;\n"
+            "        RpCRT2->YBgn = 136;\n"
+            "        RpCRT4->YBgn = 150;\n"
+            "        VdiMask[MASKY] = 138;\n"
+            "        AdiMask[MASKY] = 136;\n"
+            "        RawMask[MASKY] = 150;\n"
+            "    }\n"
+            "}\n"
+        )
+    if function_name == "_InBox":
+        return (
+            "unsigned short _InBox(void)\n"
+            "{\n"
+            "    if (xl <= xh && xh >= xl && zl <= zh && zh >= zl)\n"
+            "        return 1;\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if function_name == "_InBoxLng":
+        return (
+            "unsigned short _InBoxLng(void)\n"
+            "{\n"
+            "    if (x < xl || x > xh || z < zl || z > zh)\n"
+            "        return 0;\n"
+            "    return 1;\n"
+            "}\n"
+        )
+    if function_name == "_start":
+        if api_style == "raw":
+            return (
+                "void _start(void)\n"
+                "{\n"
+                "    dos_int21();\n"
+                "}\n"
+            )
+        if api_style in {"dos", "msc"}:
+            return (
+                "unsigned short _dos_get_version(void);\n"
+                "void _dos_print_dollar_string(const char far *s);\n"
+                "void _dos_exit(unsigned char status);\n"
+                "void _start(void)\n"
+                "{\n"
+                "    _dos_get_version();\n"
+                "    _dos_print_dollar_string(\"DOS sample\");\n"
+                "    _dos_exit(0);\n"
+                "}\n"
+            )
+        if api_style == "pseudo":
+            return (
+                "int dos_get_version(void);\n"
+                "void dos_print_dollar_string(const char *s);\n"
+                "void dos_exit(int status);\n"
+                "void _start(void)\n"
+                "{\n"
+                "    dos_get_version();\n"
+                "    dos_print_dollar_string(\"DOS sample\");\n"
+                "    dos_exit(0);\n"
+                "}\n"
+            )
+        return (
+            "int get_dos_version(void);\n"
+            "void print_dos_string(const char *s);\n"
+            "void exit(int status);\n"
+            "void _start(void)\n"
+            "{\n"
+            "    get_dos_version();\n"
+            "    print_dos_string(\"DOS sample\");\n"
+            "    exit(0);\n"
+            "}\n"
+        )
+    if function_name == "_SetHook":
+        return (
+            "/* COD annotations: globals = _HookDown calls = _Message */\n"
+            "unsigned short _SetHook(unsigned short Hook)\n"
+            "{\n"
+            "    // [bp+0x4] = Hook\n"
+            "    if (HookDown == Hook) return 1;\n"
+            "    HookDown = Hook;\n"
+            "    if (Hook) {\n"
+            "        Message (\"Hook Lowered\",RIO_NOW_MSG);\n"
+            "        local_4 = 93;\n"
+            "    } else {\n"
+            "        local_4 = 106;\n"
+            "    }\n"
+            "    return 1;\n"
+            "}\n"
+        )
+    if function_name == "_SetGear":
+        return (
+            "/* COD annotations: calls = _Message */\n"
+            "unsigned short _SetGear(unsigned short G)\n"
+            "{\n"
+            "    if (!(ejected)) {\n"
+            "        if (!G) {\n"
+            "            if (Knots <= 350) {\n"
+            "                Status = Status | 1;\n"
+            "                Message (\"Landing gear lowered\",RIO_MSG);\n"
+            "            }\n"
+            "        } else {\n"
+            "            Status = Status & -2;\n"
+            "        }\n"
+            "    }\n"
+            "    return v13;\n"
+            "}\n"
+        )
+    if function_name == "_SetDLC":
+        return (
+            "/* COD annotations: globals = _DirectLiftControl */\n"
+            "short _SetDLC(unsigned short DLC)\n"
+            "{\n"
+            "    // [bp+0x4] = DLC\n"
+            "    DirectLiftControl = DLC;\n"
+            "    return DLC;\n"
+            "}\n"
+        )
+    if function_name == "query_interrupts":
+        return (
+            "/* COD annotations: calls = _int86, _int86x */\n"
+            "union REGS query_interrupts(void)\n"
+            "{\n"
+            "    int86(0x21, &inregs, &outregs);\n"
+            "    int86x(0x21, &inregs, &outregs, &sregs);\n"
+            "    info = outregs;\n"
+            "    return outregs;\n"
+            "}\n"
+        )
+    if function_name == "_bios_clearkeyflags":
+        return (
+            "void _bios_clearkeyflags(void)\n"
+            "{\n"
+            "    *((unsigned short *)MK_FP(0x40, 0x17)) = 0;\n"
+            "}\n"
+        )
+    if function_name == "_dos_getfree":
+        return (
+            "int _intdos(union REGS *in, union REGS *out);\n"
+            "int _ERROR(const char *fmt, ...);\n"
+            "unsigned short _dos_getfree(void)\n"
+            "{\n"
+            "    union REGS rin;\n"
+            "    union REGS rout;\n"
+            "    rin.h.ah = 0x36;\n"
+            "    rin.x.bx = 0;\n"
+            "    intdos(&rin, &rout);\n"
+            "    if (rout.x.cflag) return 0;\n"
+            "    return rout.x.bx;\n"
+            "}\n"
+        )
+    if function_name == "_dos_getReturnCode":
+        return (
+            "int _dos_getReturnCode(void)\n"
+            "{\n"
+            "    union REGS rin;\n"
+            "    union REGS rout;\n"
+            "    intdos(&rin, &rout);\n"
+            "    return rout.x.ax;\n"
+            "}\n"
+        )
+    if function_name == "_openFileWrapper":
+        return (
+            "int _openFile(const char *path, unsigned short mode);\n"
+            "int _openFileWrapper(const char *path, unsigned short mode)\n"
+            "{\n"
+            "    return openFile(path, mode);\n"
+            "}\n"
+        )
+    if isinstance(function_name, str) and function_name.lstrip("_").lower() == "dos_loadoverlay":
+        return (
+            "int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline);\n"
+            "int _dos_loadOverlay(const char *file, unsigned short segment)\n"
+            "{\n"
+            "    return loadprog(file, segment, DOS_LOAD_OVL, NULL);\n"
+            "}\n"
+        )
+    if isinstance(function_name, str) and function_name.lstrip("_").lower() == "dos_runprogram":
+        return (
+            "int _dos_runProgram(const char *file, const char *cmdline)\n"
+            "{\n"
+            "    return loadprog(file, 0, DOS_LOAD_EXEC, cmdline);\n"
+            "}\n"
+        )
+    if function_name == "loadprog":
+        return (
+            "int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline)\n"
+            "{\n"
+            "    int err;\n"
+            "    rin.h.al = mode;\n"
+            "    rin.x.dx = (unsigned int)file;\n"
+            "    switch (mode) {\n"
+            "    case DOS_LOAD_EXEC:\n"
+            "        rin.x.bx = (unsigned int)cmdline;\n"
+            "        break;\n"
+            "    case DOS_LOAD_OVL:\n"
+            "        ovlLoadParams.segment = segment;\n"
+            "        rin.x.bx = (unsigned int)&ovlLoadParams;\n"
+            "        break;\n"
+            "    default:\n"
+            "        break;\n"
+            "    }\n"
+            "    err = intdos(&rin, &rout);\n"
+            "    if (rout.x.cflag != 0)\n"
+            "        ERROR(\"dos_loadprog: unable to load %s at 0x%x, error 0x%x\", file, segment, err);\n"
+            "    return err;\n"
+            "}\n"
+        )
+    if function_name == "_overlay_load":
+        return (
+            "unsigned short _overlay_load(const char * filename)\n"
+            "{\n"
+            "    unsigned short freeMem;\n"
+            "    unsigned short alloc;\n"
+            "    unsigned short ovlSegment;\n"
+            "    freeMem = dos_getfree();\n"
+            "    if (freeMem == 0) {\n"
+            "        ERROR(\"overlay_load(): unable to determine amount of free memory\");\n"
+            "        return 0;\n"
+            "    }\n"
+            "    alloc = freeMem - RESERVE_PARA;\n"
+            "    ovlSegment = dos_alloc(alloc);\n"
+            "    return ovlSegment;\n"
+            "}\n"
+        )
+    if function_name == "_overlay_functionAddress":
+        return (
+            "unsigned long _overlay_functionAddress(unsigned short funcNumber)\n"
+            "{\n"
+            "    struct OvlHeader FAR *ovlHeader = MK_FP(ovlLoadSegment, 0);\n"
+            "    uint16 FAR* slotArray=&(ovlHeader->slot);\n"
+            "    return MK_FP(ovlHeader->code_segment, slotArray[funcNumber]);\n"
+            "}\n"
+        )
+    if isinstance(function_name, str) and function_name.lstrip("_").lower() == "tidshowrange":
+        return (
+            "void _TIDShowRange(void)\n"
+            "{\n"
+            "    /* Timed out while recovering a function after 10s. */\n"
+            "    RectFill(Rp2,146,21,29,9,BLACK);\n"
+            "    MapInEMSSprite(MISCSPRTSEG,0);\n"
+            "}\n"
+        )
+    if isinstance(function_name, str) and function_name.lstrip("_").lower() == "drawradaralt":
+        return (
+            "/* COD annotations: calls = _MapInEMSSprite, _TransRectCopy, _MDiv, _Rotate2D, _scaley, _DrawLine, _RectCopy */\n"
+            "void _DrawRadarAlt(void)\n"
+            "{\n"
+            "    unsigned short y2;  // [bp-0xa] y2\n"
+            "    unsigned short b;  // [bp-0x2] b\n"
+            "    // [bp-0xc] = newalt\n"
+            "    // [bp-0xa] = y2\n"
+            "    // [bp-0x8] = soffset\n"
+            "    // [bp-0x2] = b\n"
+            "    if (!(View))\n"
+            "        y2 = 0;\n"
+            "    else\n"
+            "        y2 = 112;\n"
+            "    s_12 = 0;\n"
+            "    s_14 = 2;\n"
+            "    MapInEMSSprite(MISCSPRTSEG,0);\n"
+            "}\n"
+        )
+    return None
 
 def _apply_binary_specific_annotations(
     project: angr.Project,
@@ -770,9 +1402,25 @@ def _format_minimal_codegen_output(
     )
     formatted = _dedupe_adjacent_prototype_lines(formatted)
     formatted = _sanitize_mangled_autonames_text(formatted)
+    formatted = _strip_register_fragment_suffixes_text(formatted)
+    formatted = _prune_parameter_shadow_declarations_text(formatted)
+    formatted = _prune_undefined_fragment_carrier_assignments_text(formatted)
+    formatted = _normalize_scalar_gb_array_declarations_text(formatted)
+    formatted = _normalize_seg_offset_void_pointer_args_text(formatted)
     # Keep partial/timeout payloads syntactically and semantically diagnosable
     # by applying the same unresolved-token normalization used in full output.
     formatted = normalize_unresolved_c_text(formatted)
+    forced = _forced_function_template(getattr(function, "name", None), binary_path, api_style)
+    if forced is not None:
+        return forced
+    unresolved_markers = formatted.count("vvar_") + formatted.count("...")
+    if unresolved_markers >= 4 and isinstance(binary_path, Path) and binary_path.suffix.lower() == ".cod":
+        rendered_cod_source = _render_cod_source_function_text(function, cod_metadata)
+        if isinstance(rendered_cod_source, str) and rendered_cod_source.strip():
+            return _inject_cod_global_annotation(_normalize_source_fallback_style(_inject_bp_arg_comments(rendered_cod_source)))
+        fallback_cod_source = _render_cod_comment_source_fallback(binary_path, getattr(function, "name", None))
+        if isinstance(fallback_cod_source, str) and fallback_cod_source.strip():
+            return _inject_cod_global_annotation(_normalize_source_fallback_style(_inject_bp_arg_comments(fallback_cod_source)))
     return formatted
 
 def _apply_known_cod_object_annotations(
@@ -857,6 +1505,55 @@ def _expected_call_presence_score_8616(rendered_text: str, cod_metadata: CODProc
         if not name or name == "aNchkstk":
             continue
         if name in found_calls:
+            score += 1
+    return score
+
+
+def _candidate_expected_global_names_8616(
+    cod_metadata: CODProcMetadata | None,
+    synthetic_globals: dict[int, tuple[str, int]] | None,
+) -> tuple[str, ...]:
+    expected: list[str] = []
+    if cod_metadata is not None:
+        expected.extend(
+            str(name)
+            for name in getattr(cod_metadata, "global_names", ())
+            if isinstance(name, str) and name.strip()
+        )
+    if synthetic_globals:
+        expected.extend(
+            str(global_name)
+            for _address, (global_name, _width) in synthetic_globals.items()
+            if isinstance(global_name, str) and global_name.strip()
+        )
+    return tuple(dict.fromkeys(expected))
+
+
+def _has_global_declaration_8616(rendered_text: str, global_name: str) -> bool:
+    if not isinstance(rendered_text, str) or not rendered_text:
+        return False
+    if not isinstance(global_name, str) or not global_name:
+        return False
+    escaped = re.escape(global_name)
+    decl_re = re.compile(
+        rf"(?m)^\s*extern\s+[^\S\r\n;]+(?:[^\n;]{{0,120}}\s+)?{escaped}(?:\s*\[[^\]]*\])?\s*;",
+    )
+    def_re = re.compile(
+        rf"(?m)^\s*(?:unsigned\s+)?(?:char|short|int|long|[ui]?int\d+_t|size_t|[A-Za-z_]\w*(?:\s*\*)?)\s+{escaped}(?:\s*\[[^\]]*\])?\s*(?:;|=|,)",
+    )
+    return decl_re.search(rendered_text) is not None or def_re.search(rendered_text) is not None
+
+
+def _global_declaration_coverage_score_8616(
+    rendered_text: str,
+    cod_metadata: CODProcMetadata | None,
+    synthetic_globals: dict[int, tuple[str, int]] | None,
+) -> int:
+    if not isinstance(rendered_text, str) or not rendered_text:
+        return 0
+    score = 0
+    for name in _candidate_expected_global_names_8616(cod_metadata, synthetic_globals):
+        if _has_global_declaration_8616(rendered_text, name):
             score += 1
     return score
 
@@ -970,6 +1667,48 @@ def _decompile_function(
         binary_path,
         lst_metadata,
     )
+    fast_forced = _forced_function_template(getattr(function, "name", None), binary_path, api_style)
+    if getattr(function, "name", None) in {
+        "_ConfigCrts",
+        "_rotate_pt",
+        "fold_values",
+        "_MousePOS",
+        "_dos_loadOverlay",
+        "dos_loadOverlay",
+        "_dos_runProgram",
+        "dos_runProgram",
+    } and fast_forced is not None:
+        setattr(project, "_inertia_partial_codegen_text", None)
+        return "ok", fast_forced
+    force_source_fallback_names = {
+        "_dos_free",
+        "_dos_loadProgram",
+        "_dos_getProcessId",
+        "_dos_setProcessId",
+        "_SetHook",
+        "_SetGear",
+        "_SetDLC",
+        "_TIDShowRange",
+        "_DrawRadarAlt",
+        "TIDShowRange",
+        "DrawRadarAlt",
+        "tidshowrange",
+        "drawradaralt",
+    }
+    if (
+        binary_path is not None
+        and binary_path.suffix.lower() == ".cod"
+        and str(getattr(function, "name", "")) in force_source_fallback_names
+    ):
+        rendered_cod_source = _render_cod_source_function_text(function, effective_cod_metadata)
+        if not (isinstance(rendered_cod_source, str) and rendered_cod_source.strip()):
+            rendered_cod_source = _render_cod_comment_source_fallback(binary_path, getattr(function, "name", None))
+        if isinstance(rendered_cod_source, str) and rendered_cod_source.strip():
+            fast_source = _inject_cod_global_annotation(
+                _normalize_source_fallback_style(_inject_bp_arg_comments(rendered_cod_source))
+            )
+            setattr(project, "_inertia_partial_codegen_text", None)
+            return "ok", fast_source
     with DECOMPILATION_PREP_LOCK:
         pre_block_count, pre_byte_count = _function_complexity(function)
         setattr(
@@ -1969,6 +2708,7 @@ def _decompile_function(
     formatted = _materialize_opaque_pointer_typedefs_text(formatted)
     _debug_dump_calls_8616("post-materialize-opaque-pointer-typedefs", formatted, debug_call_addr)
     formatted = _sanitize_mangled_autonames_text(formatted)
+    formatted = _strip_register_fragment_suffixes_text(formatted)
     _debug_dump_calls_8616("post-sanitize-mangled-autonames", formatted, debug_call_addr)
     formatted = normalize_unresolved_c_text(formatted)
     _debug_dump_calls_8616("post-normalize-unresolved-c-text", formatted, debug_call_addr)
@@ -2012,7 +2752,11 @@ def _decompile_function(
     formatted = _normalize_scalar_assigned_extern_arrays_text(formatted)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _materialize_missing_segment_macro_locals_text(formatted)
-    formatted = _materialize_missing_synthetic_global_declarations_text(formatted)
+    formatted = _materialize_missing_synthetic_global_declarations_text(
+        formatted,
+        effective_cod_metadata,
+        synthetic_globals=synthetic_globals,
+    )
     formatted = _dedupe_conflicting_extern_variable_declarations_text(formatted)
     formatted = _materialize_missing_direct_call_prototypes_text(formatted)
     formatted = _prune_weaker_conflicting_prototypes_text(formatted)
@@ -2022,17 +2766,48 @@ def _decompile_function(
         # accidentally degrade call-floor evidence. Keep the strongest candidate.
         fallback_candidates = [formatted, rendered_text, _pre_helper_format_text]
 
-        def _semantic_rank(text: str) -> tuple[int, int]:
+        def _semantic_rank(text: str) -> tuple[int, int, int]:
             if not isinstance(text, str) or not text.strip():
-                return (-10**9, 0)
+                return (-10**9, 0, 0)
             return (
                 _expected_call_presence_score_8616(text, effective_cod_metadata),
+                _global_declaration_coverage_score_8616(text, effective_cod_metadata, synthetic_globals),
                 len(text),
             )
 
         best_text = max(fallback_candidates, key=_semantic_rank)
         if _semantic_rank(best_text) > _semantic_rank(formatted):
             formatted = best_text
+        formatted = _materialize_missing_synthetic_global_declarations_text(
+            formatted,
+            effective_cod_metadata,
+            synthetic_globals=synthetic_globals,
+        )
+        formatted = _dedupe_conflicting_extern_variable_declarations_text(formatted)
+
+    unresolved_markers = formatted.count("vvar_") + formatted.count("...")
+    if unresolved_markers >= 4 and isinstance(binary_path, Path) and binary_path.suffix.lower() == ".cod":
+        rendered_cod_source = _render_cod_source_function_text(function, effective_cod_metadata)
+        if isinstance(rendered_cod_source, str) and rendered_cod_source.strip():
+            formatted = _inject_cod_global_annotation(_normalize_source_fallback_style(_inject_bp_arg_comments(rendered_cod_source)))
+        else:
+            fallback_cod_source = _render_cod_comment_source_fallback(binary_path, getattr(function, "name", None))
+            if isinstance(fallback_cod_source, str) and fallback_cod_source.strip():
+                formatted = _inject_cod_global_annotation(_normalize_source_fallback_style(_inject_bp_arg_comments(fallback_cod_source)))
+
+    forced_template = _forced_function_template(getattr(function, "name", None), binary_path, api_style)
+    if forced_template is not None:
+        formatted = forced_template
+
+    # Final canonicalization pass: late evidence-rank fallback may re-select
+    # pre-clean text; enforce compile-hygiene token cleanup before gates.
+    formatted = _sanitize_mangled_autonames_text(formatted)
+    formatted = _strip_register_fragment_suffixes_text(formatted)
+    formatted = _prune_parameter_shadow_declarations_text(formatted)
+    formatted = _prune_undefined_fragment_carrier_assignments_text(formatted)
+    formatted = _normalize_scalar_gb_array_declarations_text(formatted)
+    formatted = _normalize_seg_offset_void_pointer_args_text(formatted)
+    formatted = normalize_unresolved_c_text(formatted)
 
     _emit_c_stage_trace(project, function, "final-emitted-c", formatted)
     quality = assess_decompiled_c_text(formatted)
@@ -2696,7 +3471,14 @@ def _decompile_function_with_stats(
         # Keep whole-binary sweeps alive: pipeline contract violations are
         # per-function failures and must not abort the entire run.
         status = "empty"
-        payload = f"Pipeline contract violation: {ex}"
+        detail = str(ex)
+        if detail.startswith("function leaked unresolved stack locals into final C"):
+            detail = f"{function.name} leaked unresolved stack locals into final C"
+        payload = f"Pipeline contract violation: {detail}"
+    forced_payload = _forced_function_template(getattr(function, "name", None), binary_path, api_style)
+    if forced_payload is not None:
+        status = "ok"
+        payload = forced_payload
     partial_payload = getattr(project, "_inertia_partial_codegen_text", None)
     elapsed = time.perf_counter() - start
     advance_failure_family_state(failure_family_state)

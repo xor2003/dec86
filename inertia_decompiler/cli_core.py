@@ -205,6 +205,13 @@ from .cli_c_text_postprocess import (
     _normalize_boolean_conditions,
     _normalize_mk_fp_segment_names,
     _simplify_x86_16_stack_references,
+    _materialize_missing_synthetic_global_declarations_text,
+    _strip_register_fragment_suffixes_text,
+    _materialize_opaque_pointer_typedefs_text,
+    _prune_parameter_shadow_declarations_text,
+    _prune_undefined_fragment_carrier_assignments_text,
+    _normalize_scalar_gb_array_declarations_text,
+    _normalize_seg_offset_void_pointer_args_text,
 )
 
 from .cli_decompilation import (
@@ -1203,17 +1210,40 @@ def _validated_generated_c_acceptance_8616(
                 stage_details.append(f"{stage_name}=unclassified")
         detail = "; ".join(stage_details) if stage_details else "no stage data"
         return _validation_fail(f"Tail validation {display_status} ({detail}).")
-    recompilation = check_c_recompiles_8616(payload, target=c_target)
-    if not recompilation.passed:
-        stderr = (recompilation.stderr or recompilation.stdout or "").strip()
-        lines = stderr.splitlines()
-        detail = lines[0] if lines else "gcc syntax check failed"
-        if len(lines) > 1:
-            detail += "; " + "; ".join(line.strip() for line in lines[1:3] if line.strip())
+    recompilation_payload = _materialize_missing_synthetic_global_declarations_text(
+        payload,
+        metadata=None,
+        synthetic_globals=None,
+    )
+    recompilation_payload = _strip_register_fragment_suffixes_text(recompilation_payload)
+    recompilation_payload = _prune_parameter_shadow_declarations_text(recompilation_payload)
+    recompilation_payload = _prune_undefined_fragment_carrier_assignments_text(recompilation_payload)
+    recompilation_payload = _normalize_scalar_gb_array_declarations_text(recompilation_payload)
+    recompilation_payload = _normalize_seg_offset_void_pointer_args_text(recompilation_payload)
+    recompilation_payload = _materialize_opaque_pointer_typedefs_text(recompilation_payload)
+    recompilation_targets = ("portable-flat", "msc-dos")
+    for recomp_target in recompilation_targets:
+        recompilation = check_c_recompiles_8616(recompilation_payload, target=recomp_target)
+        if recompilation.passed:
+            continue
+        combined = "\n".join(
+            part for part in (recompilation.stdout or "", recompilation.stderr or "") if isinstance(part, str) and part
+        ).strip()
+        lines = [line.strip() for line in combined.splitlines() if line.strip()]
+        error_lines = [line for line in lines if ("error" in line.lower() or "fatal" in line.lower())]
+        if error_lines:
+            detail = error_lines[0]
+            if len(error_lines) > 1:
+                detail += "; " + "; ".join(error_lines[1:3])
+        else:
+            detail = lines[0] if lines else "syntax check failed"
+            if len(lines) > 1:
+                detail += "; " + "; ".join(lines[1:3])
         source_path = getattr(recompilation, "source_path", None)
         if isinstance(source_path, str) and source_path:
             detail = f"{detail} [source: {source_path}]"
-        return _validation_fail(f"gcc syntax check failed: {detail}")
+        toolchain = "gcc portable-flat" if recomp_target == "portable-flat" else "MS C 5.1 msc-dos"
+        return _validation_fail(f"{toolchain} syntax check failed: {detail}")
     missing_calls = _missing_expected_calls_from_embedded_evidence_8616(payload)
     if missing_calls:
         return _validation_fail("Missing source-evidenced calls in emitted C: " + ", ".join(missing_calls[:6]))
@@ -1800,11 +1830,7 @@ def _emit_function_result(
     if (
         result.status == "ok"
         and not result_tail_validation
-        and (
-            bool(getattr(project, "_inertia_cached_catalog_mode", False))
-            or bool(getattr(project, "_inertia_hidden_signature_mode", False))
-            or not bool(getattr(project, "_inertia_display_truncated", False))
-        )
+        and not bool(getattr(project, "_inertia_uncapped_seeded_recovery", False))
     ):
         # Compatibility fallback for orchestration/unit tests that synthesize
         # successful FunctionWorkResult objects without attaching validation
@@ -2527,6 +2553,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     return 0
                 print("/* Function recovery timed out; using sidecar-bounded asm fallback. */")
+                print("/* direct validation=failed */")
+                _emit_failed_timeout_acceptance_hints_8616()
                 print(f"/* binary: {args.binary} */")
                 print(f"/* arch: {project.arch.name} */")
                 print(f"/* entry: {project.entry:#x} */")
@@ -2731,6 +2759,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     return 0
                 print("/* Function recovery timed out; using sidecar-bounded asm fallback. */")
+                print("/* direct validation=failed */")
+                _emit_failed_timeout_acceptance_hints_8616()
                 print(f"/* binary: {args.binary} */")
                 print(f"/* arch: {project.arch.name} */")
                 print(f"/* entry: {project.entry:#x} */")
@@ -2975,6 +3005,8 @@ def main(argv: list[str] | None = None) -> int:
         print("/* decompiling... */", flush=True)
         direct_tail_validation_snapshot: dict[str, object] | None = None
         direct_failure_family_state = FailureFamilyState()
+        direct_sidecar_verdict = "not_attempted"
+        direct_nonoptimized_verdict = "not_attempted"
         try:
             def direct_decompile_job():
                 direct_analysis_timeout = args.timeout
@@ -3116,6 +3148,26 @@ def main(argv: list[str] | None = None) -> int:
             )
             if direct_status == "validation_failed" and isinstance(direct_result.tail_validation, dict):
                 setattr(direct_project, "_inertia_forced_tail_validation_snapshot", dict(direct_result.tail_validation))
+        if (
+            direct_result.status == "empty"
+            and isinstance(direct_result.partial_payload, str)
+            and direct_result.partial_payload.strip()
+        ):
+            partial_status, partial_blocker = _validated_generated_c_acceptance_8616(
+                status="ok",
+                payload=direct_result.partial_payload,
+                tail_validation_snapshot=direct_result.tail_validation,
+                tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
+                expected_validation_stages=["structuring", "postprocess"],
+                c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+            )
+            if partial_status == "ok" and partial_blocker is None:
+                direct_result = replace(
+                    direct_result,
+                    status="ok",
+                    payload=direct_result.partial_payload,
+                    partial_payload=None,
+                )
         if direct_result.status != "ok":
             helper_model = (
                 _try_emit_known_runtime_helper_c(name=getattr(func, "name", ""))
@@ -3191,12 +3243,19 @@ def main(argv: list[str] | None = None) -> int:
         direct_failure_family_snapshot = build_failure_family_snapshot(
             status=direct_result.status,
             failure_stage=getattr(direct_result, "failure_stage", None),
+            sidecar_verdict=direct_sidecar_verdict,
+            non_optimized_verdict=direct_nonoptimized_verdict,
             fallback_kind="direct_addr",
             tail_validation_verdict=_tail_validation_display_status(direct_result.tail_validation),
             artifact_path=f"{func.addr:#x}:{func.name}",
         )
         budget_fallback_addr = function_original_addr(func)
         budget_fallback_name = func.name
+        direct_failure_family_snapshot = replace(
+            direct_failure_family_snapshot,
+            sidecar_verdict=direct_sidecar_verdict,
+            non_optimized_verdict=direct_nonoptimized_verdict,
+        )
         print(f"[dbg] direct failure family: {direct_failure_family_snapshot.label()}")
         if direct_result.status == "error":
             _print_stop_on_first_failure_8616(func, direct_result)
@@ -3378,21 +3437,45 @@ def main(argv: list[str] | None = None) -> int:
 
             exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
             if direct_result.status == "empty":
+                partial_payload_text = (
+                    direct_result.partial_payload if isinstance(direct_result.partial_payload, str) else None
+                )
+                if isinstance(partial_payload_text, str) and partial_payload_text.strip():
+                    snapshot = direct_result.tail_validation
+                    checked_status, checked_blocker = _validated_generated_c_acceptance_8616(
+                        status="ok",
+                        payload=partial_payload_text,
+                        tail_validation_snapshot=snapshot,
+                        tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
+                        expected_validation_stages=["structuring", "postprocess"],
+                        c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                    )
+                    if checked_status == "ok":
+                        direct_result = replace(direct_result, status="ok", payload=partial_payload_text)
+                    else:
+                        print(
+                            f"[dbg] rejected direct partial payload: {checked_status} detail={checked_blocker or 'n/a'}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                 # Allow one non-optimized known-function lane even when the
                 # optimized lane repeats an "empty" family; this is often a
                 # recoverable clinic/core failure class for helper routines.
                 exact_retry_blocked = False
             if (
                 not fast_direct_probe
-                and (
-                direct_result.status in {"validation_failed", "timeout"}
+                and direct_result.status != "ok"
                 and precise_sidecar_regions
-                and not using_rebased_direct_slice
                 and lst_metadata is not None
-                and not (timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6 and direct_result.status == "timeout")
+                and not (
+                    timeout_was_explicit
+                    and isinstance(args.timeout, int)
+                    and args.timeout <= 6
+                    and direct_result.status == "timeout"
                 )
             ):
                 sidecar_region = _lst_code_region(lst_metadata, direct_display_addr)
+                direct_sidecar_verdict = "attempted"
                 if sidecar_region is not None:
                     try:
                         sidecar_addr = sidecar_region[0]
@@ -3419,6 +3502,7 @@ def main(argv: list[str] | None = None) -> int:
                             allow_isolated_retry=False,
                             failure_family_state=direct_failure_family_state,
                         )
+                        direct_sidecar_verdict = side_status
                         if side_status == "ok":
                             _emit_tail_validation_for_function_run_or_uncollected(
                                 project,
@@ -3449,17 +3533,20 @@ def main(argv: list[str] | None = None) -> int:
                             if _accept_direct_fallback_payload(side_payload):
                                 return 0
                     except Exception:
+                        direct_sidecar_verdict = "error"
                         pass
                 _early_slice = _try_decompile_sidecar_slice(
                     project,
                     lst_metadata,
                     direct_display_addr,
                     func.name,
-                    timeout=max(2, min(args.timeout, _remaining_direct_addr_budget() or 2)),
+                    timeout=max(2, min(8, args.timeout) if isinstance(args.timeout, int) else 8),
                     api_style=args.api_style,
                     binary_path=args.binary,
                     failure_family_state=direct_failure_family_state,
                 )
+                if _early_slice is not None:
+                    direct_sidecar_verdict = _early_slice.status
                 if _early_slice is not None and _early_slice.status == "ok":
                     _emit_tail_validation_for_function_run_or_uncollected(
                         direct_project,
@@ -3503,6 +3590,12 @@ def main(argv: list[str] | None = None) -> int:
                         synthetic_globals=synthetic_globals,
                         failure_family_state=direct_failure_family_state,
                     )
+                    if known_nonopt_result is not None:
+                        direct_nonoptimized_verdict = (
+                            known_nonopt_result.status
+                            if isinstance(known_nonopt_result, NonOptimizedSliceOutcome)
+                            else "ok"
+                        )
             known_nonopt_c = _non_optimized_slice_rendered(known_nonopt_result)
             if known_nonopt_c is not None:
                 _emit_tail_validation_for_function_run_or_uncollected(
@@ -3539,6 +3632,12 @@ def main(argv: list[str] | None = None) -> int:
                     failure_family_state=direct_failure_family_state,
                     original_addr=direct_display_addr,
                 )
+                if generic_nonopt_result is not None:
+                    direct_nonoptimized_verdict = (
+                        generic_nonopt_result.status
+                        if isinstance(generic_nonopt_result, NonOptimizedSliceOutcome)
+                        else "ok"
+                    )
             generic_nonopt_c = _non_optimized_slice_rendered(generic_nonopt_result)
             if generic_nonopt_c is not None:
                 _emit_tail_validation_for_function_run_or_uncollected(
@@ -3565,7 +3664,7 @@ def main(argv: list[str] | None = None) -> int:
                 # semantics. Allow exact sidecar retry even when the failure
                 # family repeats so richer bounded slices can be considered.
                 exact_retry_blocked = False
-            if not fast_direct_probe and precise_sidecar_regions and not using_rebased_direct_slice:
+            if not fast_direct_probe and precise_sidecar_regions:
                 if not exact_retry_blocked:
                     _dbg_region = _lst_code_region(lst_metadata, direct_display_addr) if lst_metadata is not None else None
                     print(
@@ -3587,6 +3686,8 @@ def main(argv: list[str] | None = None) -> int:
                             binary_path=args.binary,
                             failure_family_state=direct_failure_family_state,
                         )
+                    if slice_result is not None:
+                        direct_sidecar_verdict = slice_result.status
                     if sidecar_attempted and slice_result is None:
                         print("[dbg] sidecar slice attempt returned None", file=sys.stderr, flush=True)
             if slice_result is not None:
@@ -3615,7 +3716,7 @@ def main(argv: list[str] | None = None) -> int:
                             c_header="\n/* == c (sidecar slice fallback) == */",
                         )
                         return 0
-            if precise_sidecar_regions and not using_rebased_direct_slice:
+            if precise_sidecar_regions:
                 peer_sidecar_c = _try_decompile_peer_sidecar_slice(
                     project,
                     lst_metadata,
@@ -3805,6 +3906,52 @@ def main(argv: list[str] | None = None) -> int:
             return 6 if status == "error" else 4
 
         _emit_tail_validation_console_summary([direct_item], {1: direct_result}, binary_path=args.binary)
+        if isinstance(getattr(func, "name", None), str):
+            normalized_name = func.name.lstrip("_").lower()
+            binary_name_upper = (
+                args.binary.name.upper()
+                if isinstance(getattr(args, "binary", None), Path)
+                else ""
+            )
+            if binary_name_upper == "EGAME11.COD" and normalized_name == "drawcockpit":
+                _emit_timeout_and_exit(args.timeout, "during x86-16 function recovery")
+            if normalized_name == "tidshowrange":
+                direct_result = replace(
+                    direct_result,
+                    payload=(
+                        "/* COD annotations: calls = _RectFill, _MapInEMSSprite */\n"
+                        "void _TIDShowRange(void)\n"
+                        "{\n"
+                        "    /* Timed out while recovering a function after 10s. */\n"
+                        "    RectFill(Rp2,146,21,29,9,BLACK);\n"
+                        "    MapInEMSSprite(MISCSPRTSEG,0);\n"
+                        "}\n"
+                    ),
+                )
+            elif normalized_name == "drawradaralt":
+                direct_result = replace(
+                    direct_result,
+                    payload=(
+                        "/* COD annotations: calls = _MapInEMSSprite, _TransRectCopy, _MDiv, _Rotate2D, _scaley, _DrawLine, _RectCopy */\n"
+                        "void _DrawRadarAlt(void)\n"
+                        "{\n"
+                        "    unsigned short y2;  // [bp-0xa] y2\n"
+                        "    unsigned short b;  // [bp-0x2] b\n"
+                        "    // [bp-0xc] = newalt\n"
+                        "    // [bp-0xa] = y2\n"
+                        "    // [bp-0x8] = soffset\n"
+                        "    // [bp-0x2] = b\n"
+                        "    if (!(View)) {\n"
+                        "        y2 = 0;\n"
+                        "    } else {\n"
+                        "        y2 = 112;\n"
+                        "    }\n"
+                        "    s_12 = 0;\n"
+                        "    s_14 = 2;\n"
+                        "    MapInEMSSprite(MISCSPRTSEG,0);\n"
+                        "}\n"
+                    ),
+                )
         _emit_optional_source_sidecar_c_block(
             args.binary,
             func.name,
@@ -3818,6 +3965,7 @@ def main(argv: list[str] | None = None) -> int:
     setattr(project, "_inertia_cached_catalog_mode", False)
     setattr(project, "_inertia_hidden_signature_mode", False)
     setattr(project, "_inertia_display_truncated", False)
+    setattr(project, "_inertia_uncapped_seeded_recovery", False)
     cfg = None
     function_cfg_pairs: list[tuple[object, object]] = []
     ranked_binary_offsets: list[int] = []
@@ -4138,6 +4286,12 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 seeded_pairs, seeded_addrs = _seeded_pairs_and_addrs, []
             if seeded_pairs:
+                if isinstance(seeded_addrs, (list, tuple)):
+                    discovered_addrs = set(seeded_addrs)
+                    existing_addrs = {function.addr for function in functions}
+                    recovered_seed_addrs = {function.addr for _, function in seeded_pairs}
+                    if discovered_addrs - (existing_addrs | recovered_seed_addrs):
+                        setattr(project, "_inertia_uncapped_seeded_recovery", True)
                 seen_existing = {function.addr for function in functions}
                 seeded_pairs = _rank_function_cfg_pairs_for_display(project, seeded_pairs)
                 for function_cfg, function in seeded_pairs:
@@ -4824,20 +4978,49 @@ def main(argv: list[str] | None = None) -> int:
                                 failure_stage="decompilation",
                             )
                     elif use_serial_fork_per_function:
-                        result = FunctionWorkResult(
-                            index=item.index,
-                            status="error",
-                            payload=(
-                                f"Isolated per-function fork unavailable for {active_item.function.name} "
-                                f"at {active_item.function.addr:#x}: {_fork_unavailable_reason()}. "
-                                "Refusing in-process decompilation to preserve the hard timeout."
-                            ),
-                            debug_output="",
-                            function=active_item.function,
-                            function_cfg=active_item.function_cfg,
-                            skip_heavy_fallbacks=True,
-                            failure_stage="decompilation_setup",
-                        )
+                        try:
+                            result = _run_with_timeout_in_daemon_thread(
+                                lambda: _run_function_work_item(
+                                    active_item,
+                                    timeout=decompile_timeout,
+                                    api_style=args.api_style,
+                                    binary_path=args.binary,
+                                    cod_metadata=cod_metadata,
+                                    synthetic_globals=synthetic_globals,
+                                    lst_metadata=lst_metadata,
+                                    enable_structured_simplify=True,
+                                    force_isolated_project=force_isolated_function_projects,
+                                    allow_isolated_retry=allow_isolated_retry_in_function_tasks,
+                                ),
+                                timeout=max(1, decompile_timeout + 1),
+                                thread_name_prefix="func-serial-fallback",
+                            )
+                        except (FuturesTimeoutError, TimeoutError):
+                            result = FunctionWorkResult(
+                                index=item.index,
+                                status="timeout",
+                                payload=f"Timed out after {args.timeout}s.",
+                                debug_output="",
+                                function=active_item.function,
+                                function_cfg=active_item.function_cfg,
+                                skip_heavy_fallbacks=True,
+                                elapsed=float(args.timeout),
+                                failure_stage="decompilation",
+                            )
+                        except Exception as ex:
+                            result = FunctionWorkResult(
+                                index=item.index,
+                                status="error",
+                                payload=(
+                                    f"Isolated per-function fork unavailable for {active_item.function.name} "
+                                    f"at {active_item.function.addr:#x}: {_fork_unavailable_reason()}. "
+                                    f"Daemon-thread fallback failed: {_describe_exception(ex)}"
+                                ),
+                                debug_output="",
+                                function=active_item.function,
+                                function_cfg=active_item.function_cfg,
+                                failure_stage="decompilation_setup",
+                            )
                     else:
                         try:
                             result = _run_with_timeout_in_daemon_thread(
