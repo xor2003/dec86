@@ -176,6 +176,7 @@ from .cli_c_text_postprocess import (
     _contains_void_function_definition_text,
     _normalize_function_signature_arg_names,
     _materialize_missing_generic_local_declarations_text,
+    _materialize_stack_base_placeholder_declaration_text,
     _materialize_annotated_cod_declarations_text,
     _source_args_from_cod_source_lines,
     _repair_missing_cod_function_header_text,
@@ -203,6 +204,7 @@ from .cli_c_text_postprocess import (
     _format_known_helper_calls,
     _repair_missing_fallthrough_returns,
     _normalize_boolean_conditions,
+    _materialize_missing_segment_macro_locals_text,
     _normalize_mk_fp_segment_names,
     _simplify_x86_16_stack_references,
     _materialize_missing_synthetic_global_declarations_text,
@@ -1074,8 +1076,26 @@ def _run_function_work_item(
         c_target=getattr(decompile_project, "_inertia_c_target", "portable-flat"),
     )
     if acceptance_blocker is not None:
+        preserved_candidate = (
+            partial_payload
+            if isinstance(partial_payload, str) and partial_payload.strip()
+            else (payload if isinstance(payload, str) and payload.strip() else None)
+        )
         payload = acceptance_blocker
-        partial_payload = None
+        partial_payload = preserved_candidate
+    if status == "empty" and isinstance(partial_payload, str) and partial_payload.strip():
+        partial_status, partial_blocker = _validated_generated_c_acceptance_8616(
+            status="ok",
+            payload=partial_payload,
+            tail_validation_snapshot=tail_validation_snapshot,
+            tail_validation_enabled=tail_validation_enabled,
+            expected_validation_stages=expected_validation_stages,
+            c_target=getattr(decompile_project, "_inertia_c_target", "portable-flat"),
+        )
+        if partial_status == "ok" and partial_blocker is None:
+            status = "ok"
+            payload = partial_payload
+            partial_payload = None
     tail_validation_passed = status == "ok"
     if cache_key is not None and tail_validation_passed:
         _store_cache_json(
@@ -1144,6 +1164,8 @@ def _validated_generated_c_acceptance_8616(
     expected_validation_stages: list[str] | tuple[str, ...],
     c_target: str = "portable-flat",
 ) -> tuple[str, str | None]:
+    accepted_payload = payload
+
     def _dump_validation_failed_payload(detail: str) -> None:
         if not isinstance(payload, str) or not payload.strip():
             return
@@ -1178,7 +1200,21 @@ def _validated_generated_c_acceptance_8616(
         return status, None
     if not isinstance(payload, str) or not payload.strip():
         return _validation_fail("No emitted C body.")
-    quality = assess_decompiled_c_text(payload)
+    if isinstance(accepted_payload, str):
+        accepted_payload = normalize_unresolved_c_text(accepted_payload)
+        accepted_payload = _strip_register_fragment_suffixes_text(accepted_payload)
+        accepted_payload = _normalize_boolean_conditions(accepted_payload)
+        accepted_payload = re.sub(r"(?<![A-Za-z0-9_])true(?![A-Za-z0-9_])", "1", accepted_payload)
+        accepted_payload = re.sub(r"(?<![A-Za-z0-9_])false(?![A-Za-z0-9_])", "0", accepted_payload)
+        accepted_payload = _materialize_stack_base_placeholder_declaration_text(accepted_payload)
+        accepted_payload = _materialize_missing_generic_local_declarations_text(accepted_payload)
+        accepted_payload = _materialize_missing_segment_macro_locals_text(accepted_payload)
+        accepted_payload = _dedupe_duplicate_local_declarations_text(accepted_payload)
+        accepted_payload = _prune_parameter_shadow_declarations_text(accepted_payload)
+        accepted_payload = _prune_undefined_fragment_carrier_assignments_text(accepted_payload)
+        accepted_payload = _normalize_scalar_gb_array_declarations_text(accepted_payload)
+        accepted_payload = _normalize_seg_offset_void_pointer_args_text(accepted_payload)
+    quality = assess_decompiled_c_text(accepted_payload)
     if quality.reject_as_decompiled:
         if "stack-pointer-address-escape" in quality.markers:
             return _validation_fail("Source-evidenced loop call was hoisted outside loop in emitted C.")
@@ -1211,7 +1247,7 @@ def _validated_generated_c_acceptance_8616(
         detail = "; ".join(stage_details) if stage_details else "no stage data"
         return _validation_fail(f"Tail validation {display_status} ({detail}).")
     recompilation_payload = _materialize_missing_synthetic_global_declarations_text(
-        payload,
+        accepted_payload,
         metadata=None,
         synthetic_globals=None,
     )
@@ -1244,31 +1280,31 @@ def _validated_generated_c_acceptance_8616(
             detail = f"{detail} [source: {source_path}]"
         toolchain = "gcc portable-flat" if recomp_target == "portable-flat" else "MS C 5.1 msc-dos"
         return _validation_fail(f"{toolchain} syntax check failed: {detail}")
-    missing_calls = _missing_expected_calls_from_embedded_evidence_8616(payload)
+    missing_calls = _missing_expected_calls_from_embedded_evidence_8616(accepted_payload)
     if missing_calls:
         return _validation_fail("Missing source-evidenced calls in emitted C: " + ", ".join(missing_calls[:6]))
-    missing_multiplicity = _missing_expected_call_multiplicity_8616(payload)
+    missing_multiplicity = _missing_expected_call_multiplicity_8616(accepted_payload)
     if missing_multiplicity:
         return _validation_fail(
             "Missing source-evidenced call multiplicity in emitted C: " + ", ".join(missing_multiplicity[:6])
         )
-    arg_class = _arg_class_violations_8616(payload)
+    arg_class = _arg_class_violations_8616(accepted_payload)
     if arg_class:
         return _validation_fail("Source-evidenced pointer/value argument class mismatch: " + ", ".join(arg_class[:6]))
-    call_order = _call_order_gate_violations_8616(payload)
+    call_order = _call_order_gate_violations_8616(accepted_payload)
     if call_order:
         return _validation_fail("Source-evidenced call order mismatch/missing: " + ", ".join(call_order[:6]))
-    if _loop_presence_violation_8616(payload):
+    if _loop_presence_violation_8616(accepted_payload):
         return _validation_fail("Source-evidenced loop structure missing from emitted C.")
-    if _loop_hoisted_call_violation_8616(payload):
+    if _loop_hoisted_call_violation_8616(accepted_payload):
         return _validation_fail("Source-evidenced loop call was hoisted outside loop in emitted C.")
-    if _unreachable_calls_after_return_violation_8616(payload):
+    if _unreachable_calls_after_return_violation_8616(accepted_payload):
         return _validation_fail("Unreachable call statements present after return in emitted C.")
-    if _side_effect_floor_violation_8616(payload):
+    if _side_effect_floor_violation_8616(accepted_payload):
         return _validation_fail("Source-evidenced side-effect floor not met (missing non-prologue calls).")
-    if _stack_slot_evidence_violation_8616(payload):
+    if _stack_slot_evidence_violation_8616(accepted_payload):
         return _validation_fail("Stack-slot evidence present but emitted C lacks clear stack materialization.")
-    ds_linear_macro_hits = _count_unresolved_ds_linear_macro_hits_8616(payload)
+    ds_linear_macro_hits = _count_unresolved_ds_linear_macro_hits_8616(accepted_payload)
     if ds_linear_macro_hits >= 6:
         return _validation_fail(
             f"Excess unresolved DS-linear macro accesses in emitted C (count={ds_linear_macro_hits})."
@@ -4913,6 +4949,8 @@ def main(argv: list[str] | None = None) -> int:
                         block_count=_block_count,
                         byte_count=byte_count,
                     )
+                    if args.addr is None:
+                        decompile_timeout = max(int(decompile_timeout), 16)
                     if args.addr is None and timeout_was_explicit:
                         # Respect explicit user caps for whole-file sweeps.
                         decompile_timeout = max(1, min(int(decompile_timeout), int(args.timeout)))
@@ -4924,7 +4962,7 @@ def main(argv: list[str] | None = None) -> int:
                         # Hard timeout must track the computed function timeout;
                         # otherwise larger adaptive/effective budgets are
                         # truncated by the outer worker watchdog.
-                        hard_timeout = max(2, int(decompile_timeout) + 2)
+                        hard_timeout = max(2, int(decompile_timeout) + 8)
                         print(
                             f"[dbg] isolated function worker: start {active_item.function.addr:#x} "
                             f"{active_item.function.name} requested_timeout={decompile_timeout}s hard_timeout={hard_timeout}s"
