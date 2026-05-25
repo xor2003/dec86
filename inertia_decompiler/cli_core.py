@@ -2795,6 +2795,32 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
 
+        if args.addr is not None and project.arch.name == "86_16":
+            try:
+                recovered_blocks, recovered_bytes = _function_complexity(func)
+            except Exception:
+                recovered_blocks, recovered_bytes = (0, 0)
+            region = _lst_code_region(lst_metadata, args.addr) if lst_metadata is not None else None
+            region_span = (
+                max(0, int(region[1]) - int(region[0]))
+                if isinstance(region, tuple) and len(region) == 2
+                else 0
+            )
+            if recovered_blocks <= 1 and recovered_bytes <= 16 and region_span >= 64:
+                try:
+                    ranked_cfg, ranked_func = _recover_ranked_binary_function(
+                        project,
+                        args.addr,
+                        function_label or func.name,
+                        timeout=max(12, min(args.timeout, 24)),
+                        window=args.window,
+                        low_memory=low_memory_path,
+                    )
+                except Exception:
+                    pass
+                else:
+                    cfg, func = ranked_cfg, ranked_func
+
         if function_label is not None:
             func.name = function_label
         elif lst_metadata is not None:
@@ -4420,6 +4446,39 @@ def main(argv: list[str] | None = None) -> int:
                                     thread_name_prefix="ranked-recover",
                                 )
                         if result is None:
+                            if (
+                                recovery_mode == "lst"
+                                and function is not None
+                                and lst_metadata is not None
+                            ):
+                                try:
+                                    recovered_blocks, recovered_bytes = _function_complexity(function)
+                                except Exception:
+                                    recovered_blocks, recovered_bytes = (0, 0)
+                                region = _lst_code_region(lst_metadata, item.function.addr)
+                                region_span = (
+                                    max(0, int(region[1]) - int(region[0]))
+                                    if isinstance(region, tuple) and len(region) == 2
+                                    else 0
+                                )
+                                # Sidecar regions that span much more than a tiny
+                                # one-block body often indicate that entry recovery
+                                # latched onto a stub/prefix. Retry ranked recovery
+                                # and keep the larger candidate when available.
+                                if recovered_blocks <= 1 and recovered_bytes <= 16 and region_span >= 64:
+                                    try:
+                                        ranked_cfg, ranked_func = _recover_ranked_binary_function(
+                                            project,
+                                            item.function.addr,
+                                            item.function.name,
+                                            timeout=max(recover_timeout, 12),
+                                            window=args.window,
+                                            low_memory=low_memory_path,
+                                        )
+                                    except Exception:
+                                        pass
+                                    else:
+                                        function_cfg, function = ranked_cfg, ranked_func
                             active_item = FunctionWorkItem(
                                 index=item.index,
                                 function_cfg=function_cfg,

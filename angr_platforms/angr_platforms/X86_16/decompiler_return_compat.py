@@ -72,7 +72,17 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                 ret_expr = _make_return_combo_expr_8616(self, stmt, ret_val)
 
             if ret_expr is None:
-                return _orig_handle_return(self, stmt, block)
+                try:
+                    return _orig_handle_return(self, stmt, block)
+                except AttributeError as ex:
+                    # Some tiny/irregular functions can reach ReturnMaker with a
+                    # missing prototype return type in upstream angr internals.
+                    # Keep decompilation alive by preserving the original
+                    # statement when the failure is prototype-shape related.
+                    if "returnty" in str(ex):
+                        l.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
+                        return None
+                    raise
 
             new_stmt = stmt.copy()
             new_stmt.ret_exprs.append(ret_expr)
@@ -82,7 +92,13 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
             self._new_block = block.copy(statements=new_statements)
             return None
 
-        return _orig_handle_return(self, stmt, block)
+        try:
+            return _orig_handle_return(self, stmt, block)
+        except AttributeError as ex:
+            if "returnty" in str(ex):
+                l.warning("ReturnMaker skipped due to missing returnty: %s", ex)
+                return None
+            raise
 
     if getattr(ReturnMaker._handle_Return, "__name__", "") != "_handle_Return_8616":
         ReturnMaker._handle_Return = _handle_Return_8616
