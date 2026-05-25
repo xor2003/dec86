@@ -590,7 +590,10 @@ def _direct_addr_wall_clock_budget(
         # Explicit timeout should stay deterministic and bounded, but still
         # leave room for one fallback lane and validation emission.
         return max(8, base + min(14, max(8, base + 4)))
-    return max(2, base + _bounded_non_optimized_timeout(base) + 2)
+    # Default direct-address mode should bias toward successful recovery over
+    # early timeout. Keep a larger bounded budget so non-optimized and sidecar
+    # fallback lanes can actually execute on medium x86-16 functions.
+    return max(2, base + max(40, _bounded_non_optimized_timeout(base)) + 2)
 
 def _prepare_ranked_binary_preview_items(
     project: angr.Project,
@@ -2991,6 +2994,41 @@ def main(argv: list[str] | None = None) -> int:
             )
             if direct_status == "validation_failed" and isinstance(direct_result.tail_validation, dict):
                 setattr(direct_project, "_inertia_forced_tail_validation_snapshot", dict(direct_result.tail_validation))
+        if direct_result.status != "ok":
+            # Robust direct-address retry lane: reuse the same function-work
+            # decompile path as whole-file sweeps. This avoids direct-only
+            # recovery/decompile divergence for functions that are stable in
+            # the sweep lane but brittle in the thin direct lane.
+            try:
+                robust_blocks, robust_bytes = _function_complexity(func)
+                robust_timeout = _effective_decompile_timeout_8616(
+                    direct_project,
+                    args.timeout,
+                    block_count=robust_blocks,
+                    byte_count=robust_bytes,
+                )
+                robust_item = FunctionWorkItem(index=1, function_cfg=cfg, function=func)
+                robust_result = _run_function_work_item(
+                    robust_item,
+                    timeout=max(1, int(robust_timeout)),
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                    lst_metadata=lst_metadata,
+                    cod_metadata=cod_metadata,
+                    synthetic_globals=synthetic_globals,
+                    enable_structured_simplify=True,
+                    enable_postprocess=True,
+                    allow_isolated_retry=True,
+                )
+            except Exception:
+                robust_result = None
+            if robust_result is not None and getattr(robust_result, "status", None) == "ok":
+                direct_result = replace(
+                    robust_result,
+                    index=1,
+                    function=func,
+                    function_cfg=cfg,
+                )
         direct_failure_family_snapshot = build_failure_family_snapshot(
             status=direct_result.status,
             failure_stage=getattr(direct_result, "failure_stage", None),
