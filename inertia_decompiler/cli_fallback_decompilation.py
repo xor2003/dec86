@@ -1044,7 +1044,7 @@ def _try_emit_known_runtime_helper_c(
             "{\n"
             "}\n"
         )
-    if lowered in {"astart", "_astart", "cstart", "_cstart", "__cstart"}:
+    if lowered in {"astart", "_astart", "cstart", "_cstart", "__cstart", "cinit", "_cinit", "__cinit"}:
         safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "astart"
         return (
             f"void {safe_name}(void)\n"
@@ -1206,6 +1206,13 @@ def _try_emit_known_runtime_helper_c(
         return (
             "void ctermsub(void)\n"
             "{\n"
+            "}\n"
+        )
+    if lowered in {"fpinstall87", "_fpinstall87"}:
+        return (
+            "int FPINSTALL87(void)\n"
+            "{\n"
+            "    return 0;\n"
             "}\n"
         )
     if lowered in {"fierqq", "_fierqq"}:
