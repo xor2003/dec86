@@ -1044,11 +1044,30 @@ def _try_emit_known_runtime_helper_c(
             "{\n"
             "}\n"
         )
+    if lowered in {"$_qcg_enter_far", "_qcg_enter_far"} or "qcg_enter_far" in lowered:
+        return (
+            "void _qcg_enter_far(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"b$nearrettext", "b_nearrettext"}:
+        return (
+            "void B$NearRetText(void)\n"
+            "{\n"
+            "}\n"
+        )
     if lowered in {"exit", "_exit"}:
         return (
             "void exit(int status)\n"
             "{\n"
             "    (void)status;\n"
+            "}\n"
+        )
+    if lowered in {"dosreturn", "_dosreturn"}:
+        return (
+            "int dosreturn(void)\n"
+            "{\n"
+            "    return 0;\n"
             "}\n"
         )
     if lowered in {"flushall", "_flushall"}:

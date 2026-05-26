@@ -386,10 +386,10 @@ def tail_validation_display_status(
     expected_stages: Sequence[str] = ("structuring", "postprocess"),
     fallback_kind: str | None = None,
 ) -> str:
-    if not isinstance(snapshot, Mapping) or not snapshot:
-        return TailValidationDisplayStatus.UNCOLLECTED.value
     if fallback_kind is not None:
         return TailValidationDisplayStatus.FAILED.value
+    if not isinstance(snapshot, Mapping) or not snapshot:
+        return TailValidationDisplayStatus.UNCOLLECTED.value
     if bool(snapshot.get("tail_validation_uncollected")):
         return TailValidationDisplayStatus.FAILED.value
     passed = x86_16_tail_validation_snapshot_passed(dict(snapshot), expected_stages=expected_stages)

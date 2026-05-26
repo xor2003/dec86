@@ -205,6 +205,7 @@ from .cli_c_text_postprocess import (
     _repair_missing_fallthrough_returns,
     _normalize_boolean_conditions,
     _materialize_missing_segment_macro_locals_text,
+    _materialize_missing_direct_call_prototypes_text,
     _normalize_mk_fp_segment_names,
     _simplify_x86_16_stack_references,
     _materialize_missing_synthetic_global_declarations_text,
@@ -1167,7 +1168,8 @@ def _validated_generated_c_acceptance_8616(
     accepted_payload = payload
 
     def _dump_validation_failed_payload(detail: str) -> None:
-        if not isinstance(payload, str) or not payload.strip():
+        dump_payload = accepted_payload if isinstance(accepted_payload, str) and accepted_payload.strip() else payload
+        if not isinstance(dump_payload, str) or not dump_payload.strip():
             return
         try:
             from pathlib import Path
@@ -1176,10 +1178,10 @@ def _validated_generated_c_acceptance_8616(
 
             root = Path("angr_platforms/.cache/validation_failed_payloads")
             root.mkdir(parents=True, exist_ok=True)
-            digest = hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()[:12]
+            digest = hashlib.sha1(dump_payload.encode("utf-8", errors="ignore")).hexdigest()[:12]
             stamp = int(time.time())
             out = root / f"payload_{stamp}_{digest}.c"
-            out.write_text(payload, encoding="utf-8")
+            out.write_text(dump_payload, encoding="utf-8")
             print(f"[tail-validation] failed payload artifact: {out}", file=sys.stderr)
         except Exception:
             return
@@ -1201,7 +1203,9 @@ def _validated_generated_c_acceptance_8616(
     if not isinstance(payload, str) or not payload.strip():
         return _validation_fail("No emitted C body.")
     if isinstance(accepted_payload, str):
+        accepted_payload = _normalize_function_signature_arg_names(accepted_payload)
         accepted_payload = normalize_unresolved_c_text(accepted_payload)
+        accepted_payload = _normalize_anonymous_call_targets(accepted_payload)
         accepted_payload = _strip_register_fragment_suffixes_text(accepted_payload)
         accepted_payload = _normalize_boolean_conditions(accepted_payload)
         accepted_payload = re.sub(r"(?<![A-Za-z0-9_])true(?![A-Za-z0-9_])", "1", accepted_payload)
@@ -1216,8 +1220,6 @@ def _validated_generated_c_acceptance_8616(
         accepted_payload = _normalize_seg_offset_void_pointer_args_text(accepted_payload)
     quality = assess_decompiled_c_text(accepted_payload)
     if quality.reject_as_decompiled:
-        if "stack-pointer-address-escape" in quality.markers:
-            return _validation_fail("Source-evidenced loop call was hoisted outside loop in emitted C.")
         marker_summary = ", ".join(quality.markers[:3]) if quality.markers else "unresolved"
         if len(quality.markers) > 3:
             marker_summary += ", ..."
@@ -1251,12 +1253,15 @@ def _validated_generated_c_acceptance_8616(
         metadata=None,
         synthetic_globals=None,
     )
+    recompilation_payload = _normalize_function_signature_arg_names(recompilation_payload)
+    recompilation_payload = _materialize_missing_direct_call_prototypes_text(recompilation_payload)
     recompilation_payload = _strip_register_fragment_suffixes_text(recompilation_payload)
     recompilation_payload = _prune_parameter_shadow_declarations_text(recompilation_payload)
     recompilation_payload = _prune_undefined_fragment_carrier_assignments_text(recompilation_payload)
     recompilation_payload = _normalize_scalar_gb_array_declarations_text(recompilation_payload)
     recompilation_payload = _normalize_seg_offset_void_pointer_args_text(recompilation_payload)
     recompilation_payload = _materialize_opaque_pointer_typedefs_text(recompilation_payload)
+    recompilation_payload = normalize_unresolved_c_text(recompilation_payload)
     recompilation_targets = ("portable-flat", "msc-dos")
     for recomp_target in recompilation_targets:
         recompilation = check_c_recompiles_8616(recompilation_payload, target=recomp_target)
@@ -1648,16 +1653,29 @@ def _unreachable_calls_after_return_violation_8616(emitted_c: str) -> bool:
     body = _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
     if not isinstance(body, str) or not body.strip():
         return False
-    first_return = body.find("return;")
-    if first_return < 0:
-        return False
-    tail = body[first_return + len("return;") :]
-    if not isinstance(tail, str) or not tail.strip():
-        return False
-    for name in _CALL_TOKEN_RE.findall(tail):
-        if name in {"if", "for", "while", "switch", "return", "sizeof"}:
+    depth = 0
+    saw_top_level_return = False
+    token_re = re.compile(r"\breturn\s*;|([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("//", "/*", "*")):
+            depth += line.count("{") - line.count("}")
+            if depth < 0:
+                depth = 0
             continue
-        return True
+        if depth == 0 and re.search(r"\breturn\s*;", line):
+            saw_top_level_return = True
+        elif depth == 0 and saw_top_level_return:
+            for match in token_re.finditer(line):
+                name = match.group(1)
+                if name is None:
+                    continue
+                if name in {"if", "for", "while", "switch", "return", "sizeof"}:
+                    continue
+                return True
+        depth += line.count("{") - line.count("}")
+        if depth < 0:
+            depth = 0
     return False
 
 
@@ -1898,10 +1916,52 @@ def _emit_function_result(
         status=getattr(result, "status", None),
         failure_stage=getattr(result, "failure_stage", None),
         fallback_kind="file_sweep",
-        tail_validation_verdict=_tail_validation_display_status(result_tail_validation),
+        tail_validation_verdict=_tail_validation_display_status(
+            result_tail_validation,
+            fallback_kind="file_sweep" if getattr(result, "status", None) != "ok" else None,
+        ),
         artifact_path=f"{function.addr:#x}:{function.name}",
     )
     print(f"/* failure family: {failure_family_snapshot.label()} */")
+    if result.status != "ok" and args.addr is None and getattr(project.arch, "name", "") == "86_16":
+        try:
+            retry_timeout = max(1, int(args.timeout)) if isinstance(getattr(args, "timeout", None), int) else 120
+            retry_result = _run_function_work_item(
+                item,
+                timeout=retry_timeout,
+                api_style=args.api_style,
+                binary_path=args.binary,
+                lst_metadata=lst_metadata,
+                cod_metadata=cod_metadata,
+                synthetic_globals=synthetic_globals,
+                enable_structured_simplify=True,
+                enable_postprocess=True,
+                allow_isolated_retry=True,
+            )
+            retry_tv = _extract_x86_16_tail_validation_snapshot(getattr(retry_result, "tail_validation", None))
+            if (
+                getattr(retry_result, "status", None) == "ok"
+                and x86_16_tail_validation_snapshot_passed(retry_tv)
+                and isinstance(getattr(retry_result, "payload", None), str)
+                and getattr(retry_result, "payload").strip()
+            ):
+                print("/* retry lane: recovered validation-passed candidate */")
+                decompiled_local += 1
+                _print_function_attempt_status(
+                    function,
+                    attempt="decompiled",
+                    validation_snapshot=retry_tv,
+                )
+                _emit_optional_source_sidecar_c_block(
+                    args.binary,
+                    item.function.name,
+                    retry_result.payload,
+                    alternate_source_c=bool(args.alternate_source_c),
+                    c_header="/* -- c -- */",
+                )
+                return decompiled_local, failed_local
+        except Exception:
+            pass
     if args.show_asm:
         print("/* -- asm -- */")
         print(_format_first_block_asm(project, function.addr))
@@ -1942,6 +2002,45 @@ def _emit_function_result(
         print("/* decompiled output failed tail-validation; trying fallback lanes */")
         attempt_status_printed = True
         emitted_problem = True
+        if args.addr is None and getattr(project.arch, "name", "") == "86_16":
+            try:
+                retry_timeout = max(1, int(args.timeout)) if isinstance(getattr(args, "timeout", None), int) else 120
+                retry_result = _run_function_work_item(
+                    item,
+                    timeout=retry_timeout,
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                    lst_metadata=lst_metadata,
+                    cod_metadata=cod_metadata,
+                    synthetic_globals=synthetic_globals,
+                    enable_structured_simplify=True,
+                    enable_postprocess=True,
+                    allow_isolated_retry=True,
+                )
+                retry_tv = _extract_x86_16_tail_validation_snapshot(getattr(retry_result, "tail_validation", None))
+                if (
+                    getattr(retry_result, "status", None) == "ok"
+                    and x86_16_tail_validation_snapshot_passed(retry_tv)
+                    and isinstance(getattr(retry_result, "payload", None), str)
+                    and getattr(retry_result, "payload").strip()
+                ):
+                    print("/* retry lane: recovered validation-passed candidate */")
+                    decompiled_local += 1
+                    _print_function_attempt_status(
+                        function,
+                        attempt="decompiled",
+                        validation_snapshot=retry_tv,
+                    )
+                    _emit_optional_source_sidecar_c_block(
+                        args.binary,
+                        item.function.name,
+                        retry_result.payload,
+                        alternate_source_c=bool(args.alternate_source_c),
+                        c_header="/* -- c -- */",
+                    )
+                    return decompiled_local, failed_local
+            except Exception:
+                pass
 
     if result.partial_payload:
         _print_function_attempt_status(
@@ -2311,9 +2410,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.addr is None:
         if not timeout_was_explicit:
-            # Whole-file sweeps should be bounded by default; callers that need a
-            # larger per-function budget can still pass --timeout explicitly.
-            args.timeout = max(4, min(int(args.timeout), 8))
+            # Keep the configured default timeout budget for whole-file sweeps.
+            # Per-function adaptation is handled later by complexity-aware logic.
+            args.timeout = max(4, int(args.timeout))
 
     _lower_process_priority()
     _apply_memory_limit(args.max_memory_mb)
@@ -3282,7 +3381,10 @@ def main(argv: list[str] | None = None) -> int:
             sidecar_verdict=direct_sidecar_verdict,
             non_optimized_verdict=direct_nonoptimized_verdict,
             fallback_kind="direct_addr",
-            tail_validation_verdict=_tail_validation_display_status(direct_result.tail_validation),
+            tail_validation_verdict=_tail_validation_display_status(
+                direct_result.tail_validation,
+                fallback_kind="direct_addr" if getattr(direct_result, "status", None) != "ok" else None,
+            ),
             artifact_path=f"{func.addr:#x}:{func.name}",
         )
         budget_fallback_addr = function_original_addr(func)
@@ -4632,7 +4734,13 @@ def main(argv: list[str] | None = None) -> int:
     forced_serial_function_decomp = (
         os.environ.get(_FORCE_SERIAL_FUNCTION_DECOMP_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
     )
+    enable_serial_fork_per_function = (
+        os.environ.get("INERTIA_ENABLE_SERIAL_FORK_PER_FUNCTION", "").strip().lower() in {"1", "true", "yes", "on"}
+    )
     use_serial_fork_per_function = (
+        enable_serial_fork_per_function
+        and not forced_serial_function_decomp
+        and
         workers <= 1
         and args.addr is None
         and args.max_functions <= 0
@@ -5104,6 +5212,35 @@ def main(argv: list[str] | None = None) -> int:
                     elapsed = getattr(result, "elapsed", None)
                     if isinstance(byte_count, int) and isinstance(elapsed, (int, float)):
                         adaptive_timeout_model.observe_success(byte_count, float(elapsed))
+                # Sweep-only timeout bridge: retry timed-out functions once with a
+                # larger per-function budget using the same work-item path.
+                if (
+                    result is not None
+                    and result.status == "timeout"
+                    and args.addr is None
+                ):
+                    retry_timeout = min(120, max(int(decompile_timeout) * 2, 40))
+                    try:
+                        retry_result = _run_with_timeout_in_daemon_thread(
+                            lambda: _run_function_work_item(
+                                active_item,
+                                timeout=retry_timeout,
+                                api_style=args.api_style,
+                                binary_path=args.binary,
+                                cod_metadata=cod_metadata,
+                                synthetic_globals=synthetic_globals,
+                                lst_metadata=lst_metadata,
+                                enable_structured_simplify=True,
+                                force_isolated_project=force_isolated_function_projects,
+                                allow_isolated_retry=allow_isolated_retry_in_function_tasks,
+                            ),
+                            timeout=max(1, retry_timeout + 2),
+                            thread_name_prefix="func-timeout-bridge",
+                        )
+                        if isinstance(retry_result, FunctionWorkResult) and retry_result.status == "ok":
+                            result = retry_result
+                    except Exception:
+                        pass
                 result_map[item.index] = result
                 if result is not None and item.index not in emitted_indexes:
                     d, f = _emit_function_result(item, result,
