@@ -7,6 +7,8 @@ import sys
 def _default_recovery_timeout(configured_timeout: int, *, explicit_timeout: bool) -> int:
     if configured_timeout <= 0:
         return 5
+    if not explicit_timeout:
+        return min(12, max(5, configured_timeout))
     return configured_timeout
 
 
@@ -41,11 +43,11 @@ class _AdaptivePerByteTimeoutModel:
         # Keeps deterministic behavior while avoiding frequent 86_16 timeout
         # churn on medium/large procedures (e.g. menu/render loops).
         if byte_count >= 520:
-            return max(base, 300)
+            return max(base, 120)
         if byte_count >= 380:
-            return max(base, 240)
+            return max(base, 90)
         if byte_count >= 280:
-            return max(base, 180)
+            return max(base, 60)
         return base
 
 
