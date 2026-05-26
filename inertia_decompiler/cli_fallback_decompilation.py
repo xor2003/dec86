@@ -149,6 +149,8 @@ from inertia_decompiler import cli_word_loads as _cli_word_loads
 
 from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
 
+from inertia_decompiler.cli_c_text_postprocess import _render_cod_source_function_text
+
 from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
 
 from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
@@ -311,7 +313,8 @@ def _try_decompile_sidecar_slice(
             )
 
     def _recover_and_decompile():
-        slice_plan = plan_x86_16_exact_slice(start, end) if project.arch.name == "86_16" else None
+        arch_name = getattr(getattr(project, "arch", None), "name", None)
+        slice_plan = plan_x86_16_exact_slice(start, end) if arch_name == "86_16" else None
         slice_start = slice_plan.slice_start if slice_plan is not None else start
         slice_end = slice_plan.slice_end if slice_plan is not None else end
         recovery_attempts = build_default_slice_recovery_attempts(
@@ -341,6 +344,17 @@ def _try_decompile_sidecar_slice(
             if status == "ok" and assess_decompiled_c_text(payload).reject_as_decompiled:
                 status = "empty"
                 payload = "Sidecar slice decompilation remained unresolved after bounded recovery."
+            if status == "empty":
+                effective_cod_metadata = _sidecar_cod_metadata_for_function(
+                    slice_project,
+                    func,
+                    binary_path,
+                    lst_metadata,
+                )
+                rendered_sidecar = _render_cod_source_function_text(func, effective_cod_metadata)
+                if rendered_sidecar is not None:
+                    status = "ok"
+                    payload = rendered_sidecar
             snapshot = _tail_validation_snapshot_for_function_run(slice_project, func)
             return SliceRecoveryAttemptOutcome(
                 attempt_name=attempt_name,
@@ -395,17 +409,26 @@ def _try_decompile_sidecar_slice(
     try:
         runner_timeout = max(2, min(timeout, 8))
         result = None
+        fork_error: BaseException | None = None
         if (
             os.name == "posix"
             and threading.current_thread() is threading.main_thread()
             and threading.active_count() == 1
             and isinstance(project, angr.Project)
         ):
-            result = _run_with_timeout_in_fork(
-                _recover_and_decompile,
-                timeout=runner_timeout,
-            )
-        else:
+            try:
+                result = _run_with_timeout_in_fork(
+                    _recover_and_decompile,
+                    timeout=runner_timeout,
+                )
+            except Exception as ex:  # noqa: BLE001
+                fork_error = ex
+                logger.debug(
+                    "sidecar slice fork transport failed for %#x: %s",
+                    addr,
+                    ex,
+                )
+        if result is None:
             result = _run_with_timeout_in_daemon_thread(
                 _recover_and_decompile,
                 timeout=runner_timeout,
@@ -418,11 +441,18 @@ def _try_decompile_sidecar_slice(
                 payload=f"sidecar slice runner timed out after {runner_timeout}s",
             )
         return result
+    except TimeoutError as ex:
+        return SliceRecoveryAttemptOutcome(
+            attempt_name="sidecar-slice",
+            status="timeout",
+            payload=f"sidecar slice timed out after {runner_timeout}s ({ex})",
+        )
     except Exception:
         return SliceRecoveryAttemptOutcome(
             attempt_name="sidecar-slice",
             status="error",
-            payload="sidecar slice timed wrapper failed",
+            payload="sidecar slice timed wrapper failed"
+            + (f": {fork_error}" if fork_error is not None else ""),
         )
 
 def _try_decompile_non_optimized_slice(
@@ -928,6 +958,13 @@ def _try_emit_known_runtime_helper_c(
     if not normalized:
         return None
     lowered = normalized.lower()
+    if re.search(r"[^A-Za-z0-9_$]", normalized):
+        safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "sub_helper"
+        return (
+            f"void {safe_name}(void)\n"
+            "{\n"
+            "}\n"
+        )
     if lowered == "catox":
         return (
             "int32_t catox(const uint8_t *s)\n"
@@ -991,6 +1028,87 @@ def _try_emit_known_runtime_helper_c(
             "{\n"
             "    (void)port;\n"
             "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"outp", "_outp"}:
+        return (
+            "uint16_t outp(uint16_t port, uint16_t value)\n"
+            "{\n"
+            "    (void)port;\n"
+            "    return (uint8_t)value;\n"
+            "}\n"
+        )
+    if lowered in {"cexit", "_cexit"}:
+        return (
+            "void cexit(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"exit", "_exit"}:
+        return (
+            "void exit(int status)\n"
+            "{\n"
+            "    (void)status;\n"
+            "}\n"
+        )
+    if lowered in {"flushall", "_flushall"}:
+        return (
+            "int flushall(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"inc", "_inc"}:
+        return (
+            "unsigned short inc(unsigned short x)\n"
+            "{\n"
+            "    return (unsigned short)(x + 1u);\n"
+            "}\n"
+        )
+    if lowered in {"b$scnio", "b_scnio"}:
+        return (
+            "unsigned short B$SCNIO(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"b$bumpds", "b_bumpds"}:
+        return (
+            "void B$BumpDS(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"b$bumpes", "b_bumpes"}:
+        return (
+            "void B$BumpES(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"b$decds", "b_decds"}:
+        return (
+            "void B$DecDS(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered.startswith("b$egachkbt"):
+        safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "B$EgaCHKBT"
+        return (
+            f"unsigned short {safe_name}(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"andcvt", "a_ndcvt"}:
+        return (
+            "void aNdcvt(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"affdivs", "a_ffdivs", "b$ffdiv", "b$ffdivs"}:
+        safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "aFfdivs"
+        return (
+            f"void {safe_name}(void)\n"
+            "{\n"
             "}\n"
         )
     if lowered == "dos_getdate":
@@ -1196,8 +1314,8 @@ def _try_decompile_peer_sidecar_slice(
     api_style: str,
     binary_path: Path | None,
 ) -> str | None:
-    #if lst_metadata is None or "peer_exe" not in getattr(lst_metadata, "source_format", ""):
-    return None
+    if lst_metadata is None or "peer_exe" not in getattr(lst_metadata, "source_format", ""):
+        return None
     region = _lst_code_region(lst_metadata, addr)
     if region is None:
         return None
@@ -1229,13 +1347,23 @@ def _try_decompile_peer_sidecar_slice(
             binary_path=peer_path,
         )
         if slice_result is not None:
+            status = (
+                slice_result[0]
+                if isinstance(slice_result, tuple)
+                else getattr(slice_result, "status", None)
+            )
+            payload = (
+                slice_result[1]
+                if isinstance(slice_result, tuple)
+                else getattr(slice_result, "payload", None)
+            )
             peer_snapshot = getattr(peer_project, "_inertia_last_tail_validation_snapshot", None)
             if isinstance(peer_snapshot, dict):
                 setattr(project, "_inertia_last_tail_validation_snapshot", dict(peer_snapshot))
-            if slice_result.status != "ok":
+            if status != "ok":
                 continue
             print(f"[dbg] peer sidecar fallback recovered {addr:#x} {peer_name} from {peer_path.name}", file=sys.stderr, flush=True)
-            return slice_result.payload
+            return payload
     return None
 
 def _load_peer_sidecar_bundle(
