@@ -1084,11 +1084,211 @@ def _try_emit_known_runtime_helper_c(
             "    return 0;\n"
             "}\n"
         )
+    if lowered in {"clear_mat", "_clear_mat"}:
+        return (
+            "void clear_mat(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"refresh", "_refresh"}:
+        return (
+            "void refresh(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"ftol", "_ftol"}:
+        return (
+            "long ftol(double x)\n"
+            "{\n"
+            "    return (long)x;\n"
+            "}\n"
+        )
+    if lowered in {"edit", "_edit"}:
+        return (
+            "void edit(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"set_cursor", "_set_cursor"}:
+        return (
+            "void set_cursor(unsigned short row, unsigned short col)\n"
+            "{\n"
+            "    (void)row;\n"
+            "    (void)col;\n"
+            "}\n"
+        )
+    if lowered in {"ultoa", "_ultoa"}:
+        return (
+            "char *ultoa(unsigned long value, char *str, int radix)\n"
+            "{\n"
+            "    (void)value;\n"
+            "    (void)radix;\n"
+            "    if (str != (char*)0) {\n"
+            "        str[0] = '\\0';\n"
+            "    }\n"
+            "    return str;\n"
+            "}\n"
+        )
+    if lowered in {"free", "_free"}:
+        return (
+            "void free(void *ptr)\n"
+            "{\n"
+            "    (void)ptr;\n"
+            "}\n"
+        )
+    if lowered in {"myalloc", "_myalloc"}:
+        return (
+            "void *myalloc(unsigned short size)\n"
+            "{\n"
+            "    (void)size;\n"
+            "    return (void *)0;\n"
+            "}\n"
+        )
+    if lowered in {"cltoasub", "_cltoasub"}:
+        return (
+            "void cltoasub(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"cxtoa", "_cxtoa"}:
+        return (
+            "char *cxtoa(unsigned short value, char *buf)\n"
+            "{\n"
+            "    (void)value;\n"
+            "    if (buf != (char*)0) {\n"
+            "        buf[0] = '\\0';\n"
+            "    }\n"
+            "    return buf;\n"
+            "}\n"
+        )
+    if lowered in {"amallocbrk", "_amallocbrk"}:
+        return (
+            "unsigned long amallocbrk(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"fltinf", "_fltinf"}:
+        return (
+            "void fltinf(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"fltin", "_fltin"}:
+        return (
+            "double fltin(void)\n"
+            "{\n"
+            "    return 0.0;\n"
+            "}\n"
+        )
+    if lowered in {"anfld1", "a_nfld1"}:
+        return (
+            "double aNfld1(void)\n"
+            "{\n"
+            "    return 1.0;\n"
+            "}\n"
+        )
+    if lowered in {"anlmul", "a_nlmul"}:
+        return (
+            "long aNlmul(long a, long b)\n"
+            "{\n"
+            "    return a * b;\n"
+            "}\n"
+        )
+    if lowered in {"$i8_tpwr10", "i8_tpwr10", "_i8_tpwr10"}:
+        return (
+            "double i8_tpwr10(void)\n"
+            "{\n"
+            "    return 1.0;\n"
+            "}\n"
+        )
+    if lowered in {"ctermsub", "_ctermsub"}:
+        return (
+            "void ctermsub(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"fierqq", "_fierqq"}:
+        return (
+            "void FIERQQ(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"fcmp", "_fcmp"}:
+        return (
+            "int fcmp(double a, double b)\n"
+            "{\n"
+            "    if (a < b) {\n"
+            "        return -1;\n"
+            "    }\n"
+            "    if (a > b) {\n"
+            "        return 1;\n"
+            "    }\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"maperror", "_maperror"}:
+        return (
+            "int maperror(int err)\n"
+            "{\n"
+            "    return err;\n"
+            "}\n"
+        )
+    if lowered in {"nmsg_text", "_nmsg_text"}:
+        return (
+            "const char *NMSG_TEXT(void)\n"
+            "{\n"
+            "    return \"\";\n"
+            "}\n"
+        )
+    if lowered in {"nmsg_write", "_nmsg_write"}:
+        return (
+            "int NMSG_WRITE(const char *msg)\n"
+            "{\n"
+            "    (void)msg;\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"forcdecpt", "_forcdecpt"}:
+        return (
+            "void forcdecpt(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered in {"fpsignal", "_fpsignal"}:
+        return (
+            "void fpsignal(unsigned short code)\n"
+            "{\n"
+            "    (void)code;\n"
+            "}\n"
+        )
+    if lowered in {"fisrqq", "_fisrqq"}:
+        return (
+            "void FISRQQ(void)\n"
+            "{\n"
+            "}\n"
+        )
     if lowered in {"inc", "_inc"}:
         return (
             "unsigned short inc(unsigned short x)\n"
             "{\n"
             "    return (unsigned short)(x + 1u);\n"
+            "}\n"
+        )
+    if lowered in {"rand", "_rand"}:
+        return (
+            "int rand(void)\n"
+            "{\n"
+            "    static unsigned long state = 1ul;\n"
+            "    state = state * 1103515245ul + 12345ul;\n"
+            "    return (int)((state >> 16) & 0x7ffful);\n"
+            "}\n"
+        )
+    if lowered in {"srand", "_srand"}:
+        return (
+            "void srand(unsigned int seed)\n"
+            "{\n"
+            "    (void)seed;\n"
             "}\n"
         )
     if lowered in {"b$scnio", "b_scnio"}:
@@ -1151,11 +1351,27 @@ def _try_emit_known_runtime_helper_c(
             "    return 0;\n"
             "}\n"
         )
+    if lowered in {"isatty", "_isatty"}:
+        return (
+            "int isatty(int fd)\n"
+            "{\n"
+            "    (void)fd;\n"
+            "    return 0;\n"
+            "}\n"
+        )
     if lowered == "findlast":
         return (
             "int findlast(void)\n"
             "{\n"
             "    return -1;\n"
+            "}\n"
+        )
+    if lowered in {"getenv", "_getenv"}:
+        return (
+            "char *getenv(const char *name)\n"
+            "{\n"
+            "    (void)name;\n"
+            "    return (char *)0;\n"
             "}\n"
         )
     if lowered == "b$egachkbtr":
@@ -1186,6 +1402,19 @@ def _try_emit_known_runtime_helper_c(
             "    while ((*dst++ = *src++) != '\\0') {\n"
             "    }\n"
             "    return out;\n"
+            "}\n"
+        )
+    if lowered == "memcpy":
+        return (
+            "void *memcpy(void *dst, const void *src, unsigned short n)\n"
+            "{\n"
+            "    unsigned char *d = (unsigned char *)dst;\n"
+            "    const unsigned char *s = (const unsigned char *)src;\n"
+            "    unsigned short i;\n"
+            "    for (i = 0; i < n; ++i) {\n"
+            "        d[i] = s[i];\n"
+            "    }\n"
+            "    return dst;\n"
             "}\n"
         )
     if lowered == "strlen":
