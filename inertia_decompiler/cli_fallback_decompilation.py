@@ -1202,6 +1202,20 @@ def _try_emit_known_runtime_helper_c(
             "    return 1.0;\n"
             "}\n"
         )
+    if lowered in {"$i8_output", "i8_output", "_i8_output"}:
+        return (
+            "int i8_output(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"$i8_input", "i8_input", "_i8_input"}:
+        return (
+            "int i8_input(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
     if lowered in {"ctermsub", "_ctermsub"}:
         return (
             "void ctermsub(void)\n"
