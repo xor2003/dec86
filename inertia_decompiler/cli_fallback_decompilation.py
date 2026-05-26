@@ -1044,6 +1044,13 @@ def _try_emit_known_runtime_helper_c(
             "{\n"
             "}\n"
         )
+    if lowered in {"astart", "_astart", "cstart", "_cstart", "__cstart"}:
+        safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "astart"
+        return (
+            f"void {safe_name}(void)\n"
+            "{\n"
+            "}\n"
+        )
     if lowered in {"$_qcg_enter_far", "_qcg_enter_far"} or "qcg_enter_far" in lowered:
         return (
             "void _qcg_enter_far(void)\n"

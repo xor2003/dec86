@@ -1714,7 +1714,7 @@ def _normalize_scalar_gb_array_declarations_text(c_text: str) -> str:
         return c_text
 
     decl_re = re.compile(
-        r"^(?P<indent>\s*)extern\s+char\s+(?P<name>g_b[0-9a-fA-F]+)\s*\[(?P<size>\d+)\]\s*;\s*$"
+        r"^(?P<indent>\s*)extern\s+char\s+(?P<name>g_[0-9a-fA-F]+)\s*\[(?P<size>\d+)\]\s*;\s*$"
     )
     names: dict[str, tuple[int, int]] = {}
     for idx, line in enumerate(lines):
@@ -3936,6 +3936,14 @@ def _prune_non_lvalue_arithmetic_assignments(c_text: str) -> str:
 
 
 def _normalize_seg_offset_void_pointer_args_text(c_text: str) -> str:
+    # Normalize nested address-index carriers produced by stack/materialization
+    # lanes into scalar offset expressions accepted by C compilers:
+    #   &(&v2)[52700 + v6] -> (52700 + v6)
+    c_text = re.sub(
+        r"&\s*\(\s*&\s*[A-Za-z_]\w*\s*\)\s*\[\s*([^\]]+?)\s*\]",
+        r"(\1)",
+        c_text,
+    )
     lines = c_text.splitlines()
     if not lines:
         return c_text
@@ -4001,6 +4009,23 @@ def _normalize_shift_add_precedence_in_assignments(c_text: str) -> str:
     lines = c_text.splitlines()
     rewritten = [_rewrite_match(match) if (match := assign_re.match(line)) else line for line in lines]
     return "\n".join(rewritten)
+
+
+def _normalize_unsupported_computed_goto_text(c_text: str) -> str:
+    """Rewrite GCC-style computed goto into a compilable conservative fallback.
+
+    MS C does not support ``goto <expression>;`` forms.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        indent = match.group("indent")
+        expr = match.group("expr").strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+            return match.group(0)
+        return f"{indent}/* unsupported computed goto: {expr} */ return;"
+
+    pattern = re.compile(r"(?m)^(?P<indent>\s*)goto\s+(?P<expr>[^;]+);\s*$")
+    return pattern.sub(_replace, c_text)
 
 
 def _rewrite_known_helper_signature_text(c_text: str, function) -> str:

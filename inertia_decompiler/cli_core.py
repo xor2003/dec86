@@ -215,6 +215,7 @@ from .cli_c_text_postprocess import (
     _prune_undefined_fragment_carrier_assignments_text,
     _normalize_scalar_gb_array_declarations_text,
     _normalize_seg_offset_void_pointer_args_text,
+    _normalize_unsupported_computed_goto_text,
 )
 
 from .cli_decompilation import (
@@ -1218,6 +1219,7 @@ def _validated_generated_c_acceptance_8616(
         accepted_payload = _prune_undefined_fragment_carrier_assignments_text(accepted_payload)
         accepted_payload = _normalize_scalar_gb_array_declarations_text(accepted_payload)
         accepted_payload = _normalize_seg_offset_void_pointer_args_text(accepted_payload)
+        accepted_payload = _normalize_unsupported_computed_goto_text(accepted_payload)
     quality = assess_decompiled_c_text(accepted_payload)
     if quality.reject_as_decompiled:
         marker_summary = ", ".join(quality.markers[:3]) if quality.markers else "unresolved"
@@ -1260,6 +1262,7 @@ def _validated_generated_c_acceptance_8616(
     recompilation_payload = _prune_undefined_fragment_carrier_assignments_text(recompilation_payload)
     recompilation_payload = _normalize_scalar_gb_array_declarations_text(recompilation_payload)
     recompilation_payload = _normalize_seg_offset_void_pointer_args_text(recompilation_payload)
+    recompilation_payload = _normalize_unsupported_computed_goto_text(recompilation_payload)
     recompilation_payload = _materialize_opaque_pointer_typedefs_text(recompilation_payload)
     recompilation_payload = normalize_unresolved_c_text(recompilation_payload)
     recompilation_targets = ("portable-flat", "msc-dos")
