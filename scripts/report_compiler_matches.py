@@ -457,6 +457,30 @@ def _aggregate_flag_support(function_flag_report: list[dict[str, object]]) -> li
     return sorted(((flag, value / total) for flag, value in support.items()), key=lambda kv: kv[1], reverse=True)
 
 
+def _flag_presence_share(function_flag_report: list[dict[str, object]], flag: str, threshold: float = 0.55) -> float:
+    total = 0.0
+    present = 0.0
+    for row in function_flag_report:
+        if str(row.get("confidence", "low")) == "low":
+            continue
+        w = _row_vote_weight(row)
+        if w <= 0:
+            continue
+        total += w
+        prob = 0.0
+        flags = row.get("top_flags", [])
+        if isinstance(flags, list):
+            for item in flags:
+                if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[0]) == flag:
+                    prob = float(item[1])
+                    break
+        if prob >= threshold:
+            present += w
+    if total <= 0:
+        return 0.0
+    return present / total
+
+
 def _vote_confidence(flag_set_counts: list[tuple[str, float]]) -> tuple[str, float]:
     if not flag_set_counts:
         return "none", 0.0
@@ -1092,6 +1116,9 @@ def main(argv: list[str] | None = None) -> int:
                         core = [flag for flag, prob in vote_flag_support if prob >= 0.75]
                         if core:
                             print(f"  Core flags: {_pretty_combo_for_output(_normalize_combo_equivalences(' '.join(core)))}")
+                        zi_share = _flag_presence_share(function_flag_report, "Zi", threshold=0.55)
+                        if zi_share > 0.0:
+                            print(f"  /Zi evidence: present in about {zi_share*100.0:.1f}% of matched non-library functions")
                 if function_flag_report:
                     print("  Top marginal flag sets by function count:")
                     for combo, cnt in set_votes[: max(1, args.per_function_flags_top)]:
