@@ -560,13 +560,46 @@ def _flag_presence_share(function_flag_report: list[dict[str, object]], flag: st
     return present / total
 
 
-def _best_rc_shift(function_rows: list[dict[str, object]], rc_entries: list[tuple[int, str]]) -> tuple[int | None, int]:
+def _mz_shift_candidates(raw_bytes: bytes) -> list[int]:
+    if len(raw_bytes) < 0x20 or raw_bytes[:2] != b"MZ":
+        return []
+    hdr_paras = int.from_bytes(raw_bytes[0x08:0x0A], "little")
+    cs = int.from_bytes(raw_bytes[0x16:0x18], "little")
+    header_bytes = hdr_paras * 16
+    cs_bytes = cs * 16
+    out = [-(header_bytes), -(header_bytes + cs_bytes), -(header_bytes - cs_bytes)]
+    uniq: list[int] = []
+    seen: set[int] = set()
+    for v in out:
+        if v not in seen:
+            seen.add(v)
+            uniq.append(v)
+    return uniq
+
+
+def _best_rc_shift(
+    function_rows: list[dict[str, object]],
+    rc_entries: list[tuple[int, str]],
+    raw_bytes: bytes | None = None,
+) -> tuple[int | None, int]:
     if not function_rows or not rc_entries:
         return None, 0
     rc_begins = {off for off, _ in rc_entries}
     row_offsets = [int(r.get("offset", 0)) for r in function_rows if isinstance(r.get("offset"), int)]
     if not row_offsets:
         return None, 0
+    # Prefer MZ-derived candidates first when available.
+    if raw_bytes:
+        best_shift = None
+        best_hits = -1
+        for cand in _mz_shift_candidates(raw_bytes):
+            hits = sum(1 for roff in row_offsets if (roff + cand) in rc_begins)
+            if hits > best_hits:
+                best_hits = hits
+                best_shift = cand
+        if best_shift is not None and best_hits > 0:
+            return best_shift, best_hits
+
     shift_counts: Counter[int] = Counter()
     for roff in row_offsets:
         for rcoff in rc_begins:
@@ -580,8 +613,12 @@ def _best_rc_shift(function_rows: list[dict[str, object]], rc_entries: list[tupl
     return shift, hits
 
 
-def _map_flags_to_rc_functions(function_rows: list[dict[str, object]], rc_entries: list[tuple[int, str]]) -> tuple[int | None, int, list[dict[str, object]]]:
-    shift, hits = _best_rc_shift(function_rows, rc_entries)
+def _map_flags_to_rc_functions(
+    function_rows: list[dict[str, object]],
+    rc_entries: list[tuple[int, str]],
+    raw_bytes: bytes | None = None,
+) -> tuple[int | None, int, list[dict[str, object]]]:
+    shift, hits = _best_rc_shift(function_rows, rc_entries, raw_bytes=raw_bytes)
     if shift is None:
         return None, 0, []
     rc_by_begin = {off: name for off, name in rc_entries}
@@ -1032,6 +1069,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     result_cache_path = cache_dir / f"report_compiler_matches-{key}.json"
     cached_payload = _load_cached_result(result_cache_path)
+    raw_bytes = binary_path.read_bytes()
     if cached_payload is not None:
         compiler_items = cached_payload.get("compiler_match_counts", [])
         function_items = cached_payload.get("function_match_counts", [])
@@ -1048,7 +1086,6 @@ def main(argv: list[str] | None = None) -> int:
         function_flag_report = cached_payload.get("function_flag_report", [])
     else:
         _, image_bytes = _load_image(binary_path)
-        raw_bytes = binary_path.read_bytes()
         ms_runtime_hits = _detect_ms_runtime_libraries(raw_bytes)
         linker_family = _linker_family_from_raw(raw_bytes)
 
@@ -1281,7 +1318,7 @@ def main(argv: list[str] | None = None) -> int:
                     rc_path = args.rc_json if args.rc_json.is_absolute() else (REPO_ROOT / args.rc_json)
                     rc_entries = _load_rc_extract_functions(rc_path)
                     if rc_entries:
-                        shift, hits, mapped = _map_flags_to_rc_functions(function_flag_report, rc_entries)
+                        shift, hits, mapped = _map_flags_to_rc_functions(function_flag_report, rc_entries, raw_bytes=raw_bytes)
                         if shift is not None and mapped:
                             print("Method 5: RC function map (precise names + shift)")
                             print("  How: load RC extract list, auto-find address shift, map per-function flag hints by begin offset.")
