@@ -23,3 +23,7 @@ result.txt
 .corpus
 node_modules/
 .venv/
+
+# Generated large catalog artifacts
+signature_catalogs/all_compilers.pat
+signature_catalogs/catalog_specs.pickle
