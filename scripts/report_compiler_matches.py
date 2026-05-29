@@ -19,6 +19,7 @@ import threading
 import tempfile
 from typing import Iterable
 import zipfile
+import re
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -102,6 +103,84 @@ def _load_aliases(path: Path) -> dict[str, str]:
     if not isinstance(aliases, dict):
         return {}
     return {str(k): str(v) for k, v in aliases.items()}
+
+
+def _strip_json_comments(text: str) -> str:
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    in_str = False
+    esc = False
+    while i < n:
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            i += 2
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _load_jsonc(path: Path) -> dict[str, object]:
+    raw = path.read_text(encoding="utf-8", errors="ignore")
+    return json.loads(_strip_json_comments(raw))
+
+
+def _parse_int_like(v: object) -> int | None:
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        s = v.strip().lower()
+        try:
+            return int(s, 0)
+        except Exception:
+            return None
+    return None
+
+
+def _load_rc_extract_functions(path: Path) -> list[tuple[int, str]]:
+    try:
+        payload = _load_jsonc(path)
+    except Exception:
+        return []
+    ext = payload.get("extract")
+    if not isinstance(ext, list):
+        return []
+    out: list[tuple[int, str]] = []
+    for row in ext:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("from", "")).strip()
+        begin = _parse_int_like(row.get("begin"))
+        if not name or begin is None:
+            continue
+        if name.lower() in {"padding"}:
+            continue
+        out.append((begin, name))
+    return out
 
 
 def _canonical_compiler_label(name: str, aliases: dict[str, str]) -> str:
@@ -479,6 +558,57 @@ def _flag_presence_share(function_flag_report: list[dict[str, object]], flag: st
     if total <= 0:
         return 0.0
     return present / total
+
+
+def _best_rc_shift(function_rows: list[dict[str, object]], rc_entries: list[tuple[int, str]]) -> tuple[int | None, int]:
+    if not function_rows or not rc_entries:
+        return None, 0
+    rc_begins = {off for off, _ in rc_entries}
+    row_offsets = [int(r.get("offset", 0)) for r in function_rows if isinstance(r.get("offset"), int)]
+    if not row_offsets:
+        return None, 0
+    shift_counts: Counter[int] = Counter()
+    for roff in row_offsets:
+        for rcoff in rc_begins:
+            d = rcoff - roff
+            if -0x400000 <= d <= 0x400000:
+                shift_counts[d] += 1
+    if not shift_counts:
+        return None, 0
+    shift, _ = shift_counts.most_common(1)[0]
+    hits = sum(1 for roff in row_offsets if (roff + shift) in rc_begins)
+    return shift, hits
+
+
+def _map_flags_to_rc_functions(function_rows: list[dict[str, object]], rc_entries: list[tuple[int, str]]) -> tuple[int | None, int, list[dict[str, object]]]:
+    shift, hits = _best_rc_shift(function_rows, rc_entries)
+    if shift is None:
+        return None, 0, []
+    rc_by_begin = {off: name for off, name in rc_entries}
+    out: list[dict[str, object]] = []
+    for row in function_rows:
+        off = row.get("offset")
+        if not isinstance(off, int):
+            continue
+        rc_off = off + shift
+        name = rc_by_begin.get(rc_off)
+        if not name:
+            continue
+        top_combos = row.get("top_combos", [])
+        best_combo = str(top_combos[0][0]) if isinstance(top_combos, list) and top_combos else ""
+        best_combo = _pretty_combo_for_output(best_combo)
+        out.append(
+            {
+                "rc_name": name,
+                "rc_begin": rc_off,
+                "local_offset": off,
+                "confidence": str(row.get("confidence", "low")),
+                "gap": float(row.get("gap", 0.0)),
+                "best_combo": best_combo,
+            }
+        )
+    out.sort(key=lambda r: (r["rc_begin"], r["rc_name"]))
+    return shift, hits, out
 
 
 def _vote_confidence(flag_set_counts: list[tuple[str, float]]) -> tuple[str, float]:
@@ -867,6 +997,12 @@ def main(argv: list[str] | None = None) -> int:
         default=15,
         help="How many matched functions to show for per-function flag inference.",
     )
+    parser.add_argument(
+        "--rc-json",
+        type=Path,
+        default=None,
+        help="Optional JSON/JSONC RC config (egame_rc.json) to map function offsets and auto-find address shift.",
+    )
     args = parser.parse_args(argv)
     logging.getLogger("angr").setLevel(logging.CRITICAL)
     logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -1141,6 +1277,25 @@ def main(argv: list[str] | None = None) -> int:
                             f"{_format_top_combo_flags([(_pretty_combo_for_output(str(c)), s) for c, s in list(row.get('top_combos', []))])} ; flags: {flags_txt}"
                         )
                         shown += 1
+                if args.rc_json:
+                    rc_path = args.rc_json if args.rc_json.is_absolute() else (REPO_ROOT / args.rc_json)
+                    rc_entries = _load_rc_extract_functions(rc_path)
+                    if rc_entries:
+                        shift, hits, mapped = _map_flags_to_rc_functions(function_flag_report, rc_entries)
+                        if shift is not None and mapped:
+                            print("Method 5: RC function map (precise names + shift)")
+                            print("  How: load RC extract list, auto-find address shift, map per-function flag hints by begin offset.")
+                            print(f"  Shift: {shift:+#x} ; mapped_functions={len(mapped)} ; shift_hits={hits}")
+                            print("  Top mapped functions:")
+                            for row in mapped[: max(1, args.per_function_flags_top)]:
+                                print(
+                                    f"    {row['rc_name']} @rc 0x{int(row['rc_begin']):x} "
+                                    f"(local 0x{int(row['local_offset']):x}) [{row['confidence']}, gap={row['gap']:.3f}] "
+                                    f"{row['best_combo']}"
+                                )
+                        else:
+                            print("Method 5: RC function map (precise names + shift)")
+                            print("  Result: no reliable mapping from current function offsets to RC extract list.")
             else:
                 print("  Result: no profile match (or no profiles loaded)")
         if args.verbose:

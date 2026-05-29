@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 import importlib.util
 from pathlib import Path
+import tempfile
 
 
 def _load_module():
@@ -157,3 +158,35 @@ def test_aggregate_flag_sets_uses_marginal_flags_not_exact_top_combo():
     agg = mod._aggregate_flag_sets(report)
     assert agg
     assert agg[0][0] == "Gs Oa Od"
+
+
+def test_load_rc_extract_functions_jsonc_and_shift_map():
+    mod = _load_module()
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "egame_rc.json"
+        p.write_text(
+            "{\n"
+            '  "extract": [\n'
+            "    // comment\n"
+            '    {"seg":"seg000","begin":"0x13922","from":"sub_13922"},\n'
+            '    {"seg":"seg000","begin":"0x15540","from":"sub_15540"},\n'
+            '    {"seg":"seg000","begin":"0x0","from":"padding"}\n'
+            "  ]\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        rows = mod._load_rc_extract_functions(p)
+        assert (0x13922, "sub_13922") in rows
+        assert (0x15540, "sub_15540") in rows
+        assert all(name != "padding" for _, name in rows)
+
+    function_rows = [
+        {"offset": 0x3922, "top_combos": [("Gs Oa Od Ol Or", 0.9)], "confidence": "medium", "gap": 0.05},
+        {"offset": 0x5540, "top_combos": [("Gs Oa Od Ol Zi", 0.9)], "confidence": "medium", "gap": 0.06},
+    ]
+    rc_entries = [(0x13922, "sub_13922"), (0x15540, "sub_15540")]
+    shift, hits, mapped = mod._map_flags_to_rc_functions(function_rows, rc_entries)
+    assert shift == 0x10000
+    assert hits == 2
+    assert len(mapped) == 2
+    assert mapped[0]["rc_name"] == "sub_13922"
