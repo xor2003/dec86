@@ -85,7 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     staging.mkdir(parents=True, exist_ok=True)
     shutil.copy2(catalog_path, staging / catalog_path.name)
     shutil.copy2(snapshot_path, staging / snapshot_path.name)
-    shutil.copytree(cache_dir, staging / DEFAULT_CACHE_DIRNAME, dirs_exist_ok=True)
+    # Matcher zip path needs only catalog + precompiled specs snapshot.
+    # Raw per-input cache artifacts are not required inside bundle.
 
     bundle_path = bundle_dir / args.bundle_name
     _zip_tree(bundle_path, staging)
