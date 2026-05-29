@@ -1116,9 +1116,15 @@ def main(argv: list[str] | None = None) -> int:
                         core = [flag for flag, prob in vote_flag_support if prob >= 0.75]
                         if core:
                             print(f"  Core flags: {_pretty_combo_for_output(_normalize_combo_equivalences(' '.join(core)))}")
-                        zi_share = _flag_presence_share(function_flag_report, "Zi", threshold=0.55)
-                        if zi_share > 0.0:
-                            print(f"  /Zi evidence: present in about {zi_share*100.0:.1f}% of matched non-library functions")
+                        partial_flags: list[tuple[str, float]] = []
+                        for flag, _ in vote_flag_support:
+                            share = _flag_presence_share(function_flag_report, flag, threshold=0.55)
+                            if 0.10 <= share <= 0.90:
+                                partial_flags.append((flag, share))
+                        if partial_flags:
+                            print("  Partial flag evidence (mixed across matched non-library functions):")
+                            for flag, share in partial_flags[:8]:
+                                print(f"    {flag:>4}  {share*100.0:5.1f}%")
                 if function_flag_report:
                     print("  Top marginal flag sets by function count:")
                     for combo, cnt in set_votes[: max(1, args.per_function_flags_top)]:
