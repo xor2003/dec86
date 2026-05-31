@@ -575,6 +575,14 @@ def _discover_ranked_binary_offsets(
     *,
     args: Any,
 ) -> list[int]:
+    def _auto_rizin_enabled_for_current_binary() -> bool:
+        # Default auto mode prioritizes deterministic angr-ranked discovery for
+        # 16-bit DOS EXEs. Rizin can still be forced via explicit backend.
+        if str(getattr(project.arch, "name", "") or "") != "86_16":
+            return True
+        env = os.environ.get("INERTIA_AUTO_RIZIN_8616", "").strip().lower()
+        return env in {"1", "true", "yes", "on"}
+
     backend = str(getattr(args, "function_discovery_backend", "auto") or "auto").strip().lower()
     if backend == "auto":
         legacy_seed_engine = str(getattr(args, "seed_engine", "auto") or "auto").strip().lower()
@@ -582,9 +590,12 @@ def _discover_ranked_binary_offsets(
             backend = legacy_seed_engine
     rizin_timeout = max(1, int(getattr(args, "rizin_timeout", 8) or 8))
     angr_offsets: list[int] | None = None
-    wants_rizin = backend in {"auto", "rizin", "hybrid"} and bool(
-        getattr(args, "binary", Path("")).suffix.lower() == ".exe"
-    )
+    wants_rizin = False
+    if bool(getattr(args, "binary", Path("")).suffix.lower() == ".exe"):
+        if backend in {"rizin", "hybrid"}:
+            wants_rizin = True
+        elif backend == "auto":
+            wants_rizin = _auto_rizin_enabled_for_current_binary()
     rz = discover_rizin_function_entries(getattr(args, "binary"), timeout_sec=rizin_timeout) if wants_rizin else None
     if rz is not None and rz.status is RizinDiscoveryStatus.OK:
         rizin_offsets = list(rz.offsets)
@@ -5715,7 +5726,12 @@ def main(argv: list[str] | None = None) -> int:
                         and result.status == "timeout"
                         and args.addr is None
                     ):
-                        retry_timeout = min(120, max(int(decompile_timeout) * 2, 40))
+                        base_timeout = max(1, int(getattr(args, "timeout", 120) or 120))
+                        # Ensure sweep retry actually expands the lane budget.
+                        # The previous 120s cap could become a no-op when the base
+                        # timeout was already 120s, leaving flaky one-off timeouts
+                        # unrecovered.
+                        retry_timeout = min(360, max(int(decompile_timeout) * 2, base_timeout * 2, 40))
                         try:
                             retry_result = _run_with_timeout_in_daemon_thread(
                                 lambda: _run_function_work_item(

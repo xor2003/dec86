@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from .cache import _load_cache_json, _recovery_cache_key, _store_cache_json
 
@@ -55,6 +56,84 @@ def _cache_key(binary_path: Path, *, timeout_sec: int, max_count: int | None) ->
         kind="rizin_aflj_function_seeds",
         extra={"timeout_sec": timeout_sec, "max_count": max_count or 0},
     )
+
+
+def _run_rizin_json(binary_path: Path, command: str, *, timeout_sec: int) -> Any:
+    cmd = ["rizin", "-2", "-q", "-c", command, str(binary_path)]
+    completed = subprocess.run(
+        cmd,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=max(1, int(timeout_sec)),
+    )
+    if completed.returncode != 0:
+        return None
+    try:
+        return json.loads(completed.stdout)
+    except Exception:
+        return None
+
+
+def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], str]:
+    data = binary_path.read_bytes()
+    segments = _run_rizin_json(binary_path, "iSj", timeout_sec=3)
+    if not isinstance(segments, list):
+        return [], "no_segment_map"
+    chosen = None
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        paddr = int(seg.get("paddr", 0) or 0)
+        vaddr = int(seg.get("vaddr", 0) or 0)
+        # Prefer the DOS code segment mapping near header end.
+        if paddr > 0 and vaddr >= 0:
+            if chosen is None or paddr < int(chosen.get("paddr", 0) or 0):
+                chosen = {"paddr": paddr, "vaddr": vaddr}
+    if chosen is None:
+        return [], "no_mappable_segment"
+    pbase = int(chosen["paddr"])
+    vbase = int(chosen["vaddr"])
+    patterns = (b"\x55\x8b\xec", b"\x55\x89\xe5")
+    candidates: list[int] = []
+    for pat in patterns:
+        start = 0
+        while True:
+            idx = data.find(pat, start)
+            if idx < 0:
+                break
+            start = idx + 1
+            if idx < pbase:
+                continue
+            vaddr = vbase + (idx - pbase)
+            if vaddr < 0:
+                continue
+            # angr DOS MZ loader base is 0x10000 in this pipeline.
+            candidates.append(0x10000 + vaddr)
+    entry_raw = subprocess.run(
+        ["rizin", "-2", "-q", "-c", "ieq", str(binary_path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=2,
+    )
+    if entry_raw.returncode == 0:
+        entry_text = entry_raw.stdout.strip()
+        if entry_text.startswith("0x"):
+            try:
+                candidates.append(0x10000 + int(entry_text, 16))
+            except Exception:
+                pass
+    dedup: set[int] = set()
+    ordered: list[int] = []
+    for addr in sorted(candidates):
+        if addr in dedup:
+            continue
+        dedup.add(addr)
+        ordered.append(addr)
+    return ordered, "mz_prologue_fallback"
 
 
 def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) -> RizinDiscoveryResult:
@@ -145,6 +224,25 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
         return error_result
     candidates: list[dict[str, object]] = [item for item in payload if isinstance(item, dict)]
     if not candidates:
+        mz_fallback, fallback_detail = _mz_linear_candidates_from_prologues(binary_path)
+        if mz_fallback:
+            if key is not None:
+                _store_cache_json(
+                    "recovery",
+                    key,
+                    {
+                        "status": RizinDiscoveryStatus.OK.value,
+                        "offsets": mz_fallback,
+                        "detail": fallback_detail,
+                        "engine": "rizin",
+                    },
+                )
+            return RizinDiscoveryResult(
+                RizinDiscoveryStatus.OK,
+                tuple(mz_fallback),
+                (time.perf_counter() - started) * 1000.0,
+                fallback_detail,
+            )
         empty_result = RizinDiscoveryResult(
             RizinDiscoveryStatus.EMPTY,
             (),
