@@ -64,14 +64,23 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
     key = _cache_key(binary_path, timeout_sec=timeout_sec, max_count=None)
     if key is not None:
         cached = _load_cache_json("recovery", key)
-        if isinstance(cached, dict) and isinstance(cached.get("offsets"), list):
-            offsets = tuple(int(x) for x in cached["offsets"])
-            return RizinDiscoveryResult(
-                RizinDiscoveryStatus.OK,
-                offsets,
-                (time.perf_counter() - started) * 1000.0,
-                "cache_hit",
-            )
+        if isinstance(cached, dict):
+            cached_status_raw = str(cached.get("status", "") or "").strip().lower()
+            cached_detail = str(cached.get("detail", "") or "")
+            offsets_raw = cached.get("offsets")
+            if isinstance(offsets_raw, list):
+                offsets = tuple(int(x) for x in offsets_raw)
+            else:
+                offsets = ()
+            if cached_status_raw:
+                for status in RizinDiscoveryStatus:
+                    if status.value == cached_status_raw:
+                        return RizinDiscoveryResult(
+                            status,
+                            offsets,
+                            (time.perf_counter() - started) * 1000.0,
+                            f"cache_hit:{cached_detail or cached_status_raw}",
+                        )
     cmd = ["rizin", "-2", "-q", "-c", "aaa;aflj", str(binary_path)]
     try:
         completed = subprocess.run(
@@ -83,50 +92,68 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             timeout=max(1, int(timeout_sec)),
         )
     except subprocess.TimeoutExpired:
-        return RizinDiscoveryResult(
+        timeout_result = RizinDiscoveryResult(
             RizinDiscoveryStatus.TIMEOUT,
             (),
             (time.perf_counter() - started) * 1000.0,
             "subprocess timeout",
         )
+        if key is not None:
+            _store_cache_json("recovery", key, {"status": timeout_result.status.value, "offsets": [], "detail": timeout_result.detail})
+        return timeout_result
     except Exception as ex:
-        return RizinDiscoveryResult(
+        error_result = RizinDiscoveryResult(
             RizinDiscoveryStatus.ERROR,
             (),
             (time.perf_counter() - started) * 1000.0,
             str(ex),
         )
+        if key is not None:
+            _store_cache_json("recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail})
+        return error_result
     if completed.returncode != 0:
-        return RizinDiscoveryResult(
+        error_result = RizinDiscoveryResult(
             RizinDiscoveryStatus.ERROR,
             (),
             (time.perf_counter() - started) * 1000.0,
             f"exit={completed.returncode}",
         )
+        if key is not None:
+            _store_cache_json("recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail})
+        return error_result
     try:
         payload = json.loads(completed.stdout)
     except Exception:
-        return RizinDiscoveryResult(
+        error_result = RizinDiscoveryResult(
             RizinDiscoveryStatus.ERROR,
             (),
             (time.perf_counter() - started) * 1000.0,
             "invalid JSON",
         )
+        if key is not None:
+            _store_cache_json("recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail})
+        return error_result
     if not isinstance(payload, list):
-        return RizinDiscoveryResult(
+        error_result = RizinDiscoveryResult(
             RizinDiscoveryStatus.ERROR,
             (),
             (time.perf_counter() - started) * 1000.0,
             "aflj payload is not a list",
         )
+        if key is not None:
+            _store_cache_json("recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail})
+        return error_result
     candidates: list[dict[str, object]] = [item for item in payload if isinstance(item, dict)]
     if not candidates:
-        return RizinDiscoveryResult(
+        empty_result = RizinDiscoveryResult(
             RizinDiscoveryStatus.EMPTY,
             (),
             (time.perf_counter() - started) * 1000.0,
             "no function entries",
         )
+        if key is not None:
+            _store_cache_json("recovery", key, {"status": empty_result.status.value, "offsets": [], "detail": empty_result.detail})
+        return empty_result
     ordered = sorted(candidates, key=_score_aflj_entry, reverse=True)
     dedup: set[int] = set()
     offsets: list[int] = []
@@ -137,14 +164,21 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
         dedup.add(offset)
         offsets.append(offset)
     if not offsets:
-        return RizinDiscoveryResult(
+        empty_result = RizinDiscoveryResult(
             RizinDiscoveryStatus.EMPTY,
             (),
             (time.perf_counter() - started) * 1000.0,
             "no valid offsets",
         )
+        if key is not None:
+            _store_cache_json("recovery", key, {"status": empty_result.status.value, "offsets": [], "detail": empty_result.detail})
+        return empty_result
     if key is not None:
-        _store_cache_json("recovery", key, {"offsets": offsets, "engine": "rizin"})
+        _store_cache_json(
+            "recovery",
+            key,
+            {"status": RizinDiscoveryStatus.OK.value, "offsets": offsets, "detail": "ok", "engine": "rizin"},
+        )
     return RizinDiscoveryResult(
         RizinDiscoveryStatus.OK,
         tuple(offsets),
