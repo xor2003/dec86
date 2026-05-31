@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
+from angr.sim_type import SimTypeBottom, SimTypeFunction
+
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles, infer_induction_summary
 from inertia_decompiler.runtime_support import timing_output_enabled
 
@@ -321,181 +323,281 @@ def describe_x86_16_decompiler_structuring_stage():
 
 
 def _structuring_codegen_8616(project, codegen) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
-        return False
-    if not bool(getattr(project, "_inertia_structuring_enabled", True)):
-        codegen._inertia_structuring_passes = ()
-        codegen._inertia_structuring_changed = False
-        codegen._inertia_structuring_failed = False
-        codegen._inertia_last_structuring_pass = None
-        return False
+    def _impl():
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+        if not bool(getattr(project, "_inertia_structuring_enabled", True)):
+            codegen._inertia_structuring_passes = ()
+            codegen._inertia_structuring_changed = False
+            codegen._inertia_structuring_failed = False
+            codegen._inertia_last_structuring_pass = None
+            return False
 
-    # Alias-completeness gate: structuring cannot run with provisional SS stack.
-    # AGENTS rule #1: SS:BP+offset → stack slot → variable, never guess.
-    from .pipeline.errors import PipelineHardError
-
-    try:
-        _assert_alias_complete_8616(codegen)
-    except PipelineHardError as ex:
-        codegen._inertia_structuring_failed = True
-        codegen._inertia_structuring_failure_pass = "alias_completeness_gate"
-        codegen._inertia_structuring_failure_error = str(ex)
-        logging.getLogger(__name__).warning(
-            "structuring blocked by incomplete SS alias function=%#x: %s",
-            getattr(getattr(codegen, "cfunc", None), "addr", 0),
-            ex,
-        )
-        return False
-
-    # ── Stack lowering (before structuring) ──
-    # Must run early: alias facts → stack variables → structuring sees named variables.
-    if not getattr(codegen, "_inertia_ss_stack_lowered", False):
+        # Alias-completeness gate: structuring cannot run with provisional SS stack.
+        # AGENTS rule #1: SS:BP+offset → stack slot → variable, never guess.
         from .pipeline.errors import PipelineHardError
 
         try:
-            from .lowering.real_mode_linear import (
-                lower_stable_ss_linear_stack_dereferences_8616,
-            )
-
-            lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
-        except PipelineHardError:
-            raise
-        except Exception as ex:
+            _assert_alias_complete_8616(codegen)
+        except PipelineHardError as ex:
             codegen._inertia_structuring_failed = True
-            codegen._inertia_structuring_failure_pass = "lower_stable_ss_linear_stack_dereferences_8616"
-            codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
-            logging.getLogger(__name__).warning(
-                "stack lowering setup failed function=%#x stage=%s: %s: %s",
-                getattr(getattr(codegen, "cfunc", None), "addr", 0),
-                "lower_stable_ss_linear_stack_dereferences_8616",
-                type(ex).__name__,
-                ex,
-            )
-            return False
-
-        try:
-            from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
-            from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
-
-            transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
-            alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
-            if isinstance(alias_facts, list) and alias_facts:
-                lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
-        except PipelineHardError:
-            raise
-        except Exception as ex:
-            codegen._inertia_structuring_failed = True
-            codegen._inertia_structuring_failure_pass = "lower_stack_accesses_from_alias_facts_8616"
-            codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
-            logging.getLogger(__name__).warning(
-                "stack lowering from facts failed function=%#x stage=%s: %s: %s",
-                getattr(getattr(codegen, "cfunc", None), "addr", 0),
-                "lower_stack_accesses_from_alias_facts_8616",
-                type(ex).__name__,
-                ex,
-            )
-            return False
-        codegen._inertia_ss_stack_lowered = True
-
-    # ── Hard contract gate: classified > 0 && materialized == 0 → PipelineHardError ──
-    # PipelineHardError MUST propagate — never silently caught.
-    # Only non-fatal errors (import, attribute) are logged and cause structuring abort.
-    from .pipeline.contracts import assert_pipeline_contracts_8616
-
-    try:
-        assert_pipeline_contracts_8616(codegen)
-    except PipelineHardError:
-        raise
-    except Exception as e:
-        codegen._inertia_structuring_failed = True
-        codegen._inertia_structuring_failure_pass = "pipeline_contracts"
-        codegen._inertia_structuring_failure_error = str(e)
-        logging.getLogger(__name__).warning(
-            "Pipeline contract gate setup error in %s: %s",
-            getattr(codegen, "cfunc", None) or "unknown",
-            e,
-        )
-        return False
-
-    changed = False
-    last_changed_pass = None
-    codegen._inertia_structuring_failed = False
-    codegen._inertia_structuring_failure_pass = None
-    codegen._inertia_structuring_failure_error = None
-    codegen._inertia_structuring_validation_failed = False
-    codegen._inertia_structuring_validation_failure_pass = None
-    codegen._inertia_structuring_validation_failure_error = None
-    codegen._inertia_last_structuring_pass = None
-    pass_specs = _decompiler_structuring_passes_for_function(project, codegen)
-    codegen._inertia_structuring_passes = tuple(spec.name for spec in pass_specs)
-    _t_structuring_start = time.perf_counter()
-    for spec in pass_specs:
-        try:
-            project._inertia_decompiler_stage = f"structuring:{spec.name}"
-            # Structuring must remain semantics-preserving under tail validation.
-            # Expression simplification is allowed in postprocess; in structuring it
-            # can rewrite boundary-visible conditions (e.g. 32-bit compare forms),
-            # so keep this step analysis-only here.
-            if spec.name == "_simplify_structured_expressions_8616":
-                continue
-            if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
-                import sys as _sys
-
-                _sys.stderr.write(
-                    f"[{time.strftime('%H:%M:%S')}] structuring pass: {spec.name} (+{time.perf_counter() - _t_structuring_start:.1f}s)\n"
-                )
-                _sys.stderr.flush()
-            finalize_validation = _maybe_validate_structuring_pass_8616(project, codegen, spec.name)
-            if spec.needs_project:
-                spec_changed = spec.func(project, codegen)
-            else:
-                spec_changed = spec.func(codegen)
-            if finalize_validation is not None:
-                finalize_validation()
-                if getattr(codegen, "_inertia_structuring_validation_failed", False):
-                    break
-        except Exception as ex:  # noqa: BLE001
-            codegen._inertia_structuring_failed = True
-            codegen._inertia_structuring_failure_pass = spec.name
+            codegen._inertia_structuring_failure_pass = "alias_completeness_gate"
             codegen._inertia_structuring_failure_error = str(ex)
             logging.getLogger(__name__).warning(
-                "Skipping 86_16 structuring pass %s after %s: %s",
-                spec.name,
-                last_changed_pass or "no earlier structuring",
+                "structuring blocked by incomplete SS alias function=%#x: %s",
+                getattr(getattr(codegen, "cfunc", None), "addr", 0),
                 ex,
-                exc_info=True,
             )
-            break
-        if spec_changed:
-            changed = True
-            last_changed_pass = spec.name
-            codegen._inertia_last_structuring_pass = spec.name
-    codegen._inertia_structuring_changed = changed
-    project._inertia_decompiler_stage = "structuring"
-    return changed
+            return False
+
+        # ── Stack lowering (before structuring) ──
+        # Must run early: alias facts → stack variables → structuring sees named variables.
+        if not getattr(codegen, "_inertia_ss_stack_lowered", False):
+            from .pipeline.errors import PipelineHardError
+
+            try:
+                from .lowering.real_mode_linear import (
+                    lower_stable_ss_linear_stack_dereferences_8616,
+                )
+
+                lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
+            except PipelineHardError:
+                raise
+            except Exception as ex:
+                codegen._inertia_structuring_failed = True
+                codegen._inertia_structuring_failure_pass = "lower_stable_ss_linear_stack_dereferences_8616"
+                codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
+                logging.getLogger(__name__).warning(
+                    "stack lowering setup failed function=%#x stage=%s: %s: %s",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0),
+                    "lower_stable_ss_linear_stack_dereferences_8616",
+                    type(ex).__name__,
+                    ex,
+                )
+                return False
+
+            try:
+                from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+                from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
+
+                transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
+                alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+                if isinstance(alias_facts, list) and alias_facts:
+                    lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+            except PipelineHardError:
+                raise
+            except Exception as ex:
+                codegen._inertia_structuring_failed = True
+                codegen._inertia_structuring_failure_pass = "lower_stack_accesses_from_alias_facts_8616"
+                codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
+                logging.getLogger(__name__).warning(
+                    "stack lowering from facts failed function=%#x stage=%s: %s: %s",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0),
+                    "lower_stack_accesses_from_alias_facts_8616",
+                    type(ex).__name__,
+                    ex,
+                )
+                return False
+            codegen._inertia_ss_stack_lowered = True
+
+        # ── Hard contract gate: classified > 0 && materialized == 0 → PipelineHardError ──
+        # PipelineHardError MUST propagate — never silently caught.
+        # Only non-fatal errors (import, attribute) are logged and cause structuring abort.
+        from .pipeline.contracts import assert_pipeline_contracts_8616
+
+        try:
+            assert_pipeline_contracts_8616(codegen)
+        except PipelineHardError:
+            raise
+        except Exception as e:
+            codegen._inertia_structuring_failed = True
+            codegen._inertia_structuring_failure_pass = "pipeline_contracts"
+            codegen._inertia_structuring_failure_error = str(e)
+            logging.getLogger(__name__).warning(
+                "Pipeline contract gate setup error in %s: %s",
+                getattr(codegen, "cfunc", None) or "unknown",
+                e,
+            )
+            return False
+
+        changed = False
+        last_changed_pass = None
+        codegen._inertia_structuring_failed = False
+        codegen._inertia_structuring_failure_pass = None
+        codegen._inertia_structuring_failure_error = None
+        codegen._inertia_structuring_validation_failed = False
+        codegen._inertia_structuring_validation_failure_pass = None
+        codegen._inertia_structuring_validation_failure_error = None
+        codegen._inertia_last_structuring_pass = None
+        pass_specs = _decompiler_structuring_passes_for_function(project, codegen)
+        codegen._inertia_structuring_passes = tuple(spec.name for spec in pass_specs)
+        _t_structuring_start = time.perf_counter()
+        for spec in pass_specs:
+            try:
+                project._inertia_decompiler_stage = f"structuring:{spec.name}"
+                # Structuring must remain semantics-preserving under tail validation.
+                # Expression simplification is allowed in postprocess; in structuring it
+                # can rewrite boundary-visible conditions (e.g. 32-bit compare forms),
+                # so keep this step analysis-only here.
+                if spec.name == "_simplify_structured_expressions_8616":
+                    continue
+                if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
+                    import sys as _sys
+
+                    _sys.stderr.write(
+                        f"[{time.strftime('%H:%M:%S')}] structuring pass: {spec.name} (+{time.perf_counter() - _t_structuring_start:.1f}s)\n"
+                    )
+                    _sys.stderr.flush()
+                finalize_validation = _maybe_validate_structuring_pass_8616(project, codegen, spec.name)
+                if spec.needs_project:
+                    spec_changed = spec.func(project, codegen)
+                else:
+                    spec_changed = spec.func(codegen)
+                if finalize_validation is not None:
+                    finalize_validation()
+                    if getattr(codegen, "_inertia_structuring_validation_failed", False):
+                        break
+            except Exception as ex:  # noqa: BLE001
+                codegen._inertia_structuring_failed = True
+                codegen._inertia_structuring_failure_pass = spec.name
+                codegen._inertia_structuring_failure_error = str(ex)
+                logging.getLogger(__name__).warning(
+                    "Skipping 86_16 structuring pass %s after %s: %s",
+                    spec.name,
+                    last_changed_pass or "no earlier structuring",
+                    ex,
+                    exc_info=True,
+                )
+                break
+            if spec_changed:
+                changed = True
+                last_changed_pass = spec.name
+                codegen._inertia_last_structuring_pass = spec.name
+        codegen._inertia_structuring_changed = changed
+        project._inertia_decompiler_stage = "structuring"
+        return changed
+
+    return _impl()
 
 
 def _decompile_structuring_8616(self):
-    _orig_decompiler_decompile = getattr(Decompiler, "_orig_before_structuring", None)
-    if _orig_decompiler_decompile is None:
-        _orig_decompiler_decompile = getattr(_decompile_structuring_8616, "_orig_decompiler_decompile", None)
+    def _impl():
+        def _ensure_function_prototype_8616() -> None:
+            func = getattr(self, "func", None) or getattr(self, "function", None)
+            if func is None:
+                return
+            prototype = getattr(func, "prototype", None)
+            needs_fallback = (
+                prototype is None
+                or not hasattr(prototype, "returnty")
+                or getattr(prototype, "returnty", None) is None
+            )
+            if not needs_fallback:
+                return
+            arch = getattr(getattr(self, "project", None), "arch", None)
+            fallback = SimTypeFunction([], SimTypeBottom())
+            if arch is not None:
+                fallback = fallback.with_arch(arch)
+            func.prototype = fallback
+
+        _orig_decompiler_decompile = getattr(Decompiler, "_orig_before_structuring", None)
         if _orig_decompiler_decompile is None:
-            _orig_decompiler_decompile = Decompiler._decompile
-            _decompile_structuring_8616._orig_decompiler_decompile = _orig_decompiler_decompile
-    structuring_started = time.perf_counter()
-    self.project._inertia_decompiler_stage = "core"
-    _orig_decompiler_decompile(self)
-    structuring_elapsed = time.perf_counter() - structuring_started
-    if self.project.arch.name != "86_16" or self.codegen is None:
-        return
-    if not bool(getattr(self.project, "_inertia_tail_validation_enabled", True)):
+            _orig_decompiler_decompile = getattr(_decompile_structuring_8616, "_orig_decompiler_decompile", None)
+            if _orig_decompiler_decompile is None:
+                _orig_decompiler_decompile = Decompiler._decompile
+                _decompile_structuring_8616._orig_decompiler_decompile = _orig_decompiler_decompile
+        structuring_started = time.perf_counter()
+        self.project._inertia_decompiler_stage = "core"
+        _ensure_function_prototype_8616()
+        _orig_decompiler_decompile(self)
+        structuring_elapsed = time.perf_counter() - structuring_started
+        if self.project.arch.name != "86_16" or self.codegen is None:
+            return
+        if not bool(getattr(self.project, "_inertia_tail_validation_enabled", True)):
+            changed = _structuring_codegen_8616(self.project, self.codegen)
+            function = getattr(self, "function", None) or getattr(self, "func", None)
+            if function is not None:
+                info = getattr(function, "info", None)
+                if isinstance(info, MutableMapping):
+                    structuring_info = info.setdefault("x86_16_decompiler_structuring", {})
+                    structuring_info["elapsed"] = structuring_elapsed
+                    structuring_info["last_pass"] = getattr(self.codegen, "_inertia_last_structuring_pass", None)
+                    structuring_info["changed"] = bool(changed)
+                    structuring_info["failed"] = bool(getattr(self.codegen, "_inertia_structuring_failed", False))
+                    structuring_info["failure_pass"] = getattr(self.codegen, "_inertia_structuring_failure_pass", None)
+                    structuring_info["failure_error"] = getattr(self.codegen, "_inertia_structuring_failure_error", None)
+                    structuring_info["validation_failed"] = bool(
+                        getattr(self.codegen, "_inertia_structuring_validation_failed", False)
+                    )
+                    structuring_info["validation_failure_pass"] = getattr(
+                        self.codegen, "_inertia_structuring_validation_failure_pass", None
+                    )
+                    structuring_info["validation_failure_error"] = getattr(
+                        self.codegen, "_inertia_structuring_validation_failure_error", None
+                    )
+                    structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
+                    structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
+                    structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
+                    structuring_info["struct_merging_changed"] = bool(
+                        getattr(self.codegen, "_inertia_struct_merging_changed", False)
+                    )
+            setattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+            self.project._inertia_decompiler_stage = "structuring_done"
+            return
+
+        validation_mode = "live_out"
+        _prime_structuring_validation_semantics_8616(self.project, self.codegen)
+        before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
+        before_collect_started = time.perf_counter()
+        before_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
+        before_collect_elapsed = time.perf_counter() - before_collect_started
+        if not getattr(self.codegen, "_inertia_typed_conditions_transferred", False):
+            func_addr = getattr(getattr(self.codegen, "cfunc", None), "addr", None)
+            if isinstance(func_addr, int):
+                with contextlib.suppress(Exception):
+                    transfer_typed_conditions_to_codegen_8616(self.project, func_addr, self.codegen)
+            self.codegen._inertia_typed_conditions_transferred = True
         changed = _structuring_codegen_8616(self.project, self.codegen)
+        _refresh_structuring_condition_semantics_8616(self.project, self.codegen)
+        record_ast_condition_trace_8616(self.project, self.codegen, stage="structured")
+        after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
+        after_collect_started = time.perf_counter()
+        after_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
+        after_collect_elapsed = time.perf_counter() - after_collect_started
         function = getattr(self, "function", None) or getattr(self, "func", None)
+        if function is None and getattr(getattr(self, "codegen", None), "cfunc", None) is not None:
+            addr = getattr(self.codegen.cfunc, "addr", None)
+            kb_functions = getattr(getattr(self, "project", None), "kb", None)
+            kb_functions = getattr(kb_functions, "functions", None)
+            if isinstance(addr, int) and kb_functions is not None:
+                with contextlib.suppress(Exception):
+                    function = kb_functions.function(addr, create=False)
+        owner = getattr(function, "info", None) if function is not None else None
+        validation_started = time.perf_counter()
+        validation = build_x86_16_tail_validation_cached_result(
+            owner=owner if isinstance(owner, MutableMapping) else None,
+            stage="structuring",
+            mode=validation_mode,
+            before_fingerprint=before_fingerprint,
+            after_fingerprint=after_fingerprint,
+            before_summary=before_summary,
+            after_summary=after_summary,
+        )
+        validation_compare_elapsed = time.perf_counter() - validation_started
+        validation_timings = {
+            "collect_before_ms": round(before_collect_elapsed * 1000.0, 3),
+            "collect_after_ms": round(after_collect_elapsed * 1000.0, 3),
+            "compare_ms": round(validation_compare_elapsed * 1000.0, 3),
+            "total_ms": round((before_collect_elapsed + after_collect_elapsed + validation_compare_elapsed) * 1000.0, 3),
+        }
+        validation["timings"] = validation_timings
+        validation["verdict"] = build_x86_16_tail_validation_verdict("structuring", validation)
         if function is not None:
             info = getattr(function, "info", None)
             if isinstance(info, MutableMapping):
                 structuring_info = info.setdefault("x86_16_decompiler_structuring", {})
                 structuring_info["elapsed"] = structuring_elapsed
+                structuring_info["tail_validation_timings"] = validation_timings
                 structuring_info["last_pass"] = getattr(self.codegen, "_inertia_last_structuring_pass", None)
                 structuring_info["changed"] = bool(changed)
                 structuring_info["failed"] = bool(getattr(self.codegen, "_inertia_structuring_failed", False))
@@ -512,158 +614,86 @@ def _decompile_structuring_8616(self):
                 )
                 structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
                 structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
+                structuring_info["tail_validation_verdict"] = validation["verdict"]
+                structuring_info["tail_validation_cache_hit"] = bool(validation.get("cache_hit", False))
                 structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
                 structuring_info["struct_merging_changed"] = bool(
                     getattr(self.codegen, "_inertia_struct_merging_changed", False)
                 )
-        setattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+                persist_x86_16_tail_validation_snapshot(
+                    function_info=info,
+                    codegen=self.codegen,
+                    stage="structuring",
+                    validation=validation,
+                )
+        log = logging.getLogger(__name__)
+        if not x86_16_tail_validation_result_passed(validation):
+            log.warning("%s", validation["verdict"])
+        else:
+            log.info("%s", validation["verdict"])
         self.project._inertia_decompiler_stage = "structuring_done"
-        return
 
-    validation_mode = "live_out"
-    _prime_structuring_validation_semantics_8616(self.project, self.codegen)
-    before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
-    before_collect_started = time.perf_counter()
-    before_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
-    before_collect_elapsed = time.perf_counter() - before_collect_started
-    if not getattr(self.codegen, "_inertia_typed_conditions_transferred", False):
-        func_addr = getattr(getattr(self.codegen, "cfunc", None), "addr", None)
-        if isinstance(func_addr, int):
-            with contextlib.suppress(Exception):
-                transfer_typed_conditions_to_codegen_8616(self.project, func_addr, self.codegen)
-        self.codegen._inertia_typed_conditions_transferred = True
-    changed = _structuring_codegen_8616(self.project, self.codegen)
-    _refresh_structuring_condition_semantics_8616(self.project, self.codegen)
-    record_ast_condition_trace_8616(self.project, self.codegen, stage="structured")
-    after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
-    after_collect_started = time.perf_counter()
-    after_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
-    after_collect_elapsed = time.perf_counter() - after_collect_started
-    function = getattr(self, "function", None) or getattr(self, "func", None)
-    if function is None and getattr(getattr(self, "codegen", None), "cfunc", None) is not None:
-        addr = getattr(self.codegen.cfunc, "addr", None)
-        kb_functions = getattr(getattr(self, "project", None), "kb", None)
-        kb_functions = getattr(kb_functions, "functions", None)
-        if isinstance(addr, int) and kb_functions is not None:
-            with contextlib.suppress(Exception):
-                function = kb_functions.function(addr, create=False)
-    owner = getattr(function, "info", None) if function is not None else None
-    validation_started = time.perf_counter()
-    validation = build_x86_16_tail_validation_cached_result(
-        owner=owner if isinstance(owner, MutableMapping) else None,
-        stage="structuring",
-        mode=validation_mode,
-        before_fingerprint=before_fingerprint,
-        after_fingerprint=after_fingerprint,
-        before_summary=before_summary,
-        after_summary=after_summary,
-    )
-    validation_compare_elapsed = time.perf_counter() - validation_started
-    validation_timings = {
-        "collect_before_ms": round(before_collect_elapsed * 1000.0, 3),
-        "collect_after_ms": round(after_collect_elapsed * 1000.0, 3),
-        "compare_ms": round(validation_compare_elapsed * 1000.0, 3),
-        "total_ms": round((before_collect_elapsed + after_collect_elapsed + validation_compare_elapsed) * 1000.0, 3),
-    }
-    validation["timings"] = validation_timings
-    validation["verdict"] = build_x86_16_tail_validation_verdict("structuring", validation)
-    if function is not None:
-        info = getattr(function, "info", None)
-        if isinstance(info, MutableMapping):
-            structuring_info = info.setdefault("x86_16_decompiler_structuring", {})
-            structuring_info["elapsed"] = structuring_elapsed
-            structuring_info["tail_validation_timings"] = validation_timings
-            structuring_info["last_pass"] = getattr(self.codegen, "_inertia_last_structuring_pass", None)
-            structuring_info["changed"] = bool(changed)
-            structuring_info["failed"] = bool(getattr(self.codegen, "_inertia_structuring_failed", False))
-            structuring_info["failure_pass"] = getattr(self.codegen, "_inertia_structuring_failure_pass", None)
-            structuring_info["failure_error"] = getattr(self.codegen, "_inertia_structuring_failure_error", None)
-            structuring_info["validation_failed"] = bool(
-                getattr(self.codegen, "_inertia_structuring_validation_failed", False)
-            )
-            structuring_info["validation_failure_pass"] = getattr(
-                self.codegen, "_inertia_structuring_validation_failure_pass", None
-            )
-            structuring_info["validation_failure_error"] = getattr(
-                self.codegen, "_inertia_structuring_validation_failure_error", None
-            )
-            structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
-            structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
-            structuring_info["tail_validation_verdict"] = validation["verdict"]
-            structuring_info["tail_validation_cache_hit"] = bool(validation.get("cache_hit", False))
-            structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
-            structuring_info["struct_merging_changed"] = bool(
-                getattr(self.codegen, "_inertia_struct_merging_changed", False)
-            )
-            persist_x86_16_tail_validation_snapshot(
-                function_info=info,
-                codegen=self.codegen,
-                stage="structuring",
-                validation=validation,
-            )
-    log = logging.getLogger(__name__)
-    if not x86_16_tail_validation_result_passed(validation):
-        log.warning("%s", validation["verdict"])
-    else:
-        log.info("%s", validation["verdict"])
-    self.project._inertia_decompiler_stage = "structuring_done"
+    return _impl()
 
 
 def _assert_alias_complete_8616(codegen) -> None:
-    """Block structuring when SS stack alias facts are incomplete.
+    def _impl():
+        """Block structuring when SS stack alias facts are incomplete.
 
-    AGENTS rule #1: SS:BP+offset → stack slot → variable, never guess.
-    AGENTS rule #8: validation must be honest — unreviewed SS is not safe.
+        AGENTS rule #1: SS:BP+offset → stack slot → variable, never guess.
+        AGENTS rule #8: validation must be honest — unreviewed SS is not safe.
 
-    Consults the module-level alias fact cache populated during VEX lifting
-    (access._inertia_module_alias_fact_cache).  Returns without error when
-    no SS accesses are present (e.g. pure register / DS-only functions).
+        Consults the module-level alias fact cache populated during VEX lifting
+        (access._inertia_module_alias_fact_cache).  Returns without error when
+        no SS accesses are present (e.g. pure register / DS-only functions).
 
-    Raises PipelineHardError if any proven SS access lacks stable stack alias.
-    """
-    from .access import _inertia_module_alias_fact_cache
-    from .alias.alias_model_impl import AliasFailure
-    from .pipeline.errors import PipelineHardError
+        Raises PipelineHardError if any proven SS access lacks stable stack alias.
+        """
+        from .access import _inertia_module_alias_fact_cache
+        from .alias.alias_model_impl import AliasFailure
+        from .pipeline.errors import PipelineHardError
 
-    cfunc = getattr(codegen, "cfunc", None)
-    func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
-    if not isinstance(func_addr, int):
-        return
+        cfunc = getattr(codegen, "cfunc", None)
+        func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
+        if not isinstance(func_addr, int):
+            return
 
-    facts = _inertia_module_alias_fact_cache.get(func_addr, None)
-    if not isinstance(facts, list):
-        return  # No facts recorded for this function — likely not yet lifted with typed IR.
+        facts = _inertia_module_alias_fact_cache.get(func_addr, None)
+        if not isinstance(facts, list):
+            return  # No facts recorded for this function — likely not yet lifted with typed IR.
 
-    has_ss = False
-    has_ss_stable = False
-    has_ss_failure = False
-    _first_ss_failure_reason = None
-    for fact in facts:
-        if isinstance(fact, AliasFailure):
-            if getattr(fact, "space", None) in {"ss", "SS"}:
+        has_ss = False
+        has_ss_stable = False
+        has_ss_failure = False
+        _first_ss_failure_reason = None
+        for fact in facts:
+            if isinstance(fact, AliasFailure):
+                if getattr(fact, "space", None) in {"ss", "SS"}:
+                    has_ss = True
+                    address = getattr(fact, "address", None)
+                    status = getattr(address, "status", None)
+                    if getattr(status, "name", None) == "PROVISIONAL":
+                        continue
+                    has_ss_failure = True
+                    if _first_ss_failure_reason is None:
+                        _first_ss_failure_reason = getattr(fact, "reason", None)
+            elif hasattr(fact, "domain") and getattr(fact.domain, "space", None) == "stack":
                 has_ss = True
-                address = getattr(fact, "address", None)
-                status = getattr(address, "status", None)
-                if getattr(status, "name", None) == "PROVISIONAL":
-                    continue
-                has_ss_failure = True
-                if _first_ss_failure_reason is None:
-                    _first_ss_failure_reason = getattr(fact, "reason", None)
-        elif hasattr(fact, "domain") and getattr(fact.domain, "space", None) == "stack":
-            has_ss = True
-            has_ss_stable = True
+                has_ss_stable = True
 
-    if not has_ss:
-        return  # No SS accesses — nothing to block.
+        if not has_ss:
+            return  # No SS accesses — nothing to block.
 
-    # Only block when SS accesses exist but NONE are successfully classified.
-    # Provisional SP-relative AliasFailures (push/pop/ret) are expected and
-    # should not prevent structuring when BP-relative stack accesses are resolved.
-    if not has_ss_stable and has_ss_failure:
-        raise PipelineHardError(
-            f"structuring before stable stack alias: {_first_ss_failure_reason}",
-            layer="structuring",
-        )
+        # Only block when SS accesses exist but NONE are successfully classified.
+        # Provisional SP-relative AliasFailures (push/pop/ret) are expected and
+        # should not prevent structuring when BP-relative stack accesses are resolved.
+        if not has_ss_stable and has_ss_failure:
+            raise PipelineHardError(
+                f"structuring before stable stack alias: {_first_ss_failure_reason}",
+                layer="structuring",
+            )
+
+    return _impl()
 
 
 def apply_x86_16_decompiler_structuring() -> None:

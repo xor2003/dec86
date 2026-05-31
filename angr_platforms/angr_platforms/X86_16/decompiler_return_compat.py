@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from angr import ailment
+from angr.analyses.decompiler.structured_codegen.c import MakeTypecastsImplicit
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.calling_conventions import SimComboArg, SimRegArg
 from angr.sim_type import SimTypeBottom
@@ -73,7 +74,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
 
             if ret_expr is None:
                 try:
-                    return _orig_handle_return(self, stmt, block)
+                    return _orig_handle_return(self, stmt_idx, stmt, block)
                 except AttributeError as ex:
                     # Some tiny/irregular functions can reach ReturnMaker with a
                     # missing prototype return type in upstream angr internals.
@@ -93,7 +94,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
             return None
 
         try:
-            return _orig_handle_return(self, stmt, block)
+            return _orig_handle_return(self, stmt_idx, stmt, block)
         except AttributeError as ex:
             if "returnty" in str(ex):
                 l.warning("ReturnMaker skipped due to missing returnty: %s", ex)
@@ -102,3 +103,20 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
 
     if getattr(ReturnMaker._handle_Return, "__name__", "") != "_handle_Return_8616":
         ReturnMaker._handle_Return = _handle_Return_8616
+
+    _orig_handle_c_return = MakeTypecastsImplicit.handle_CReturn
+
+    def _handle_CReturn_8616(self, obj):
+        try:
+            return _orig_handle_c_return(self, obj)
+        except AttributeError as ex:
+            if "returnty" in str(ex):
+                # Some irregular functions can reach this pass without a resolved
+                # prototype. Keep return expression unchanged instead of aborting
+                # the entire decompilation.
+                l.warning("MakeTypecastsImplicit skipped CReturn collapse due to missing returnty: %s", ex)
+                return obj
+            raise
+
+    if getattr(MakeTypecastsImplicit.handle_CReturn, "__name__", "") != "_handle_CReturn_8616":
+        MakeTypecastsImplicit.handle_CReturn = _handle_CReturn_8616

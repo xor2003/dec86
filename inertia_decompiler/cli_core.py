@@ -586,7 +586,7 @@ def _discover_ranked_binary_offsets(
         getattr(args, "binary", Path("")).suffix.lower() == ".exe"
     )
     rz = discover_rizin_function_entries(getattr(args, "binary"), timeout_sec=rizin_timeout) if wants_rizin else None
-    if rz is not None and rz.status in {RizinDiscoveryStatus.OK, RizinDiscoveryStatus.CACHE_HIT}:
+    if rz is not None and rz.status is RizinDiscoveryStatus.OK:
         rizin_offsets = list(rz.offsets)
         print(
             f"/* rizin discovery: status={rz.status.value} entries={len(rizin_offsets)} elapsed={rz.elapsed_ms:.1f}ms "
@@ -1440,7 +1440,6 @@ def _validated_generated_c_acceptance_8616(
     c_target: str = "portable-flat",
 ) -> CAcceptanceResult8616:
     def _impl():
-        del c_target
         baseline_payload = payload if isinstance(payload, str) else ""
         if status != "ok":
             return _acceptance_result_8616(status, None, baseline_payload)
@@ -2353,6 +2352,7 @@ def _emit_function_result_fallback_lanes_8616(
     emit_timeout_delay_line,
 ) -> tuple[int, int]:
     def _impl():
+        nonlocal decompiled_local, failed_local, attempt_status_printed, emitted_problem
         function = item.function
         skip_heavy_fallbacks_for_result = bool(getattr(result, "skip_heavy_fallbacks", False))
         slice_result: SliceRecoveryAttemptOutcome | None = None
@@ -2552,6 +2552,7 @@ def _emit_function_result_light_fallback_8616(
     emit_timeout_delay_line,
 ) -> tuple[int, int]:
     def _impl():
+        nonlocal decompiled_local, failed_local, attempt_status_printed, emitted_problem
         function = item.function
         sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
         string_c = None
@@ -2655,6 +2656,7 @@ def _emit_string_or_asm_fallback_8616(
     emit_timeout_delay_line,
 ) -> tuple[int, int]:
     def _impl():
+        nonlocal decompiled_local, failed_local, attempt_status_printed, emitted_problem
         function = item.function
         sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
         string_c = None
@@ -5245,8 +5247,8 @@ def main(argv: list[str] | None = None) -> int:
                 except ValueError:
                     sweep_budget_sec = None
             if sweep_budget_sec is None:
-                # Keep whole-binary runs bounded by default.
-                sweep_budget_sec = 180
+                # Keep full-binary sweeps bounded by default to avoid non-terminating runs.
+                sweep_budget_sec = 300
             if sweep_budget_sec <= 0:
                 sweep_deadline = None
                 print("/* sweep budget: disabled via INERTIA_SWEEP_BUDGET_SEC */")
