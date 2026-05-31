@@ -8,7 +8,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 
-DECOMPILATION_CACHE_SCHEMA = 3
+DECOMPILATION_CACHE_SCHEMA = 4
 DECOMPILATION_CACHE_DIR = _ROOT / ".inertia_decomp_cache"
 RECOVERY_CACHE_SOURCE_FILES = (
     _ROOT / "decompile.py",
@@ -24,6 +24,7 @@ RECOVERY_CACHE_SOURCE_FILES = (
     _ROOT / "inertia_decompiler" / "sidecar_parsers.py",
     _ROOT / "inertia_decompiler" / "sidecar_metadata.py",
     _ROOT / "inertia_decompiler" / "slice_recovery.py",
+    _ROOT / "inertia_decompiler" / "rizin_discovery.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "analysis_helpers.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "load_dos_mz.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "load_dos_ne.py",
@@ -48,10 +49,14 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
     _ROOT / "inertia_decompiler" / "cli_decompilation.py",
+    _ROOT / "inertia_decompiler" / "cli_core.py",
+    _ROOT / "inertia_decompiler" / "cli_c_ast_rewrites.py",
+    _ROOT / "inertia_decompiler" / "cli_dead_local_prune.py",
     _ROOT / "inertia_decompiler" / "cli_c_text_postprocess.py",
     _ROOT / "inertia_decompiler" / "cache.py",
     _ROOT / "inertia_decompiler" / "decompilation_quality.py",
     _ROOT / "inertia_decompiler" / "disassembly_helpers.py",
+    _ROOT / "inertia_decompiler" / "recompile_check.py",
     _ROOT / "inertia_decompiler" / "non_optimized_fallback.py",
     _ROOT / "inertia_decompiler" / "project_loading.py",
     _ROOT / "inertia_decompiler" / "source_sidecar.py",
@@ -61,6 +66,7 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "inertia_decompiler" / "slice_recovery.py",
     _ROOT / "inertia_decompiler" / "tail_validation.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "analysis_helpers.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "postprocess" / "optimization" / "dead_setup.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "condition_ir.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_flags.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess.py",

@@ -113,10 +113,29 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         help="PAT matcher backend. Use python_regex for the portable fallback or hyperscan for the faster scanner.",
     )
     parser.add_argument(
+        "--function-discovery-backend",
+        choices=("auto", "angr", "rizin", "hybrid"),
+        default=os.environ.get("INERTIA_FUNCTION_DISCOVERY_BACKEND", "auto"),
+        help="Function discovery backend for whole-binary EXE sweeps: angr, rizin, hybrid, or auto.",
+    )
+    parser.add_argument(
+        "--rizin-timeout",
+        type=int,
+        default=int(os.environ.get("INERTIA_RIZIN_TIMEOUT", "8")),
+        help="Timeout in seconds for optional rizin pre-discovery in hybrid/rizin modes.",
+    )
+    parser.add_argument(
         "--signature-catalog",
         type=Path,
         default=None,
         help="Optional deduplicated PAT catalog built from .pat/.obj/.lib inputs.",
+    )
+    parser.add_argument(
+        "--seed-engine",
+        choices=("auto", "angr", "rizin"),
+        default="auto",
+        help="Function seed discovery engine for whole-binary runs. "
+        "'auto' tries rizin first (if available) then falls back to angr-ranked seeds.",
     )
     parser.add_argument(
         "-q",
