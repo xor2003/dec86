@@ -1405,12 +1405,23 @@ def _tail_validation_stage_detail_8616(
     return "; ".join(stage_details) if stage_details else "no stage data"
 
 
+_RECOMPILE_RESULT_CACHE_8616: dict[tuple[str, str], object] = {}
+_RECOMPILE_RESULT_CACHE_LOCK_8616 = threading.Lock()
+
+
 def _collect_recompilation_payloads_8616(accepted_payload: str) -> tuple[list[tuple[str, str]], str | None]:
     def _impl():
         recompilation_targets = ("portable-flat", "msc-dos")
         checked_payloads: list[tuple[str, str]] = []
+        payload_hash = hashlib.sha256(accepted_payload.encode("utf-8", errors="ignore")).hexdigest()
         for recomp_target in recompilation_targets:
-            recompilation = check_c_recompiles_8616(accepted_payload, target=recomp_target)
+            cache_key = (recomp_target, payload_hash)
+            with _RECOMPILE_RESULT_CACHE_LOCK_8616:
+                recompilation = _RECOMPILE_RESULT_CACHE_8616.get(cache_key)
+            if recompilation is None:
+                recompilation = check_c_recompiles_8616(accepted_payload, target=recomp_target)
+                with _RECOMPILE_RESULT_CACHE_LOCK_8616:
+                    _RECOMPILE_RESULT_CACHE_8616[cache_key] = recompilation
             if recompilation.passed:
                 checked_payload = _normalize_gcc_checked_payload_8616(
                     str(getattr(recompilation, "checked_payload", "")),
@@ -5258,8 +5269,9 @@ def main(argv: list[str] | None = None) -> int:
                 except ValueError:
                     sweep_budget_sec = None
             if sweep_budget_sec is None:
-                # Keep full-binary sweeps bounded by default to avoid non-terminating runs.
-                sweep_budget_sec = 300
+                # Default to unbounded whole-binary sweeps. Callers can opt into a
+                # hard cap with INERTIA_SWEEP_BUDGET_SEC=<seconds>.
+                sweep_budget_sec = 0
             if sweep_budget_sec <= 0:
                 sweep_deadline = None
                 print("/* sweep budget: disabled via INERTIA_SWEEP_BUDGET_SEC */")
