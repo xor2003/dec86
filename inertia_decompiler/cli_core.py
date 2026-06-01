@@ -553,6 +553,7 @@ from inertia_decompiler.non_optimized_fallback import (
     sidecar_verdict_closes_non_optimized_lane,
 )
 from inertia_decompiler.rizin_discovery import RizinDiscoveryStatus, discover_rizin_function_entries
+from inertia_decompiler.rizin_evidence import RizinEvidenceStatus, collect_rizin_evidence
 
 from inertia_decompiler.direct_addr_failure_family import FailureFamilyState, build_failure_family_snapshot
 
@@ -575,13 +576,42 @@ def _discover_ranked_binary_offsets(
     *,
     args: Any,
 ) -> list[int]:
+    binary_path = Path(getattr(args, "binary", Path("")))
+
+    def _has_local_sidecar_evidence(binary_path: Path) -> bool:
+        stem = binary_path.stem
+        parent = binary_path.parent
+        if not parent.exists():
+            return False
+        sidecar_exts = {
+            ".cod",
+            ".lst",
+            ".map",
+            ".idc",
+            ".inc",
+            ".sym",
+            ".dbg",
+            ".tds",
+            ".pdb",
+        }
+        for candidate in parent.glob(f"{stem}.*"):
+            if candidate.resolve() == binary_path.resolve():
+                continue
+            if candidate.suffix.lower() in sidecar_exts:
+                return True
+        return False
+
     def _auto_rizin_enabled_for_current_binary() -> bool:
-        # Default auto mode prioritizes deterministic angr-ranked discovery for
-        # 16-bit DOS EXEs. Rizin can still be forced via explicit backend.
+        # For non-86_16 keep auto as hybrid-friendly behavior.
         if str(getattr(project.arch, "name", "") or "") != "86_16":
             return True
         env = os.environ.get("INERTIA_AUTO_RIZIN_8616", "").strip().lower()
-        return env in {"1", "true", "yes", "on"}
+        if env in {"1", "true", "yes", "on"}:
+            return True
+        if env in {"0", "false", "no", "off"}:
+            return False
+        # Default: rizin-first when local sidecar hints are not available.
+        return not _has_local_sidecar_evidence(binary_path)
 
     backend = str(getattr(args, "function_discovery_backend", "auto") or "auto").strip().lower()
     if backend == "auto":
@@ -589,6 +619,12 @@ def _discover_ranked_binary_offsets(
         if legacy_seed_engine in {"angr", "rizin"}:
             backend = legacy_seed_engine
     rizin_timeout = max(1, int(getattr(args, "rizin_timeout", 8) or 8))
+    has_sidecar_evidence = _has_local_sidecar_evidence(binary_path)
+    auto_rizin_only = (
+        backend == "auto"
+        and str(getattr(project.arch, "name", "") or "") == "86_16"
+        and not has_sidecar_evidence
+    )
     angr_offsets: list[int] | None = None
     wants_rizin = False
     if bool(getattr(args, "binary", Path("")).suffix.lower() == ".exe"):
@@ -596,14 +632,29 @@ def _discover_ranked_binary_offsets(
             wants_rizin = True
         elif backend == "auto":
             wants_rizin = _auto_rizin_enabled_for_current_binary()
+    rz_evidence = collect_rizin_evidence(binary_path, timeout_sec=rizin_timeout) if wants_rizin else None
+    if rz_evidence is not None:
+        setattr(project, "_inertia_rizin_evidence", rz_evidence)
+        setattr(project, "_inertia_rizin_function_names", rz_evidence.function_name_by_addr)
     rz = discover_rizin_function_entries(getattr(args, "binary"), timeout_sec=rizin_timeout) if wants_rizin else None
-    if rz is not None and rz.status is RizinDiscoveryStatus.OK:
+    if rz_evidence is not None and rz_evidence.status is RizinEvidenceStatus.OK and rz_evidence.functions:
+        rizin_offsets = list(rz_evidence.function_offsets)
+        elapsed_ms = rz_evidence.elapsed_ms
+        status_value = rz_evidence.status.value
+    elif rz is not None and rz.status is RizinDiscoveryStatus.OK:
         rizin_offsets = list(rz.offsets)
+        elapsed_ms = rz.elapsed_ms
+        status_value = rz.status.value
+    else:
+        rizin_offsets = []
+        elapsed_ms = 0.0
+        status_value = "error"
+    if rizin_offsets:
         print(
-            f"/* rizin discovery: status={rz.status.value} entries={len(rizin_offsets)} elapsed={rz.elapsed_ms:.1f}ms "
+            f"/* rizin discovery: status={status_value} entries={len(rizin_offsets)} elapsed={elapsed_ms:.1f}ms "
             f"backend={backend} */"
         )
-        if backend == "rizin":
+        if backend == "rizin" or auto_rizin_only:
             return rizin_offsets
         angr_offsets = _rank_exe_function_seeds(project)
         merged: list[int] = []
@@ -620,6 +671,11 @@ def _discover_ranked_binary_offsets(
             f"/* hybrid discovery: angr={len(angr_offsets)} rizin={len(rizin_offsets)} merged={len(merged)} */"
         )
         return merged
+    if rz_evidence is not None:
+        detail = rz_evidence.detail or rz_evidence.status.value
+        print(
+            f"/* rizin evidence: status={rz_evidence.status.value} elapsed={rz_evidence.elapsed_ms:.1f}ms detail={detail} */"
+        )
     if rz is not None:
         detail = rz.detail or rz.status.value
         print(
@@ -4866,11 +4922,16 @@ def main(argv: list[str] | None = None) -> int:
         if cfg is not None:
             if function_label is not None and project.entry in cfg.functions:
                 cfg.functions[project.entry].name = function_label
-            elif lst_metadata is not None:
+            else:
+                rizin_names = getattr(project, "_inertia_rizin_function_names", {}) or {}
                 for addr, func in cfg.functions.items():
-                    code_name = _lst_code_label(lst_metadata, addr, project.entry)
+                    code_name = _lst_code_label(lst_metadata, addr, project.entry) if lst_metadata is not None else None
                     if code_name is not None:
                         func.name = code_name
+                    elif isinstance(rizin_names, dict):
+                        rz_name = rizin_names.get(addr)
+                        if isinstance(rz_name, str) and rz_name:
+                            func.name = rz_name
 
         if lst_metadata is not None and visible_code_labels:
             total_functions = ranked_labeled_total or len(labeled_offsets)
