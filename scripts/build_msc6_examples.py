@@ -716,6 +716,7 @@ def _decompile(
     last_profile: dict[str, object] | None = None
 
     try:
+        all_selection_failures = True
         for candidate in candidates:
             candidate_cmd = _candidate_command(candidate)
             candidate_attempt: dict[str, object] = {
@@ -748,15 +749,22 @@ def _decompile(
                 stderr_path.write_text(proc.stderr, encoding="utf-8")
                 return True, stdout_path, stderr_path, elapsed, run_profile
 
+            if not _is_proc_selection_failure(proc.stderr):
+                all_selection_failures = False
+                if decompile_mode == "main":
+                    # Real rejection is enough to stop probing this candidate chain.
+                    if attempts:
+                        break
             last_profile = run_profile
-            if decompile_mode == "main" and not _is_proc_selection_failure(proc.stderr):
-                # keep behavior: if decompiler reaches a real failure mode for this candidate,
-                # still try remaining candidates in main mode when available.
-                continue
             if decompile_mode != "main":
                 break
 
-        if decompile_mode == "main" and attempts and attempts[-1]["candidate"].get("kind") != "max-functions":
+        if (
+            decompile_mode == "main"
+            and all_selection_failures
+            and attempts
+            and attempts[-1]["candidate"].get("kind") != "max-functions"
+        ):
             fallback_count = max(1, decompile_max_functions)
             fallback_candidate = {
                 "kind": "max-functions",
