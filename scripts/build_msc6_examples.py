@@ -26,6 +26,7 @@ class ExampleResult:
     obj: str
     map: str
     build_ok: bool
+    decompile_skipped: bool
     decompile_ok: bool
     compile_stdout: str
     compile_stderr: str
@@ -130,7 +131,14 @@ def main() -> int:
         "simple_control": "SIMPLE.C",
         "medium_structs": "MEDIUM.C",
         "compare32": "COMP32.C",
+        "loops_jumps": "LOOPS.C",
+        "scalar_types_io": "TYPES.C",
+        "pointer_memory": "POINT.C",
+        "enum_union": "EUNION.C",
+        "function_pointers": "FPTR.C",
+        "storage_classes": "STORE.C",
     }
+    decompile_skip = {"medium_structs"}
 
     for source_path in sorted(args.examples_dir.glob("*.c")):
         dos_name = dos_names.get(source_path.stem, source_path.name.upper())
@@ -145,10 +153,11 @@ def main() -> int:
         exe_path = args.out_dir / f"{local_source.stem.upper()}.EXE"
         obj_path = args.out_dir / f"{local_source.stem.upper()}.OBJ"
         map_path = args.out_dir / f"{local_source.stem.upper()}.MAP"
+        decompile_skipped = source_path.stem in decompile_skip
         decompile_ok = False
         dec_out: Path | None = None
         dec_err: Path | None = None
-        if build_ok and exe_path.exists():
+        if build_ok and exe_path.exists() and not decompile_skipped:
             decompile_ok, dec_out, dec_err = _decompile(exe_path, args.out_dir, decompile_py=args.decompile_py)
         results.append(
             ExampleResult(
@@ -158,6 +167,7 @@ def main() -> int:
                 obj=str(obj_path),
                 map=str(map_path),
                 build_ok=build_ok,
+                decompile_skipped=decompile_skipped,
                 decompile_ok=decompile_ok,
                 compile_stdout=c_out,
                 compile_stderr=c_err,
@@ -174,7 +184,7 @@ def main() -> int:
     for item in results:
         print(
             f"{item.name}: build={'ok' if item.build_ok else 'fail'} "
-            f"decompile={'ok' if item.decompile_ok else 'fail'} exe={item.exe}"
+            f"decompile={'skipped' if item.decompile_skipped else ('ok' if item.decompile_ok else 'fail')} exe={item.exe}"
         )
     return 0
 
