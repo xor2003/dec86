@@ -26,7 +26,14 @@ int main(void)
     int total;
 
     total = sum_globals();
-    total += bump_static();
-    total += bump_static();
-    return total;
+    if (total != 13) {
+        return 1;
+    }
+    if (bump_static() != 12) {
+        return 2;
+    }
+    if (bump_static() != 14) {
+        return 3;
+    }
+    return 0;
 }

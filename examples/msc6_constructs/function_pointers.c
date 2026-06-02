@@ -29,5 +29,17 @@ int select_and_apply(int which, int value)
 
 int main(void)
 {
-    return select_and_apply(1, 5) + select_and_apply(0, 8);
+    if (apply_twice(inc_one, 5) != 7) {
+        return 1;
+    }
+    if (apply_twice(dec_one, 8) != 6) {
+        return 2;
+    }
+    if (select_and_apply(1, 5) != 7) {
+        return 3;
+    }
+    if (select_and_apply(0, 8) != 6) {
+        return 4;
+    }
+    return 0;
 }

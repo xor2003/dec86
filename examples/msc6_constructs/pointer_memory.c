@@ -43,5 +43,14 @@ int main(void)
     a = 5;
     b = 9;
     swap_ptrs(&a, &b);
-    return sum_words(words, 4) + a + b + bytes[2];
+    if (bytes[2] != 3) {
+        return 1;
+    }
+    if (sum_words(words, 4) != 100) {
+        return 2;
+    }
+    if (a != 9 || b != 5) {
+        return 3;
+    }
+    return 0;
 }

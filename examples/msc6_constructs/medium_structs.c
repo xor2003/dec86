@@ -62,5 +62,14 @@ int main(void)
     rotate_triplet(values);
     total = accumulate_pairs(pairs, 3);
     pos = find_first_gt(values, 4, 10);
-    return total + pos + values[0];
+    if (values[0] != 8 || values[1] != 15 || values[2] != 4) {
+        return 1;
+    }
+    if (total != 29) {
+        return 2;
+    }
+    if (pos != 1) {
+        return 3;
+    }
+    return 0;
 }

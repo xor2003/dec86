@@ -38,5 +38,14 @@ int main(void)
     unsigned short combined;
 
     combined = combine_bytes(0x34, 0x12);
-    return token_cost(TOK_TWO) + (int)combined;
+    if (token_cost(TOK_TWO) != 2) {
+        return 1;
+    }
+    if (token_cost(TOK_MANY) != 9) {
+        return 2;
+    }
+    if (combined != 0x1234) {
+        return 3;
+    }
+    return 0;
 }

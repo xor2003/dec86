@@ -46,7 +46,12 @@ def _visible_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
     skipped = _signature_matched_code_addrs(metadata)
     if not skipped:
         return dict(metadata.code_labels)
-    return {addr: name for addr, name in metadata.code_labels.items() if addr not in skipped}
+    cod_proc_addrs = set((getattr(metadata, "cod_proc_kinds", None) or {}).keys())
+    return {
+        addr: name
+        for addr, name in metadata.code_labels.items()
+        if addr not in skipped or addr in cod_proc_addrs
+    }
 
 
 def _recovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
@@ -68,25 +73,28 @@ def _recovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
 
 
 def _peer_exe_family_candidates(binary: Path) -> tuple[Path, ...]:
-    if binary.suffix.lower() != ".exe":
-        return ()
-    family_stem = _TRAILING_DIGITS_RE.sub("", binary.stem).lower()
-    if not family_stem:
-        return ()
-    binary_suffix = binary.stem[len(family_stem) :]
-    binary_index = int(binary_suffix) if binary_suffix.isdigit() else 0
-    candidates: list[tuple[tuple[int, str], Path]] = []
-    for candidate in sorted(binary.parent.iterdir()):
-        if candidate == binary or candidate.suffix.lower() != ".exe" or not candidate.is_file():
-            continue
-        candidate_family = _TRAILING_DIGITS_RE.sub("", candidate.stem).lower()
-        if candidate_family != family_stem:
-            continue
-        suffix = candidate.stem[len(family_stem) :]
-        candidate_index = int(suffix) if suffix.isdigit() else 0
-        distance = abs(candidate_index - binary_index)
-        candidates.append(((distance, candidate.name.lower()), candidate))
-    return tuple(candidate for _meta, candidate in sorted(candidates))
+    def _impl():
+        if binary.suffix.lower() != ".exe":
+            return ()
+        family_stem = _TRAILING_DIGITS_RE.sub("", binary.stem).lower()
+        if not family_stem:
+            return ()
+        binary_suffix = binary.stem[len(family_stem) :]
+        binary_index = int(binary_suffix) if binary_suffix.isdigit() else 0
+        candidates: list[tuple[tuple[int, str], Path]] = []
+        for candidate in sorted(binary.parent.iterdir()):
+            if candidate == binary or candidate.suffix.lower() != ".exe" or not candidate.is_file():
+                continue
+            candidate_family = _TRAILING_DIGITS_RE.sub("", candidate.stem).lower()
+            if candidate_family != family_stem:
+                continue
+            suffix = candidate.stem[len(family_stem) :]
+            candidate_index = int(suffix) if suffix.isdigit() else 0
+            distance = abs(candidate_index - binary_index)
+            candidates.append(((distance, candidate.name.lower()), candidate))
+        return tuple(candidate for _meta, candidate in sorted(candidates))
+
+    return _impl()
 
 
 def _exact_function_span_matches(
@@ -169,51 +177,43 @@ def _discover_peer_exe_catalog_matches(
     return {}, {}, ()
 
 
-def _load_lst_metadata(
+def _load_ida_map_sidecar(
     binary: Path,
-    project: angr.Project,
     *,
-    pat_backend: str | None = None,
-    signature_catalog: Path | None = None,
-    allow_peer_exe: bool = True,
-) -> LSTMetadata | None:
-    cached_sidecar, sidecar_cache_key = load_cached_sidecar_metadata(
-        binary_path=binary,
-        pat_backend=pat_backend,
-        signature_catalog=signature_catalog,
-        allow_peer_exe=allow_peer_exe,
-    )
-    if cached_sidecar is not None:
-        metadata = apply_cached_sidecar_metadata(project, cached_sidecar)
-        emit_sidecar_metadata_debug(project, metadata)
-        return metadata
-    load_base_linear = _probe_ida_base_linear(binary, getattr(project.loader.main_object, "linked_base", 0))
-    code_labels: dict[int, str] = {}
-    data_labels: dict[int, str] = {}
-    code_ranges: dict[int, tuple[int, int]] = {}
-    signature_code_addrs: set[int] = set()
-    cod_proc_kinds: dict[int, str] = {}
-    struct_names: list[str] = []
-    source_formats: list[str] = []
-    cod_path: Path | None = None
-    codeview_code: dict[int, str] = {}
-    codeview_data: dict[int, str] = {}
-    codeview_ranges: dict[int, tuple[int, int]] = {}
+    load_base_linear: int,
+    code_labels: dict[int, str],
+    data_labels: dict[int, str],
+    source_formats: list[str],
+) -> dict[str, int]:
     map_path = binary.with_suffix(".map")
     segment_offsets: dict[str, int] = {}
+    if not map_path.exists():
+        return segment_offsets
+    try:
+        ida_code, ida_data, segment_offsets = _parse_ida_map_metadata(map_path, load_base_linear=load_base_linear)
+        if ida_code or ida_data or segment_offsets:
+            code_labels.update(ida_code)
+            data_labels.update(ida_data)
+            source_formats.append("ida_map")
+    except Exception as exc:
+        print(f"[dbg] failed to parse IDA map {map_path}: {exc}")
+    return segment_offsets
 
-    if map_path.exists():
-        try:
-            ida_code, ida_data, segment_offsets = _parse_ida_map_metadata(map_path, load_base_linear=load_base_linear)
-            if ida_code or ida_data or segment_offsets:
-                code_labels.update(ida_code)
-                data_labels.update(ida_data)
-                source_formats.append("ida_map")
-        except Exception as exc:
-            print(f"[dbg] failed to parse IDA map {map_path}: {exc}")
 
-    lst_path = binary.with_suffix(".lst")
-    if lst_path.exists():
+def _load_lst_sidecar(
+    binary: Path,
+    *,
+    load_base_linear: int,
+    segment_offsets: dict[str, int],
+    code_labels: dict[int, str],
+    data_labels: dict[int, str],
+    code_ranges: dict[int, tuple[int, int]],
+    source_formats: list[str],
+) -> None:
+    def _impl():
+        lst_path = binary.with_suffix(".lst")
+        if not lst_path.exists():
+            return
         try:
             metadata = extract_lst_metadata(lst_path)
             if metadata.code_labels or metadata.data_labels:
@@ -227,10 +227,7 @@ def _load_lst_metadata(
                     for offset, name in metadata.code_labels.items():
                         code_labels.setdefault(load_base_linear + offset, name)
                     for offset, span in metadata.code_ranges.items():
-                        code_ranges.setdefault(
-                            load_base_linear + offset,
-                            (load_base_linear + span[0], load_base_linear + span[1]),
-                        )
+                        code_ranges.setdefault(load_base_linear + offset, (load_base_linear + span[0], load_base_linear + span[1]))
                 source_formats.append(metadata.source_format)
         except Exception as exc:
             print(f"[dbg] failed to parse source listing {lst_path}: {exc}")
@@ -246,6 +243,17 @@ def _load_lst_metadata(
         except Exception as exc:
             print(f"[dbg] failed to parse IDA proc listing {lst_path}: {exc}")
 
+    return _impl()
+
+
+def _load_idc_inc_sidecars(
+    binary: Path,
+    *,
+    code_labels: dict[int, str],
+    data_labels: dict[int, str],
+    struct_names: list[str],
+    source_formats: list[str],
+) -> None:
     idc_path = binary.with_suffix(".idc")
     if idc_path.exists():
         try:
@@ -256,7 +264,6 @@ def _load_lst_metadata(
                 source_formats.append("ida_idc")
         except Exception as exc:
             print(f"[dbg] failed to parse IDC file {idc_path}: {exc}")
-
     inc_path = binary.with_suffix(".inc")
     if inc_path.exists():
         try:
@@ -265,170 +272,255 @@ def _load_lst_metadata(
         except Exception as exc:
             print(f"[dbg] failed to parse INC file {inc_path}: {exc}")
 
-    try:
-        codeview_code, codeview_data, codeview_ranges = _parse_codeview_nb00_metadata(
-            binary,
-            load_base_linear=load_base_linear,
-        )
-        codeview_format = "codeview_nb00" if codeview_code else None
-    except Exception as exc:
-        codeview_code, codeview_data, codeview_ranges = {}, {}, {}
-        codeview_format = None
-        print(f"[dbg] failed to parse CodeView NB00 metadata from {binary}: {exc}")
 
-    # Try NB02/NB04 (CV2/CV4) if NB00 didn't yield results
-    if not codeview_code:
+def _load_codeview_or_ne_metadata(
+    binary: Path,
+    project: angr.Project,
+    *,
+    load_base_linear: int,
+) -> tuple[dict[int, str], dict[int, str], dict[int, tuple[int, int]], str | None]:
+    def _impl():
+        codeview_code: dict[int, str] = {}
+        codeview_data: dict[int, str] = {}
+        codeview_ranges: dict[int, tuple[int, int]] = {}
+        codeview_format: str | None = None
         try:
-            cv_code, cv_data, cv_ranges = _parse_codeview_nb0204_metadata(
-                binary,
-                load_base_linear=load_base_linear,
-            )
-            if cv_code or cv_data or cv_ranges:
-                codeview_code = cv_code
-                codeview_data = cv_data
-                codeview_ranges = cv_ranges
-                codeview_format = "codeview_nb0204"
+            codeview_code, codeview_data, codeview_ranges = _parse_codeview_nb00_metadata(binary, load_base_linear=load_base_linear)
+            codeview_format = "codeview_nb00" if codeview_code else None
         except Exception as exc:
-            print(f"[dbg] failed to parse CodeView NB02/NB04 metadata from {binary}: {exc}")
+            print(f"[dbg] failed to parse CodeView NB00 metadata from {binary}: {exc}")
+        if not codeview_code:
+            try:
+                cv_code, cv_data, cv_ranges = _parse_codeview_nb0204_metadata(binary, load_base_linear=load_base_linear)
+                if cv_code or cv_data or cv_ranges:
+                    codeview_code, codeview_data, codeview_ranges = cv_code, cv_data, cv_ranges
+                    codeview_format = "codeview_nb0204"
+            except Exception as exc:
+                print(f"[dbg] failed to parse CodeView NB02/NB04 metadata from {binary}: {exc}")
+        if not codeview_code:
+            try:
+                ne_code, ne_data, ne_ranges = _parse_ne_exe_metadata(binary, load_base_linear=load_base_linear, project=project)
+                if ne_code or ne_data or ne_ranges:
+                    codeview_code, codeview_data, codeview_ranges = ne_code, ne_data, ne_ranges
+                    codeview_format = "ne_exe"
+            except Exception as exc:
+                print(f"[dbg] failed to parse NE format metadata from {binary}: {exc}")
+        return codeview_code, codeview_data, codeview_ranges, codeview_format
 
-    # Try NE/Win16 format if CodeView didn't yield results
-    ne_format = None
-    if not codeview_code:
-        try:
-            ne_code, ne_data, ne_ranges = _parse_ne_exe_metadata(
-                binary,
-                load_base_linear=load_base_linear,
-                project=project,
-            )
-            if ne_code or ne_data or ne_ranges:
-                codeview_code = ne_code
-                codeview_data = ne_data
-                codeview_ranges = ne_ranges
-                ne_format = "ne_exe"
-        except Exception as exc:
-            print(f"[dbg] failed to parse NE format metadata from {binary}: {exc}")
+    return _impl()
 
-    if codeview_code or codeview_data or codeview_ranges:
-        code_labels.update(codeview_code)
-        data_labels.update(codeview_data)
-        code_ranges.update(codeview_ranges)
-        source_formats.append(ne_format or codeview_format or "codeview_unknown")
 
+def _load_tdinfo_sidecar(
+    binary: Path,
+    *,
+    load_base_linear: int,
+    code_labels: dict[int, str],
+    data_labels: dict[int, str],
+    source_formats: list[str],
+) -> None:
     try:
         tdinfo = parse_tdinfo_exe(binary, load_base_linear=load_base_linear)
-        if tdinfo is not None and (tdinfo.code_labels or tdinfo.data_labels):
-            for addr, name in tdinfo.code_labels.items():
-                code_labels.setdefault(addr, name)
-            for addr, name in tdinfo.data_labels.items():
-                data_labels.setdefault(addr, name)
-            source_formats.append("turbo_debug_tdinfo")
-            # Add TDS version info for compiler identification
-            if tdinfo.tds_version_str and tdinfo.tds_version_str != "N/A (pre-2.0 format)":
-                # TDS version can help identify the Borland toolchain
-                if tdinfo.products:
-                    # Extract product names and add as compiler hints
-                    for product in tdinfo.products.split(","):
-                        product = product.strip()
-                        if product and product not in matched_compiler_names:
-                            matched_compiler_names.append(product)
-                # Add the TLink version as a compiler hint
-                if tdinfo.tlink_version_str and tdinfo.tlink_version_str not in ("unknown", "1.0/1.1"):
-                    tlink_hint = f"Borland TLink {tdinfo.tlink_version_str}"
-                    if tlink_hint not in matched_compiler_names:
-                        matched_compiler_names.append(tlink_hint)
-            elif tdinfo.tds_version_str == "N/A (pre-2.0 format)":
-                # Pre-2.0 format binaries were from Turbo C 1.0/1.5 era
-                if "Turbo C 1.0" not in matched_compiler_names:
-                    matched_compiler_names.append("Turbo C 1.0")
     except Exception as exc:
         print(f"[dbg] failed to parse Turbo Debug TDInfo metadata from {binary}: {exc}")
+        return
+    if tdinfo is None or not (tdinfo.code_labels or tdinfo.data_labels):
+        return
+    for addr, name in tdinfo.code_labels.items():
+        code_labels.setdefault(addr, name)
+    for addr, name in tdinfo.data_labels.items():
+        data_labels.setdefault(addr, name)
+    source_formats.append("turbo_debug_tdinfo")
 
-    sibling_cod_path = binary.with_suffix(".COD")
-    if sibling_cod_path.exists():
+
+def _load_cod_mzre_flair_sidecars(
+    binary: Path,
+    project: angr.Project,
+    *,
+    load_base_linear: int,
+    code_labels: dict[int, str],
+    data_labels: dict[int, str],
+    code_ranges: dict[int, tuple[int, int]],
+    source_formats: list[str],
+    codeview_code: dict[int, str],
+    codeview_ranges: dict[int, tuple[int, int]],
+    pat_backend: str | None,
+    signature_catalog: Path | None,
+    cod_proc_kinds: dict[int, str],
+) -> tuple[Path | None, set[int]]:
+    def _impl():
+        cod_path: Path | None = None
+        signature_code_addrs: set[int] = set()
+        sibling_cod_path = binary.with_suffix(".COD")
+        if sibling_cod_path.exists():
+            try:
+                cod_anchor_labels = dict(code_labels)
+                cod_anchor_labels.update(codeview_code)
+                cod_listing = _parse_cod_sidecar_metadata(
+                    sibling_cod_path,
+                    load_base_linear=load_base_linear,
+                    existing_code_labels=cod_anchor_labels,
+                    project=project,
+                )
+                cod_listing = _reconcile_cod_listing_with_codeview(cod_listing, codeview_code, codeview_ranges)
+                if cod_listing.code_labels or cod_listing.code_ranges or cod_listing.proc_kinds:
+                    for addr, name in cod_listing.code_labels.items():
+                        code_labels.setdefault(addr, name)
+                    for addr, span in cod_listing.code_ranges.items():
+                        code_ranges.setdefault(addr, span)
+                    cod_proc_kinds.update(cod_listing.proc_kinds)
+                    cod_path = sibling_cod_path
+                    source_formats.append("cod_listing")
+            except Exception as exc:
+                print(f"[dbg] failed to parse COD listing {sibling_cod_path}: {exc}")
+        external_mzre_map = Path("/home/xor/games/f15se2-re/map") / f"{binary.stem}.map"
+        if external_mzre_map.exists():
+            try:
+                mzre_code, mzre_data, mzre_ranges = _parse_mzre_map_metadata(external_mzre_map, load_base_linear=load_base_linear)
+                if mzre_code or mzre_data or mzre_ranges:
+                    for addr, name in mzre_code.items():
+                        code_labels.setdefault(addr, name)
+                    for addr, name in mzre_data.items():
+                        data_labels.setdefault(addr, name)
+                    for addr, span in mzre_ranges.items():
+                        code_ranges.setdefault(addr, span)
+                    source_formats.append("mzre_map")
+            except Exception as exc:
+                print(f"[dbg] failed to parse mzretools map {external_mzre_map}: {exc}")
         try:
-            cod_anchor_labels = dict(code_labels)
-            cod_anchor_labels.update(codeview_code)
-            cod_listing = _parse_cod_sidecar_metadata(
-                sibling_cod_path,
-                load_base_linear=load_base_linear,
-                existing_code_labels=cod_anchor_labels,
-                project=project,
+            flair_code, flair_ranges, flair_formats = _detect_flair_metadata(
+                binary,
+                project,
+                pat_backend=pat_backend,
+                signature_catalog=signature_catalog,
             )
-            cod_listing = _reconcile_cod_listing_with_codeview(cod_listing, codeview_code, codeview_ranges)
-            if cod_listing.code_labels or cod_listing.code_ranges or cod_listing.proc_kinds:
-                for addr, name in cod_listing.code_labels.items():
+            if flair_code or flair_ranges:
+                for addr, name in flair_code.items():
                     code_labels.setdefault(addr, name)
-                for addr, span in cod_listing.code_ranges.items():
+                    signature_code_addrs.add(addr)
+                for addr, span in flair_ranges.items():
                     code_ranges.setdefault(addr, span)
-                cod_proc_kinds.update(cod_listing.proc_kinds)
-                cod_path = sibling_cod_path
-                source_formats.append("cod_listing")
+            source_formats.extend(flair_formats)
         except Exception as exc:
-            print(f"[dbg] failed to parse COD listing {sibling_cod_path}: {exc}")
+            print(f"[dbg] failed to inspect FLAIR metadata for {binary}: {exc}")
+        return cod_path, signature_code_addrs
 
-    external_mzre_map = Path("/home/xor/games/f15se2-re/map") / f"{binary.stem}.map"
-    if external_mzre_map.exists():
-        try:
-            mzre_code, mzre_data, mzre_ranges = _parse_mzre_map_metadata(
-                external_mzre_map,
-                load_base_linear=load_base_linear,
-            )
-            if mzre_code or mzre_data or mzre_ranges:
-                for addr, name in mzre_code.items():
-                    code_labels.setdefault(addr, name)
-                for addr, name in mzre_data.items():
-                    data_labels.setdefault(addr, name)
-                for addr, span in mzre_ranges.items():
-                    code_ranges.setdefault(addr, span)
-                source_formats.append("mzre_map")
-        except Exception as exc:
-            print(f"[dbg] failed to parse mzretools map {external_mzre_map}: {exc}")
+    return _impl()
 
-    try:
-        flair_code, flair_ranges, flair_formats = _detect_flair_metadata(
-            binary,
-            project,
+
+def _load_lst_metadata(
+    binary: Path,
+    project: angr.Project,
+    *,
+    pat_backend: str | None = None,
+    signature_catalog: Path | None = None,
+    allow_peer_exe: bool = True,
+) -> LSTMetadata | None:
+    def _impl():
+        cached_sidecar, sidecar_cache_key = load_cached_sidecar_metadata(
+            binary_path=binary,
             pat_backend=pat_backend,
             signature_catalog=signature_catalog,
+            allow_peer_exe=allow_peer_exe,
         )
-        if flair_code or flair_ranges:
-            for addr, name in flair_code.items():
-                code_labels.setdefault(addr, name)
-                signature_code_addrs.add(addr)
-            for addr, span in flair_ranges.items():
-                code_ranges.setdefault(addr, span)
-        source_formats.extend(flair_formats)
-    except Exception as exc:
-        print(f"[dbg] failed to inspect FLAIR metadata for {binary}: {exc}")
+        if cached_sidecar is not None:
+            metadata = apply_cached_sidecar_metadata(project, cached_sidecar)
+            emit_sidecar_metadata_debug(project, metadata)
+            return metadata
+        load_base_linear = _probe_ida_base_linear(binary, getattr(project.loader.main_object, "linked_base", 0))
+        code_labels: dict[int, str] = {}
+        data_labels: dict[int, str] = {}
+        code_ranges: dict[int, tuple[int, int]] = {}
+        signature_code_addrs: set[int] = set()
+        cod_proc_kinds: dict[int, str] = {}
+        struct_names: list[str] = []
+        source_formats: list[str] = []
+        cod_path: Path | None = None
+        segment_offsets = _load_ida_map_sidecar(
+            binary,
+            load_base_linear=load_base_linear,
+            code_labels=code_labels,
+            data_labels=data_labels,
+            source_formats=source_formats,
+        )
+        _load_lst_sidecar(
+            binary,
+            load_base_linear=load_base_linear,
+            segment_offsets=segment_offsets,
+            code_labels=code_labels,
+            data_labels=data_labels,
+            code_ranges=code_ranges,
+            source_formats=source_formats,
+        )
+        _load_idc_inc_sidecars(
+            binary,
+            code_labels=code_labels,
+            data_labels=data_labels,
+            struct_names=struct_names,
+            source_formats=source_formats,
+        )
+        codeview_code, codeview_data, codeview_ranges, codeview_format = _load_codeview_or_ne_metadata(
+            binary,
+            project,
+            load_base_linear=load_base_linear,
+        )
 
-    if not code_labels and not data_labels and not struct_names:
-        return None
+        if codeview_code or codeview_data or codeview_ranges:
+            code_labels.update(codeview_code)
+            data_labels.update(codeview_data)
+            code_ranges.update(codeview_ranges)
+            source_formats.append(codeview_format or "codeview_unknown")
+        _load_tdinfo_sidecar(
+            binary,
+            load_base_linear=load_base_linear,
+            code_labels=code_labels,
+            data_labels=data_labels,
+            source_formats=source_formats,
+        )
+        cod_path, signature_code_addrs = _load_cod_mzre_flair_sidecars(
+            binary,
+            project,
+            load_base_linear=load_base_linear,
+            code_labels=code_labels,
+            data_labels=data_labels,
+            code_ranges=code_ranges,
+            source_formats=source_formats,
+            codeview_code=codeview_code,
+            codeview_ranges=codeview_ranges,
+            pat_backend=pat_backend,
+            signature_catalog=signature_catalog,
+            cod_proc_kinds=cod_proc_kinds,
+        )
 
-    for addr, name in data_labels.items():
-        project.kb.labels[addr] = name
-    for addr, name in code_labels.items():
-        project.kb.labels[addr] = name
+        if not code_labels and not data_labels and not struct_names:
+            return None
 
-    image_end = getattr(getattr(project.loader, "main_object", None), "max_addr", None)
-    if isinstance(image_end, int):
-        image_end += 1
-    code_ranges = _synthesize_code_ranges(code_labels, code_ranges, image_end=image_end)
+        for addr, name in data_labels.items():
+            project.kb.labels[addr] = name
+        for addr, name in code_labels.items():
+            project.kb.labels[addr] = name
 
-    metadata = LSTMetadata(
-        data_labels=data_labels,
-        code_labels=code_labels,
-        code_ranges=code_ranges,
-        signature_code_addrs=frozenset(signature_code_addrs),
-        absolute_addrs=True,
-        source_format="+".join(dict.fromkeys(source_formats)) or "sidecars",
-        struct_names=tuple(dict.fromkeys(struct_names)),
-        cod_path=str(cod_path) if cod_path is not None else None,
-        cod_proc_kinds=cod_proc_kinds,
-    )
-    project._inertia_lst_metadata = metadata
-    store_cached_sidecar_metadata(cache_key=sidecar_cache_key, metadata=metadata, project=project)
-    emit_sidecar_metadata_debug(project, metadata)
-    return metadata
+        image_end = getattr(getattr(project.loader, "main_object", None), "max_addr", None)
+        if isinstance(image_end, int):
+            image_end += 1
+        code_ranges = _synthesize_code_ranges(code_labels, code_ranges, image_end=image_end)
+
+        metadata = LSTMetadata(
+            data_labels=data_labels,
+            code_labels=code_labels,
+            code_ranges=code_ranges,
+            signature_code_addrs=frozenset(signature_code_addrs),
+            absolute_addrs=True,
+            source_format="+".join(dict.fromkeys(source_formats)) or "sidecars",
+            struct_names=tuple(dict.fromkeys(struct_names)),
+            cod_path=str(cod_path) if cod_path is not None else None,
+            cod_proc_kinds=cod_proc_kinds,
+        )
+        project._inertia_lst_metadata = metadata
+        store_cached_sidecar_metadata(cache_key=sidecar_cache_key, metadata=metadata, project=project)
+        emit_sidecar_metadata_debug(project, metadata)
+        return metadata
+
+    return _impl()
 
 
 def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | None:
@@ -453,13 +545,37 @@ def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: i
 
 
 def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[int, int] | None:
-    if metadata is None or addr is None:
-        return None
-    code_ranges = getattr(metadata, "code_ranges", None) or {}
-    span = code_ranges.get(addr)
-    if span is not None:
-        return span
-    for start, span in code_ranges.items():
-        if start <= addr < span[1]:
+    def _impl():
+        if metadata is None or addr is None:
+            return None
+        code_ranges = getattr(metadata, "code_ranges", None) or {}
+        span = code_ranges.get(addr)
+        if span is not None:
             return span
-    return None
+        for start, span in code_ranges.items():
+            if start <= addr < span[1]:
+                return span
+        # Fallback: derive a bounded span from ordered code labels when explicit
+        # code_ranges are unavailable/incomplete for this address.
+        code_labels = getattr(metadata, "code_labels", None) or {}
+        if not isinstance(code_labels, dict) or not code_labels:
+            return None
+        ordered = sorted(int(k) for k in code_labels.keys() if isinstance(k, int))
+        if not ordered:
+            return None
+        start = None
+        end = None
+        for i, label_addr in enumerate(ordered):
+            next_addr = ordered[i + 1] if i + 1 < len(ordered) else None
+            if label_addr <= addr and (next_addr is None or addr < next_addr):
+                start = label_addr
+                end = next_addr
+                break
+        if start is None:
+            return None
+        # Keep fallback spans bounded to avoid swallowing unrelated neighbors.
+        if end is None or end <= start:
+            end = start + 0x200
+        return (start, end)
+
+    return _impl()

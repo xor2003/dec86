@@ -25,7 +25,12 @@ class ExampleResult:
     exe: str
     obj: str
     map: str
+    cod: str
     build_ok: bool
+    run_ok: bool
+    run_exit_code: int | None
+    run_stdout: str
+    run_stderr: str
     decompile_skipped: bool
     decompile_ok: bool
     compile_stdout: str
@@ -53,6 +58,7 @@ def _compile_and_link(source_path: Path, out_dir: Path, *, kvikdos: Path, msc6_r
     obj_name = f"{stem}.OBJ"
     exe_name = f"{stem}.EXE"
     map_name = f"{stem}.MAP"
+    cod_name = f"{stem}.COD"
 
     compile_cmd = [
         str(kvikdos),
@@ -69,6 +75,7 @@ def _compile_and_link(source_path: Path, out_dir: Path, *, kvikdos: Path, msc6_r
         "/Od",
         "/c",
         f"/Foc:\\{obj_name}",
+        f"/Fcc:\\{cod_name}",
         f"c:\\{source_path.name}",
     ]
     compile_proc = _run(compile_cmd, timeout=120)
@@ -88,6 +95,19 @@ def _compile_and_link(source_path: Path, out_dir: Path, *, kvikdos: Path, msc6_r
 
     built = (out_dir / exe_name).exists()
     return built, compile_proc.stdout, compile_proc.stderr, link_proc.stdout, link_proc.stderr
+
+
+def _run_example(exe_path: Path, out_dir: Path, *, kvikdos: Path) -> tuple[bool, int | None, str, str]:
+    cmd = [
+        str(kvikdos),
+        f"--mount=c:{out_dir}/",
+        "--drive=c",
+        "--cwd-dos=c:\\",
+        "--prog=" + f"c:\\{exe_path.name}",
+        f"c:\\{exe_path.name}",
+    ]
+    proc = _run(cmd, timeout=30)
+    return proc.returncode == 0, proc.returncode, proc.stdout, proc.stderr
 
 
 def _decompile(exe_path: Path, out_dir: Path, *, decompile_py: Path) -> tuple[bool, Path, Path]:
@@ -128,6 +148,7 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     results: list[ExampleResult] = []
     dos_names = {
+        "compare16": "CMP16.C",
         "simple_control": "SIMPLE.C",
         "medium_structs": "MEDIUM.C",
         "compare32": "COMP32.C",
@@ -153,11 +174,22 @@ def main() -> int:
         exe_path = args.out_dir / f"{local_source.stem.upper()}.EXE"
         obj_path = args.out_dir / f"{local_source.stem.upper()}.OBJ"
         map_path = args.out_dir / f"{local_source.stem.upper()}.MAP"
+        cod_path = args.out_dir / f"{local_source.stem.upper()}.COD"
+        run_ok = False
+        run_exit_code: int | None = None
+        run_stdout = ""
+        run_stderr = ""
+        if build_ok and exe_path.exists():
+            run_ok, run_exit_code, run_stdout, run_stderr = _run_example(
+                exe_path,
+                args.out_dir,
+                kvikdos=args.kvikdos,
+            )
         decompile_skipped = source_path.stem in decompile_skip
         decompile_ok = False
         dec_out: Path | None = None
         dec_err: Path | None = None
-        if build_ok and exe_path.exists() and not decompile_skipped:
+        if build_ok and run_ok and exe_path.exists() and not decompile_skipped:
             decompile_ok, dec_out, dec_err = _decompile(exe_path, args.out_dir, decompile_py=args.decompile_py)
         results.append(
             ExampleResult(
@@ -166,7 +198,12 @@ def main() -> int:
                 exe=str(exe_path),
                 obj=str(obj_path),
                 map=str(map_path),
+                cod=str(cod_path),
                 build_ok=build_ok,
+                run_ok=run_ok,
+                run_exit_code=run_exit_code,
+                run_stdout=run_stdout,
+                run_stderr=run_stderr,
                 decompile_skipped=decompile_skipped,
                 decompile_ok=decompile_ok,
                 compile_stdout=c_out,
@@ -184,6 +221,7 @@ def main() -> int:
     for item in results:
         print(
             f"{item.name}: build={'ok' if item.build_ok else 'fail'} "
+            f"run={'ok' if item.run_ok else f'fail({item.run_exit_code})'} "
             f"decompile={'skipped' if item.decompile_skipped else ('ok' if item.decompile_ok else 'fail')} exe={item.exe}"
         )
     return 0

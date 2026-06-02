@@ -78,5 +78,41 @@ int main(void)
     total += (int)sub_ulong(90UL, 30UL);
     total += (int)scale_float(2.0f, 3.0f);
     total += (int)blend_double(8.0, 4.0);
-    return total + picked[0];
+    if (add_sc(1, 2) != 3) {
+        return 1;
+    }
+    if (mix_uc(7, 3) != (unsigned char)13) {
+        return 2;
+    }
+    if (sub_ss(9, 4) != 5) {
+        return 3;
+    }
+    if (mul_us(3, 5) != 15) {
+        return 4;
+    }
+    if (add_int(10, 20) != 30) {
+        return 5;
+    }
+    if (rot_ui(9U) != 18U) {
+        return 6;
+    }
+    if (add_long(1000L, 2000L) != 3000L) {
+        return 7;
+    }
+    if (sub_ulong(90UL, 30UL) != 60UL) {
+        return 8;
+    }
+    if ((int)scale_float(2.0f, 3.0f) != 7) {
+        return 9;
+    }
+    if ((int)blend_double(8.0, 4.0) != 8) {
+        return 10;
+    }
+    if (picked[0] != 'B') {
+        return 11;
+    }
+    if (total == 0) {
+        return 12;
+    }
+    return 0;
 }

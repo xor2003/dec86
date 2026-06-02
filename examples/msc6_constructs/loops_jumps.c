@@ -47,5 +47,11 @@ start:
 
 int main(void)
 {
-    return nested_loops(5) + goto_accumulate(4);
+    if (nested_loops(5) != 42) {
+        return 1;
+    }
+    if (goto_accumulate(4) != 12) {
+        return 2;
+    }
+    return 0;
 }

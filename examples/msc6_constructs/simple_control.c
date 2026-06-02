@@ -52,5 +52,20 @@ int main(void)
     a = classify(7);
     b = sum_to(6);
     c = switch_fold(2);
-    return a + b + c;
+    if (classify(-4) != -1) {
+        return 1;
+    }
+    if (classify(0) != 0) {
+        return 2;
+    }
+    if (a != 1) {
+        return 3;
+    }
+    if (b != 3) {
+        return 4;
+    }
+    if (c != 22) {
+        return 5;
+    }
+    return 0;
 }
