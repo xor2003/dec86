@@ -2930,6 +2930,9 @@ def main(argv: list[str] | None = None) -> int:
                 entry_point=args.entry_point,
             )
             setattr(project, "_inertia_c_target", args.c_target)
+            setattr(project, "_inertia_dump_layers", bool(args.dump_layers))
+            setattr(project, "_inertia_dump_layer_root", args.dump_layer_dir)
+            setattr(project, "_inertia_dump_layer_filter", args.dump_layer_filter)
             _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
             _apply_binary_specific_annotations(
                 project,
@@ -2954,6 +2957,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             setattr(project, "_inertia_c_target", args.c_target)
             setattr(project, "_inertia_trace_c_stages", bool(args.trace_c_stages))
+            setattr(project, "_inertia_dump_layers", bool(args.dump_layers))
+            setattr(project, "_inertia_dump_layer_root", args.dump_layer_dir)
+            setattr(project, "_inertia_dump_layer_filter", args.dump_layer_filter)
             _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
             lst_metadata = _load_lst_metadata(
                 args.binary,
@@ -2972,6 +2978,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("/* no helper metadata (.lst/.map/.cod/debug info) found; using raw binary analysis and quick function-entry scans. */")
             print(_recovery_evidence_line(args.binary, lst_metadata))
         setattr(project, "_inertia_trace_c_stages", bool(args.trace_c_stages))
+        setattr(project, "_inertia_dump_layers", bool(args.dump_layers))
+        setattr(project, "_inertia_dump_layer_root", args.dump_layer_dir)
+        setattr(project, "_inertia_dump_layer_filter", args.dump_layer_filter)
         low_memory_path = _prefer_low_memory_path()
         interactive_stdout = _stdout_is_interactive()
         precise_sidecar_regions = metadata_has_precise_code_regions(lst_metadata)
@@ -3566,6 +3575,9 @@ def main(argv: list[str] | None = None) -> int:
                     func.name = code_name
             direct_project = getattr(func, "project", project)
             setattr(direct_project, "_inertia_trace_c_stages", bool(args.trace_c_stages))
+            setattr(direct_project, "_inertia_dump_layers", bool(args.dump_layers))
+            setattr(direct_project, "_inertia_dump_layer_root", args.dump_layer_dir)
+            setattr(direct_project, "_inertia_dump_layer_filter", args.dump_layer_filter)
             _apply_binary_specific_annotations(
                 direct_project,
                 args.binary,

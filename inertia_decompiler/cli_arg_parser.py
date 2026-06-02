@@ -62,6 +62,25 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         help="Print labeled C snapshots after major decompilation text stages so line origin is visible.",
     )
     parser.add_argument(
+        "--dump-layers",
+        action="store_true",
+        help=(
+            "Dump every decompilation-stage C snapshot under a layer directory "
+            "instead of printing to stdout only."
+        ),
+    )
+    parser.add_argument(
+        "--dump-layer-dir",
+        type=Path,
+        default=Path("angr_platforms/.cache/decompilation_layers"),
+        help="Directory for per-layer decompilation artifacts (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--dump-layer-filter",
+        default=os.environ.get("INERTIA_DUMP_LAYER_FILTER", ""),
+        help="Comma-separated list of layer labels to dump (default: all).",
+    )
+    parser.add_argument(
         "--proc",
         default=None,
         help="Extract and decompile one procedure from a .COD listing by PROC name.",
