@@ -19,7 +19,11 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 
 from .analysis_helpers import patch_direct_call_sites, preferred_known_helper_signature_decl
 from .callee_name_normalization import normalize_callee_name_8616
-from .callsite_stack_metadata import _stack_carrier_key_8616, prune_materialized_callsite_segment_metadata_8616
+from .callsite_stack_metadata import (
+    _generic_stack_carrier_keys_8616,
+    _stack_carrier_key_8616,
+    prune_materialized_callsite_segment_metadata_8616,
+)
 from .callsite_summary import summarize_x86_16_callsite
 from .cod_extract import extract_cod_proc_metadata
 from .decompiler_postprocess import _normalize_arg_names_8616
@@ -697,6 +701,8 @@ class CallsiteMaterializationStats:
     consumed_outgoing_stack_placeholder_count: int = 0
     stale_target_rejected_count: int = 0
     known_prototype_arg_mismatch_count: int = 0
+    has_push_arg_evidence_count: int = 0
+    no_push_arg_evidence_count: int = 0
     failure_count: int = 0
 
 
@@ -933,6 +939,29 @@ def _expected_arg_count_for_known_callee_8616(name: str) -> int | None:
         return None
 
     return _impl()
+
+
+def _expected_arg_count_for_call_8616(
+    summary_arg_count: int | None,
+    *,
+    known_arg_count: int | None,
+    prototype_arg_count: int | None,
+) -> int | None:
+    """
+    Resolve expected call arity with summary evidence preferred over declarative hints.
+
+    Summary data is authoritative when present and non-zero. A summary value of 0 is
+    treated as explicit zero only when no stronger known/prototype arity is available.
+    """
+    if isinstance(summary_arg_count, int):
+        if summary_arg_count > 0:
+            return summary_arg_count
+        return 0
+    if isinstance(known_arg_count, int) and known_arg_count > 0:
+        return known_arg_count
+    if isinstance(prototype_arg_count, int) and prototype_arg_count > 0:
+        return prototype_arg_count
+    return None
 
 
 def _known_default_args_for_missing_8616(name: str, codegen) -> tuple | None:
@@ -1527,6 +1556,8 @@ def _finalize_callsite_materialization_stats_8616(codegen) -> CallsiteMaterializ
         previous = _ensure_callsite_materialization_stats_8616(codegen)
         stats = CallsiteMaterializationStats(
             bp_slot_arg_value_normalized_count=int(getattr(previous, "bp_slot_arg_value_normalized_count", 0) or 0),
+            has_push_arg_evidence_count=int(getattr(previous, "has_push_arg_evidence_count", 0) or 0),
+            no_push_arg_evidence_count=int(getattr(previous, "no_push_arg_evidence_count", 0) or 0),
             pointer_arg_materialized_count=int(getattr(previous, "pointer_arg_materialized_count", 0) or 0),
             push_order_reversed_count=int(getattr(previous, "push_order_reversed_count", 0) or 0),
             consumed_outgoing_stack_placeholder_count=int(
@@ -1958,22 +1989,34 @@ def _apply_callsite_summary_to_node_8616(
         changed = False
         if summary_map.get(id(node)) != summary:
             summary_map[id(node)] = summary
+            changed = True
             record_callsite_summary_fact_8616(codegen, summary, node_id=id(node), attached=True)
         target_addr = getattr(summary, "target_addr", None)
-        if not isinstance(target_addr, int) or not allow_call_target_rewrites:
+        if not isinstance(target_addr, int):
             return changed
         callee_func = getattr(node, "callee_func", None)
         candidate = _lookup_callee_function_8616(project, target_addr)
         if candidate is not None:
             current_addr = getattr(callee_func, "addr", None)
             candidate_addr = getattr(candidate, "addr", None)
-            if callee_func is None or (
-                isinstance(current_addr, int) and isinstance(candidate_addr, int) and current_addr != candidate_addr
+            if (
+                allow_call_target_rewrites
+                and (
+                    callee_func is None
+                    or (
+                        isinstance(current_addr, int)
+                        and isinstance(candidate_addr, int)
+                        and current_addr != candidate_addr
+                    )
+                )
             ):
                 node.callee_func = candidate
                 changed = True
                 callee_func = candidate
         sidecar_label = _sidecar_label_for_target_8616(project, target_addr)
+        if callee_func is None and node is not None and isinstance(sidecar_label, str):
+            node.callee_func = candidate
+            callee_func = candidate
         if callee_func is None and isinstance(sidecar_label, str) and getattr(node, "callee_target", None) != sidecar_label:
             node.callee_target = sidecar_label
             changed = True
@@ -2250,10 +2293,10 @@ def _conservative_call_arg_seed_8616(
             push_sources = getattr(summary, "push_arg_sources", ()) if summary is not None else ()
             summary_arg_count = getattr(summary, "arg_count", None) if summary is not None else None
             known_count = expected_arg_count_fn(call_name)
-            expected_count = (
-                known_count
-                if isinstance(known_count, int)
-                else (summary_arg_count if isinstance(summary_arg_count, int) and summary_arg_count >= 0 else None)
+            expected_count = _expected_arg_count_for_call_8616(
+                summary_arg_count,
+                known_arg_count=known_count,
+                prototype_arg_count=None,
             )
             if not (isinstance(expected_count, int) and expected_count > 0):
                 continue
@@ -2311,14 +2354,20 @@ def _seed_empty_known_helper_calls_8616(
                 continue
             call_name = call_name_fn(node) or ""
             known_count = expected_arg_count_fn(call_name)
-            if not (isinstance(known_count, int) and known_count > 0):
+            summary = summary_map.get(id(node))
+            summary_arg_count = getattr(summary, "arg_count", None) if summary is not None else None
+            expected_count = _expected_arg_count_for_call_8616(
+                summary_arg_count,
+                known_arg_count=known_count,
+                prototype_arg_count=None,
+            )
+            if not (isinstance(expected_count, int) and expected_count > 0):
                 continue
             if tuple(getattr(node, "args", ()) or ()):
                 continue
-            summary = summary_map.get(id(node))
             push_sources = getattr(summary, "push_arg_sources", ()) if summary is not None else ()
             seeded_args = None
-            if isinstance(push_sources, tuple) and len(push_sources) == known_count:
+            if isinstance(push_sources, tuple) and len(push_sources) == expected_count:
                 ordered_sources = list(reversed(push_sources)) if len(push_sources) > 1 else list(push_sources)
                 direct_args = [
                     direct_expr_from_push_source_fn(source, call_name=call_name, arg_index=idx)
@@ -2328,12 +2377,45 @@ def _seed_empty_known_helper_calls_8616(
                     seeded_args = tuple(direct_args)
             if seeded_args is None:
                 defaults = known_default_args_fn(call_name, codegen)
-                if defaults is not None and len(defaults) == known_count and not has_unverified_non_ss_stack_probe:
+                if defaults is not None and len(defaults) == expected_count and not has_unverified_non_ss_stack_probe:
                     seeded_args = tuple(defaults)
             if seeded_args is None:
                 continue
             set_materialized_call_args_fn(node, seeded_args, call_name=call_name, force_replace=True)
             refresh_summary_arg_shape_fn(node, summary)
+            changed = True
+        return changed
+
+    return _impl()
+
+
+def _clear_zero_arg_known_helper_args_8616(
+    *,
+    root,
+    summary_map: dict[int, object],
+    call_name_fn,
+    expected_arg_count_fn,
+    set_materialized_call_args_fn,
+    refresh_summary_arg_shape_fn,
+) -> bool:
+    def _impl():
+        changed = False
+        for node in _iter_c_nodes_deep_8616(root):
+            if not isinstance(node, CFunctionCall) or _is_runtime_segment_helper_call_8616(node):
+                continue
+            call_name = call_name_fn(node) or ""
+            known_count = expected_arg_count_fn(call_name)
+            if known_count != 0:
+                continue
+            current_args = tuple(getattr(node, "args", ()) or ())
+            if not current_args:
+                continue
+            summary = summary_map.get(id(node))
+            set_materialized_call_args_fn(node, (), call_name=call_name, force_replace=True)
+            if summary is not None:
+                updated = replace(summary, arg_count=0, arg_widths=())
+                summary_map[id(node)] = updated
+                changed = True
             changed = True
         return changed
 
@@ -2349,17 +2431,22 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
     if not isinstance(summary_map, dict):
         summary_map = {}
-    # Evidence gate: this pass is semantic materialization, not speculative
-    # recovery. Skip the expensive traversal when summaries have no concrete
-    # push-argument sources to consume.
+    # Evidence gate removed: when push-source evidence is absent, we still run
+    # conservative materialization using backtracking/defaults.
+    # The pass still remains diagnostic and must preserve semantics if no
+    # recoverable evidence is available.
     has_push_arg_evidence = False
     for _summary in summary_map.values():
         push_sources = getattr(_summary, "push_arg_sources", None)
         if isinstance(push_sources, tuple) and any(source is not None for source in push_sources):
             has_push_arg_evidence = True
             break
-    if not has_push_arg_evidence:
-        return False
+    stats = _ensure_callsite_materialization_stats_8616(codegen)
+    if has_push_arg_evidence:
+        stats.has_push_arg_evidence_count += 1
+    else:
+        stats.no_push_arg_evidence_count += 1
+
     _refresh_callsite_summary_node_ids_8616(codegen, summary_map)
     typed_stack_probe_facts = build_typed_stack_probe_return_facts_8616(codegen)
     record_callsite_summary_map_facts_8616(codegen, summary_map)
@@ -2372,6 +2459,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     conservative_materialization, prune_consumed_arg_stores = _call_arg_materialization_mode_flags_8616(
         has_recoverable_stack_probe
     )
+    if conservative_materialization and has_push_arg_evidence:
+        conservative_materialization = False
     materialized_callsite_metadata_ids: dict[int, tuple[int, ...]] = {}
     synthetic_stack_cvars: dict[int, structured_c.CVariable] = {}
 
@@ -2402,6 +2491,26 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         if isinstance(name, str) and name.lower() in {"cs", "ds", "es", "ss"}:
             return True
         return False
+
+    def _is_call_arg_count_evidence_tuple(source) -> bool:
+        if not isinstance(source, tuple) or len(source) < 2:
+            return False
+        if source[0] not in {"bp", "imm", "sp", "ss", "ds", "cs", "es", "dx", "ax", "bx", "cx", "dx", "di", "si", "di", "si"}:
+            return False
+        return isinstance(source[1], int)
+
+    def _fallback_call_arg_count_8616(
+        *,
+        expected_arg_count: int | None,
+        push_arg_sources: tuple,
+    ) -> int | None:
+        if isinstance(expected_arg_count, int):
+            return expected_arg_count
+        if isinstance(push_arg_sources, tuple) and push_arg_sources and all(
+            _is_call_arg_count_evidence_tuple(source) for source in push_arg_sources
+        ):
+            return len(push_arg_sources)
+        return 1
 
     def _all_arg_exprs_are_non_segment_registers(args) -> bool:
         return bool(args) and all(not _is_segment_register_value_expr(arg) for arg in args)
@@ -2966,9 +3075,18 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if op_name not in {"add", "sub", "shl", "shr"}:
                     return None
                 c_op = {"add": "Add", "sub": "Sub", "shl": "Shl", "shr": "Shr"}[op_name]
+                lhs_expr = expr
+                if c_op == "Shr":
+                    lhs_node = lhs_expr
+                    while isinstance(lhs_node, CTypeCast):
+                        lhs_node = lhs_node.expr
+                    if isinstance(lhs_node, CUnaryOp) and getattr(lhs_node, "op", None) in {"Reference", "AddressOf"}:
+                        # High-byte projection of address-like carrier must be an explicit
+                        # integer operation for strict 16-bit C compilers.
+                        lhs_expr = CTypeCast(None, SimTypeShort(False), lhs_expr, codegen=codegen)
                 expr = CBinaryOp(
                     c_op,
-                    expr,
+                    lhs_expr,
                     structured_c.CConstant(op_value, SimTypeShort(False), codegen=codegen),
                     codegen=codegen,
                 )
@@ -3012,7 +3130,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     and name.startswith(("arg_", "s_", "stack_", "vvar_", "tmp_", "ir_"))
                 ):
                     return True
-            if current.__class__.__name__ == "CDirtyExpression":
+            if _is_virtual_dirty_expr_8616(current):
                 return True
             for attr in ("lhs", "rhs", "operand", "expr", "condition", "iftrue", "iffalse", "variable", "index"):
                 child = getattr(current, attr, None)
@@ -3565,10 +3683,6 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         existing_count = getattr(summary, "arg_count", None)
         existing_widths = tuple(getattr(summary, "arg_widths", ()) or ())
         floor_count = existing_count if isinstance(existing_count, int) and existing_count >= 0 else 0
-        call_name = _call_node_name_8616(call) or ""
-        known_count = _expected_arg_count_for_known_callee_8616(call_name)
-        if isinstance(known_count, int) and known_count > floor_count:
-            floor_count = known_count
         next_count = max(len(arg_widths_live), floor_count)
         if len(arg_widths_live) < next_count:
             padded = list(arg_widths_live)
@@ -3602,6 +3716,20 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             break
         if tail_ids:
             materialized_callsite_metadata_ids[id(call)] = tuple(tail_ids)
+
+    def _delete_consumed_indices_8616(statements: list, indices: list[int]) -> None:
+        if not isinstance(statements, list) or not indices:
+            return
+        clean_indices = sorted(
+            {
+                int(idx)
+                for idx in indices
+                if isinstance(idx, int) and 0 <= int(idx) < len(statements)
+            },
+            reverse=True,
+        )
+        for idx in clean_indices:
+            del statements[idx]
 
     def _call_from_statement(stmt):
         if isinstance(stmt, CFunctionCall):
@@ -3714,26 +3842,12 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     return True
             return False
 
-        def _is_virtual_dirty_expr(term) -> bool:
-            dirty = getattr(term, "dirty", None)
-            if isinstance(dirty, str):
-                return dirty.startswith("vvar_") or dirty.startswith("tmp_") or dirty.startswith("ir_")
-            if dirty is None:
-                return False
-            varid = getattr(dirty, "varid", None)
-            if isinstance(varid, int):
-                return True
-            name = getattr(dirty, "name", None)
-            return isinstance(name, str) and (
-                name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_")
-            )
-
         def _contains_unresolved_dirty_expr(term) -> bool:
             nodes = (term, *_iter_c_nodes_deep_8616(term))
             for raw_node in nodes:
                 if raw_node.__class__.__name__ != "CDirtyExpression":
                     continue
-                if _is_virtual_dirty_expr(raw_node):
+                if _is_virtual_dirty_expr_8616(raw_node):
                     continue
                 return True
             return False
@@ -3768,17 +3882,21 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     def _store_matches_typed_stack_probe_fact(lhs, fact: TypedStackProbeReturnFact8616 | None) -> bool:
         if lhs is None or fact is None:
             return False
+
+        def _contains_unsafe_dirty_term(term) -> bool:
+            nodes = (term, *_iter_c_nodes_deep_8616(term))
+            for raw_node in nodes:
+                if raw_node.__class__.__name__ == "CDirtyExpression":
+                    if _is_virtual_dirty_expr_8616(raw_node):
+                        continue
+                    return True
+            return False
+
         seg_name, _offset_terms = _match_real_mode_segmented_store_shape_8616(lhs, project)
+        if any(_contains_unsafe_dirty_term(term) for _sign, term in _offset_terms):
+            return False
         if seg_name == fact.segment_space:
-
-            def _contains_dirty_expr(term) -> bool:
-                nodes = (term, *_iter_c_nodes_deep_8616(term))
-                for raw_node in nodes:
-                    if raw_node.__class__.__name__ == "CDirtyExpression":
-                        return True
-                return False
-
-            return not any(_contains_dirty_expr(term) for _sign, term in _offset_terms)
+            return True
 
         deref = lhs
         while isinstance(deref, CTypeCast):
@@ -3847,6 +3965,88 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return rhss[:max_collect]
         rhs = _typed_stack_store_rhs_from_statement(stmt, fact)
         return [rhs] if rhs is not None else []
+
+    def _typed_stack_store_rhs_sources_from_statement(
+        stmt,
+        fact: TypedStackProbeReturnFact8616 | None,
+        *,
+        max_collect: int = 4,
+    ) -> tuple[list, list[set[tuple[str, str | int]]]]:
+        if fact is None:
+            return [], []
+        nested_statements = getattr(stmt, "statements", None)
+        if isinstance(nested_statements, (list, tuple)):
+            rhss: list = []
+            sources: list[set[tuple[str, str | int]]] = []
+            for nested in reversed(tuple(nested_statements)):
+                nested_rhss, nested_sources = _typed_stack_store_rhs_sources_from_statement(
+                    nested,
+                    fact,
+                    max_collect=max_collect,
+                )
+                if nested_rhss:
+                    rhss.extend(reversed(nested_rhss))
+                    sources.extend(reversed(nested_sources))
+                    if len(rhss) >= max_collect:
+                        break
+                    continue
+                nested_children = getattr(nested, "statements", None)
+                if isinstance(nested_children, (list, tuple)):
+                    continue
+                if _is_stack_carrier_temp_assignment(nested) or _is_non_memory_assignment(nested):
+                    continue
+            rhss.reverse()
+            sources.reverse()
+            if len(rhss) > max_collect:
+                rhss = rhss[:max_collect]
+                sources = sources[:max_collect]
+            return rhss, sources
+
+        rhs = None
+        carrier_sources: set[tuple[str, str | int]] = set()
+        for assignment in reversed(_iter_assignment_nodes(stmt)):
+            lhs, assignment_rhs = _assignment_lhs_rhs(assignment)
+            if not _assignment_lhs_writes_memory(lhs):
+                continue
+            if _is_segment_register_value_expr(assignment_rhs):
+                continue
+            if _store_matches_typed_stack_probe_fact(lhs, fact):
+                rhs = assignment_rhs
+                carrier_sources = set(_generic_stack_carrier_keys_8616(lhs))
+                if isinstance(assignment_rhs, object):
+                    carrier_sources.update(_generic_stack_carrier_keys_8616(assignment_rhs))
+                break
+        return ([rhs], [carrier_sources]) if rhs is not None else ([], [])
+
+    def _collect_typed_stack_carrier_defs(
+        statements: list,
+        start_index: int,
+        *,
+        wanted_indices: list[int],
+        wanted_keys: set[tuple[str, str | int]],
+    ) -> list[int]:
+        if not wanted_indices or not wanted_keys:
+            return wanted_indices
+        consumed = list(wanted_indices)
+        pending_keys = set(wanted_keys)
+        idx = start_index
+        while idx >= 0 and pending_keys:
+            stmt = statements[idx]
+            if _statement_contains_call(stmt):
+                break
+            for assignment in reversed(_iter_assignment_nodes(stmt)):
+                lhs, rhs = _assignment_lhs_rhs(assignment)
+                if lhs is None:
+                    continue
+                lhs_keys = _generic_stack_carrier_keys_8616(lhs)
+                if not lhs_keys & pending_keys:
+                    continue
+                consumed.append(idx)
+                pending_keys -= lhs_keys
+                pending_keys.update(_generic_stack_carrier_keys_8616(rhs))
+                break
+            idx -= 1
+        return sorted(consumed)
 
     def _is_stack_carrier_temp_assignment(stmt) -> bool:
         candidates = _iter_assignment_nodes(stmt)
@@ -3942,7 +4142,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return None
         return rhs
 
-    def _is_outgoing_segment_return_store_statement(stmt) -> bool:
+    def _is_outgoing_segment_return_store_statement(stmt, *, stack_probe_seen: bool = False) -> bool:
+        if not stack_probe_seen:
+            return False
         candidates = _iter_assignment_nodes(stmt)
         if not candidates:
             return False
@@ -3952,7 +4154,22 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         segment_name, _offset_terms = _match_real_mode_segmented_store_shape_8616(lhs, project)
         if segment_name != "ss":
             return False
-        return _is_segment_register_value_expr(rhs)
+        rhs_segments = set()
+        for raw_node in (rhs, *_iter_c_nodes_deep_8616(rhs)):
+            node = raw_node
+            while isinstance(node, CTypeCast):
+                node = node.expr
+            variable = getattr(node, "variable", None)
+            name = getattr(variable, "name", None) or getattr(node, "name", None)
+            if isinstance(name, str) and name.lower() in {"cs", "ds", "es", "ss"}:
+                rhs_segments.add(name.lower())
+            segment_selector = getattr(node, "segment_selector", None)
+            if isinstance(segment_selector, str) and segment_selector.lower() in {"cs", "ds", "es", "ss"}:
+                rhs_segments.add(segment_selector.lower())
+            seg_name, _offset_terms = _match_real_mode_linear_expr_8616(node, project)
+            if seg_name in {"cs", "ds", "es", "ss"}:
+                rhs_segments.add(seg_name)
+        return rhs_segments == {"ss"}
 
     def _offset_terms_include_stack_base_placeholder(offset_terms) -> bool:
         for _sign, term in tuple(offset_terms or ()):
@@ -3961,6 +4178,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         return False
 
     def _is_stack_probe_frame_artifact_store_statement(stmt) -> bool:
+        if _statement_contains_call(stmt):
+            return False
         candidates = _iter_assignment_nodes(stmt)
         if not candidates:
             return False
@@ -3993,6 +4212,20 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 continue
             pruned.append(stmt)
         return pruned
+
+    def _is_virtual_dirty_expr_8616(term) -> bool:
+        dirty = getattr(term, "dirty", None)
+        if isinstance(dirty, str):
+            return dirty.startswith("vvar_") or dirty.startswith("tmp_") or dirty.startswith("ir_")
+        if dirty is None:
+            return False
+        varid = getattr(dirty, "varid", None)
+        if isinstance(varid, int):
+            return True
+        name = getattr(dirty, "name", None)
+        return isinstance(name, str) and (
+            name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_")
+        )
 
     def _assignment_lhs_writes_memory(lhs) -> bool:
         if lhs is None:
@@ -4029,32 +4262,94 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         wanted_count: int | None = None,
         max_count: int = 4,
         typed_probe_fact: TypedStackProbeReturnFact8616 | None = None,
+        allow_partial: bool = False,
     ) -> tuple[list, list]:
-        def _trailing_stack_store_rhss_after_last_call(stmt, *, max_collect: int) -> list:
+        def _dedupe_indices(indices: list[int]) -> list[int]:
+            return sorted(set(indices))
+
+        def _is_skip_after_typed_collect(stmt) -> bool:
+            return (
+                _is_stack_carrier_temp_assignment(stmt)
+                or _is_non_memory_assignment(stmt)
+                or _is_value_only_assignment(stmt)
+                or _is_segment_register_metadata_store(stmt)
+            )
+
+        def _expand_typed_carrier_defs(stmt_index: int, wanted_indices: list[int], wanted_keys: set[tuple[str, str | int]]) -> list[int]:
+            if not wanted_indices or not wanted_keys:
+                return wanted_indices
+            if stmt_index < 0:
+                return wanted_indices
+            return _collect_typed_stack_carrier_defs(
+                statements,
+                start_index=stmt_index,
+                wanted_indices=wanted_indices,
+                wanted_keys=wanted_keys,
+            )
+
+        def _trailing_stack_store_rhss_after_last_call(
+            stmt,
+            *,
+            max_collect: int,
+            parent_stmt_index: int,
+        ) -> tuple[list, list[int]]:
             nested_statements = getattr(stmt, "statements", None)
             if not isinstance(nested_statements, (list, tuple)):
-                return []
+                return [], []
             sequence = list(nested_statements)
             last_call_idx = None
             for seq_idx, node in enumerate(sequence):
                 if _statement_contains_call(node):
                     last_call_idx = seq_idx
             if last_call_idx is None:
-                return []
+                return [], []
 
             rhss: list = []
+            consumed_nested_indices: list[int] = []
             skipped_carriers = 0
             skipped_value_assignments = 0
-            for node in sequence[last_call_idx + 1 :]:
+            for seq_idx, node in enumerate(sequence[last_call_idx + 1 :], start=last_call_idx + 1):
                 if _statement_contains_call(node):
                     break
-                nested_rhss = (
-                    _typed_stack_store_rhss_from_statement(node, typed_probe_fact, max_collect=max_collect)
-                    if typed_probe_fact is not None
-                    else _stack_store_rhss_from_statement(node, max_collect=max_collect)
-                )
+                nested_rhss = []
+                nested_sources: list[set[tuple[str, str | int]]] = []
+                if typed_probe_fact is not None:
+                    nested_rhss, nested_sources = _typed_stack_store_rhs_sources_from_statement(
+                        node,
+                        typed_probe_fact,
+                        max_collect=max_collect,
+                    )
+                    if not nested_rhss:
+                        if _is_skip_after_typed_collect(node):
+                            if _is_segment_register_metadata_store(node) or _is_stack_carrier_temp_assignment(node):
+                                skipped_carriers += 1
+                            else:
+                                skipped_value_assignments += 1
+                            if skipped_carriers > 4 or skipped_value_assignments > 8:
+                                break
+                            continue
+                        break
+                    rhss.extend(nested_rhss)
+                    consumed_nested_indices.append(seq_idx)
+                    if nested_sources:
+                        keys = set()
+                        for entry in nested_sources:
+                            keys.update(entry)
+                        # Typed nested store materialization currently remains scoped to the
+                        # parent call statement; nested statement indices are not directly
+                        # removable from the outer sequence.
+                        _expand_typed_carrier_defs(
+                            seq_idx - 1,
+                            wanted_keys=keys,
+                            wanted_indices=[parent_stmt_index - 1],
+                        )
+                    if len(rhss) >= max_collect:
+                        break
+                    continue
+                nested_rhss = _stack_store_rhss_from_statement(node, max_collect=max_collect)
                 if nested_rhss:
                     rhss.extend(nested_rhss)
+                    consumed_nested_indices.append(seq_idx)
                     if len(rhss) >= max_collect:
                         break
                     continue
@@ -4080,7 +4375,16 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         break
                     continue
                 break
-            return rhss[:max_collect]
+            if consumed_nested_indices:
+                for del_idx in reversed(_dedupe_indices(consumed_nested_indices)):
+                    if 0 <= del_idx < len(sequence):
+                        del sequence[del_idx]
+                if isinstance(nested_statements, list):
+                    stmt.statements = sequence
+                else:
+                    stmt.statements = tuple(sequence)
+
+            return rhss[:max_collect], []
 
         rhs_values: list = []
         consumed_indices: list[int] = []
@@ -4094,18 +4398,36 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 trailing_rhss = _trailing_stack_store_rhss_after_last_call(
                     stmt,
                     max_collect=max(0, limit - len(rhs_values)),
+                    parent_stmt_index=idx,
                 )
                 if trailing_rhss:
-                    if len(trailing_rhss) > 1:
+                    trailing_args, trailing_indices = trailing_rhss
+                    if len(trailing_args) > 1:
                         stats.push_order_reversed_count += 1
-                    rhs_values.extend(trailing_rhss)
-                    consumed_indices.append(idx)
+                    rhs_values.extend(trailing_args)
+                    consumed_indices.extend(trailing_indices)
                 break
-            rhss = (
-                _typed_stack_store_rhss_from_statement(stmt, typed_probe_fact, max_collect=max_count)
-                if typed_probe_fact is not None
-                else _stack_store_rhss_from_statement(stmt, max_collect=max_count)
-            )
+            rhss = []
+            rhs_sources: list[set[tuple[str, str | int]]] = []
+            if typed_probe_fact is not None:
+                rhss, rhs_sources = _typed_stack_store_rhs_sources_from_statement(
+                    stmt,
+                    typed_probe_fact,
+                    max_collect=max_count,
+                )
+                if not rhss:
+                    if _is_skip_after_typed_collect(stmt):
+                        if _is_segment_register_metadata_store(stmt) or _is_stack_carrier_temp_assignment(stmt):
+                            skipped_carriers += 1
+                        else:
+                            skipped_value_assignments += 1
+                        if skipped_carriers > 4 or skipped_value_assignments > 8:
+                            break
+                        idx -= 1
+                        continue
+                    break
+            if not rhss and typed_probe_fact is None:
+                rhss = _stack_store_rhss_from_statement(stmt, max_collect=max_count)
             if rhss:
                 if all(_is_segment_register_value_expr(rhs) for rhs in rhss):
                     skipped_carriers += 1
@@ -4116,7 +4438,17 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if len(rhss) > 1:
                     stats.push_order_reversed_count += 1
                 rhs_values.extend(rhss)
-                consumed_indices.append(idx)
+                expanded_indices = [idx]
+                if typed_probe_fact is not None and rhs_sources:
+                    keys = set()
+                    for entry in rhs_sources:
+                        keys.update(entry)
+                    expanded_indices = _expand_typed_carrier_defs(
+                        idx - 1,
+                        wanted_indices=expanded_indices,
+                        wanted_keys=keys,
+                    )
+                consumed_indices.extend(expanded_indices)
                 idx -= 1
                 continue
             placeholder_rhs = _outgoing_arg_placeholder_rhs_from_statement(stmt)
@@ -4146,6 +4478,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 continue
             break
         if wanted_count is not None and len(rhs_values) != wanted_count:
+            if allow_partial and rhs_values:
+                return rhs_values, consumed_indices
             return [], []
         if len(rhs_values) > 1:
             stats.push_order_reversed_count += 1
@@ -4240,8 +4574,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         if len(rhs_values) != arg_count:
             return None
 
-        for idx in sorted(consumed_indices, reverse=True):
-            del sequence[idx]
+        _delete_consumed_indices_8616(sequence, consumed_indices)
         stmt.statements = sequence if isinstance(nested_statements, list) else tuple(sequence)
         if len(rhs_values) > 1:
             stats.push_order_reversed_count += 1
@@ -4313,9 +4646,52 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             bool(getattr(item, "stack_probe_helper", False)) for item in summary_map.values()
         )
         stack_probe_address_seen = inherited_stack_probe_address_seen or typed_stack_probe_fact is not None
+
+        def _has_recent_stack_arg_store_evidence(
+            statement_list: list,
+            wanted_count: int,
+            typed_probe_fact: TypedStackProbeReturnFact8616 | None,
+        ) -> bool:
+            if not isinstance(wanted_count, int) or wanted_count <= 0:
+                return False
+            needed = wanted_count
+            skipped_carriers = 0
+            skipped_values = 0
+            idx = len(statement_list) - 1
+            while idx >= 0 and needed > 0:
+                candidate = statement_list[idx]
+                if _statement_contains_call(candidate):
+                    break
+                if typed_probe_fact is not None:
+                    rhs = _typed_stack_store_rhs_from_statement(candidate, typed_probe_fact)
+                else:
+                    rhs = _stack_store_rhs_from_statement(candidate)
+                if rhs is not None and not _is_segment_register_value_expr(rhs):
+                    needed -= 1
+                    idx -= 1
+                    continue
+                if _outgoing_arg_placeholder_rhs_from_statement(candidate) is not None:
+                    needed -= 1
+                    idx -= 1
+                    continue
+                if _is_stack_carrier_temp_assignment(candidate) or _is_segment_register_metadata_store(candidate):
+                    skipped_carriers += 1
+                    if skipped_carriers > 4:
+                        break
+                    idx -= 1
+                    continue
+                if _is_non_memory_assignment(candidate) or _is_value_only_assignment(candidate):
+                    skipped_values += 1
+                    if skipped_values > 8:
+                        break
+                    idx -= 1
+                    continue
+                break
+            return needed <= 0
+
         while i < len(statements):
             stmt = statements[i]
-            if _is_outgoing_segment_return_store_statement(stmt):
+            if _is_outgoing_segment_return_store_statement(stmt, stack_probe_seen=stack_probe_seen):
                 stats.consumed_outgoing_stack_placeholder_count += 1
                 changed = True
                 i += 1
@@ -4327,6 +4703,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 continue
             summary = summary_map.get(id(call)) if call is not None else None
             arg_count = getattr(summary, "arg_count", None) if summary is not None else None
+            summary_arg_count = arg_count if isinstance(arg_count, int) else None
             call_name = _call_node_name_8616(call) if call is not None else None
             prototype_arg_count = _prototype_arg_count(call) if call is not None else None
             normalized_call_name = normalize_callee_name_8616(call_name) if isinstance(call_name, str) else None
@@ -4354,16 +4731,44 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             typed_stack_probe_materialization = (
                 typed_stack_probe_fact is not None and stack_probe_seen and not is_stack_probe_helper
             )
-            expected_arg_count = arg_count
-            if isinstance(prototype_arg_count, int) and prototype_arg_count > 0:
-                if not isinstance(expected_arg_count, int) or expected_arg_count <= 0:
-                    expected_arg_count = prototype_arg_count
-                elif typed_stack_probe_materialization and prototype_arg_count > expected_arg_count:
-                    expected_arg_count = prototype_arg_count
-            if isinstance(known_arg_count, int):
-                # Known helper/callee signatures are exact arity evidence and
-                # must cap noisy backtracked stack materialization.
+            expected_arg_count = _expected_arg_count_for_call_8616(
+                arg_count if isinstance(arg_count, int) else None,
+                known_arg_count=known_arg_count,
+                prototype_arg_count=prototype_arg_count,
+            )
+            has_strong_direct_push_sources = (
+                isinstance(expected_arg_count, int)
+                and expected_arg_count > 0
+                and isinstance(push_arg_sources, tuple)
+                and len(push_arg_sources) == expected_arg_count
+                and all(
+                    isinstance(source, tuple)
+                    and len(source) >= 2
+                    and source[0] == "bp"
+                    and isinstance(source[1], int)
+                    for source in push_arg_sources
+                )
+            )
+            if (
+                isinstance(expected_arg_count, int)
+                and expected_arg_count > 0
+                and isinstance(known_arg_count, int)
+                and known_arg_count > expected_arg_count
+                and summary_arg_count is not None
+                and (
+                    summary_arg_count <= 0
+                    or (
+                        summary_arg_count > 0
+                        and stack_probe_seen
+                    )
+                )
+                and not has_strong_direct_push_sources
+            ):
                 expected_arg_count = known_arg_count
+            fallback_arg_count = _fallback_call_arg_count_8616(
+                expected_arg_count=expected_arg_count,
+                push_arg_sources=push_arg_sources,
+            )
             if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION") and call is not None:
                 log.warning(
                     "[call-summary] function=%#x target=%s expected_arg_count=%r push_arg_sources=%r",
@@ -4444,6 +4849,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             ):
                 _refresh_summary_arg_shape(call, summary)
                 changed = True
+            has_recent_stack_arg_store_evidence = _has_recent_stack_arg_store_evidence(
+                new_statements,
+                expected_arg_count,
+                typed_stack_probe_fact if stack_probe_seen else None,
+            )
             if (
                 call is not None
                 and not is_stack_probe_helper
@@ -4484,6 +4894,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if (
                     isinstance(push_arg_sources, tuple)
                     and len(push_arg_sources) == expected_arg_count
+                    and not has_recent_stack_arg_store_evidence
                     and any(source is not None for source in push_arg_sources)
                 ):
                     ordered_push_sources = (
@@ -4537,40 +4948,68 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                             changed = True
                             strict_arg_shape_applied = True
                 if len(new_statements) >= expected_arg_count:
-                    candidate_stmts = new_statements[-expected_arg_count:]
-                    candidate_rhs = []
-                    for candidate in candidate_stmts:
-                        rhs = _stack_store_rhs_from_statement(candidate)
-                        if rhs is None:
-                            rhs = _outgoing_arg_placeholder_rhs_from_statement(candidate)
-                        candidate_rhs.append(rhs)
-                    candidate_indices = list(range(len(new_statements) - expected_arg_count, len(new_statements)))
-                    if len(candidate_rhs) > 1:
-                        candidate_rhs = list(reversed(candidate_rhs))
-                        candidate_indices = list(reversed(candidate_indices))
-                    normalized_args = (
-                        _normalize_materialized_call_args(
-                            candidate_rhs,
-                            candidate_indices,
-                            new_statements,
-                            call_name=call_name,
+                    if (
+                        not typed_stack_probe_materialization
+                        and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
+                    ):
+                        candidate_stmts = new_statements[-expected_arg_count:]
+                        candidate_rhs = []
+                        for candidate in candidate_stmts:
+                            rhs = _stack_store_rhs_from_statement(candidate)
+                            if rhs is None:
+                                rhs = _outgoing_arg_placeholder_rhs_from_statement(candidate)
+                            candidate_rhs.append(rhs)
+                        candidate_indices = list(range(len(new_statements) - expected_arg_count, len(new_statements)))
+                        if len(candidate_rhs) > 1:
+                            candidate_rhs = list(reversed(candidate_rhs))
+                            candidate_indices = list(reversed(candidate_indices))
+                        normalized_args = (
+                            _normalize_materialized_call_args(
+                                candidate_rhs,
+                                candidate_indices,
+                                new_statements,
+                                call_name=call_name,
+                            )
+                            if all(rhs is not None for rhs in candidate_rhs)
+                            else None
                         )
-                        if all(rhs is not None for rhs in candidate_rhs)
-                        else None
-                    )
-                    if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(call, normalized_args, call_name=call_name)
-                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                        _record_prunable_segment_metadata_ids(
-                            call,
-                            new_statements,
-                            candidate_indices,
-                        )
-                        if prune_consumed_arg_stores:
-                            del new_statements[-expected_arg_count:]
-                        _refresh_summary_arg_shape(call, summary)
-                        changed = True
-                        strict_arg_shape_applied = True
+                        if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
+                            _set_materialized_call_args(call, normalized_args, call_name=call_name)
+                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                            _record_prunable_segment_metadata_ids(
+                                call,
+                                new_statements,
+                                candidate_indices,
+                            )
+                            if prune_consumed_arg_stores:
+                                if (
+                                    stack_probe_seen
+                                    and not stack_probe_address_seen
+                                    and typed_stack_probe_fact is None
+                                ):
+                                    cleanup_indices = candidate_indices.copy()
+                                    scan_idx = min(candidate_indices, default=-1) - 1
+                                    while scan_idx >= 0:
+                                        prev_stmt = new_statements[scan_idx]
+                                        if _statement_contains_call(prev_stmt):
+                                            break
+                                        if (
+                                            _is_stack_carrier_temp_assignment(prev_stmt)
+                                            or _is_segment_register_metadata_store(prev_stmt)
+                                        ):
+                                            cleanup_indices.append(scan_idx)
+                                            scan_idx -= 1
+                                            continue
+                                        break
+                                    _delete_consumed_indices_8616(new_statements, list(set(cleanup_indices)))
+                                else:
+                                    _delete_consumed_indices_8616(
+                                        new_statements,
+                                        list(range(len(new_statements) - expected_arg_count, len(new_statements))),
+                                    )
+                            _refresh_summary_arg_shape(call, summary)
+                            changed = True
+                            strict_arg_shape_applied = True
                 if (
                     not strict_arg_shape_applied
                     and typed_stack_probe_fact is not None
@@ -4579,7 +5018,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 ):
                     expanded_rhs, consumed_indices = _collect_backtracked_stack_args(
                         new_statements,
-                        wanted_count=None,
+                        wanted_count=fallback_arg_count if isinstance(fallback_arg_count, int) and fallback_arg_count > 0 else None,
                         max_count=4,
                         typed_probe_fact=typed_stack_probe_fact,
                     )
@@ -4591,15 +5030,15 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     )
                     if (
                         normalized_args is not None
-                        and len(normalized_args) > expected_arg_count
+                        and isinstance(expected_arg_count, int)
+                        and len(normalized_args) >= expected_arg_count
                         and _all_arg_exprs_are_non_segment_registers(normalized_args)
                     ):
                         _set_materialized_call_args(call, normalized_args, call_name=call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         if prune_consumed_arg_stores:
-                            for consume_idx in sorted(consumed_indices, reverse=True):
-                                del new_statements[consume_idx]
+                            _delete_consumed_indices_8616(new_statements, consumed_indices)
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -4626,13 +5065,13 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         if prune_consumed_arg_stores:
-                            for consume_idx in sorted(consumed_indices, reverse=True):
-                                del new_statements[consume_idx]
+                            _delete_consumed_indices_8616(new_statements, consumed_indices)
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
                 if not strict_arg_shape_applied and (
-                    not typed_stack_probe_materialization and (not stack_probe_seen or stack_probe_address_seen)
+                    not typed_stack_probe_materialization
+                    and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
                 ):
                     backtracked_rhs, consumed_indices = _collect_backtracked_stack_args(
                         new_statements,
@@ -4649,13 +5088,13 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         if prune_consumed_arg_stores:
-                            for consume_idx in sorted(consumed_indices, reverse=True):
-                                del new_statements[consume_idx]
+                            _delete_consumed_indices_8616(new_statements, consumed_indices)
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
                 if not strict_arg_shape_applied and (
-                    not typed_stack_probe_materialization and (not stack_probe_seen or stack_probe_address_seen)
+                    not typed_stack_probe_materialization
+                    and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
                 ):
                     inline_rhs = _extract_inline_stack_store_args(stmt, call, expected_arg_count)
                     normalized_args = (
@@ -4677,7 +5116,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if (
                     not strict_arg_shape_applied
                     and not typed_stack_probe_materialization
-                    and (not stack_probe_seen or stack_probe_address_seen)
+                    and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
                     and isinstance(expected_arg_count, int)
                     and expected_arg_count > 0
                 ):
@@ -4695,8 +5134,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         _set_materialized_call_args(call, normalized_args, call_name=call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         if prune_consumed_arg_stores:
-                            for consume_idx in sorted(consumed_indices, reverse=True):
-                                del new_statements[consume_idx]
+                            _delete_consumed_indices_8616(new_statements, consumed_indices)
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -4725,8 +5163,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         record_stack_arg_materialization_8616(codegen, 1)
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         if prune_consumed_arg_stores:
-                            for consume_idx in sorted(consumed_indices, reverse=True):
-                                del new_statements[consume_idx]
+                            _delete_consumed_indices_8616(new_statements, consumed_indices)
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -4735,7 +5172,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     and call_name is not None
                     and isinstance(expected_arg_count, int)
                     and expected_arg_count > 0
-                    and (not stack_probe_seen or stack_probe_address_seen)
+                    and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
                 ):
                     default_args = _known_default_args_for_missing_8616(call_name, codegen)
                     if default_args is not None and len(default_args) == expected_arg_count:
@@ -4753,7 +5190,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             ):
                 fallback_args = None
                 if isinstance(expected_arg_count, int) and expected_arg_count > 0:
-                    if isinstance(push_arg_sources, tuple) and len(push_arg_sources) == expected_arg_count:
+                    if (
+                        isinstance(push_arg_sources, tuple)
+                        and len(push_arg_sources) == expected_arg_count
+                        and not has_recent_stack_arg_store_evidence
+                    ):
                         ordered_push_sources = (
                             list(reversed(push_arg_sources)) if len(push_arg_sources) > 1 else list(push_arg_sources)
                         )
@@ -4777,11 +5218,23 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     new_statements.append(stmt)
                     i += 1
                     continue
+                want_arg_count = 0
+                if isinstance(fallback_arg_count, int) and fallback_arg_count > 0:
+                    want_arg_count = max(fallback_arg_count, 1)
+                allow_unbounded_collect = (
+                    isinstance(fallback_arg_count, int)
+                    and fallback_arg_count > 1
+                ) or (
+                    isinstance(known_arg_count, int) and known_arg_count > 1
+                ) or (
+                    isinstance(prototype_arg_count, int) and prototype_arg_count > 1
+                )
                 candidate_rhs, consumed_indices = _collect_backtracked_stack_args(
                     new_statements,
-                    wanted_count=None,
-                    max_count=4,
+                    wanted_count=None if allow_unbounded_collect else want_arg_count,
+                    max_count=max(want_arg_count, 4),
                     typed_probe_fact=typed_stack_probe_fact if stack_probe_seen else None,
+                    allow_partial=not (isinstance(arg_count, int) and arg_count > 0),
                 )
                 normalized_args = _normalize_materialized_call_args(
                     candidate_rhs,
@@ -4796,7 +5249,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         (typed_stack_probe_fact is not None and stack_probe_address_seen and stack_probe_seen)
                         or (
                             not typed_stack_probe_materialization
-                            and (not stack_probe_seen or stack_probe_address_seen)
+                            and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
                         )
                     )
                 ):
@@ -4804,11 +5257,14 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     record_stack_arg_materialization_8616(codegen, len(normalized_args))
                     _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                     if prune_consumed_arg_stores:
-                        for consume_idx in sorted(consumed_indices, reverse=True):
-                            del new_statements[consume_idx]
+                        _delete_consumed_indices_8616(new_statements, consumed_indices)
                     _refresh_summary_arg_shape(call, summary)
                     changed = True
                 else:
+                    if want_arg_count <= 0:
+                        i += 1
+                        new_statements.append(stmt)
+                        continue
                     inline_rhs = _extract_inline_stack_store_args(stmt, call, 1)
                     normalized_args = (
                         _normalize_materialized_call_args(
@@ -4822,14 +5278,14 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     )
                     if (
                         normalized_args is not None
-                        and _all_arg_exprs_are_non_segment_registers(normalized_args)
-                        and (
-                            (typed_stack_probe_fact is not None and stack_probe_address_seen and stack_probe_seen)
-                            or (
-                                not typed_stack_probe_materialization
-                                and (not stack_probe_seen or stack_probe_address_seen)
-                            )
+                    and _all_arg_exprs_are_non_segment_registers(normalized_args)
+                    and (
+                        (typed_stack_probe_fact is not None and stack_probe_address_seen and stack_probe_seen)
+                        or (
+                            not typed_stack_probe_materialization
+                            and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
                         )
+                    )
                     ):
                         _set_materialized_call_args(call, [normalized_args[0]], call_name=call_name)
                         record_stack_arg_materialization_8616(codegen, 1)
@@ -4851,12 +5307,20 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         for stmt in getattr(block, "statements", ()) or ():
             nested_statements = getattr(stmt, "statements", None)
             if isinstance(nested_statements, (list, tuple)):
-                stack_probe_seen, stack_probe_address_seen, typed_stack_probe_fact = _rewrite_block(
+                (
+                    child_stack_probe_seen,
+                    child_stack_probe_address_seen,
+                    child_typed_stack_probe_fact,
+                ) = _rewrite_block(
                     stmt,
                     inherited_stack_probe_seen=stack_probe_seen,
                     inherited_stack_probe_address_seen=stack_probe_address_seen,
                     inherited_typed_stack_probe_fact=typed_stack_probe_fact,
                 )
+                stack_probe_seen = stack_probe_seen or child_stack_probe_seen
+                stack_probe_address_seen = stack_probe_address_seen or child_stack_probe_address_seen
+                if child_typed_stack_probe_fact is not None:
+                    typed_stack_probe_fact = child_typed_stack_probe_fact
             nested = getattr(stmt, "body", None)
             if isinstance(getattr(nested, "statements", None), (list, tuple)):
                 _rewrite_block(
@@ -4889,7 +5353,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     if isinstance(getattr(root, "statements", None), (list, tuple)):
         if not conservative_materialization:
             _rewrite_block(root)
-        else:
+        elif has_push_arg_evidence:
             changed |= _conservative_call_arg_seed_8616(
                 root=root,
                 summary_map=summary_map,
@@ -4905,15 +5369,23 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 refresh_summary_arg_shape_fn=_refresh_summary_arg_shape,
                 call_args_need_rematerialization_fn=_call_args_need_rematerialization_8616,
             )
-        changed |= _seed_empty_known_helper_calls_8616(
+            changed |= _seed_empty_known_helper_calls_8616(
+                root=root,
+                summary_map=summary_map,
+                codegen=codegen,
+                has_unverified_non_ss_stack_probe=has_unverified_non_ss_stack_probe,
+                call_name_fn=_call_node_name_8616,
+                expected_arg_count_fn=_expected_arg_count_for_known_callee_8616,
+                known_default_args_fn=_known_default_args_for_missing_8616,
+                direct_expr_from_push_source_fn=_direct_expr_from_push_source_8616,
+                set_materialized_call_args_fn=_set_materialized_call_args,
+                refresh_summary_arg_shape_fn=_refresh_summary_arg_shape,
+            )
+        changed |= _clear_zero_arg_known_helper_args_8616(
             root=root,
             summary_map=summary_map,
-            codegen=codegen,
-            has_unverified_non_ss_stack_probe=has_unverified_non_ss_stack_probe,
             call_name_fn=_call_node_name_8616,
             expected_arg_count_fn=_expected_arg_count_for_known_callee_8616,
-            known_default_args_fn=_known_default_args_for_missing_8616,
-            direct_expr_from_push_source_fn=_direct_expr_from_push_source_8616,
             set_materialized_call_args_fn=_set_materialized_call_args,
             refresh_summary_arg_shape_fn=_refresh_summary_arg_shape,
         )
