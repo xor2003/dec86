@@ -577,6 +577,30 @@ def _discover_ranked_binary_offsets(
     args: Any,
 ) -> list[int]:
     binary_path = Path(getattr(args, "binary", Path("")))
+    include_library_functions = bool(getattr(args, "include_library_functions", False))
+    setattr(project, "_inertia_include_library_functions", include_library_functions)
+
+    def _is_library_function_name_8616(name: str) -> bool:
+        lowered = (name or "").lower()
+        return (
+            lowered.startswith("sym.imp.")
+            or lowered.startswith("fcn.imp.")
+            or ".imp." in lowered
+            or lowered.startswith("import_")
+            or lowered.startswith("imp.")
+        )
+
+    def _collect_rizin_library_offsets_8616(evidence: object | None) -> set[int]:
+        if evidence is None:
+            return set()
+        out: set[int] = set()
+        for function_fact in evidence.functions:
+            if _is_library_function_name_8616(function_fact.name):
+                out.add(function_fact.addr)
+        for symbol_fact in evidence.symbols:
+            if _is_library_function_name_8616(symbol_fact.name):
+                out.add(symbol_fact.vaddr)
+        return out
 
     def _has_local_sidecar_evidence(binary_path: Path) -> bool:
         stem = binary_path.stem
@@ -637,6 +661,7 @@ def _discover_ranked_binary_offsets(
         setattr(project, "_inertia_rizin_evidence", rz_evidence)
         setattr(project, "_inertia_rizin_function_names", rz_evidence.function_name_by_addr)
     rz = discover_rizin_function_entries(getattr(args, "binary"), timeout_sec=rizin_timeout) if wants_rizin else None
+    rizin_library_offsets = _collect_rizin_library_offsets_8616(rz_evidence)
     if rz_evidence is not None and rz_evidence.status is RizinEvidenceStatus.OK and rz_evidence.functions:
         rizin_offsets = list(rz_evidence.function_offsets)
         elapsed_ms = rz_evidence.elapsed_ms
@@ -650,13 +675,23 @@ def _discover_ranked_binary_offsets(
         elapsed_ms = 0.0
         status_value = "error"
     if rizin_offsets:
+        if not include_library_functions and rizin_library_offsets:
+            original_count = len(rizin_offsets)
+            rizin_offsets = [offset for offset in rizin_offsets if offset not in rizin_library_offsets]
+            if len(rizin_offsets) != original_count:
+                print(
+                    f"/* rizin discovery: dropped {original_count - len(rizin_offsets)} library-like entries by default */"
+                )
         print(
             f"/* rizin discovery: status={status_value} entries={len(rizin_offsets)} elapsed={elapsed_ms:.1f}ms "
             f"backend={backend} */"
         )
         if backend == "rizin" or auto_rizin_only:
             return rizin_offsets
-        angr_offsets = _rank_exe_function_seeds(project)
+        angr_offsets = _rank_exe_function_seeds(
+            project,
+            include_library_functions=include_library_functions,
+        )
         merged: list[int] = []
         seen: set[int] = set()
         for addr in angr_offsets:
@@ -683,7 +718,10 @@ def _discover_ranked_binary_offsets(
             "falling back to angr-ranked discovery. */"
         )
     if angr_offsets is None:
-        angr_offsets = _rank_exe_function_seeds(project)
+        angr_offsets = _rank_exe_function_seeds(
+            project,
+            include_library_functions=include_library_functions,
+        )
     return angr_offsets
 
 def _function_recovery_detail(stage: str | None) -> str | None:
@@ -2815,6 +2853,16 @@ def _emit_string_or_asm_fallback_8616(
     return _impl()
 
 def main(argv: list[str] | None = None) -> int:
+
+    def _resolve_cod_path(binary_path: Path) -> Path | None:
+        if binary_path.suffix.lower() in {".cod", ".lst", ".map", ".dbg", ".pdb"}:
+            return binary_path
+        for suffix in (".COD", ".cod"):
+            candidate = binary_path.with_suffix(suffix)
+            if candidate.exists():
+                return candidate
+        return None
+
     def _impl():
         from .cli_arg_parser import _build_cli_argument_parser
 
@@ -2857,8 +2905,12 @@ def main(argv: list[str] | None = None) -> int:
         if effective_signature_catalog is None:
             effective_signature_catalog = default_signature_catalog_path()
         if args.proc is not None:
-            entries = extract_cod_function_entries(args.binary, args.proc, args.proc_kind)
-            cod_metadata = extract_cod_proc_metadata(args.binary, args.proc, args.proc_kind)
+            binary_path = Path(args.binary)
+            cod_path = _resolve_cod_path(binary_path)
+            if cod_path is None:
+                raise ValueError(f"--proc mode requires sibling COD listing: not found for {binary_path}")
+            entries = extract_cod_function_entries(cod_path, args.proc, args.proc_kind)
+            cod_metadata = extract_cod_proc_metadata(cod_path, args.proc, args.proc_kind)
             # --proc builds a synthetic single-procedure blob, so entry recovery can
             # start with the lean CFG path even when the procedure is not helper-call
             # heavy. Falling back to full CFGFast first makes some small COD procs
@@ -2887,8 +2939,11 @@ def main(argv: list[str] | None = None) -> int:
                 synthetic_globals=synthetic_globals,
             )
             function_label = args.proc
-            if args.addr is None:
-                args.addr = args.entry_point
+            if args.addr is not None:
+                print(
+                    f"[dbg] proc mode ignoring caller-provided --addr {args.addr:#x}"
+                )
+            args.addr = args.entry_point
             args.window = max(len(proc_code), 1)
         else:
             project = _build_project(
