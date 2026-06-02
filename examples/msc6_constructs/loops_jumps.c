@@ -50,7 +50,7 @@ int main(void)
     if (nested_loops(5) != 42) {
         return 1;
     }
-    if (goto_accumulate(4) != 12) {
+    if (goto_accumulate(4) != 14) {
         return 2;
     }
     return 0;

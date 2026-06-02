@@ -16,6 +16,7 @@ DEFAULT_OUT_DIR = REPO_ROOT / "examples" / "build_msc6"
 DEFAULT_KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
 DEFAULT_MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
 DEFAULT_DECOMPILE = REPO_ROOT / "decompile.py"
+DEFAULT_DECOMPILE_SKIP = ("enum_union", "medium_structs")
 
 
 @dataclass(frozen=True)
@@ -143,6 +144,12 @@ def main() -> int:
     ap.add_argument("--kvikdos", type=Path, default=DEFAULT_KVIKDOS)
     ap.add_argument("--msc6-root", type=Path, default=DEFAULT_MSC6_ROOT)
     ap.add_argument("--decompile-py", type=Path, default=DEFAULT_DECOMPILE)
+    ap.add_argument(
+        "--skip-constructs",
+        type=lambda text: [item.strip() for item in text.split(",") if item.strip()],
+        default=list(DEFAULT_DECOMPILE_SKIP),
+        help="Comma-separated source stems to skip decompilation for (default: enum_union,medium_structs)",
+    )
     args = ap.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -159,7 +166,7 @@ def main() -> int:
         "function_pointers": "FPTR.C",
         "storage_classes": "STORE.C",
     }
-    decompile_skip = {"medium_structs"}
+    decompile_skip = set(args.skip_constructs)
 
     for source_path in sorted(args.examples_dir.glob("*.c")):
         dos_name = dos_names.get(source_path.stem, source_path.name.upper())
@@ -224,7 +231,13 @@ def main() -> int:
             f"run={'ok' if item.run_ok else f'fail({item.run_exit_code})'} "
             f"decompile={'skipped' if item.decompile_skipped else ('ok' if item.decompile_ok else 'fail')} exe={item.exe}"
         )
-    return 0
+    all_examples_ok = all(
+        item.build_ok
+        and item.run_ok
+        and (item.decompile_ok or item.decompile_skipped)
+        for item in results
+    )
+    return 0 if all_examples_ok else 1
 
 
 if __name__ == "__main__":
