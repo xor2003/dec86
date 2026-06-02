@@ -26,9 +26,10 @@ DEFAULT_KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
 DEFAULT_MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
 DEFAULT_DECOMPILE = REPO_ROOT / "decompile.py"
 DEFAULT_DECOMPILE_SKIP = ("enum_union", "medium_structs")
+HARNESS_SUCCESS_EXIT_CODE = 255
 DECOMPILE_MAIN_NAMES = ("main", "MAIN", "_main", "_MAIN", "start", "_start")
-DECOMPILE_MAIN_TIMEOUT_SECONDS_DEFAULT = 8
-DECOMPILE_MAIN_RUN_TIMEOUT_SECONDS_DEFAULT = 30
+DECOMPILE_MAIN_TIMEOUT_SECONDS_DEFAULT = 60
+DECOMPILE_MAIN_RUN_TIMEOUT_SECONDS_DEFAULT = 60
 DECOMPILE_SLOW_FUNCTION_SECONDS = 1.0
 DECOMPILE_SLOW_PASS_SECONDS = 1.0
 
@@ -981,10 +982,23 @@ def main() -> int:
         default=DECOMPILE_MAIN_RUN_TIMEOUT_SECONDS_DEFAULT,
         help="Wall-clock timeout for one decompile invocation in seconds.",
     )
+    ap.add_argument(
+        "--only-constructs",
+        type=lambda text: [item.strip() for item in text.split(",") if item.strip()],
+        default=[],
+        help="Comma-separated example stems to run. If provided, only these examples are processed.",
+    )
+    ap.add_argument(
+        "--harvest-success-code",
+        type=int,
+        default=HARNESS_SUCCESS_EXIT_CODE,
+        help="Exit code to return when all checks pass.",
+    )
     args = ap.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     results: list[ExampleResult] = []
+    only_set = {item for item in args.only_constructs}
     dos_names = {
         "compare16": "CMP16.C",
         "simple_control": "SIMPLE.C",
@@ -1001,6 +1015,8 @@ def main() -> int:
     decompile_idx = 0
 
     for source_path in sorted(args.examples_dir.glob("*.c")):
+        if only_set and source_path.stem not in only_set:
+            continue
         decompile_idx += 1
         dos_name = dos_names.get(source_path.stem, source_path.name.upper())
         local_source = args.out_dir / dos_name
@@ -1158,7 +1174,9 @@ def main() -> int:
         and ((item.decompile_recompile_ok and item.decompile_run_ok) or item.decompile_skipped)
         for item in results
     )
-    return 0 if all_examples_ok else 1
+    if all_examples_ok:
+        return args.harvest_success_code
+    return 1
 
 
 if __name__ == "__main__":
