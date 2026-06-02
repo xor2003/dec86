@@ -281,43 +281,6 @@ def _pick_main_proc_candidates_from_cod(
     return []
 
 
-def _resolve_main_from_cod_and_sidecar(
-    exe_path: Path,
-    cod_path: Path | None,
-) -> tuple[int | None, str | None]:
-    sidecar_labels = _lookup_sidecar_code_labels(exe_path)
-    for candidate in DECOMPILE_MAIN_NAMES:
-        candidate_lower = candidate.lower()
-        mapped_addr = sidecar_labels.get(candidate_lower)
-        if mapped_addr is not None:
-            return mapped_addr, f"sidecar_labels:{candidate_lower}"
-
-    if cod_path is None or not cod_path.is_file():
-        return None, None
-    proc_candidates = _pick_main_proc_candidates_from_cod(cod_path)
-    if not proc_candidates:
-        return None, None
-    map_path = exe_path.with_suffix(".MAP")
-    if not map_path.exists():
-        alt_map_path = exe_path.with_suffix(".map")
-        if alt_map_path.exists():
-            map_path = alt_map_path
-        else:
-            map_path = None
-
-    for candidate_name, _candidate_kind, candidate_addr in proc_candidates:
-        if candidate_addr is None:
-            continue
-        mapped_addr = _resolve_cod_offset_to_exe_addr(
-            candidate_addr,
-            map_path,
-            proc_name=candidate_name,
-        )
-        if mapped_addr is not None:
-            return mapped_addr, f"cod_offset:{candidate_name.lower()}"
-    return None, None
-
-
 def _resolve_main_candidates_from_metadata(
     exe_path: Path,
     cod_path: Path | None,
