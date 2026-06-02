@@ -9,18 +9,24 @@ import re
 import shutil
 import subprocess
 import time
+import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-REPO_ROOT = Path("/home/xor/vextest")
+from inertia_decompiler.project_loading import _build_project
+from inertia_decompiler.sidecar_metadata import _load_lst_metadata
+
 DEFAULT_EXAMPLES_DIR = REPO_ROOT / "examples" / "msc6_constructs"
 DEFAULT_OUT_DIR = REPO_ROOT / "examples" / "build_msc6"
 DEFAULT_KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
 DEFAULT_MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
 DEFAULT_DECOMPILE = REPO_ROOT / "decompile.py"
 DEFAULT_DECOMPILE_SKIP = ("enum_union", "medium_structs")
-DECOMPILE_MAIN_NAMES = ("_main", "main", "MAIN", "_MAIN", "start", "_start")
+DECOMPILE_MAIN_NAMES = ("main", "MAIN", "_main", "_MAIN", "start", "_start")
 DECOMPILE_MAIN_TIMEOUT_SECONDS_DEFAULT = 8
 DECOMPILE_MAIN_RUN_TIMEOUT_SECONDS_DEFAULT = 30
 DECOMPILE_SLOW_FUNCTION_SECONDS = 1.0
@@ -88,6 +94,75 @@ def _run(
     )
 
 
+def _dos_safe_names(stem: str, counter: int | None = None) -> tuple[str, str, str, str]:
+    """
+    Return short DOS-friendly base names for C source, OBJ, EXE and MAP outputs.
+    """
+    normalized = "".join(ch for ch in stem.upper() if ch.isalnum())
+    if not normalized:
+        normalized = "DECOMPILE"
+
+    # Keep short names within 8.3 constraints and avoid collisions by suffixing an index.
+    short_core = normalized[:6]
+    if counter is not None and counter > 0:
+        short_core = f"{short_core[:5]}{counter % 10}"
+    if not short_core:
+        short_core = "DECOM1"[:6]
+
+    return (
+        f"{short_core}.C",
+        f"{short_core}.OBJ",
+        f"{short_core}.EXE",
+        f"{short_core}.MAP",
+    )
+
+
+def _ensure_msvc6_compat_headers(out_dir: Path) -> None:
+    """
+    MS C 6 in this test harness may miss stdbool/stdint, so emit minimal shims.
+    """
+    stdbool = """#ifndef _STDBOOL_H\n#define _STDBOOL_H\n\n#define bool unsigned char\n#define true 1\n#define false 0\n\n#endif\n"""
+    stdint = """#ifndef _STDINT_H\n#define _STDINT_H\n\ntypedef unsigned char uint8_t;\ntypedef signed char int8_t;\ntypedef unsigned short uint16_t;\ntypedef signed short int16_t;\ntypedef unsigned long uint32_t;\ntypedef signed long int32_t;\ntypedef unsigned int uintptr_t;\n\ntypedef unsigned long size_t;\n\ntypedef uint8_t u8;\ntypedef uint16_t u16;\ntypedef uint32_t u32;\n\ntypedef int32_t ptrdiff_t;\n\ntypedef int16_t int_fast16_t;\ntypedef uint16_t uint_fast16_t;\n\ntypedef int32_t int_least32_t;\ntypedef uint32_t uint_least32_t;\n\ntypedef int16_t int_least16_t;\ntypedef uint16_t uint_least16_t;\n\n#endif\n"""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "STDBOOL.H").write_text(stdbool, encoding="utf-8")
+    (out_dir / "STDINT.H").write_text(stdint, encoding="utf-8")
+
+
+def _sanitize_decompiled_source(raw_c_text: str) -> str:
+    keep_lines: list[str] = []
+    for line in raw_c_text.splitlines():
+        stripped = line.lstrip()
+        if (
+            stripped.startswith("[dbg]")
+            or stripped.startswith("[metric]")
+            or stripped.startswith("[warn]")
+            or stripped.startswith("[err]")
+        ):
+            continue
+        keep_lines.append(line)
+    return "\n".join(keep_lines) + ("\n" if raw_c_text.endswith("\n") else "")
+
+
+def _lookup_sidecar_code_labels(binary_path: Path) -> dict[str, int]:
+    project = _build_project(
+        binary_path,
+        force_blob=False,
+        base_addr=0x10000,
+        entry_point=None,
+    )
+    metadata = _load_lst_metadata(binary_path, project, pat_backend=None, signature_catalog=None)
+    labels: dict[str, int] = {}
+    if metadata is None:
+        return labels
+    for addr, name in getattr(metadata, "code_labels", {}).items():
+        if not isinstance(name, str):
+            continue
+        normalized = name.lower()
+        labels[normalized] = int(addr)
+        labels[normalized.lstrip("_")] = int(addr)
+    return labels
+
+
 def _compile_and_link(
     source_path: Path,
     out_dir: Path,
@@ -99,6 +174,7 @@ def _compile_and_link(
     map_name: str,
     cod_name: str | None = None,
 ) -> tuple[bool, str, str, str, str]:
+    _ensure_msvc6_compat_headers(out_dir)
     compile_cmd = [
         str(kvikdos),
         f"--mount=c:{out_dir}/",
@@ -110,6 +186,7 @@ def _compile_and_link(
         "--env=LIB=E:\\LIB",
         "--prog=e:\\BIN\\CL.EXE",
         "e:\\BIN\\CL.EXE",
+        "/Ic:\\",
         "/nologo",
         "/Od",
         "/c",
@@ -202,6 +279,109 @@ def _pick_main_proc_candidates_from_cod(
         first = next(iter(sorted(kinds)))
         return [(name, first, proc_addrs.get(name))]
     return []
+
+
+def _resolve_main_from_cod_and_sidecar(
+    exe_path: Path,
+    cod_path: Path | None,
+) -> tuple[int | None, str | None]:
+    sidecar_labels = _lookup_sidecar_code_labels(exe_path)
+    for candidate in DECOMPILE_MAIN_NAMES:
+        candidate_lower = candidate.lower()
+        mapped_addr = sidecar_labels.get(candidate_lower)
+        if mapped_addr is not None:
+            return mapped_addr, f"sidecar_labels:{candidate_lower}"
+
+    if cod_path is None or not cod_path.is_file():
+        return None, None
+    proc_candidates = _pick_main_proc_candidates_from_cod(cod_path)
+    if not proc_candidates:
+        return None, None
+    map_path = exe_path.with_suffix(".MAP")
+    if not map_path.exists():
+        alt_map_path = exe_path.with_suffix(".map")
+        if alt_map_path.exists():
+            map_path = alt_map_path
+        else:
+            map_path = None
+
+    for candidate_name, _candidate_kind, candidate_addr in proc_candidates:
+        if candidate_addr is None:
+            continue
+        mapped_addr = _resolve_cod_offset_to_exe_addr(
+            candidate_addr,
+            map_path,
+            proc_name=candidate_name,
+        )
+        if mapped_addr is not None:
+            return mapped_addr, f"cod_offset:{candidate_name.lower()}"
+    return None, None
+
+
+def _resolve_main_candidates_from_metadata(
+    exe_path: Path,
+    cod_path: Path | None,
+) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    seen: set[tuple[str, int]] = set()
+
+    sidecar_labels = _lookup_sidecar_code_labels(exe_path)
+    for candidate in DECOMPILE_MAIN_NAMES:
+        candidate_lower = candidate.lower()
+        mapped_addr = sidecar_labels.get(candidate_lower)
+        if mapped_addr is None:
+            continue
+        key = ("sidecar", int(mapped_addr))
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(
+            {
+                "kind": "addr",
+                "source": "sidecar_labels",
+                "name": candidate_lower,
+                "value": int(mapped_addr),
+            }
+        )
+
+    if cod_path is not None and cod_path.is_file():
+        proc_candidates = _pick_main_proc_candidates_from_cod(cod_path)
+        map_path = exe_path.with_suffix(".MAP")
+        if not map_path.exists():
+            alt_map_path = exe_path.with_suffix(".map")
+            if alt_map_path.exists():
+                map_path = alt_map_path
+            else:
+                map_path = None
+
+        for candidate_name, candidate_kind, candidate_addr in proc_candidates:
+            if candidate_name is None:
+                continue
+            mapped_addr = None
+            if candidate_addr is not None:
+                mapped_addr = _resolve_cod_offset_to_exe_addr(
+                    candidate_addr,
+                    map_path,
+                    proc_name=candidate_name,
+                )
+            if mapped_addr is None:
+                continue
+            key = ("cod", int(mapped_addr))
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(
+                {
+                    "kind": "proc",
+                    "source": "cod",
+                    "name": candidate_name,
+                    "proc_kind": candidate_kind,
+                    "value": int(mapped_addr),
+                    "cod_offset": int(candidate_addr),
+                }
+            )
+
+    return candidates
 
 
 def _read_map_obj_base_offset(map_path: Path) -> tuple[int | None, dict[int, int], dict[str, int]]:
@@ -297,6 +477,11 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
         "tail_failures": 0,
         "timeout": False,
         "wall_seconds": 0.0,
+        "asm_fallback": False,
+        "tail_validation_status": None,
+        "tail_validation_uncollected": False,
+        "tail_validation_changed": False,
+        "validation_state": [],
     }
     queued_re = re.compile(r"functions queued for decompilation:\s*(\d+)")
     selected_re = re.compile(r"selected\s+(\d+)\s+function\(s\)\s+for display")
@@ -306,6 +491,11 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
     decomp_summary_re = re.compile(r"summary: decompiled (\\d+)/(\\d+) shown functions")
     attempted_summary_re = re.compile(r"summary: decompilation attempted for (\\d+)/(\\d+) displayed function\\(s\\)")
     timed_out_summary_re = re.compile(r"summary: (\\d+) discovered function\\(s\\) timed out during decompilation")
+    tail_validation_re = re.compile(r"\[tail-validation\] whole-tail validation (passed|failed|uncollected)", re.IGNORECASE)
+    validation_state_re = re.compile(r"validation=([a-z_]+)")
+    asm_fallback_re = re.compile(r"== asm fallback ==")
+    severity_changed_re = re.compile(r"\[tail-validation\] severity=changed")
+    severity_uncollected_re = re.compile(r"\[tail-validation\] severity=uncollected")
     for line in stderr_text.splitlines():
         queue_match = queued_re.search(line)
         if queue_match is not None:
@@ -371,9 +561,66 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
         if timed_out_match is not None:
             profile["timed_out_functions"] = int(timed_out_match.group(1))
             continue
+        tail_match = tail_validation_re.search(line)
+        if tail_match is not None:
+            status = tail_match.group(1).lower()
+            profile["tail_validation_status"] = status
+            if status == "uncollected":
+                profile["tail_validation_uncollected"] = True
+            if status == "failed":
+                profile["tail_validation_changed"] = True
+            continue
+        if severity_changed_re.search(line) is not None:
+            profile["tail_validation_changed"] = True
+        if severity_uncollected_re.search(line) is not None:
+            profile["tail_validation_uncollected"] = True
+        if asm_fallback_re.search(line) is not None:
+            profile["asm_fallback"] = True
         if "failure family:" in line:
             profile["tail_failures"] += 1
+            validation_match = validation_state_re.search(line)
+            if validation_match is not None and isinstance(profile.get("validation_state"), list):
+                validation_state = validation_match.group(1).lower()
+                states = profile["validation_state"]
+                assert isinstance(states, list)
+                if validation_state not in states:
+                    states.append(validation_state)
     return profile
+
+
+def _is_decompile_output_acceptable(
+    stdout_text: str,
+    stderr_text: str,
+    profile: dict[str, object],
+) -> tuple[bool, str | None]:
+    if profile.get("timeout"):
+        return False, "timeout"
+
+    tail_status = profile.get("tail_validation_status")
+    if tail_status in {"failed", "uncollected"}:
+        return False, f"tail_validation_{tail_status}"
+    if profile.get("tail_validation_changed"):
+        return False, "tail_validation_changed"
+    if profile.get("asm_fallback"):
+        return False, "asm_fallback"
+
+    validation_state = profile.get("validation_state")
+    if isinstance(validation_state, list):
+        if "failed" in validation_state:
+            return False, "validation_failed"
+        if "changed" in validation_state:
+            return False, "validation_changed"
+        if "uncollected" in validation_state:
+            return False, "validation_uncollected"
+
+    combined = f"{stdout_text}\n{stderr_text}".lower()
+    if "== asm fallback ==" in combined:
+        return False, "asm_fallback"
+    if "decompile timeout" in combined:
+        return False, "timeout"
+    if "whole-tail validation failed" in combined:
+        return False, "tail_validation_failed"
+    return True, None
 
 
 def _extract_profile_summary(profile: dict[str, object]) -> str:
@@ -438,106 +685,183 @@ def _decompile(
         "decompile_mode": decompile_mode,
         "selected": {},
     }
-
     if decompile_mode == "main":
-        proc_candidates = _pick_main_proc_candidates_from_cod(decompile_cod_path)
-        if proc_candidates:
-            profile["selected"] = {"kind": "proc", "candidates": proc_candidates}
-        else:
-            profile["selected"] = {"kind": "max-functions", "value": max(1, decompile_max_functions)}
-            cmd.extend(["--max-functions", str(max(1, decompile_max_functions))])
-    else:
-        if decompile_max_functions > 0:
-            cmd.extend(["--max-functions", str(decompile_max_functions)])
-            profile["selected"] = {"kind": "max-functions", "value": decompile_max_functions}
-        else:
-            profile["selected"] = {"kind": "all", "value": 0}
-
-    cmd.append(str(exe_path))
-
-    start = time.perf_counter()
-    try:
-        tried_commands: list[str] = []
-        if decompile_mode == "main" and proc_candidates:
-            for candidate_name, candidate_kind, candidate_addr in proc_candidates:
-                cmd_with_candidate = list(cmd)
-                if candidate_name:
-                    cmd_with_candidate.extend(["--proc", candidate_name, "--proc-kind", str(candidate_kind or "NEAR")])
-                elif candidate_addr is not None:
-                    map_path = exe_path.with_suffix(".MAP") if exe_path else None
-                    if map_path is not None and not map_path.exists():
-                        alt_map_path = exe_path.with_suffix(".map")
-                        if alt_map_path.exists():
-                            map_path = alt_map_path
-                    mapped_addr = _resolve_cod_offset_to_exe_addr(
-                        candidate_addr,
-                        map_path,
-                        proc_name=candidate_name,
-                    )
-                    if mapped_addr is not None:
-                        cmd_with_candidate.extend(["--addr", f"0x{mapped_addr:x}"])
-                tried_commands.append(" ".join(cmd_with_candidate))
-                proc = _run(
-                    cmd_with_candidate,
-                    cwd=REPO_ROOT,
-                    timeout=decompile_run_timeout,
-                    env={"INERTIA_DEBUG_TIMING": "1"},
-                )
-                if proc.returncode == 0:
-                    break
-                if not _is_proc_selection_failure(proc.stderr):
-                    break
-            else:
-                fallback_count = max(1, decompile_max_functions)
-                fallback_cmd = list(cmd)
-                fallback_cmd.extend(["--max-functions", str(fallback_count)])
-                tried_commands.append(" ".join(cmd + ["[fallback-all-functions]"]))
-                proc = _run(
-                    fallback_cmd,
-                    cwd=REPO_ROOT,
-                    timeout=decompile_run_timeout,
-                    env={"INERTIA_DEBUG_TIMING": "1"},
-                )
-                profile["selected"] = {
-                    "kind": "fallback-max-functions",
-                    "value": fallback_count,
-                    "reason": "main-selection-failed",
+        candidates = _resolve_main_candidates_from_metadata(exe_path, decompile_cod_path)
+        if not candidates:
+            selected_count = max(1, decompile_max_functions)
+            candidates = [
+                {
+                    "kind": "max-functions",
+                    "source": "default",
+                    "value_type": "max-functions",
+                    "value": selected_count,
                 }
+            ]
+            profile["selected"] = {"kind": "max-functions", "value": selected_count}
         else:
-            tried_commands.append(" ".join(cmd))
+            profile["selected"] = {"kind": "candidates", "candidates": candidates}
+    else:
+        selected_count = max(1, decompile_max_functions) if decompile_max_functions > 0 else 0
+        candidates = [
+            {
+                "kind": "max-functions",
+                "source": "command-line",
+                "value_type": "max-functions",
+                "value": selected_count,
+            }
+        ]
+        profile["selected"] = {"kind": "max-functions", "value": selected_count}
+
+    def _candidate_command(candidate: dict[str, object]) -> list[str]:
+        cmd_for_candidate = list(cmd)
+        kind = candidate.get("kind")
+        if kind == "addr":
+            candidate_addr = candidate.get("value")
+            if isinstance(candidate_addr, int):
+                cmd_for_candidate.extend(["--addr", f"0x{candidate_addr:x}"])
+        elif kind == "proc":
+            candidate_name = candidate.get("name")
+            candidate_kind = candidate.get("proc_kind")
+            candidate_cod_offset = candidate.get("cod_offset")
+            if isinstance(candidate_name, str) and candidate_name:
+                cmd_for_candidate.extend(["--proc", candidate_name, "--proc-kind", str(candidate_kind or "NEAR")])
+            elif isinstance(candidate_cod_offset, int):
+                map_path = exe_path.with_suffix(".MAP")
+                if not map_path.exists():
+                    alt_map_path = exe_path.with_suffix(".map")
+                    if alt_map_path.exists():
+                        map_path = alt_map_path
+                    else:
+                        map_path = None
+                mapped_addr = _resolve_cod_offset_to_exe_addr(
+                    candidate_cod_offset,
+                    map_path,
+                    proc_name=None,
+                )
+                if mapped_addr is not None:
+                    cmd_for_candidate.extend(["--addr", f"0x{mapped_addr:x}"])
+        elif kind == "max-functions":
+            candidate_value = candidate.get("value")
+            if isinstance(candidate_value, int) and candidate_value > 0:
+                cmd_for_candidate.extend(["--max-functions", str(candidate_value)])
+        cmd_for_candidate.append(str(exe_path))
+        return cmd_for_candidate
+
+    attempts: list[dict[str, object]] = []
+    start = time.perf_counter()
+    last_proc: subprocess.CompletedProcess[str] | None = None
+    last_profile: dict[str, object] | None = None
+
+    try:
+        for candidate in candidates:
+            candidate_cmd = _candidate_command(candidate)
+            candidate_attempt: dict[str, object] = {
+                "candidate": candidate,
+                "command": " ".join(candidate_cmd),
+            }
+            attempts.append(candidate_attempt)
+
             proc = _run(
-                cmd,
+                candidate_cmd,
                 cwd=REPO_ROOT,
                 timeout=decompile_run_timeout,
                 env={"INERTIA_DEBUG_TIMING": "1"},
             )
-            elapsed = time.perf_counter() - start
-            profile["commands_tried"] = tried_commands
-            profile.update(_parse_decompile_profile(proc.stderr))
-            profile["wall_seconds"] = elapsed
-            profile["slowest_function_summary"] = _extract_profile_summary(profile)
-            stdout_path.write_text(proc.stdout, encoding="utf-8")
-            stderr_path.write_text(proc.stderr, encoding="utf-8")
-            return proc.returncode == 0, stdout_path, stderr_path, elapsed, profile
+            last_proc = proc
+            run_profile = _parse_decompile_profile(proc.stderr)
+            acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, run_profile)
+            run_profile["acceptance_reason"] = None if acceptable else reason
+            run_profile["candidate"] = candidate
+            candidate_attempt["returncode"] = proc.returncode
+            candidate_attempt["profile"] = run_profile
+
+            if acceptable and proc.returncode == 0:
+                elapsed = time.perf_counter() - start
+                run_profile["commands_tried"] = attempts
+                run_profile["wall_seconds"] = elapsed
+                run_profile["selected"] = profile.get("selected", {})
+                run_profile["slowest_function_summary"] = _extract_profile_summary(run_profile)
+                stdout_path.write_text(_sanitize_decompiled_source(proc.stdout), encoding="utf-8")
+                stderr_path.write_text(proc.stderr, encoding="utf-8")
+                return True, stdout_path, stderr_path, elapsed, run_profile
+
+            last_profile = run_profile
+            if decompile_mode == "main" and not _is_proc_selection_failure(proc.stderr):
+                # keep behavior: if decompiler reaches a real failure mode for this candidate,
+                # still try remaining candidates in main mode when available.
+                continue
+            if decompile_mode != "main":
+                break
+
+        if decompile_mode == "main" and attempts and attempts[-1]["candidate"].get("kind") != "max-functions":
+            fallback_count = max(1, decompile_max_functions)
+            fallback_candidate = {
+                "kind": "max-functions",
+                "source": "fallback-after-failed-main-candidates",
+                "value_type": "max-functions",
+                "value": fallback_count,
+            }
+            fallback_cmd = _candidate_command(fallback_candidate)
+            fallback_attempt = {
+                "candidate": fallback_candidate,
+                "command": " ".join(fallback_cmd),
+            }
+            attempts.append(fallback_attempt)
+            proc = _run(
+                fallback_cmd,
+                cwd=REPO_ROOT,
+                timeout=decompile_run_timeout,
+                env={"INERTIA_DEBUG_TIMING": "1"},
+            )
+            last_proc = proc
+            run_profile = _parse_decompile_profile(proc.stderr)
+            acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, run_profile)
+            run_profile["acceptance_reason"] = None if acceptable else reason
+            run_profile["candidate"] = fallback_candidate
+            fallback_attempt["returncode"] = proc.returncode
+            fallback_attempt["profile"] = run_profile
+            if acceptable and proc.returncode == 0:
+                elapsed = time.perf_counter() - start
+                run_profile["commands_tried"] = attempts
+                run_profile["wall_seconds"] = elapsed
+                run_profile["selected"] = profile.get("selected", {})
+                run_profile["slowest_function_summary"] = _extract_profile_summary(run_profile)
+                stdout_path.write_text(_sanitize_decompiled_source(proc.stdout), encoding="utf-8")
+                stderr_path.write_text(proc.stderr, encoding="utf-8")
+                return True, stdout_path, stderr_path, elapsed, run_profile
+            last_profile = run_profile
+
         elapsed = time.perf_counter() - start
-        profile["commands_tried"] = tried_commands
-        profile.update(_parse_decompile_profile(proc.stderr))
-        profile["wall_seconds"] = elapsed
-        profile["slowest_function_summary"] = _extract_profile_summary(profile)
-        stdout_path.write_text(proc.stdout, encoding="utf-8")
-        stderr_path.write_text(proc.stderr, encoding="utf-8")
-        return proc.returncode == 0, stdout_path, stderr_path, elapsed, profile
+        profile["commands_tried"] = attempts
+        merged_profile = last_profile if isinstance(last_profile, dict) else _parse_decompile_profile((last_proc.stderr if last_proc else ""))
+        merged_profile["commands_tried"] = attempts
+        merged_profile["selected"] = profile.get("selected", {})
+        merged_profile["wall_seconds"] = elapsed
+        merged_profile["slowest_function_summary"] = _extract_profile_summary(merged_profile)
+        if merged_profile.get("acceptance_reason") is None and last_proc is not None:
+            merged_profile["acceptance_reason"] = "no_acceptable_candidate"
+        stdout_text = ""
+        stderr_text = ""
+        if last_proc is not None:
+            stdout_text = last_proc.stdout
+            stderr_text = last_proc.stderr
+        stdout_path.write_text(_sanitize_decompiled_source(stdout_text), encoding="utf-8")
+        stderr_path.write_text(stderr_text, encoding="utf-8")
+        return False, stdout_path, stderr_path, elapsed, merged_profile
     except subprocess.TimeoutExpired as ex:
         elapsed = time.perf_counter() - start
         stdout_data = ex.stdout.decode("utf-8", errors="replace") if isinstance(ex.stdout, bytes) else (ex.stdout or "")
         stderr_data = ex.stderr.decode("utf-8", errors="replace") if isinstance(ex.stderr, bytes) else (ex.stderr or "")
         timeout_text = stderr_data + "\ndecompile timeout\n"
-        profile.update(_parse_decompile_profile(timeout_text))
-        profile["wall_seconds"] = elapsed
-        profile["timeout"] = True
-        stdout_path.write_text(stdout_data, encoding="utf-8")
+        merged_profile = _parse_decompile_profile(timeout_text)
+        merged_profile["commands_tried"] = attempts
+        merged_profile["wall_seconds"] = elapsed
+        merged_profile["timeout"] = True
+        merged_profile["selected"] = profile.get("selected", {})
+        merged_profile["acceptance_reason"] = "timeout"
+        stdout_path.write_text(_sanitize_decompiled_source(stdout_data), encoding="utf-8")
         stderr_path.write_text(timeout_text, encoding="utf-8")
-        return False, stdout_path, stderr_path, elapsed, profile
+        return False, stdout_path, stderr_path, elapsed, merged_profile
 
 
 def _decompile_and_validate(
@@ -552,6 +876,7 @@ def _decompile_and_validate(
     decompile_mode: str,
     decompile_cod_path: Path | None,
     decompile_max_functions: int,
+    decompile_safe_names: tuple[str, str, str, str] | None = None,
 ) -> tuple[bool, Path, Path, bool, bool, int | None, str, str, str, str, str, str, float, int, str]:
     decompile_ok, dec_out, dec_err, decompile_elapsed, decompile_profile = _decompile(
         exe_path,
@@ -564,6 +889,10 @@ def _decompile_and_validate(
         decompile_max_functions=decompile_max_functions,
     )
     if not decompile_ok:
+        selected_functions = 0
+        attempted_count = decompile_profile.get("attempted_count")
+        if isinstance(attempted_count, int):
+            selected_functions = attempted_count
         return (
             False,
             dec_out,
@@ -578,13 +907,23 @@ def _decompile_and_validate(
             "",
             "",
             decompile_elapsed,
-            int(decompile_profile.get("functions_selected", 0) if isinstance(decompile_profile.get("functions_selected"), int) else 0),
+            selected_functions,
             json.dumps(decompile_profile),
         )
 
-    stem = exe_path.stem.upper()
-    decomp_src = out_dir / f"{stem}_DECOMPILE.C"
-    reexe = out_dir / f"{stem}_DECOMPILE.EXE"
+    if decompile_safe_names is None:
+        stem = exe_path.stem.upper()
+        decomp_name, obj_name, exe_name, map_name = (
+            f"{stem}_DECOMPILE.C",
+            f"{stem}_DECOMPILE.OBJ",
+            f"{stem}_DECOMPILE.EXE",
+            f"{stem}_DECOMPILE.MAP",
+        )
+    else:
+        decomp_name, obj_name, exe_name, map_name = decompile_safe_names
+
+    decomp_src = out_dir / decomp_name
+    reexe = out_dir / exe_name
     shutil.copy2(dec_out, decomp_src)
 
     recompiled_ok, rec_out, rec_err, rel_out, rel_err = _compile_and_link(
@@ -592,9 +931,9 @@ def _decompile_and_validate(
         out_dir,
         kvikdos=kvikdos,
         msc6_root=msc6_root,
-        obj_name=f"{stem}_DECOMPILE.OBJ",
-        exe_name=f"{stem}_DECOMPILE.EXE",
-        map_name=f"{stem}_DECOMPILE.MAP",
+        obj_name=obj_name,
+        exe_name=exe_name,
+        map_name=map_name,
     )
     decompile_run_ok = False
     decompile_run_exit: int | None = None
@@ -622,7 +961,14 @@ def _decompile_and_validate(
         decompile_run_stdout,
         decompile_run_stderr,
         decompile_elapsed,
-        int(decompile_profile.get("functions_selected", 0) if isinstance(decompile_profile.get("functions_selected"), int) else 0),
+        int(
+            (
+                (decompile_profile.get("decompiled_count") if isinstance(decompile_profile.get("decompiled_count"), dict) else None)
+                or {}
+            ).get("shown", 0)
+            if isinstance(decompile_profile.get("decompiled_count"), dict)
+            else 0
+        ),
         json.dumps(decompile_profile),
     )
 
@@ -681,8 +1027,10 @@ def main() -> int:
         "storage_classes": "STORE.C",
     }
     decompile_skip = set(args.skip_constructs)
+    decompile_idx = 0
 
     for source_path in sorted(args.examples_dir.glob("*.c")):
+        decompile_idx += 1
         dos_name = dos_names.get(source_path.stem, source_path.name.upper())
         local_source = args.out_dir / dos_name
         shutil.copy2(source_path, local_source)
@@ -733,6 +1081,10 @@ def main() -> int:
         decompile_run_stderr = ""
 
         if build_ok and run_ok and exe_path.exists() and not decompile_skipped:
+            decompile_c_name, decompile_obj_name, decompile_exe_name, decompile_map_name = _dos_safe_names(
+                local_source.stem.upper(),
+                counter=decompile_idx,
+            )
             (
                 decompile_ok,
                 decompile_stdout,
@@ -760,7 +1112,16 @@ def main() -> int:
                 decompile_mode=args.decompile_mode,
                 decompile_cod_path=cod_path,
                 decompile_max_functions=args.decompile_max_functions,
+                decompile_safe_names=(
+                    decompile_c_name,
+                    decompile_obj_name,
+                    decompile_exe_name,
+                    decompile_map_name,
+                ),
             )
+            decompile_recompiled_exe = str(args.out_dir / decompile_exe_name)
+            decompile_recompiled_obj = str(args.out_dir / decompile_obj_name)
+            decompile_recompiled_map = str(args.out_dir / decompile_map_name)
 
         results.append(
             ExampleResult(
