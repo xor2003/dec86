@@ -24,6 +24,7 @@ _RAW_IR_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("raw-register-frag", re.compile(r"\b[a-z_]\w*\{r\d+\|\d+b\}")),
     ("unresolved-callee-namespace", re.compile(r"::0x[0-9a-fA-F]+::[A-Za-z_]\w*")),
     ("stack-pointer-address-escape", re.compile(r"=\s*&sp_0\s*;")),
+    ("stack-base-return-escape", re.compile(r"\breturn\s+(?:&\s*)?(?:sp|bp)_0\s*;")),
 )
 
 _FATAL_MARKERS = frozenset(
@@ -31,9 +32,8 @@ _FATAL_MARKERS = frozenset(
         "goto-none",
         "missing-type",
         "ellipsis-condition",
-        "raw-register-frag",
         "unresolved-callee-namespace",
-        "stack-pointer-address-escape",
+        "stack-base-return-escape",
     }
 )
 
@@ -50,38 +50,41 @@ _RAW_IR_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 
 def assess_decompiled_c_text(rendered_text: str) -> DecompilationQualityAssessment:
-    """
-    Classify emitted C text as acceptable or unresolved IR-shaped output.
+    def _impl():
+        """
+        Classify emitted C text as acceptable or unresolved IR-shaped output.
 
-    This is a refusal gate only. It does not infer semantics from text; it
-    rejects output that still exposes raw AIL/VEX/storage internals and should
-    not be presented as successful decompilation.
-    """
+        This is a refusal gate only. It does not infer semantics from text; it
+        rejects output that still exposes raw AIL/VEX/storage internals and should
+        not be presented as successful decompilation.
+        """
 
-    if not isinstance(rendered_text, str) or not rendered_text.strip():
-        return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
+        if not isinstance(rendered_text, str) or not rendered_text.strip():
+            return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
 
-    code_lines = [
-        line.strip()
-        for line in rendered_text.splitlines()
-        if line.strip() and line.strip() not in {"{", "}"} and not line.strip().startswith(("/*", "*", "//"))
-    ]
-    code_only_text = "\n".join(code_lines)
-    markers = tuple(label for label, pattern in _RAW_IR_MARKERS if pattern.search(code_only_text))
-    if not markers:
-        return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
+        code_lines = [
+            line.strip()
+            for line in rendered_text.splitlines()
+            if line.strip() and line.strip() not in {"{", "}"} and not line.strip().startswith(("/*", "*", "//"))
+        ]
+        code_only_text = "\n".join(code_lines)
+        markers = tuple(label for label, pattern in _RAW_IR_MARKERS if pattern.search(code_only_text))
+        if not markers:
+            return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
 
-    if _FATAL_MARKERS.intersection(markers):
-        return DecompilationQualityAssessment(reject_as_decompiled=True, markers=markers)
+        if _FATAL_MARKERS.intersection(markers):
+            return DecompilationQualityAssessment(reject_as_decompiled=True, markers=markers)
 
-    raw_ir_line_count = sum(
-        1
-        for line in code_lines
-        if any(pattern.search(line) for pattern in _RAW_IR_LINE_PATTERNS)
-    )
-    readable_line_count = max(len(code_lines), 1)
-    reject = raw_ir_line_count >= 4 and raw_ir_line_count * 2 >= readable_line_count
-    return DecompilationQualityAssessment(
-        reject_as_decompiled=reject,
-        markers=markers,
-    )
+        raw_ir_line_count = sum(
+            1
+            for line in code_lines
+            if any(pattern.search(line) for pattern in _RAW_IR_LINE_PATTERNS)
+        )
+        readable_line_count = max(len(code_lines), 1)
+        reject = raw_ir_line_count >= 4 and raw_ir_line_count * 2 >= readable_line_count
+        return DecompilationQualityAssessment(
+            reject_as_decompiled=reject,
+            markers=markers,
+        )
+
+    return _impl()

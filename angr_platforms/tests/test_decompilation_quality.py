@@ -29,3 +29,16 @@ def test_assess_decompiled_c_text_accepts_normal_c() -> None:
 
     assert assessment.reject_as_decompiled is False
     assert assessment.markers == ()
+
+
+def test_assess_decompiled_c_text_rejects_stack_base_return_escape() -> None:
+    assessment = assess_decompiled_c_text(
+        "int rel_i16(int a, int b)\n"
+        "{\n"
+        "    unsigned short sp_0;\n"
+        "    return sp_0;\n"
+        "}\n"
+    )
+
+    assert assessment.reject_as_decompiled is True
+    assert "stack-base-return-escape" in assessment.markers
