@@ -2354,8 +2354,9 @@ def _rank_exe_function_seeds(
         main_object = getattr(project.loader, "main_object", None)
         if main_object is None:
             return []
-        if include_library_functions is None:
-            include_library_functions = bool(
+        lib_functions = include_library_functions
+        if lib_functions is None:
+            lib_functions = bool(
                 getattr(project, "_inertia_include_library_functions", False)
             )
         binary_path = getattr(main_object, "binary", None)
@@ -2372,7 +2373,7 @@ def _rank_exe_function_seeds(
             linked_base,
             max_addr,
             metadata_fingerprint,
-            bool(include_library_functions),
+            bool(lib_functions),
         )
         cached_addrs = _load_seed_ranking_cache(cache_key)
         if cached_addrs is not None:
@@ -2411,7 +2412,7 @@ def _rank_exe_function_seeds(
                 ranked[addr] = candidate
 
         metadata_labels = _visible_code_labels(metadata) if metadata is not None else {}
-        if include_library_functions and metadata is not None:
+        if lib_functions and metadata is not None:
             metadata_labels = recovery_labels
         if not metadata_labels and metadata is not None:
             metadata_labels = recovery_labels

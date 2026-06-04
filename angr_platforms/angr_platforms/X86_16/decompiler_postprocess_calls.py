@@ -1987,7 +1987,11 @@ def _near_function_pointer_type_8616(project, arg_count: int | None):
 
 
 def _summary_return_type_8616(project, summary):
-    if getattr(summary, "return_register", None) == "ax" and getattr(summary, "return_used", None) is True:
+    return_shape = getattr(summary, "return_shape", None)
+    if return_shape == "dx_ax" and getattr(summary, "return_used", None) is True:
+        return _summary_type_8616(project, 4)
+    if (return_shape in {None, "ax"} and getattr(summary, "return_register", None) == "ax"
+            and getattr(summary, "return_used", None) is True):
         return _summary_type_8616(project, 2)
     ty = SimTypeBottom(label="void")
     arch = getattr(project, "arch", None)
@@ -2582,8 +2586,12 @@ def _materialize_callsite_prototypes_8616(project, codegen) -> bool:
                 else ", ".join(f"{_ctype_for_width(width)} a{idx}" for idx, width in enumerate(arg_widths))
             )
             return_type = (
-                _ctype_for_width(2)
-                if getattr(summary, "return_register", None) == "ax" and getattr(summary, "return_used", None) is True
+                _ctype_for_width(4)
+                if getattr(summary, "return_shape", None) == "dx_ax" and getattr(summary, "return_used", None) is True
+                else _ctype_for_width(2)
+                if getattr(summary, "return_shape", None) in {None, "ax"}
+                and getattr(summary, "return_register", None) == "ax"
+                and getattr(summary, "return_used", None) is True
                 else "int"
             )
             return f"{return_type} {name}({args});"

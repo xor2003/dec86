@@ -3,10 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CStatements
-from angr.sim_type import SimTypeFunction, SimTypeShort
+from angr.sim_type import SimTypeFunction, SimTypeShort, SimTypeLong
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.callsite_summary import CallsiteReturnShape8616
 from angr_platforms.X86_16.decompiler_postprocess_calls import _materialize_callsite_prototypes_8616
 
 
@@ -80,3 +81,32 @@ def test_materialize_callsite_prototypes_keeps_existing_meaningful_prototype():
 
     assert changed is False
     assert callee.prototype is existing_proto
+
+
+def test_materialize_callsite_prototypes_uses_long_return_for_dx_ax_shape():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen(project)
+    callee = SimpleNamespace(prototype=None, is_prototype_guessed=False)
+    call = CFunctionCall(None, callee, [], codegen=codegen)
+    root = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register="ax",
+            return_used=True,
+            return_shape=CallsiteReturnShape8616.DX_AX.value,
+        )
+    }
+
+    changed = _materialize_callsite_prototypes_8616(project, codegen)
+
+    assert changed is True
+    assert callee.prototype is not None
+    assert isinstance(callee.prototype.returnty, SimTypeLong)

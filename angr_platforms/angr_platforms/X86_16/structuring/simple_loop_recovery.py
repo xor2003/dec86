@@ -172,7 +172,15 @@ def _linear_instruction_summaries_8616(project, function, *, max_size: int = 0x1
         block = project.factory.block(addr, size=size)
     except Exception:
         return []
-    return [_summarize_capstone_insn_8616(insn.insn) for insn in getattr(getattr(block, "capstone", None), "insns", ()) or ()]
+    try:
+        capstone_block = block.capstone
+    except Exception:
+        return []
+    try:
+        capstone_insns = getattr(capstone_block, "insns", ())
+    except Exception:
+        return []
+    return [_summarize_capstone_insn_8616(insn.insn) for insn in capstone_insns or ()]
 
 
 def recover_counted_stack_loop_c_8616(project, function) -> str | None:

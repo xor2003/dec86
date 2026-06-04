@@ -4,13 +4,22 @@ from types import SimpleNamespace
 
 from angr_platforms.X86_16.analysis_helpers import CallTargetSeed
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616, summarize_x86_16_callsite
+from angr_platforms.X86_16.callsite_summary import CallsiteReturnShape8616
 
 
 class _Operand:
-    def __init__(self, *, reg: int | None = None, imm: int | None = None, size: int | None = None):
+    def __init__(
+        self,
+        *,
+        reg: int | None = None,
+        imm: int | None = None,
+        size: int | None = None,
+        mem: object | None = None,
+    ):
         self.reg = reg
         self.imm = imm
         self.size = size
+        self.mem = mem
 
 
 class _Insn:
@@ -62,6 +71,7 @@ def test_callsite_summary_reports_push_args_cleanup_and_return_use(monkeypatch):
         stack_cleanup=4,
         return_register="ax",
         return_used=True,
+        return_shape=CallsiteReturnShape8616.AX.value,
         stack_probe_helper=False,
     )
 
@@ -334,6 +344,46 @@ def test_callsite_summary_marks_stack_probe_returned_stack_address_when_ax_is_co
     assert summary.helper_return_space == "ss"
     assert summary.helper_return_width == 2
     assert summary.helper_return_address_kind == "stack"
+
+
+def test_callsite_summary_detects_dx_ax_return_shape(monkeypatch):
+    bp_base = 7
+    insns = (
+        _Insn(0x1002, "call"),
+        _Insn(
+            0x1005,
+            "mov",
+            [
+                _Operand(mem=SimpleNamespace(base=bp_base, disp=-4), size=2),
+                _Operand(reg=2),
+            ],
+            reg_names={bp_base: "bp", 2: "ax"},
+        ),
+        _Insn(
+            0x1007,
+            "mov",
+            [
+                _Operand(mem=SimpleNamespace(base=bp_base, disp=-2), size=2),
+                _Operand(reg=3),
+            ],
+            reg_names={bp_base: "bp", 3: "dx"},
+        ),
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        factory=SimpleNamespace(block=lambda addr, opt_level=0: block),
+    )
+    function = SimpleNamespace(project=project)
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1002, 0x1500, 0x1005, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1002)
+
+    assert summary is not None
+    assert summary.return_shape == CallsiteReturnShape8616.DX_AX.value
 
 
 def test_callsite_summary_does_not_claim_stack_address_when_probe_return_is_not_consumed(monkeypatch):

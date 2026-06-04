@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 from types import SimpleNamespace
 
 from .analysis_helpers import collect_neighbor_call_targets
@@ -11,6 +12,11 @@ from .callee_name_normalization import normalize_callee_name_8616
 __all__ = ["CallsiteSummary8616", "summarize_x86_16_callsite"]
 
 log = logging.getLogger(__name__)
+
+
+class CallsiteReturnShape8616(Enum):
+    AX = "ax"
+    DX_AX = "dx_ax"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +35,7 @@ class CallsiteSummary8616:
     helper_return_space: str | None = None
     helper_return_width: int | None = None
     helper_return_address_kind: str = "none"
+    return_shape: str | None = None
     push_arg_sources: tuple[tuple | None, ...] = field(default=(), compare=False)
     return_store_destination: tuple[str, int] | None = None
 
@@ -37,6 +44,7 @@ class CallsiteSummary8616:
             f"callsite={self.callsite_addr:#x} "
             f"target={None if self.target_addr is None else hex(self.target_addr)} "
             f"args={self.arg_count} "
+            f"return_shape={self.return_shape} "
             f"helper_return={self.helper_return_state} "
             f"helper_space={self.helper_return_space} "
             f"helper_width={self.helper_return_width} "
@@ -643,6 +651,59 @@ def _return_use_after_call(function, insns: tuple, idx: int, callsite_addr: int)
     return None, False
 
 
+def _return_shape_after_call(function, insns: tuple, idx: int, callsite_addr: int) -> CallsiteReturnShape8616 | None:
+    follow_insns = list(insns[idx + 1 : idx + 8])
+    if len(follow_insns) < 8:
+        follow_insns.extend(_next_linear_block_insns(function, callsite_addr)[: 8 - len(follow_insns)])
+    follow_insns = _extend_follow_insns_through_direct_jumps_8616(function, follow_insns, limit=16)
+
+    store_dx_offsets: set[int] = set()
+    store_ax_offsets: set[int] = set()
+    saw_ax = False
+    saw_dx = False
+
+    for insn in follow_insns[:16]:
+        if _mnemonic(insn) in {"ret", "retf", "retw", "iret"}:
+            break
+
+        if _mnemonic(insn) == "mov" and len(_instruction_operands(insn)) == 2:
+            operands = _instruction_operands(insn)
+            base, disp = _operand_mem_base_disp(insn, operands[0])
+            if base == "bp" and isinstance(disp, int):
+                if _operand_is_reg(insn, operands[1], {"dx", "dh", "dl"}):
+                    store_dx_offsets.add(disp)
+                    saw_dx = True
+                if _operand_is_reg(insn, operands[1], {"ax", "al", "ah"}):
+                    store_ax_offsets.add(disp)
+                    saw_ax = True
+
+        if _instruction_reads_return_reg(insn, {"ax", "al", "ah"}):
+            saw_ax = True
+        if _instruction_reads_return_reg(insn, {"dx", "dh", "dl"}):
+            saw_dx = True
+        if _instruction_writes_return_reg(insn, {"ax", "al", "ah"}):
+            saw_ax = True
+        if _instruction_writes_return_reg(insn, {"dx", "dh", "dl"}):
+            saw_dx = True
+
+        if _transparent_return_epilogue_insn_8616(insn):
+            continue
+
+        if saw_dx and saw_ax and 1 <= len(store_dx_offsets | store_ax_offsets):
+            # both words observed in return-related materialization
+            break
+
+    if any(off + 2 in store_ax_offsets for off in store_dx_offsets):
+        return CallsiteReturnShape8616.DX_AX
+    if any(off - 2 in store_dx_offsets for off in store_ax_offsets):
+        return CallsiteReturnShape8616.DX_AX
+    if saw_dx and saw_ax:
+        return CallsiteReturnShape8616.DX_AX
+    if saw_ax:
+        return CallsiteReturnShape8616.AX
+    return None
+
+
 def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> CallsiteSummary8616 | None:
     def _impl():
         project = getattr(function, "project", None)
@@ -735,6 +796,7 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             follow_insns.extend(_next_linear_block_insns(function, callsite_addr)[: 2 - len(follow_insns)])
         has_followup_insns = bool(follow_insns)
         return_register, return_used = _return_use_after_call(function, insns, call_idx, callsite_addr)
+        return_shape = _return_shape_after_call(function, insns, call_idx, callsite_addr)
         return_store_destination = _return_store_after_call(function, insns, call_idx, callsite_addr)
         helper_return_state = "none"
         helper_return_space = None
@@ -764,6 +826,7 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             helper_return_space=helper_return_space,
             helper_return_width=helper_return_width,
             helper_return_address_kind=helper_return_address_kind,
+            return_shape=return_shape.value if isinstance(return_shape, CallsiteReturnShape8616) else None,
             push_arg_sources=push_arg_sources,
             return_store_destination=return_store_destination,
         )
