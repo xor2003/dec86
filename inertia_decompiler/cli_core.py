@@ -606,6 +606,13 @@ def _discover_ranked_binary_offsets(
         return out
 
     def _has_local_sidecar_evidence(binary_path: Path) -> bool:
+        if os.environ.get("INERTIA_IGNORE_LOCAL_SIDECAR_HINTS_8616", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return False
         stem = binary_path.stem
         parent = binary_path.parent
         if not parent.exists():
@@ -748,6 +755,35 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
     # decompiler warmup before emitting fallback C.
     return min(max(1, timeout), 60)
 
+
+def _parse_env_timeout_cap() -> int | None:
+    cap = os.environ.get("INERTIA_MAX_FUNCTION_TIMEOUT")
+    if not cap:
+        return 120
+    try:
+        cap_value = int(cap)
+    except ValueError:
+        return 120
+    if cap_value <= 0:
+        return None
+    return max(1, cap_value)
+
+
+def _enforce_function_timeout_cap(timeout: int, *, context: str) -> int:
+    cap = _parse_env_timeout_cap()
+    if cap is None:
+        return max(1, int(timeout))
+    bounded = max(1, min(int(timeout), cap))
+    if bounded != max(1, int(timeout)):
+        logging.getLogger(__name__).debug(
+            "%s timeout capped: requested=%s cap=%s applied=%s",
+            context,
+            int(timeout),
+            cap,
+            bounded,
+        )
+    return bounded
+
 def _direct_addr_wall_clock_budget(
     timeout: int,
     *,
@@ -762,11 +798,16 @@ def _direct_addr_wall_clock_budget(
     if explicit_timeout:
         # Explicit timeout should stay deterministic and bounded, but still
         # leave room for one fallback lane and validation emission.
-        return max(8, base + min(14, max(8, base + 4)))
+        budget = max(8, base + min(14, max(8, base + 4)))
     # Default direct-address mode should bias toward successful recovery over
     # early timeout. Keep a larger bounded budget so non-optimized and sidecar
     # fallback lanes can actually execute on medium x86-16 functions.
-    return max(2, base + max(40, _bounded_non_optimized_timeout(base)) + 2)
+    else:
+        if timeout <= 6:
+            budget = max(8, base + min(14, max(8, base + 4)))
+        else:
+            budget = max(2, base + max(40, _bounded_non_optimized_timeout(base)) + 2)
+    return _enforce_function_timeout_cap(int(budget), context="direct address wall clock")
 
 def _prepare_ranked_binary_preview_items(
     project: angr.Project,
@@ -1278,7 +1319,10 @@ def _run_function_work_item(
 
         block_estimate, _byte_estimate = _function_complexity(item.function)
         complexity_timeout_bonus = max(0, int(block_estimate) - 30) * 2
-        effective_timeout = max(1, min(360, int(timeout) + complexity_timeout_bonus))
+        effective_timeout = _enforce_function_timeout_cap(
+            max(1, min(360, int(timeout) + complexity_timeout_bonus)),
+            context="complexity-aware decompile timeout",
+        )
         cached_work_result, cache_bypass_debug, cache_key, tail_validation_enabled, expected_validation_stages = (
             _function_work_cache_lookup(
                 item,
@@ -1386,9 +1430,12 @@ def _run_function_work_item(
         )
         if fork_isolated_eligible:
             try:
-                status, payload, partial_payload, debug_output, tail_validation_snapshot, elapsed, block_count, byte_count = _run_with_timeout_in_fork(
+                    status, payload, partial_payload, debug_output, tail_validation_snapshot, elapsed, block_count, byte_count = _run_with_timeout_in_fork(
                     lambda: _run_local(decompile_project, decompile_cfg, decompile_function),
-                    timeout=max(1, effective_timeout) + 1,
+                    timeout=_enforce_function_timeout_cap(
+                        max(1, effective_timeout) + 1,
+                        context="forked local decompile",
+                    ),
                 )
             except Exception as ex:
                 logging.getLogger(__name__).warning("fork-isolated decompilation failed: %s", ex)
@@ -3102,6 +3149,8 @@ def main(argv: list[str] | None = None) -> int:
                 # Keep the configured default timeout budget for whole-file sweeps.
                 # Per-function adaptation is handled later by complexity-aware logic.
                 args.timeout = max(4, int(args.timeout))
+        if bool(args.ignore_local_sidecar_hints):
+            os.environ["INERTIA_IGNORE_LOCAL_SIDECAR_HINTS_8616"] = "1"
 
         _lower_process_priority()
         _apply_memory_limit(args.max_memory_mb)
@@ -3175,12 +3224,16 @@ def main(argv: list[str] | None = None) -> int:
             setattr(project, "_inertia_dump_layer_root", args.dump_layer_dir)
             setattr(project, "_inertia_dump_layer_filter", args.dump_layer_filter)
             _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
-            lst_metadata = _load_lst_metadata(
-                args.binary,
-                project,
-                pat_backend=args.pat_backend,
-                signature_catalog=effective_signature_catalog,
-            )
+            if bool(args.ignore_local_sidecar_hints):
+                lst_metadata = None
+                print("/* ignoring local sidecar metadata for function discovery and recovery due --ignore-local-sidecar-hints */")
+            else:
+                lst_metadata = _load_lst_metadata(
+                    args.binary,
+                    project,
+                    pat_backend=args.pat_backend,
+                    signature_catalog=effective_signature_catalog,
+                )
             _apply_binary_specific_annotations(
                 project,
                 args.binary,
@@ -3866,7 +3919,10 @@ def main(argv: list[str] | None = None) -> int:
                         boosted = max(boosted, base_timeout + 120)
                     elif block_count >= 40 or byte_count >= 300:
                         boosted = max(boosted, base_timeout + 80)
-                return max(1, boosted)
+                return _enforce_function_timeout_cap(
+                    max(1, boosted),
+                    context="direct shape timeout",
+                )
             try:
                 def direct_decompile_job():
                     _bcount, _bbytes = _function_complexity(func)
@@ -3973,7 +4029,10 @@ def main(argv: list[str] | None = None) -> int:
                     _direct_blocks,
                     _direct_bytes,
                 )
-                direct_decompile_timeout = max(1, _direct_effective_timeout) + 28
+                direct_decompile_timeout = _enforce_function_timeout_cap(
+                    max(1, _direct_effective_timeout) + 28,
+                    context="direct analysis wrapper timeout",
+                )
                 if timeout_was_explicit and isinstance(args.timeout, int):
                     if args.timeout <= 6:
                         if _direct_blocks >= 4 or _direct_bytes >= 0x50:
@@ -3982,7 +4041,10 @@ def main(argv: list[str] | None = None) -> int:
                             direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 8)
                     else:
                         direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 32)
-                direct_decompile_timeout = max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1))
+                direct_decompile_timeout = _enforce_function_timeout_cap(
+                    max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1)),
+                    context="direct direct-address budget timeout",
+                )
                 use_fork_for_direct = (
                     os.name == "posix"
                     and threading.current_thread() is threading.main_thread()
@@ -6008,6 +6070,10 @@ def main(argv: list[str] | None = None) -> int:
                         remaining_sweep_budget = _remaining_sweep_budget_sec()
                         if remaining_sweep_budget is not None:
                             decompile_timeout = max(1, min(int(decompile_timeout), remaining_sweep_budget))
+                        decompile_timeout = _enforce_function_timeout_cap(
+                            int(decompile_timeout),
+                            context="sweep decompile timeout",
+                        )
                         if (
                             use_serial_fork_per_function
                             and threading.current_thread() is threading.main_thread()
@@ -6016,7 +6082,10 @@ def main(argv: list[str] | None = None) -> int:
                             # Hard timeout must track the computed function timeout;
                             # otherwise larger adaptive/effective budgets are
                             # truncated by the outer worker watchdog.
-                            hard_timeout = max(2, int(decompile_timeout) + 8)
+                            hard_timeout = _enforce_function_timeout_cap(
+                                max(2, int(decompile_timeout) + 8),
+                                context="sweep hard timeout",
+                            )
                             print(
                                 f"[dbg] isolated function worker: start {active_item.function.addr:#x} "
                                 f"{active_item.function.name} requested_timeout={decompile_timeout}s hard_timeout={hard_timeout}s"
@@ -6038,7 +6107,10 @@ def main(argv: list[str] | None = None) -> int:
                                             allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                         )
                                     ),
-                                    timeout=hard_timeout,
+                                    timeout=_enforce_function_timeout_cap(
+                                        max(1, hard_timeout + 2),
+                                        context="sweep function fork timeout",
+                                    ),
                                 )
                                 result = replace(result, function=active_item.function, function_cfg=active_item.function_cfg)
                             except TimeoutError as ex:
@@ -6084,7 +6156,10 @@ def main(argv: list[str] | None = None) -> int:
                                         force_isolated_project=force_isolated_function_projects,
                                         allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                     ),
-                                    timeout=max(1, decompile_timeout + 1),
+                                    timeout=_enforce_function_timeout_cap(
+                                        max(1, decompile_timeout + 1),
+                                        context="sweep function daemon timeout",
+                                    ),
                                     thread_name_prefix="func-serial-fallback",
                                 )
                             except (FuturesTimeoutError, TimeoutError):
@@ -6128,7 +6203,10 @@ def main(argv: list[str] | None = None) -> int:
                                         force_isolated_project=force_isolated_function_projects,
                                         allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                     ),
-                                    timeout=max(1, decompile_timeout + 1),
+                                    timeout=_enforce_function_timeout_cap(
+                                        max(1, decompile_timeout + 1),
+                                        context="sweep function serial daemon timeout",
+                                    ),
                                     thread_name_prefix="func-serial",
                                 )
                             except (FuturesTimeoutError, TimeoutError):
@@ -6187,6 +6265,10 @@ def main(argv: list[str] | None = None) -> int:
                         # timeout was already 120s, leaving flaky one-off timeouts
                         # unrecovered.
                         retry_timeout = min(360, max(int(decompile_timeout) * 2, base_timeout * 2, 40))
+                        retry_timeout = _enforce_function_timeout_cap(
+                            retry_timeout,
+                            context="sweep timeout bridge",
+                        )
                         try:
                             retry_result = _run_with_timeout_in_daemon_thread(
                                 lambda: _run_function_work_item(
@@ -6201,7 +6283,10 @@ def main(argv: list[str] | None = None) -> int:
                                     force_isolated_project=force_isolated_function_projects,
                                     allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                 ),
-                                timeout=max(1, retry_timeout + 2),
+                                timeout=_enforce_function_timeout_cap(
+                                    max(1, retry_timeout + 2),
+                                    context="sweep retry bridge thread timeout",
+                                ),
                                 thread_name_prefix="func-timeout-bridge",
                             )
                             if isinstance(retry_result, FunctionWorkResult) and retry_result.status == "ok":

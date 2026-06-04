@@ -35,6 +35,13 @@ DECOMPILE_SLOW_FUNCTION_SECONDS = 1.0
 DECOMPILE_SLOW_PASS_SECONDS = 1.0
 
 
+def _make_decompile_env(force_rizin_8616: bool) -> dict[str, str]:
+    env = {"INERTIA_DEBUG_TIMING": "1", "INERTIA_ENABLE_TAIL_VALIDATION": "1"}
+    if force_rizin_8616:
+        env["INERTIA_AUTO_RIZIN_8616"] = "1"
+    return env
+
+
 @dataclass(frozen=True)
 class ExampleResult:
     name: str
@@ -735,6 +742,12 @@ def _decompile(
     decompile_mode: str,
     decompile_cod_path: Path | None,
     decompile_max_functions: int,
+    decompile_function_discovery_backend: str,
+    decompile_seed_engine: str,
+    decompile_rizin_timeout: int,
+    decompile_force_rizin_8616: bool,
+    decompile_ignore_local_sidecar_hints: bool,
+    decompile_pat_backend: str | None = None,
 ) -> tuple[bool, Path, Path, float, dict[str, object]]:
     stdout_path = out_dir / f"{exe_path.stem}.dec.txt"
     stderr_path = out_dir / f"{exe_path.stem}.dec.err.txt"
@@ -744,9 +757,24 @@ def _decompile(
         "--alternate-source-c",
         "--timeout",
         str(decompile_timeout),
+        "--function-discovery-backend",
+        decompile_function_discovery_backend,
+        "--seed-engine",
+        decompile_seed_engine,
+        "--rizin-timeout",
+        str(decompile_rizin_timeout),
     ]
+    if decompile_ignore_local_sidecar_hints:
+        cmd.extend(["--ignore-local-sidecar-hints"])
+    if decompile_pat_backend is not None:
+        cmd.extend(["--pat-backend", decompile_pat_backend])
     profile: dict[str, object] = {
         "decompile_mode": decompile_mode,
+        "discovery_backend": decompile_function_discovery_backend,
+        "seed_engine": decompile_seed_engine,
+        "rizin_timeout": decompile_rizin_timeout,
+        "force_rizin_8616": decompile_force_rizin_8616,
+        "pat_backend": decompile_pat_backend,
         "selected": {},
     }
     if decompile_mode == "main":
@@ -840,7 +868,7 @@ def _decompile(
                 candidate_cmd,
                 cwd=REPO_ROOT,
                 timeout=_candidate_run_timeout(candidate),
-                env={"INERTIA_DEBUG_TIMING": "1", "INERTIA_ENABLE_TAIL_VALIDATION": "1"},
+                env=_make_decompile_env(decompile_force_rizin_8616),
             )
             last_proc = proc
             run_profile = _parse_decompile_profile(proc.stderr)
@@ -902,7 +930,7 @@ def _decompile(
                 fallback_cmd,
                 cwd=REPO_ROOT,
                 timeout=_candidate_run_timeout(fallback_candidate),
-                env={"INERTIA_DEBUG_TIMING": "1", "INERTIA_ENABLE_TAIL_VALIDATION": "1"},
+                env=_make_decompile_env(decompile_force_rizin_8616),
             )
             last_proc = proc
             run_profile = _parse_decompile_profile(proc.stderr)
@@ -969,6 +997,12 @@ def _decompile_and_validate(
     decompile_max_functions: int,
     expected_exit_code: int,
     decompile_safe_names: tuple[str, str, str, str] | None = None,
+    decompile_function_discovery_backend: str = "auto",
+    decompile_seed_engine: str = "auto",
+    decompile_rizin_timeout: int = 8,
+    decompile_force_rizin_8616: bool = False,
+    decompile_ignore_local_sidecar_hints: bool = False,
+    decompile_pat_backend: str | None = None,
 ) -> tuple[bool, Path, Path, bool, bool, int | None, str, str, str, str, str, str, float, int, str]:
     def _selected_function_count(profile: dict[str, object]) -> int:
         for key in ("attempted_total", "attempted_count", "functions_selected"):
@@ -991,6 +1025,12 @@ def _decompile_and_validate(
         decompile_mode=decompile_mode,
         decompile_cod_path=decompile_cod_path,
         decompile_max_functions=decompile_max_functions,
+        decompile_function_discovery_backend=decompile_function_discovery_backend,
+        decompile_seed_engine=decompile_seed_engine,
+        decompile_rizin_timeout=decompile_rizin_timeout,
+        decompile_force_rizin_8616=decompile_force_rizin_8616,
+        decompile_ignore_local_sidecar_hints=decompile_ignore_local_sidecar_hints,
+        decompile_pat_backend=decompile_pat_backend,
     )
     if not decompile_ok:
         selected_functions = _selected_function_count(decompile_profile)
@@ -1116,6 +1156,40 @@ def main() -> int:
         default=HARNESS_SUCCESS_EXIT_CODE,
         help="Exit code to return when all checks pass.",
     )
+    ap.add_argument(
+        "--decompile-function-discovery-backend",
+        choices=("auto", "angr", "rizin", "hybrid"),
+        default="auto",
+        help="Force function discovery backend for harness decompilation.",
+    )
+    ap.add_argument(
+        "--decompile-seed-engine",
+        choices=("auto", "angr", "rizin"),
+        default="auto",
+        help="Seed engine used by discovery backend selection.",
+    )
+    ap.add_argument(
+        "--decompile-rizin-timeout",
+        type=int,
+        default=8,
+        help="Timeout in seconds for rizin discovery/evidence in harness mode.",
+    )
+    ap.add_argument(
+        "--decompile-force-rizin-8616",
+        action="store_true",
+        help="Force rizin-based discovery even when local sidecar hints are available.",
+    )
+    ap.add_argument(
+        "--decompile-ignore-local-sidecar-hints",
+        action="store_true",
+        help="Disable local sidecar function discovery hints for benchmarking pure rizin/angr behavior.",
+    )
+    ap.add_argument(
+        "--decompile-pat-backend",
+        choices=("python_regex", "hyperscan"),
+        default=None,
+        help="Optional override for PAT backend.",
+    )
     args = ap.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -1223,6 +1297,12 @@ def main() -> int:
                 decompile_cod_path=cod_path,
                 decompile_max_functions=args.decompile_max_functions,
                 expected_exit_code=args.harvest_success_code,
+                decompile_function_discovery_backend=args.decompile_function_discovery_backend,
+                decompile_seed_engine=args.decompile_seed_engine,
+                decompile_rizin_timeout=args.decompile_rizin_timeout,
+                decompile_force_rizin_8616=args.decompile_force_rizin_8616,
+                decompile_ignore_local_sidecar_hints=args.decompile_ignore_local_sidecar_hints,
+                decompile_pat_backend=args.decompile_pat_backend,
                 decompile_safe_names=(
                     decompile_c_name,
                     decompile_obj_name,

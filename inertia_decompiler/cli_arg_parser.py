@@ -120,6 +120,11 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         help="Include sidecar signature/library-labeled functions in whole-binary decompilation and tail-validation sweeps.",
     )
     parser.add_argument(
+        "--ignore-local-sidecar-hints",
+        action="store_true",
+        help="Ignore on-disk sidecar hints for function discovery only.",
+    )
+    parser.add_argument(
         "--api-style",
         choices=("modern", "dos", "raw", "pseudo", "service", "msc", "compiler"),
         default="modern",
