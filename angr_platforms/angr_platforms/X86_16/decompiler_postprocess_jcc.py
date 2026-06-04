@@ -194,6 +194,54 @@ def _lookup_register_expr_before_8616(reg_exprs: dict[tuple[int, str, int], obje
     return best_expr
 
 
+def _lookup_prior_register_stack_load_8616(project, codegen, ins_addr: int, reg_name: str, size: int):
+    for insn in sorted(
+        _function_insns_for_codegen_8616(project, codegen),
+        key=lambda item: int(getattr(item, "address", -1)),
+        reverse=True,
+    ):
+        addr = int(getattr(insn, "address", -1))
+        if addr >= int(ins_addr):
+            continue
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if mnemonic in {"jmp", "ljmp", "ret", "retf", "iret", "call", "lcall"} or mnemonic.startswith("j"):
+            break
+        if mnemonic != "mov" or len(operands) != 2:
+            continue
+        if int(getattr(operands[0], "type", -1)) != 1 or int(getattr(operands[1], "type", -1)) != 3:
+            continue
+        if str(insn.reg_name(operands[0].reg)).lower() != reg_name.lower():
+            continue
+        if int(getattr(operands[0], "size", 0) or size) != int(size):
+            continue
+        mem = operands[1].mem
+        if not mem.base or str(insn.reg_name(mem.base)).lower() != "bp":
+            continue
+        return _stack_slot_expr_8616(codegen, int(mem.disp), int(getattr(operands[1], "size", 0) or size))
+    return None
+
+
+def _stack_slot_offset_8616(expr) -> int | None:
+    if not isinstance(expr, CVariable):
+        return None
+    variable = getattr(expr, "variable", None)
+    if not isinstance(variable, SimStackVariable):
+        return None
+    offset = getattr(variable, "offset", None)
+    return offset if isinstance(offset, int) else None
+
+
+def _wide_stack_pair_expr_8616(codegen, hi_expr, lo_expr):
+    hi_offset = _stack_slot_offset_8616(hi_expr)
+    lo_offset = _stack_slot_offset_8616(lo_expr)
+    if not (isinstance(hi_offset, int) and isinstance(lo_offset, int)):
+        return None
+    if hi_offset != lo_offset + 2:
+        return None
+    return _stack_slot_expr_8616(codegen, lo_offset, 4)
+
+
 def _stack_slot_placeholder_name_8616(disp: int, size: int) -> str:
     sign = "m" if int(disp) < 0 else "p"
     return f"stack_bp_{sign}{abs(int(disp)):x}_b{int(size)}"
@@ -338,7 +386,33 @@ def _function_insns_for_codegen_8616(project, codegen) -> tuple:
         except Exception:
             continue
         insns.extend(tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()))
-    result = tuple(sorted(insns, key=lambda item: int(getattr(item, "address", 0) or 0)))
+    func_size = int(getattr(function, "size", 0) or 0)
+    linear_size = max(func_size, 0x400)
+    if 0 < linear_size <= 0x4000:
+        addr = int(func_addr)
+        end_addr = int(func_addr) + int(linear_size)
+        linear_insns = []
+        while addr < end_addr:
+            try:
+                linear_block = project.factory.block(addr, num_inst=1, opt_level=0)
+            except Exception:
+                break
+            decoded = tuple(getattr(getattr(linear_block, "capstone", None), "insns", ()) or ())
+            if not decoded:
+                break
+            insn = decoded[0]
+            linear_insns.append(insn)
+            size = int(getattr(insn, "size", 0) or 0)
+            if str(getattr(insn, "mnemonic", "")).lower() in {"ret", "retf", "iret"}:
+                break
+            if size <= 0:
+                break
+            addr += size
+        insns.extend(tuple(linear_insns))
+    by_addr = {}
+    for insn in insns:
+        by_addr.setdefault(int(getattr(insn, "address", 0) or 0), insn)
+    result = tuple(sorted(by_addr.values(), key=lambda item: int(getattr(item, "address", 0) or 0)))
     try:
         codegen._inertia_jcc_function_insns_8616 = result
     except Exception:
@@ -478,6 +552,79 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
         except Exception:
             return None
         mid_insns = tuple(getattr(getattr(mid_block, "capstone", None), "insns", ()) or ())
+
+        reg_state: dict[str, object] = {}
+        stack_slots: dict[tuple[int, int], object] = {}
+        for state_insn in sorted(
+            _function_insns_for_codegen_8616(project, codegen),
+            key=lambda item: int(getattr(item, "address", -1)),
+        ):
+            state_addr = int(getattr(state_insn, "address", -1))
+            if state_addr >= int(cmp_insn.address):
+                break
+            _apply_cmp_state_update_8616(project, codegen, state_insn, reg_state, stack_slots, reg_exprs, ds_var)
+
+        if jcc1 in {"je", "jz"}:
+            cmp2_insn = next((ins for ins in mid_insns if str(getattr(ins, "mnemonic", "")).lower() == "cmp"), None)
+            jcc2_insn = next(
+                (
+                    ins
+                    for ins in mid_insns
+                    if str(getattr(ins, "mnemonic", "")).lower() in {"je", "jz", "jne", "jnz"}
+                ),
+                None,
+            )
+            if cmp2_insn is not None and jcc2_insn is not None:
+                lhs_lo = _resolve_cmp_operand_expr_8616(
+                    project,
+                    codegen,
+                    cmp_insn.operands[0],
+                    reg_state,
+                    ds_var,
+                    cmp_insn.reg_name,
+                    reg_exprs,
+                    int(cmp_insn.address),
+                )
+                rhs_lo = _resolve_cmp_operand_expr_8616(
+                    project,
+                    codegen,
+                    cmp_insn.operands[1],
+                    reg_state,
+                    ds_var,
+                    cmp_insn.reg_name,
+                    reg_exprs,
+                    int(cmp_insn.address),
+                )
+                lhs_hi = _resolve_cmp_operand_expr_8616(
+                    project,
+                    codegen,
+                    cmp2_insn.operands[0],
+                    reg_state,
+                    ds_var,
+                    cmp2_insn.reg_name,
+                    reg_exprs,
+                    int(cmp2_insn.address),
+                )
+                rhs_hi = _resolve_cmp_operand_expr_8616(
+                    project,
+                    codegen,
+                    cmp2_insn.operands[1],
+                    reg_state,
+                    ds_var,
+                    cmp2_insn.reg_name,
+                    reg_exprs,
+                    int(cmp2_insn.address),
+                )
+                lhs_wide = _wide_stack_pair_expr_8616(codegen, lhs_hi, lhs_lo)
+                rhs_wide = _wide_stack_pair_expr_8616(codegen, rhs_hi, rhs_lo)
+                if lhs_wide is not None and rhs_wide is not None:
+                    jcc2_name = str(getattr(jcc2_insn, "mnemonic", "")).lower()
+                    return _DecodedCmpGuard8616(
+                        lhs=lhs_wide,
+                        rhs=rhs_wide,
+                        op="CmpNE" if jcc2_name in {"jne", "jnz"} else "CmpEQ",
+                    )
+
         # Compilers often emit `jcc short; jmp far` in the middle block. Accept
         # both one-insn and two-insn forms and pick the first conditional jump.
         jcc2_insn = next(
@@ -512,16 +659,30 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
             return None
 
         lhs_hi = _resolve_cmp_operand_expr_8616(
-            project, codegen, cmp_insn.operands[0], {}, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
+            project, codegen, cmp_insn.operands[0], reg_state, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
         )
         rhs_hi = _resolve_cmp_operand_expr_8616(
-            project, codegen, cmp_insn.operands[1], {}, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
+            project, codegen, cmp_insn.operands[1], reg_state, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
         )
         lhs_lo = _resolve_cmp_operand_expr_8616(
-            project, codegen, cmp2_insn.operands[0], {}, ds_var, cmp2_insn.reg_name, reg_exprs, int(cmp2_insn.address)
+            project,
+            codegen,
+            cmp2_insn.operands[0],
+            reg_state,
+            ds_var,
+            cmp2_insn.reg_name,
+            reg_exprs,
+            int(cmp2_insn.address),
         )
         rhs_lo = _resolve_cmp_operand_expr_8616(
-            project, codegen, cmp2_insn.operands[1], {}, ds_var, cmp2_insn.reg_name, reg_exprs, int(cmp2_insn.address)
+            project,
+            codegen,
+            cmp2_insn.operands[1],
+            reg_state,
+            ds_var,
+            cmp2_insn.reg_name,
+            reg_exprs,
+            int(cmp2_insn.address),
         )
         if lhs_hi is None or rhs_hi is None or lhs_lo is None or rhs_lo is None:
             return None
@@ -531,8 +692,12 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
         hi_eq = CBinaryOp("CmpEQ", lhs_hi, rhs_hi, codegen=codegen)
         lo_rel = CBinaryOp(low_op, lhs_lo, rhs_lo, codegen=codegen)
         eq_expr = CBinaryOp("LogicalAnd", hi_eq, CBinaryOp("CmpEQ", lhs_lo, rhs_lo, codegen=codegen), codegen=codegen)
+        lhs_wide = _wide_stack_pair_expr_8616(codegen, lhs_hi, lhs_lo)
+        rhs_wide = _wide_stack_pair_expr_8616(codegen, rhs_hi, rhs_lo)
 
         if jcc1 in {"jl", "jnge", "jb", "jnae", "jc"} and jcc2 in {"jge", "jnl", "jae", "jnb", "jnc"}:
+            if lhs_wide is not None and rhs_wide is not None:
+                return _DecodedCmpGuard8616(lhs=lhs_wide, rhs=rhs_wide, op="CmpLT")
             return _DecodedCmpGuard8616(
                 lhs=None,
                 rhs=None,
@@ -542,6 +707,12 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
                 ),
             )
         if jcc1 in {"jle", "jng", "jbe", "jna"} and jcc2 in {"jge", "jnl", "jae", "jnb", "jnc"}:
+            if lhs_wide is not None and rhs_wide is not None:
+                return _DecodedCmpGuard8616(
+                    lhs=lhs_wide,
+                    rhs=rhs_wide,
+                    op="CmpLT" if low_op == "CmpLT" else "CmpLE",
+                )
             return _DecodedCmpGuard8616(
                 lhs=None,
                 rhs=None,
@@ -551,6 +722,8 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
                 ),
             )
         if jcc1 in {"jg", "jnle", "ja", "jnbe"} and jcc2 in {"jle", "jng", "jbe", "jna"}:
+            if lhs_wide is not None and rhs_wide is not None:
+                return _DecodedCmpGuard8616(lhs=lhs_wide, rhs=rhs_wide, op="CmpGT")
             return _DecodedCmpGuard8616(
                 lhs=None,
                 rhs=None,
@@ -560,6 +733,12 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
                 ),
             )
         if jcc1 in {"jge", "jnl", "jae", "jnb", "jnc"} and jcc2 in {"jle", "jng", "jbe", "jna"}:
+            if lhs_wide is not None and rhs_wide is not None:
+                return _DecodedCmpGuard8616(
+                    lhs=lhs_wide,
+                    rhs=rhs_wide,
+                    op="CmpGT" if low_op == "CmpGT" else "CmpGE",
+                )
             return _DecodedCmpGuard8616(
                 lhs=None,
                 rhs=None,
@@ -569,8 +748,12 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
                 ),
             )
         if jcc1 in {"je", "jz"} and jcc2 in {"je", "jz", "jne", "jnz"}:
+            if lhs_wide is not None and rhs_wide is not None:
+                return _DecodedCmpGuard8616(lhs=lhs_wide, rhs=rhs_wide, op="CmpEQ")
             return _DecodedCmpGuard8616(lhs=None, rhs=None, op="CmpEQ", expr=eq_expr)
         if jcc1 in {"jne", "jnz"} and jcc2 in {"je", "jz", "jne", "jnz"}:
+            if lhs_wide is not None and rhs_wide is not None:
+                return _DecodedCmpGuard8616(lhs=lhs_wide, rhs=rhs_wide, op="CmpNE")
             ne_expr = CBinaryOp(
                 "LogicalOr",
                 CBinaryOp("CmpNE", lhs_hi, rhs_hi, codegen=codegen),
@@ -601,6 +784,15 @@ def _resolve_cmp_operand_expr_8616(
             if expr is not None:
                 return expr
             expr = _lookup_register_expr_8616(reg_exprs, int(ins_addr), reg_name, int(getattr(operand, "size", 0) or 2))
+            if expr is not None:
+                return expr
+            expr = _lookup_prior_register_stack_load_8616(
+                project,
+                codegen,
+                int(ins_addr),
+                reg_name,
+                int(getattr(operand, "size", 0) or 2),
+            )
             if expr is not None:
                 return expr
             reg_offset = _reg_offset_8616(project, reg_name)

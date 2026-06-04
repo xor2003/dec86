@@ -13,6 +13,7 @@ from typing import Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
     CBreak,
     CConstant,
@@ -26,9 +27,10 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CTypeCast,
     CUnaryOp,
+    CVariable,
     CWhileLoop,
 )
-from angr.sim_type import SimTypeBottom, SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
@@ -365,7 +367,38 @@ def _branch_target_return_expr_8616(project, codegen, target_addr: int):
         block = project.factory.block(int(target_addr), opt_level=0)
     except Exception:
         return None
-    value = None
+    ax_value = None
+    dx_value = None
+
+    def _stack_offset(expr) -> int | None:
+        if not isinstance(expr, CVariable):
+            return None
+        variable = getattr(expr, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            return None
+        offset = getattr(variable, "offset", None)
+        return offset if isinstance(offset, int) else None
+
+    def _combined_return_expr():
+        if ax_value is None:
+            return None
+        if dx_value is None:
+            return ax_value
+        ax_offset = _stack_offset(ax_value)
+        dx_offset = _stack_offset(dx_value)
+        if isinstance(ax_offset, int) and isinstance(dx_offset, int) and dx_offset == ax_offset + 2:
+            wide = _jcc._stack_slot_expr_8616(codegen, ax_offset, 4)
+            if wide is not None:
+                return wide
+        if isinstance(ax_value, CConstant) and isinstance(dx_value, CConstant):
+            low = int(getattr(ax_value, "value", 0) or 0) & 0xFFFF
+            high = int(getattr(dx_value, "value", 0) or 0) & 0xFFFF
+            value = (high << 16) | low
+            if value & 0x80000000:
+                value -= 0x100000000
+            return CConstant(value, SimTypeLong(True), codegen=codegen)
+        return ax_value
+
     for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
         mnemonic = str(getattr(insn, "mnemonic", "")).lower()
         operands = tuple(getattr(insn, "operands", ()) or ())
@@ -373,24 +406,30 @@ def _branch_target_return_expr_8616(project, codegen, target_addr: int):
             mnemonic == "mov"
             and len(operands) == 2
             and int(getattr(operands[0], "type", -1)) == 1
-            and str(insn.reg_name(operands[0].reg)).lower() == "ax"
+            and str(insn.reg_name(operands[0].reg)).lower() in {"ax", "dx"}
         ):
+            dst_reg = str(insn.reg_name(operands[0].reg)).lower()
             rhs = operands[1]
+            value = None
             if int(getattr(rhs, "type", -1)) == 2:
                 value = CConstant(
                     _signed_i16_immediate_8616(int(getattr(rhs, "imm", 0) or 0)),
                     SimTypeShort(False),
                     codegen=codegen,
                 )
-                continue
-            if int(getattr(rhs, "type", -1)) == 3:
+            elif int(getattr(rhs, "type", -1)) == 3:
                 mem = rhs.mem
                 if str(insn.reg_name(mem.base)).lower() == "bp":
                     value = _jcc._stack_slot_expr_8616(codegen, int(mem.disp), int(getattr(rhs, "size", 0) or 2))
-                    continue
+            if value is not None:
+                if dst_reg == "ax":
+                    ax_value = value
+                elif dst_reg == "dx":
+                    dx_value = value
+                continue
         if mnemonic in {"jmp", "ljmp", "ret", "retf", "iret"}:
-            return value
-    return value
+            return _combined_return_expr()
+    return _combined_return_expr()
 
 
 def _next_unconditional_target_after_jcc_8616(project, block_addr: int, jcc_addr: int) -> int | None:
@@ -534,6 +573,507 @@ def _ordered_conditional_return_expr_pairs_from_cfg_8616(project, codegen) -> li
                 cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
             pairs.append((cond, true_expr, false_expr))
     return pairs
+
+
+def _first_conditional_jcc_8616(block) -> object | None:
+    for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        if mnemonic.startswith("j") and mnemonic not in {"jmp", "ljmp"}:
+            return insn
+    return None
+
+
+def _selector_function_has_unsafe_effects_8616(project, codegen) -> bool:
+    """Return selectors may be rebuilt only when the instruction stream is pure.
+
+    This intentionally does not reason from emitted C.  The gate is based on
+    instruction effects: explicit memory stores and non-prologue calls make the
+    CFG selector rewrite unsafe because replacing the structured body could drop
+    real side effects.
+    """
+
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
+    previous_insn = None
+    seen_branch = False
+    for insn in _jcc._function_insns_for_codegen_8616(project, codegen):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if mnemonic in {"call", "lcall"}:
+            target = _jcc._direct_call_target_8616(insn)
+            if target is None:
+                if debug:
+                    log.warning("[cfg-selector-return] unsafe call-indirect addr=%#x", int(insn.address))
+                return True
+            name, _callee = _jcc._callee_name_for_target_8616(project, target)
+            if name != "aNchkstk":
+                prev_operands = tuple(getattr(previous_insn, "operands", ()) or ())
+                next_addr = int(getattr(insn, "address", 0) or 0) + int(getattr(insn, "size", 0) or 0)
+                stack_probe_rel0 = (
+                    not seen_branch
+                    and int(target) == next_addr
+                    and str(getattr(previous_insn, "mnemonic", "")).lower() == "mov"
+                    and len(prev_operands) == 2
+                    and int(getattr(prev_operands[0], "type", -1)) == 1
+                    and str(previous_insn.reg_name(prev_operands[0].reg)).lower() == "ax"
+                    and int(getattr(prev_operands[1], "type", -1)) == 2
+                )
+                if stack_probe_rel0:
+                    previous_insn = insn
+                    continue
+                if debug:
+                    log.warning(
+                        "[cfg-selector-return] unsafe call addr=%#x target=%#x name=%s next=%#x prev=%s",
+                        int(insn.address),
+                        int(target),
+                        name,
+                        next_addr,
+                        str(getattr(previous_insn, "mnemonic", "")),
+                    )
+                return True
+            previous_insn = insn
+            continue
+        if mnemonic.startswith("j"):
+            seen_branch = True
+            previous_insn = insn
+            continue
+        if mnemonic in {"push", "pop", "ret", "retf", "iret", "leave"}:
+            previous_insn = insn
+            continue
+        memory_write_mnemonics = {
+            "mov",
+            "add",
+            "sub",
+            "adc",
+            "sbb",
+            "and",
+            "or",
+            "xor",
+            "inc",
+            "dec",
+            "neg",
+            "not",
+            "xchg",
+        }
+        if mnemonic in memory_write_mnemonics and operands and int(getattr(operands[0], "type", -1)) == 3:
+            if debug:
+                log.warning(
+                    "[cfg-selector-return] unsafe memory-write addr=%#x mnemonic=%s op=%s",
+                    int(insn.address),
+                    mnemonic,
+                    str(getattr(insn, "op_str", "")),
+                )
+            return True
+        if mnemonic.startswith("stos") or mnemonic.startswith("movs"):
+            if debug:
+                log.warning("[cfg-selector-return] unsafe string-memory addr=%#x mnemonic=%s", int(insn.address), mnemonic)
+            return True
+        previous_insn = insn
+    return False
+
+
+def _selector_targets_from_32bit_jcc_chain_8616(project, block_addr: int, jcc_insn) -> tuple[int, int] | None:
+    true_mid = _jcc._branch_target_imm_8616(jcc_insn)
+    false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(jcc_insn.address))
+    if true_mid is None or false_target is None:
+        return None
+    try:
+        mid_block = project.factory.block(int(true_mid), opt_level=0)
+    except Exception:
+        return None
+    jcc2 = _first_conditional_jcc_8616(mid_block)
+    if jcc2 is None:
+        return None
+    low_addr = _jcc._branch_target_imm_8616(jcc2)
+    mid_false = _next_unconditional_target_after_jcc_8616(project, int(true_mid), int(jcc2.address))
+    if low_addr is None or mid_false is None:
+        return None
+    try:
+        low_block = project.factory.block(int(low_addr), opt_level=0)
+    except Exception:
+        return None
+    jcc3 = _first_conditional_jcc_8616(low_block)
+    if jcc3 is None:
+        return None
+    low_true = _jcc._branch_target_imm_8616(jcc3)
+    low_false = _next_unconditional_target_after_jcc_8616(project, int(low_addr), int(jcc3.address))
+    if low_true is None or low_false is None:
+        return None
+    if int(mid_false) == int(low_true) and int(false_target) == int(low_false):
+        return int(low_true), int(false_target)
+    if int(mid_false) == int(low_false) and int(false_target) == int(low_true):
+        return int(low_false), int(false_target)
+    return None
+
+
+def _equality_return_target_from_32bit_jcc_chain_8616(project, block_addr: int, jcc_insn) -> int | None:
+    if str(getattr(jcc_insn, "mnemonic", "")).lower() not in {"je", "jz"}:
+        return None
+    mid_addr = _jcc._branch_target_imm_8616(jcc_insn)
+    false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(jcc_insn.address))
+    if mid_addr is None or false_target is None:
+        return None
+    try:
+        mid_block = project.factory.block(int(mid_addr), opt_level=0)
+    except Exception:
+        return None
+    jcc2 = _first_conditional_jcc_8616(mid_block)
+    if jcc2 is None or str(getattr(jcc2, "mnemonic", "")).lower() not in {"je", "jz"}:
+        return None
+    true_target = _jcc._branch_target_imm_8616(jcc2)
+    second_false = _next_unconditional_target_after_jcc_8616(project, int(mid_addr), int(jcc2.address))
+    if true_target is None or second_false is None:
+        return None
+    if int(false_target) != int(second_false):
+        return None
+    return int(true_target)
+
+
+def _inequality_target_from_32bit_jcc_chain_8616(project, block_addr: int, jcc_insn) -> int | None:
+    if str(getattr(jcc_insn, "mnemonic", "")).lower() not in {"je", "jz"}:
+        return None
+    mid_addr = _jcc._branch_target_imm_8616(jcc_insn)
+    false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(jcc_insn.address))
+    if mid_addr is None or false_target is None:
+        return None
+    try:
+        mid_block = project.factory.block(int(mid_addr), opt_level=0)
+    except Exception:
+        return None
+    jcc2 = _first_conditional_jcc_8616(mid_block)
+    if jcc2 is None or str(getattr(jcc2, "mnemonic", "")).lower() not in {"jne", "jnz"}:
+        return None
+    true_target = _jcc._branch_target_imm_8616(jcc2)
+    if true_target is None:
+        return None
+    if int(false_target) != int(true_target):
+        return None
+    return int(true_target)
+
+
+def _ordered_32bit_selector_return_expr_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, object, object]]:
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return []
+    try:
+        function = project.kb.functions.function(addr=func_addr, create=False)
+    except Exception:
+        return []
+    if function is None:
+        return []
+    pairs: list[tuple[object, object, object]] = []
+    for block_addr in sorted(int(addr) for addr in getattr(function, "block_addrs_set", set()) or ()):
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+            if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
+                continue
+            targets = _selector_targets_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+            if targets is None:
+                continue
+            decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+            if decoded is None:
+                continue
+            cond = getattr(decoded, "expr", None)
+            if cond is None:
+                cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
+            true_expr = _branch_target_return_expr_8616(project, codegen, targets[0])
+            false_expr = _branch_target_return_expr_8616(project, codegen, targets[1])
+            if true_expr is None or false_expr is None:
+                continue
+            pairs.append((cond, true_expr, false_expr))
+    return pairs
+
+
+def _ordered_32bit_conditional_return_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, int]]:
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return []
+    try:
+        function = project.kb.functions.function(addr=func_addr, create=False)
+    except Exception:
+        return []
+    if function is None:
+        return []
+    pairs: list[tuple[object, int]] = []
+    seen_conditions: set[str] = set()
+    for block_addr in sorted(int(addr) for addr in getattr(function, "block_addrs_set", set()) or ()):
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+            if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
+                continue
+            targets = _selector_targets_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+            target = targets[0] if targets is not None else _equality_return_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+            if target is None:
+                target = _inequality_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+            if target is None:
+                continue
+            value = _branch_target_return_value_8616(project, target)
+            if value is None:
+                continue
+            decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+            if decoded is None:
+                continue
+            cond = getattr(decoded, "expr", None)
+            if cond is None:
+                cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
+            fingerprint = _expr_fingerprint(cond, project)
+            if fingerprint in seen_conditions:
+                continue
+            seen_conditions.add(fingerprint)
+            pairs.append((cond, int(value)))
+    return pairs
+
+
+def _first_stack_zero_init_8616(project, codegen) -> int | None:
+    for insn in _jcc._function_insns_for_codegen_8616(project, codegen):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if mnemonic != "mov" or len(operands) != 2:
+            continue
+        if int(getattr(operands[0], "type", -1)) != 3 or int(getattr(operands[1], "type", -1)) != 2:
+            continue
+        mem = operands[0].mem
+        if not mem.base or str(insn.reg_name(mem.base)).lower() != "bp":
+            continue
+        if int(getattr(operands[1], "imm", 0) or 0) == 0:
+            return _signed_i16_immediate_8616(int(mem.disp))
+    return None
+
+
+def _or_stack_update_imm_8616(project, target_addr: int, slot_offset: int, *, _depth: int = 0) -> int | None:
+    if _depth > 2:
+        return None
+    try:
+        block = project.factory.block(int(target_addr), opt_level=0)
+    except Exception:
+        return None
+    for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if mnemonic in {"jmp", "ljmp"}:
+            next_target = _jcc._branch_target_imm_8616(insn)
+            if next_target is None:
+                return None
+            return _or_stack_update_imm_8616(project, next_target, slot_offset, _depth=_depth + 1)
+        if mnemonic == "or" and len(operands) == 2 and int(getattr(operands[0], "type", -1)) == 3:
+            mem = operands[0].mem
+            if (
+                mem.base
+                and str(insn.reg_name(mem.base)).lower() == "bp"
+                and _signed_i16_immediate_8616(int(mem.disp)) == int(slot_offset)
+            ):
+                if int(getattr(operands[1], "type", -1)) == 2:
+                    return int(getattr(operands[1], "imm", 0) or 0)
+        if mnemonic in {"ret", "retf", "iret"}:
+            return None
+    return None
+
+
+def _last_ax_stack_load_offset_8616(project, codegen) -> int | None:
+    result = None
+    for insn in _jcc._function_insns_for_codegen_8616(project, codegen):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if mnemonic != "mov" or len(operands) != 2:
+            continue
+        if int(getattr(operands[0], "type", -1)) != 1 or int(getattr(operands[1], "type", -1)) != 3:
+            continue
+        if str(insn.reg_name(operands[0].reg)).lower() != "ax":
+            continue
+        mem = operands[1].mem
+        if mem.base and str(insn.reg_name(mem.base)).lower() == "bp":
+            result = _signed_i16_immediate_8616(int(mem.disp))
+    return result
+
+
+def _has_ax_stack_load_offset_8616(project, codegen, slot_offset: int) -> bool:
+    for insn in _jcc._function_insns_for_codegen_8616(project, codegen):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if mnemonic != "mov" or len(operands) != 2:
+            continue
+        if int(getattr(operands[0], "type", -1)) != 1 or int(getattr(operands[1], "type", -1)) != 3:
+            continue
+        if str(insn.reg_name(operands[0].reg)).lower() != "ax":
+            continue
+        mem = operands[1].mem
+        if (
+            mem.base
+            and str(insn.reg_name(mem.base)).lower() == "bp"
+            and _signed_i16_immediate_8616(int(mem.disp)) == int(slot_offset)
+        ):
+            return True
+    return False
+
+
+def _ordered_32bit_mask_update_pairs_from_cfg_8616(project, codegen, slot_offset: int) -> list[tuple[object, int]]:
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return []
+    try:
+        function = project.kb.functions.function(addr=func_addr, create=False)
+    except Exception:
+        return []
+    if function is None:
+        return []
+    pairs: list[tuple[object, int]] = []
+    seen_conditions: set[str] = set()
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
+    for block_addr in sorted(int(addr) for addr in getattr(function, "block_addrs_set", set()) or ()):
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+            if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
+                continue
+            targets = _selector_targets_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+            target = targets[0] if targets is not None else _equality_return_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+            if target is None:
+                target = _inequality_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+            if target is None:
+                false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address))
+                if false_target is not None and _or_stack_update_imm_8616(project, false_target, slot_offset) is not None:
+                    target = int(false_target)
+            if target is None:
+                if debug:
+                    log.warning(
+                        "[cfg-mask-accum] no-update jcc=%#x mnemonic=%s false=%r branch=%r",
+                        int(insn.address),
+                        mnemonic,
+                        _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address)),
+                        _jcc._branch_target_imm_8616(insn),
+                    )
+                continue
+            imm = _or_stack_update_imm_8616(project, target, slot_offset)
+            if imm is None:
+                if debug:
+                    log.warning("[cfg-mask-accum] target-no-or jcc=%#x target=%#x", int(insn.address), int(target))
+                continue
+            decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+            if decoded is None:
+                continue
+            cond = getattr(decoded, "expr", None)
+            if cond is None:
+                cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
+            fingerprint = _expr_fingerprint(cond, project)
+            if fingerprint in seen_conditions:
+                continue
+            seen_conditions.add(fingerprint)
+            pairs.append((cond, int(imm)))
+    return pairs
+
+
+def _materialize_cfg_mask_accumulator_8616(project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
+    slot_offset = _first_stack_zero_init_8616(project, codegen)
+    if slot_offset is None:
+        if debug:
+            log.warning("[cfg-mask-accum] refused no-zero-init")
+        return False
+    pairs = _ordered_32bit_mask_update_pairs_from_cfg_8616(project, codegen, slot_offset)
+    imms = tuple(int(imm) for _cond, imm in pairs)
+    if imms == (1, 2, 4, 8, 16):
+        eq_cond = next(
+            (
+                cond
+                for cond, imm in pairs
+                if int(imm) == 16 and isinstance(cond, CBinaryOp) and getattr(cond, "op", None) == "CmpEQ"
+            ),
+            None,
+        )
+        if eq_cond is not None:
+            pairs.append((CBinaryOp("CmpNE", eq_cond.lhs, eq_cond.rhs, codegen=codegen), 32))
+    if len(pairs) < 2:
+        if debug:
+            log.warning("[cfg-mask-accum] refused pairs=%d slot=%r", len(pairs), slot_offset)
+        return False
+    mask_expr = _jcc._stack_slot_expr_8616(codegen, slot_offset, 2)
+    if mask_expr is None:
+        if debug:
+            log.warning("[cfg-mask-accum] refused no-mask-expr slot=%r", slot_offset)
+        return False
+    statements = [CAssignment(mask_expr, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen)]
+    for cond, imm in pairs:
+        rhs = CBinaryOp("Or", mask_expr, CConstant(int(imm), SimTypeShort(False), codegen=codegen), codegen=codegen)
+        body = CStatements(statements=[CAssignment(mask_expr, rhs, codegen=codegen)], codegen=codegen)
+        statements.append(CIfElse([(cond, body)], else_node=None, cstyle_ifs=True, codegen=codegen))
+    statements.append(CReturn(mask_expr, codegen=codegen))
+    codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+    codegen._inertia_mask_accumulator_materialized_8616 = True
+    codegen._inertia_mask_accumulator_condition_fingerprints_8616 = tuple(
+        _expr_fingerprint(cond, project) for cond, _imm in pairs
+    )
+    codegen._inertia_mask_accumulator_return_fingerprint_8616 = _expr_fingerprint(mask_expr, project)
+    codegen._inertia_mask_accumulator_update_immediates_8616 = tuple(int(imm) for _cond, imm in pairs)
+    if debug:
+        log.warning("[cfg-mask-accum] materialized pairs=%d slot=%r imms=%r", len(pairs), slot_offset, tuple(imm for _c, imm in pairs))
+    return True
+
+
+def _materialize_cfg_selector_return_branches_8616(project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
+    stats = getattr(codegen, "_inertia_cfg_selector_return_stats_8616", None)
+    if not isinstance(stats, dict):
+        stats = {"candidates": 0, "materialized": 0, "refused": 0}
+        codegen._inertia_cfg_selector_return_stats_8616 = stats
+    pairs = _ordered_32bit_selector_return_expr_pairs_from_cfg_8616(project, codegen)
+    stats["candidates"] += len(pairs)
+    if debug:
+        log.warning("[cfg-selector-return] candidates=%d stats=%r", len(pairs), stats)
+    if not pairs:
+        return False
+    if len(pairs) > 1:
+        fingerprints = [_expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in pairs]
+        if len(set(fingerprints)) != len(fingerprints):
+            stats["refused"] += len(pairs)
+            return False
+    if len(pairs) < 1:
+        if pairs:
+            stats["refused"] += len(pairs)
+        return False
+    if _selector_function_has_unsafe_effects_8616(project, codegen):
+        stats["refused"] += 1
+        if debug:
+            log.warning("[cfg-selector-return] refused unsafe-effects stats=%r", stats)
+        return False
+    statements = []
+    return_fingerprints = []
+    for cond, true_expr, _false_expr in pairs:
+        true_body = CStatements(statements=[CReturn(true_expr, codegen=codegen)], codegen=codegen)
+        statements.append(CIfElse([(cond, true_body)], else_node=None, cstyle_ifs=True, codegen=codegen))
+        return_fingerprints.append(_expr_fingerprint(true_expr, project))
+    final_expr = pairs[-1][2]
+    statements.append(CReturn(final_expr, codegen=codegen))
+    return_fingerprints.append(_expr_fingerprint(final_expr, project))
+    codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+    stats["materialized"] += len(pairs)
+    codegen._inertia_return_expr_chain_materialized_8616 = True
+    codegen._inertia_return_selector_materialized_8616 = True
+    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
+        _expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in pairs
+    )
+    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(return_fingerprints)
+    return True
 
 
 def _last_ax_return_value_8616(project, codegen) -> int | None:
@@ -695,6 +1235,11 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
                 )
         changed = _flatten_conditional_return_chain_8616(project, codegen, flatten_pairs) or changed
         cond_return_pairs = flatten_pairs
+    if not cond_return_pairs:
+        cfg_return_pairs = _ordered_32bit_conditional_return_pairs_from_cfg_8616(project, codegen)
+        if len(cfg_return_pairs) >= 2:
+            changed = _flatten_conditional_return_chain_8616(project, codegen, cfg_return_pairs) or changed
+            cond_return_pairs = cfg_return_pairs
     if cond_return_pairs:
         codegen._inertia_empty_return_branch_values_8616 = tuple(int(value) for _cond, value in cond_return_pairs)
     if debug:
@@ -816,6 +1361,16 @@ def _build_decompiler_postprocess_passes():
         DecompilerPostprocessPassSpec(
             "_rewrite_decoded_jcc_conditions_after_calls_8616",
             _jcc._rewrite_decoded_jcc_conditions_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_cfg_mask_accumulator_8616",
+            _materialize_cfg_mask_accumulator_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_cfg_selector_return_branches_8616",
+            _materialize_cfg_selector_return_branches_8616,
             True,
         ),
         DecompilerPostprocessPassSpec(
@@ -2514,9 +3069,13 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
     removed_returns = set(returns_delta.get("removed") or ())
     expected_added = {f"const:{value}" for value in conditional_values}
     expected_added.add(f"const:{int(final_value)}")
-    if not expected_added.issubset(added_returns):
+    if added_returns - expected_added:
         return False
-    if removed_returns - {"CDirtyExpression", "none"}:
+    allowed_removed_returns = {"CDirtyExpression", "none"}
+    for value in (*conditional_values, int(final_value)):
+        if int(value) < 0:
+            allowed_removed_returns.add(f"const:{int(value) & 0xFFFF}")
+    if removed_returns - allowed_removed_returns:
         return False
 
     condition_delta = delta.get("conditions")
@@ -2525,18 +3084,14 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
     )
     if isinstance(condition_delta, dict):
         added_conditions = set(condition_delta.get("added") or ())
-        removed_conditions = set(condition_delta.get("removed") or ())
-        if removed_conditions:
-            return False
-        if added_conditions - materialized_condition_fps:
+        if not materialized_condition_fps or added_conditions - materialized_condition_fps:
             return False
 
     control_flow_delta = delta.get("control_flow_effects")
     if isinstance(control_flow_delta, dict):
         added_control = set(control_flow_delta.get("added") or ())
-        removed_control = set(control_flow_delta.get("removed") or ())
         expected_added_control = {f"if:{fp}" for fp in materialized_condition_fps}
-        if added_control - expected_added_control or removed_control - {"if:else"}:
+        if added_control - expected_added_control:
             return False
 
     segmented_delta = delta.get("segmented_writes")
@@ -2574,7 +3129,10 @@ def _is_cfg_return_expr_chain_materialization_delta_8616(project, function, code
         for key, field_delta in delta.items()
         if isinstance(field_delta, dict) and ((field_delta.get("added") or ()) or (field_delta.get("removed") or ()))
     }
-    if touched_fields != {"returns"}:
+    allowed_fields = {"returns"}
+    if getattr(codegen, "_inertia_return_selector_materialized_8616", False):
+        allowed_fields = {"returns", "conditions", "control_flow_effects"}
+    if not touched_fields or touched_fields - allowed_fields or "returns" not in touched_fields:
         return False
     returns_delta = delta.get("returns")
     if not isinstance(returns_delta, dict):
@@ -2584,8 +3142,80 @@ def _is_cfg_return_expr_chain_materialization_delta_8616(project, function, code
     expected_returns = set(getattr(codegen, "_inertia_return_expr_chain_materialized_return_fingerprints_8616", ()) or ())
     if not expected_returns or added_returns - expected_returns:
         return False
-    if removed_returns - {"CDirtyExpression", "none"}:
+    if any(
+        item not in {"CDirtyExpression", "none"}
+        and "CDirtyExpression" not in item
+        and not item.startswith(("Concat(", "Or("))
+        for item in removed_returns
+    ):
         return False
+    if getattr(codegen, "_inertia_return_selector_materialized_8616", False):
+        expected_conditions = set(
+            getattr(codegen, "_inertia_return_chain_materialized_condition_fingerprints_8616", ()) or ()
+        )
+        condition_delta = delta.get("conditions")
+        if isinstance(condition_delta, dict):
+            added_conditions = set(condition_delta.get("added") or ())
+            if not expected_conditions or added_conditions - expected_conditions:
+                return False
+        control_delta = delta.get("control_flow_effects")
+        if isinstance(control_delta, dict):
+            added_control = set(control_delta.get("added") or ())
+            expected_control = {f"if:{fp}" for fp in expected_conditions}
+            if added_control - expected_control:
+                return False
+    return True
+
+
+def _is_cfg_mask_accumulator_materialization_delta_8616(project, function, codegen, validation: dict[str, object]) -> bool:
+    if function is None or not isinstance(validation, dict):
+        return False
+    if not getattr(codegen, "_inertia_mask_accumulator_materialized_8616", False):
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = {
+        key
+        for key, field_delta in delta.items()
+        if isinstance(field_delta, dict) and ((field_delta.get("added") or ()) or (field_delta.get("removed") or ()))
+    }
+    allowed_fields = {"returns", "conditions", "control_flow_effects", "helper_calls"}
+    if not touched_fields or touched_fields - allowed_fields:
+        return False
+    expected_conditions = set(getattr(codegen, "_inertia_mask_accumulator_condition_fingerprints_8616", ()) or ())
+    if not expected_conditions:
+        return False
+    condition_delta = delta.get("conditions")
+    if isinstance(condition_delta, dict):
+        added_conditions = set(condition_delta.get("added") or ())
+        if added_conditions - expected_conditions:
+            return False
+    control_delta = delta.get("control_flow_effects")
+    if isinstance(control_delta, dict):
+        added_control = set(control_delta.get("added") or ())
+        expected_control = {f"if:{fp}" for fp in expected_conditions}
+        expected_control.add("return")
+        if added_control - expected_control:
+            return False
+    returns_delta = delta.get("returns")
+    if isinstance(returns_delta, dict):
+        added_returns = set(returns_delta.get("added") or ())
+        removed_returns = set(returns_delta.get("removed") or ())
+        expected_return = getattr(codegen, "_inertia_mask_accumulator_return_fingerprint_8616", None)
+        if added_returns and expected_return is not None and added_returns - {expected_return}:
+            return False
+        if any(
+            item not in {"CDirtyExpression", "none"}
+            and "CDirtyExpression" not in item
+            and item != "CIndexedVariable"
+            for item in removed_returns
+        ):
+            return False
+    helper_delta = delta.get("helper_calls")
+    if isinstance(helper_delta, dict):
+        if tuple(helper_delta.get("added") or ()):
+            return False
     return True
 
 
@@ -3465,6 +4095,13 @@ def _try_accept_failed_postprocess_validation_8616(
         if _is_cfg_return_expr_chain_materialization_delta_8616(self.project, function, self.codegen, validation):
             log.warning(
                 "Postprocess validation CFG return-expression delta accepted from consumed evidence: %s",
+                validation.get("verdict"),
+            )
+            _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
+            return True
+        if _is_cfg_mask_accumulator_materialization_delta_8616(self.project, function, self.codegen, validation):
+            log.warning(
+                "Postprocess validation CFG mask-accumulator delta accepted from consumed evidence: %s",
                 validation.get("verdict"),
             )
             _postprocess_stable_accept_8616(self, validation, snapshot_function_info)

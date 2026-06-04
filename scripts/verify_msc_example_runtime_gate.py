@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -49,6 +50,115 @@ class ExampleSpec:
     exe: Path
     output_stem: str
     functions: tuple[FunctionSpec, ...]
+    harness_main: str
+
+
+CMP16_HARNESS_MAIN = """
+int main(void)
+{
+    if (cmp_i16(-2, 5) != -1) {
+        return 1;
+    }
+    if (cmp_i16(9, 3) != 1) {
+        return 2;
+    }
+    if (cmp_i16(7, 7) != 0) {
+        return 3;
+    }
+    if (rel_i16(-2, 5) != (1 | 2 | 32)) {
+        return 4;
+    }
+    if (rel_i16(9, 3) != (4 | 8 | 32)) {
+        return 5;
+    }
+    if (rel_i16(7, 7) != (2 | 8 | 16)) {
+        return 6;
+    }
+    if (rel_u16(2U, 9U) != (1 | 2 | 32)) {
+        return 7;
+    }
+    if (rel_u16(12U, 3U) != (4 | 8 | 32)) {
+        return 8;
+    }
+    if (rel_u16(6U, 6U) != (2 | 8 | 16)) {
+        return 9;
+    }
+    if (clamp_u16(10U, 7U) != 7U) {
+        return 10;
+    }
+    if (clamp_u16(6U, 7U) != 6U) {
+        return 11;
+    }
+    if (in_window_i16(4, 1, 7) != 1) {
+        return 12;
+    }
+    if (in_window_i16(9, 1, 7) != 0) {
+        return 13;
+    }
+    return 255;
+}
+"""
+
+
+CMP32_HARNESS_MAIN = """
+int main(void)
+{
+    long a;
+    long b;
+    unsigned long ua;
+    unsigned long ub;
+    long clipped;
+
+    a = 100000L;
+    b = -2000L;
+    ua = 300000UL;
+    ub = 300001UL;
+    clipped = clamp_window(a, -100L, 50000L);
+    if (select_max(a, b) != a) {
+        return 1;
+    }
+    if (compare_signed(a, b) != 1) {
+        return 2;
+    }
+    if (compare_signed(b, a) != -1) {
+        return 3;
+    }
+    if (compare_signed(a, a) != 0) {
+        return 4;
+    }
+    if (compare_unsigned(ua, ub) != -1) {
+        return 5;
+    }
+    if (compare_unsigned(ub, ua) != 1) {
+        return 6;
+    }
+    if (compare_unsigned(ua, ua) != 0) {
+        return 7;
+    }
+    if (rel_signed32(b, a) != (1 | 2 | 32)) {
+        return 8;
+    }
+    if (rel_signed32(a, b) != (4 | 8 | 32)) {
+        return 9;
+    }
+    if (rel_signed32(a, a) != (2 | 8 | 16)) {
+        return 10;
+    }
+    if (rel_unsigned32(ua, ub) != (1 | 2 | 32)) {
+        return 11;
+    }
+    if (rel_unsigned32(ub, ua) != (4 | 8 | 32)) {
+        return 12;
+    }
+    if (rel_unsigned32(ua, ua) != (2 | 8 | 16)) {
+        return 13;
+    }
+    if (clipped != 50000L) {
+        return 14;
+    }
+    return 255;
+}
+"""
 
 
 EXAMPLES: dict[str, ExampleSpec] = {
@@ -62,8 +172,8 @@ EXAMPLES: dict[str, ExampleSpec] = {
             FunctionSpec("rel_u16", proc_kind="NEAR"),
             FunctionSpec("clamp_u16", proc_kind="NEAR"),
             FunctionSpec("in_window_i16", proc_kind="NEAR"),
-            FunctionSpec("main", addr="0x101a7"),
         ),
+        harness_main=CMP16_HARNESS_MAIN,
     ),
     "cmp32": ExampleSpec(
         name="cmp32",
@@ -76,8 +186,8 @@ EXAMPLES: dict[str, ExampleSpec] = {
             FunctionSpec("clamp_window", proc_kind="NEAR"),
             FunctionSpec("rel_signed32", proc_kind="NEAR"),
             FunctionSpec("rel_unsigned32", proc_kind="NEAR"),
-            FunctionSpec("main", addr="0x10322"),
         ),
+        harness_main=CMP32_HARNESS_MAIN,
     ),
 }
 
@@ -179,13 +289,15 @@ def _find_function_definition(c_text: str, function_name: str) -> str:
     raise RuntimeGateError(RuntimeGateStage.EXTRACT, f"unterminated generated definition for {function_name}")
 
 
-def _build_full_source(function_bodies: list[str]) -> str:
+def _build_full_source(example: ExampleSpec, function_bodies: list[str]) -> str:
     return "\n".join(
         [
             "#include <stdbool.h>",
             "#include <stdint.h>",
             "",
             *function_bodies,
+            "",
+            textwrap.dedent(example.harness_main).strip(),
             "",
         ]
     )
@@ -225,7 +337,7 @@ def _verify_example(
         bodies.append(_find_function_definition(c_text, function.name))
 
     source_path = out_dir / f"{example.output_stem}.C"
-    source_path.write_text(_build_full_source(bodies), encoding="utf-8")
+    source_path.write_text(_build_full_source(example, bodies), encoding="utf-8")
 
     exe_name = f"{example.output_stem}.EXE"
     built_ok, compile_stdout, compile_stderr, link_stdout, link_stderr = _compile_and_link(

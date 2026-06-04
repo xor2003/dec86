@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
+from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -23,7 +25,6 @@ from angr.sim_type import (
     SimTypePointer,
     SimTypeShort,
 )
-from types import SimpleNamespace
 
 try:
     from angr.analyses.typehoon import lifter as _typehoon_lifter
@@ -177,14 +178,60 @@ def _set_codegen_prototype_8616(codegen, prototype) -> None:
 
 def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen: SimpleNamespace) -> bool:
     def _impl():
-        def _should_drop_arg(variable, stack_specs) -> bool:
+        debug = os.environ.get("INERTIA_DEBUG_RETADDR_PRUNE") == "1"
+
+        def _debug_stack_variable(container: str, variable) -> None:
+            if not debug or not isinstance(variable, SimStackVariable):
+                return
+            identity = _stack_slot_identity_for_variable(variable)
+            logging.getLogger(__name__).warning(
+                "[retaddr-prune] %s name=%r offset=%r size=%r base=%r identity=%r",
+                container,
+                getattr(variable, "name", None),
+                getattr(variable, "offset", None),
+                getattr(variable, "size", None),
+                getattr(variable, "base", None),
+                identity,
+            )
+
+        def _return_address_stack_offset(variable) -> int | None:
             if not isinstance(variable, SimStackVariable):
-                return False
+                return None
             identity = _stack_slot_identity_for_variable(variable)
             if identity is None or getattr(identity, "base", None) != "bp":
-                return False
+                return None
             slot_offset = getattr(identity, "offset", None)
-            return slot_offset in {0, 2} and slot_offset not in stack_specs
+            return slot_offset if isinstance(slot_offset, int) else None
+
+        def _should_drop_arg(variable, stack_specs) -> bool:
+            slot_offset = _return_address_stack_offset(variable)
+            if slot_offset != 0:
+                return False
+            # BP+2 is the near return IP, not a source-level argument. Metadata
+            # can label object-file stack slots with a different bias, but it
+            # must not override the architectural return-address exclusion.
+            return True
+
+        def _prune_return_address_variable_maps() -> bool:
+            changed_maps = False
+            cfunc = getattr(codegen, "cfunc", None)
+            if cfunc is None:
+                return False
+            variables_in_use = getattr(cfunc, "variables_in_use", None)
+            if isinstance(variables_in_use, dict):
+                for variable in tuple(variables_in_use.keys()):
+                    _debug_stack_variable("variables_in_use", variable)
+                    if _return_address_stack_offset(variable) == 0:
+                        del variables_in_use[variable]
+                        changed_maps = True
+            unified = getattr(cfunc, "unified_local_vars", None)
+            if isinstance(unified, dict):
+                for variable in tuple(unified.keys()):
+                    _debug_stack_variable("unified_local_vars", variable)
+                    if _return_address_stack_offset(variable) == 0:
+                        del unified[variable]
+                        changed_maps = True
+            return changed_maps
 
         def _arg_name_from_stack_spec(variable, stack_specs):
             arg_name = getattr(variable, "name", None)
@@ -245,17 +292,19 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
         stack_specs = annotations.get("stack_vars", {}) if isinstance(annotations, dict) else {}
         arg_list = list(getattr(codegen.cfunc, "arg_list", ()) or ())
         if prototype is None or not arg_list:
-            return False
+            return _prune_return_address_variable_maps()
 
         kept_args = []
         changed = False
         for arg in arg_list:
             variable = getattr(arg, "variable", None)
+            _debug_stack_variable("arg_list", variable)
             if _should_drop_arg(variable, stack_specs):
                 changed = True
                 continue
             kept_args.append(arg)
 
+        changed = _prune_return_address_variable_maps() or changed
         if not changed:
             return False
         codegen.cfunc.arg_list = kept_args
@@ -660,6 +709,15 @@ def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codege
         annotations, source_pointer_flags, stack_specs, annotated_args = _collect_stack_promotion_inputs_8616(func)
         arg_names = list(getattr(prototype, "arg_names", None) or ())
 
+        if _sync_arg_list_from_prototype_stack_layout_8616(
+            project=project,
+            codegen=codegen,
+            func=func,
+            prototype=prototype,
+            arg_names=arg_names,
+        ):
+            return True
+
         if _promote_from_annotated_args_8616(
             project=project,
             codegen=codegen,
@@ -685,6 +743,90 @@ def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codege
             return True
 
         return _promote_from_legacy_arg_names_8616(project=project, codegen=codegen, func=func, prototype=prototype, arg_names=arg_names)
+
+    return _impl()
+
+
+def _type_size_bytes_8616(type_, *, default: int = 2) -> int:
+    bits = getattr(type_, "size", None)
+    if isinstance(bits, int) and bits > 0:
+        return max(1, (bits + 7) // 8)
+    return default
+
+
+def _sync_arg_list_from_prototype_stack_layout_8616(*, project, codegen, func, prototype, arg_names: list[str]) -> bool:
+    def _impl():
+        proto_args = list(getattr(prototype, "args", ()) or ())
+        if not proto_args:
+            return False
+        cfunc = getattr(codegen, "cfunc", None)
+        if cfunc is None:
+            return False
+        func_addr = getattr(cfunc, "addr", None)
+        variables_in_use = getattr(cfunc, "variables_in_use", None)
+        if not isinstance(variables_in_use, dict):
+            return False
+        unified = getattr(cfunc, "unified_local_vars", None)
+        stack_cvars_by_offset: dict[int, CVariable] = {}
+        for variable, cvar in variables_in_use.items():
+            if isinstance(variable, SimStackVariable) and isinstance(cvar, CVariable):
+                stack_cvars_by_offset.setdefault(getattr(variable, "offset", None), cvar)
+
+        desired_args = []
+        expected_offsets: set[int] = set()
+        offset = 4
+        changed = False
+        for index, arg_type in enumerate(proto_args):
+            width = max(2, _type_size_bytes_8616(arg_type))
+            expected_offsets.add(offset)
+            name = arg_names[index] if index < len(arg_names) and isinstance(arg_names[index], str) else f"a{index}"
+            cvar = stack_cvars_by_offset.get(offset)
+            variable = getattr(cvar, "variable", None) if cvar is not None else None
+            if not isinstance(variable, SimStackVariable) or getattr(variable, "size", None) != width:
+                variable = SimStackVariable(offset, width, base="bp", name=name, region=func_addr)
+                cvar = CVariable(variable, variable_type=arg_type, codegen=codegen)
+                variables_in_use[variable] = cvar
+                if isinstance(unified, dict):
+                    unified[variable] = {(cvar, arg_type)}
+                changed = True
+            if getattr(variable, "name", None) != name:
+                variable.name = name
+                changed = True
+            if getattr(cvar, "name", None) != name:
+                with contextlib.suppress(Exception):
+                    cvar.name = name
+                changed = True
+            if getattr(cvar, "variable_type", None) != arg_type:
+                cvar.variable_type = arg_type
+                changed = True
+            desired_args.append(cvar)
+            offset += width
+
+        first_arg_offset = min(expected_offsets) if expected_offsets else 4
+        for variable in tuple(variables_in_use.keys()):
+            if not isinstance(variable, SimStackVariable):
+                continue
+            var_offset = getattr(variable, "offset", None)
+            if isinstance(var_offset, int) and 0 < var_offset < first_arg_offset:
+                del variables_in_use[variable]
+                changed = True
+        if isinstance(unified, dict):
+            for variable in tuple(unified.keys()):
+                if not isinstance(variable, SimStackVariable):
+                    continue
+                var_offset = getattr(variable, "offset", None)
+                if isinstance(var_offset, int) and 0 < var_offset < first_arg_offset:
+                    del unified[variable]
+                    changed = True
+
+        existing_args = list(getattr(cfunc, "arg_list", ()) or ())
+        if len(existing_args) != len(desired_args) or any(existing is not desired for existing, desired in zip(existing_args, desired_args)):
+            cfunc.arg_list = desired_args
+            changed = True
+        if getattr(cfunc, "functy", None) is not prototype:
+            _set_codegen_prototype_8616(codegen, prototype)
+            changed = True
+        return changed
 
     return _impl()
 
@@ -1126,7 +1268,6 @@ def _prune_void_function_return_values_8616(project, codegen) -> bool:
     if func is None:
         return False
 
-    prototype = getattr(func, "prototype", None)
     if not _function_has_void_return_prototype_8616(func):
         return False
 

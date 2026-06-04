@@ -10,6 +10,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CMP16_EXE = REPO_ROOT / "examples" / "build_msc6" / "CMP16.EXE"
+CMP32_EXE = REPO_ROOT / "examples" / "build_msc6" / "COMP32.EXE"
 CLI_PATH = REPO_ROOT / "decompile.py"
 RUNTIME_GATE_PATH = REPO_ROOT / "scripts" / "verify_msc_example_runtime_gate.py"
 KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
@@ -209,19 +210,33 @@ def test_msc6_cmp16_all_helper_functions_pass_tail_validation_and_msc_recompile(
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
 @pytest.mark.skipif(not KVIKDOS_PATH.is_file(), reason="kvikdos is not available in this workspace.")
 @pytest.mark.skipif(not MSC6_ROOT.is_dir(), reason="MS C 6 root is not available in this workspace.")
-def test_msc6_cmp16_full_rebuilt_executable_runs_zero(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("example_name", "exe_path"),
+    [
+        ("cmp16", CMP16_EXE),
+        ("cmp32", CMP32_EXE),
+    ],
+)
+def test_msc6_rebuilt_comparison_executable_runs_success_sentinel(
+    tmp_path: Path,
+    example_name: str,
+    exe_path: Path,
+) -> None:
+    if not exe_path.is_file():
+        pytest.skip(f"{example_name} example binary is not available in this workspace.")
+
     result = subprocess.run(
         [
             sys.executable,
             str(RUNTIME_GATE_PATH),
             "--example",
-            "cmp16",
+            example_name,
             "--expected-exit-code",
             "255",
             "--timeout",
             "60",
             "--out-dir",
-            str(tmp_path / "cmp16_runtime_gate"),
+            str(tmp_path / f"{example_name}_runtime_gate"),
             "--clean",
         ],
         cwd=REPO_ROOT,
