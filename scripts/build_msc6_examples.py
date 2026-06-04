@@ -14,6 +14,9 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from signature_catalog import build_signature_catalog
+from inertia_decompiler.flair_paths import default_flair_startup_root
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -28,6 +31,7 @@ DEFAULT_MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6a
 DEFAULT_DECOMPILE = REPO_ROOT / "decompile.py"
 DEFAULT_DECOMPILE_SKIP = ("enum_union", "medium_structs")
 HARNESS_SUCCESS_EXIT_CODE = 255
+DEFAULT_SIGNATURE_CATALOG_NAME = "runtime_signature_catalog.pat"
 DECOMPILE_MAIN_NAMES = ("main", "MAIN", "_main", "_MAIN", "start", "_start")
 DECOMPILE_MAIN_TIMEOUT_SECONDS_DEFAULT = 60
 DECOMPILE_MAIN_RUN_TIMEOUT_SECONDS_DEFAULT = 60
@@ -101,6 +105,48 @@ def _run(
         check=False,
         env=runtime_env,
     )
+
+
+def _prepare_signature_catalog(
+    *,
+    signature_inputs: list[Path],
+    signature_catalog_output: Path | None,
+    signature_cache_dir: Path | None,
+    build_root: Path,
+    default_catalog_name: str,
+) -> Path | None:
+    if not signature_inputs:
+        return None
+
+    output_path = signature_catalog_output
+    if output_path is None:
+        output_path = build_root / "signature_catalogs" / default_catalog_name
+
+    if output_path.is_absolute():
+        prepared_output = output_path
+    else:
+        prepared_output = (build_root / output_path).resolve()
+
+    cache_dir = signature_cache_dir
+    if cache_dir is None:
+        cache_dir = prepared_output.parent / ".signature_catalog_cache"
+    elif not cache_dir.is_absolute():
+        cache_dir = build_root / cache_dir
+
+    result = build_signature_catalog(
+        tuple(path.resolve() for path in signature_inputs),
+        prepared_output,
+        recursive=True,
+        cache_dir=cache_dir,
+        flair_root=default_flair_startup_root(),
+    )
+    print(
+        f"prepared signature catalog: {result.output_path} "
+        f"inputs={result.input_count} "
+        f"unique_modules={result.unique_module_count} "
+        f"duplicates={result.duplicate_module_count}"
+    )
+    return result.output_path
 
 
 def _dos_safe_names(stem: str, counter: int | None = None) -> tuple[str, str, str, str]:
@@ -748,6 +794,7 @@ def _decompile(
     decompile_force_rizin_8616: bool,
     decompile_ignore_local_sidecar_hints: bool,
     decompile_pat_backend: str | None = None,
+    decompile_signature_catalog: Path | None = None,
 ) -> tuple[bool, Path, Path, float, dict[str, object]]:
     stdout_path = out_dir / f"{exe_path.stem}.dec.txt"
     stderr_path = out_dir / f"{exe_path.stem}.dec.err.txt"
@@ -768,6 +815,8 @@ def _decompile(
         cmd.extend(["--ignore-local-sidecar-hints"])
     if decompile_pat_backend is not None:
         cmd.extend(["--pat-backend", decompile_pat_backend])
+    if decompile_signature_catalog is not None:
+        cmd.extend(["--signature-catalog", str(decompile_signature_catalog)])
     profile: dict[str, object] = {
         "decompile_mode": decompile_mode,
         "discovery_backend": decompile_function_discovery_backend,
@@ -775,6 +824,7 @@ def _decompile(
         "rizin_timeout": decompile_rizin_timeout,
         "force_rizin_8616": decompile_force_rizin_8616,
         "pat_backend": decompile_pat_backend,
+        "signature_catalog": str(decompile_signature_catalog) if decompile_signature_catalog is not None else None,
         "selected": {},
     }
     if decompile_mode == "main":
@@ -1003,6 +1053,7 @@ def _decompile_and_validate(
     decompile_force_rizin_8616: bool = False,
     decompile_ignore_local_sidecar_hints: bool = False,
     decompile_pat_backend: str | None = None,
+    decompile_signature_catalog: Path | None = None,
 ) -> tuple[bool, Path, Path, bool, bool, int | None, str, str, str, str, str, str, float, int, str]:
     def _selected_function_count(profile: dict[str, object]) -> int:
         for key in ("attempted_total", "attempted_count", "functions_selected"):
@@ -1031,6 +1082,7 @@ def _decompile_and_validate(
         decompile_force_rizin_8616=decompile_force_rizin_8616,
         decompile_ignore_local_sidecar_hints=decompile_ignore_local_sidecar_hints,
         decompile_pat_backend=decompile_pat_backend,
+        decompile_signature_catalog=decompile_signature_catalog,
     )
     if not decompile_ok:
         selected_functions = _selected_function_count(decompile_profile)
@@ -1190,7 +1242,57 @@ def main() -> int:
         default=None,
         help="Optional override for PAT backend.",
     )
+    ap.add_argument(
+        "--signature-catalog",
+        type=Path,
+        default=None,
+        help="Optional prebuilt signature catalog path for the decompiler.",
+    )
+    ap.add_argument(
+        "--signature-input",
+        action="append",
+        type=Path,
+        default=[],
+        help="Additional .pat/.obj/.lib inputs (or directories) to build a temporary catalog for this run.",
+    )
+    ap.add_argument(
+        "--signature-catalog-output",
+        type=Path,
+        default=None,
+        help="Output path when building a temporary catalog from --signature-input (default: <out-dir>/signature_catalogs/runtime_signature_catalog.pat).",
+    )
+    ap.add_argument(
+        "--signature-cache-dir",
+        type=Path,
+        default=None,
+        help="Cache directory when building a temporary signature catalog.",
+    )
     args = ap.parse_args()
+
+    signature_inputs: list[Path] = list(args.signature_input)
+    if args.signature_catalog is not None:
+        signature_catalog = args.signature_catalog
+        if not signature_catalog.is_absolute():
+            signature_catalog = (REPO_ROOT / signature_catalog).resolve()
+        if args.signature_input:
+            signature_inputs = [signature_catalog] + [path for path in args.signature_input]
+            signature_catalog = None
+    else:
+        signature_catalog: Path | None = None
+
+    if signature_inputs:
+        prepared_catalog = _prepare_signature_catalog(
+            signature_inputs=signature_inputs,
+            signature_catalog_output=args.signature_catalog_output,
+            signature_cache_dir=args.signature_cache_dir,
+            build_root=args.out_dir,
+            default_catalog_name=DEFAULT_SIGNATURE_CATALOG_NAME,
+        )
+        if prepared_catalog is None:
+            return 1
+        signature_catalog = prepared_catalog
+    if signature_catalog is not None and not signature_catalog.exists():
+        raise SystemExit(f"signature catalog not found: {signature_catalog}")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     results: list[ExampleResult] = []
@@ -1303,6 +1405,7 @@ def main() -> int:
                 decompile_force_rizin_8616=args.decompile_force_rizin_8616,
                 decompile_ignore_local_sidecar_hints=args.decompile_ignore_local_sidecar_hints,
                 decompile_pat_backend=args.decompile_pat_backend,
+                decompile_signature_catalog=signature_catalog,
                 decompile_safe_names=(
                     decompile_c_name,
                     decompile_obj_name,
