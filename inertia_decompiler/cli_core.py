@@ -1012,6 +1012,22 @@ def _function_work_cache_lookup(
                         tail_validation_enabled,
                         expected_validation_stages,
                     )
+                source_blocker = _source_evidence_return_blocker_8616(
+                    binary_path=binary_path,
+                    function_name=str(getattr(item.function, "name", "")) or None,
+                    payload=cached_payload,
+                )
+                if source_blocker is not None:
+                    return (
+                        None,
+                        (
+                            f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
+                            f"{getattr(item.function, 'name', 'sub')} source_gate={source_blocker}\n"
+                        ),
+                        cache_key,
+                        tail_validation_enabled,
+                        expected_validation_stages,
+                    )
                 cache_validation_status = (
                     "uncollected"
                     if not tail_validation_enabled
@@ -1141,6 +1157,11 @@ def _run_function_work_item(
             tail_validation_enabled: bool,
             expected_validation_stages: tuple[str, ...],
         ) -> FunctionWorkResult:
+            source_evidence_payload = _source_evidence_payload_for_function_8616(
+                binary_path=binary_path,
+                function_name=item.function.name,
+                payload=payload,
+            )
             acceptance = _validated_generated_c_acceptance_8616(
                 status=status,
                 payload=payload,
@@ -1148,6 +1169,7 @@ def _run_function_work_item(
                 tail_validation_enabled=tail_validation_enabled,
                 expected_validation_stages=expected_validation_stages,
                 c_target=getattr(decompile_project, "_inertia_c_target", "portable-flat"),
+                source_evidence_payload=source_evidence_payload,
             )
             status = acceptance.status
             acceptance_blocker = acceptance.blocker
@@ -1558,6 +1580,7 @@ def _validated_generated_c_acceptance_8616(
     expected_validation_stages: list[str] | tuple[str, ...],
     c_target: str = "portable-flat",
     emit_failure_diagnostics: bool = True,
+    source_evidence_payload: str | None = None,
 ) -> CAcceptanceResult8616:
     def _impl():
         baseline_payload = payload if isinstance(payload, str) else ""
@@ -1607,6 +1630,10 @@ def _validated_generated_c_acceptance_8616(
             if len(quality.markers) > 3:
                 marker_summary += ", ..."
             return _validation_fail(f"Final quality guard rejected emitted C ({marker_summary}).")
+        semantic_gate_payload = source_evidence_payload if isinstance(source_evidence_payload, str) else accepted_payload
+        missing_returns = _missing_expected_return_values_from_embedded_evidence_8616(semantic_gate_payload)
+        if missing_returns:
+            return _validation_fail("Missing source-evidenced return values in emitted C: " + ", ".join(missing_returns[:8]))
         if not tail_validation_enabled:
             return _acceptance_result_8616("ok", None, accepted_payload)
         if not _tail_validation_passes_lenient(
@@ -1617,9 +1644,6 @@ def _validated_generated_c_acceptance_8616(
             detail = _tail_validation_stage_detail_8616(tail_validation_snapshot, expected_validation_stages)
             return _validation_fail(f"Tail validation {display_status} ({detail}).")
 
-        missing_returns = _missing_expected_return_values_from_embedded_evidence_8616(accepted_payload)
-        if missing_returns:
-            return _validation_fail("Missing source-evidenced return values in emitted C: " + ", ".join(missing_returns[:8]))
         checked_payloads, recomp_failure = _collect_recompilation_payloads_8616(accepted_payload)
         if recomp_failure is not None:
             return _validation_fail(recomp_failure)
@@ -1695,6 +1719,44 @@ def _with_source_evidence_comments_8616(
         return payload
     source_lines = "\n".join(f"/// {line}" for line in source_text.splitlines())
     return f"{source_lines}\n{payload}"
+
+
+def _source_evidence_payload_for_function_8616(
+    *,
+    binary_path: Path | None,
+    function_name: str | None,
+    payload: str,
+) -> str:
+    emitted_function_name = _extract_emitted_function_name_8616(payload)
+    for candidate_name in (emitted_function_name, function_name):
+        if not isinstance(candidate_name, str) or not candidate_name:
+            continue
+        wrapped = _with_source_evidence_comments_8616(
+            binary_path,
+            candidate_name,
+            payload,
+            enabled=bool(binary_path),
+        )
+        if wrapped != payload:
+            return wrapped
+    return payload
+
+
+def _source_evidence_return_blocker_8616(
+    *,
+    binary_path: Path | None,
+    function_name: str | None,
+    payload: str,
+) -> str | None:
+    source_evidence_payload = _source_evidence_payload_for_function_8616(
+        binary_path=binary_path,
+        function_name=function_name,
+        payload=payload,
+    )
+    missing_returns = _missing_expected_return_values_from_embedded_evidence_8616(source_evidence_payload)
+    if not missing_returns:
+        return None
+    return "Missing source-evidenced return values in emitted C: " + ", ".join(missing_returns[:8])
 
 
 def _mark_tail_validation_failed_with_blocker_8616(
@@ -5998,6 +6060,22 @@ def main(argv: list[str] | None = None) -> int:
                                     function_cfg=active_item.function_cfg,
                                     failure_stage="decompilation",
                                 )
+                    if result is not None and result.status == "ok":
+                        source_blocker = _source_evidence_return_blocker_8616(
+                            binary_path=args.binary,
+                            function_name=getattr(getattr(result, "function", None), "name", None)
+                            or getattr(item.function, "name", None),
+                            payload=result.payload if isinstance(result.payload, str) else "",
+                        )
+                        if source_blocker is not None:
+                            result = replace(
+                                result,
+                                status="validation_failed",
+                                payload=source_blocker,
+                                partial_payload=result.payload
+                                if isinstance(result.payload, str) and result.payload.strip()
+                                else result.partial_payload,
+                            )
                     if result is not None and result.status == "ok":
                         byte_count = getattr(result, "byte_count", None)
                         elapsed = getattr(result, "elapsed", None)
