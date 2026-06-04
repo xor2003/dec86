@@ -65,6 +65,20 @@ EXAMPLES: dict[str, ExampleSpec] = {
             FunctionSpec("main", addr="0x101a7"),
         ),
     ),
+    "cmp32": ExampleSpec(
+        name="cmp32",
+        exe=DEFAULT_BUILD_DIR / "COMP32.EXE",
+        output_stem="CMP32RT",
+        functions=(
+            FunctionSpec("select_max", proc_kind="NEAR"),
+            FunctionSpec("compare_signed", proc_kind="NEAR"),
+            FunctionSpec("compare_unsigned", proc_kind="NEAR"),
+            FunctionSpec("clamp_window", proc_kind="NEAR"),
+            FunctionSpec("rel_signed32", proc_kind="NEAR"),
+            FunctionSpec("rel_unsigned32", proc_kind="NEAR"),
+            FunctionSpec("main", addr="0x10322"),
+        ),
+    ),
 }
 
 
@@ -234,7 +248,7 @@ def _verify_example(
         )
 
     rebuilt_exe = out_dir / exe_name
-    run_ok, run_exit, run_stdout, run_stderr = _run_example(
+    _, run_exit, run_stdout, run_stderr = _run_example(
         rebuilt_exe,
         out_dir,
         kvikdos=kvikdos,
@@ -242,7 +256,7 @@ def _verify_example(
     )
     (out_dir / f"{example.output_stem}.run.out.txt").write_text(run_stdout, encoding="utf-8")
     (out_dir / f"{example.output_stem}.run.err.txt").write_text(run_stderr, encoding="utf-8")
-    if not run_ok or run_exit != expected_exit_code:
+    if run_exit != expected_exit_code:
         raise RuntimeGateError(
             RuntimeGateStage.RUN,
             f"rebuilt {example.name} exited {run_exit}, expected {expected_exit_code}\n{run_stdout}{run_stderr}",
@@ -257,7 +271,7 @@ def main() -> int:
     parser.add_argument("--kvikdos", type=Path, default=DEFAULT_KVIKDOS)
     parser.add_argument("--msc6-root", type=Path, default=DEFAULT_MSC6_ROOT)
     parser.add_argument("--decompile-py", type=Path, default=DEFAULT_DECOMPILE)
-    parser.add_argument("--expected-exit-code", type=int, default=0)
+    parser.add_argument("--expected-exit-code", type=int, default=255)
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--clean", action="store_true", help="Remove the output directory before running the gate.")
     args = parser.parse_args()

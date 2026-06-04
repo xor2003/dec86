@@ -53,5 +53,5 @@ int main(void)
     if (goto_accumulate(4) != 14) {
         return 2;
     }
-    return 0;
+    return 255;
 }

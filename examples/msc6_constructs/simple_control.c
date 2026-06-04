@@ -67,5 +67,5 @@ int main(void)
     if (c != 22) {
         return 5;
     }
-    return 0;
+    return 255;
 }

@@ -41,5 +41,5 @@ int main(void)
     if (select_and_apply(0, 8) != 6) {
         return 4;
     }
-    return 0;
+    return 255;
 }

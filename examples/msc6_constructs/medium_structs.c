@@ -71,5 +71,5 @@ int main(void)
     if (pos != 1) {
         return 3;
     }
-    return 0;
+    return 255;
 }

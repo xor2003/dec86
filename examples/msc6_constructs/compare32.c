@@ -152,5 +152,5 @@ int main(void)
     if (clipped != 50000L) {
         return 14;
     }
-    return 0;
+    return 255;
 }

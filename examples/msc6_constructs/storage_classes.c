@@ -35,5 +35,5 @@ int main(void)
     if (bump_static() != 14) {
         return 3;
     }
-    return 0;
+    return 255;
 }

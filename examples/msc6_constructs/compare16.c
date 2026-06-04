@@ -124,5 +124,5 @@ int main(void)
     if (in_window_i16(9, 1, 7) != 0) {
         return 13;
     }
-    return 0;
+    return 255;
 }

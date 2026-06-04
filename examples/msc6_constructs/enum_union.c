@@ -47,5 +47,5 @@ int main(void)
     if (combined != 0x1234) {
         return 3;
     }
-    return 0;
+    return 255;
 }

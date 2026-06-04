@@ -114,5 +114,5 @@ int main(void)
     if (total == 0) {
         return 12;
     }
-    return 0;
+    return 255;
 }

@@ -135,8 +135,9 @@ def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
     emitted_without_source_comments = "\n".join(
         line for line in emitted.splitlines() if not line.lstrip().startswith("///")
     )
-    for value in range(14):
+    for value in range(1, 14):
         assert f"return {value};" in emitted_without_source_comments, emitted_without_source_comments
+    assert "return 255;" in emitted_without_source_comments, emitted_without_source_comments
     assert "::0x" not in emitted_without_source_comments
     assert "cmp_i16(" in emitted_without_source_comments
     assert "rel_i16(" in emitted_without_source_comments
@@ -216,7 +217,7 @@ def test_msc6_cmp16_full_rebuilt_executable_runs_zero(tmp_path: Path) -> None:
             "--example",
             "cmp16",
             "--expected-exit-code",
-            "0",
+            "255",
             "--timeout",
             "60",
             "--out-dir",
@@ -232,4 +233,4 @@ def test_msc6_cmp16_full_rebuilt_executable_runs_zero(tmp_path: Path) -> None:
     combined = f"{result.stderr}\n{result.stdout}"
     assert result.returncode == 0, combined
     assert "status=passed" in combined
-    assert "run_exit=0" in combined
+    assert "run_exit=255" in combined

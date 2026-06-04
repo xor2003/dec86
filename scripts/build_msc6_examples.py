@@ -8,17 +8,17 @@ import os
 import re
 import shutil
 import subprocess
-import time
 import sys
-from dataclasses import dataclass, asdict
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler.project_loading import _build_project
-from inertia_decompiler.sidecar_metadata import _load_lst_metadata
+from inertia_decompiler.project_loading import _build_project  # noqa: E402
+from inertia_decompiler.sidecar_metadata import _load_lst_metadata  # noqa: E402
 
 DEFAULT_EXAMPLES_DIR = REPO_ROOT / "examples" / "msc6_constructs"
 DEFAULT_OUT_DIR = REPO_ROOT / "examples" / "build_msc6"
@@ -858,6 +858,7 @@ def _decompile_and_validate(
     decompile_mode: str,
     decompile_cod_path: Path | None,
     decompile_max_functions: int,
+    expected_exit_code: int,
     decompile_safe_names: tuple[str, str, str, str] | None = None,
 ) -> tuple[bool, Path, Path, bool, bool, int | None, str, str, str, str, str, str, float, int, str]:
     decompile_ok, dec_out, dec_err, decompile_elapsed, decompile_profile = _decompile(
@@ -917,12 +918,11 @@ def _decompile_and_validate(
         exe_name=exe_name,
         map_name=map_name,
     )
-    decompile_run_ok = False
     decompile_run_exit: int | None = None
     decompile_run_stdout = ""
     decompile_run_stderr = ""
     if recompiled_ok and reexe.exists():
-        decompile_run_ok, decompile_run_exit, decompile_run_stdout, decompile_run_stderr = _run_example(
+        _, decompile_run_exit, decompile_run_stdout, decompile_run_stderr = _run_example(
             reexe,
             out_dir,
             kvikdos=kvikdos,
@@ -934,7 +934,7 @@ def _decompile_and_validate(
         dec_out,
         dec_err,
         recompiled_ok,
-        decompile_run_ok and decompile_run_exit == 0,
+        decompile_run_exit == expected_exit_code,
         decompile_run_exit,
         rec_out,
         rec_err,
@@ -1051,11 +1051,12 @@ def main() -> int:
         run_stdout = ""
         run_stderr = ""
         if build_ok and exe_path.exists():
-            run_ok, run_exit_code, run_stdout, run_stderr = _run_example(
+            _, run_exit_code, run_stdout, run_stderr = _run_example(
                 exe_path,
                 args.out_dir,
                 kvikdos=args.kvikdos,
             )
+            run_ok = run_exit_code == args.harvest_success_code
 
         decompile_skipped = source_path.stem in decompile_skip
         decompile_ok = False
@@ -1109,6 +1110,7 @@ def main() -> int:
                 decompile_mode=args.decompile_mode,
                 decompile_cod_path=cod_path,
                 decompile_max_functions=args.decompile_max_functions,
+                expected_exit_code=args.harvest_success_code,
                 decompile_safe_names=(
                     decompile_c_name,
                     decompile_obj_name,

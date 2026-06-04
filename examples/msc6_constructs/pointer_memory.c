@@ -52,5 +52,5 @@ int main(void)
     if (a != 9 || b != 5) {
         return 3;
     }
-    return 0;
+    return 255;
 }
