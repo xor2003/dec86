@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+import os
 
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 
@@ -28,72 +30,312 @@ class RecompileCheckResult:
     stdout: str
     stderr: str
     command: tuple[str, ...]
+    checked_payload: str
+    checked_payload_hash: str
     source_path: str | None = None
 
 
+_DEFAULT_KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
+_DEFAULT_MSC51_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v5.1")
+_MSC51_MIRROR_CACHE: dict[Path, Path] = {}
+_DEFAULT_RECOMPILE_TIMEOUT_SEC = 20
+
+
+def _compile_input_payload_8616(c_text: str, *, target: str) -> str:
+    sanitized = _sanitize_nested_block_comments(_with_runtime_header_8616(c_text, target=target))
+    return sanitized
+
+
+def _checked_payload_identity_8616(c_text: str) -> tuple[str, str]:
+    checked_payload = str(c_text or "")
+    return checked_payload, _sha256_text_8616(checked_payload)
+
+
+def _recompile_timeout_sec() -> int:
+    raw = os.environ.get("INERTIA_RECOMPILE_TIMEOUT_SEC", "").strip()
+    try:
+        value = int(raw) if raw else _DEFAULT_RECOMPILE_TIMEOUT_SEC
+    except ValueError:
+        value = _DEFAULT_RECOMPILE_TIMEOUT_SEC
+    return max(1, value)
+
+
+def _sanitize_empty_control_bodies_for_compile_8616(text: str) -> str:
+    normalized = str(text or "")
+    # Compile-hygiene only: preserve condition expression while making malformed
+    # empty control bodies syntactically explicit.
+    normalized = re.sub(
+        r"(?m)^(?P<indent>\s*)if \((?P<cond>[^\n]+)\)\s*(?=\n\s*(?:\}|$))",
+        r"\g<indent>if (\g<cond>);",
+        normalized,
+    )
+    return normalized
+
+
 def _with_runtime_header_8616(c_text: str, *, target: str) -> str:
-    text = str(c_text or "")
-    if target != "portable-flat":
-        return text
-    if "extern uint8_t inertia_memory[];" in text and "#define SEG_U8(seg, off)" in text:
-        return text
+    text = _sanitize_empty_control_bodies_for_compile_8616(c_text)
+    if target == "portable-flat":
+        if "extern uint8_t inertia_memory[];" in text and "#define SEG_U8(seg, off)" in text:
+            return text
+        return f"{render_c_runtime_header_8616(target)}\n{text.lstrip()}"
+    if target == "msc-dos":
+        if "#define SEG_U8(seg, off)" in text and "#include <dos.h>" in text:
+            return text
+        return f"{render_c_runtime_header_8616(target)}\n{text.lstrip()}"
     return f"{render_c_runtime_header_8616(target)}\n{text.lstrip()}"
 
 
-def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> RecompileCheckResult:
-    compiler = shutil.which("gcc")
-    if compiler is None:
+def _resolve_kvikdos_path() -> Path | None:
+    raw = os.environ.get("INERTIA_KVIKDOS_PATH", "").strip()
+    candidate = Path(raw) if raw else _DEFAULT_KVIKDOS_PATH
+    if not candidate.exists():
+        return None
+    return candidate
+
+
+def _resolve_msc51_root() -> Path | None:
+    raw = os.environ.get("INERTIA_MSC51_ROOT", "").strip()
+    candidate = Path(raw) if raw else _DEFAULT_MSC51_ROOT
+    if not candidate.exists():
+        return None
+    if not (candidate / "bin").exists():
+        return None
+    return candidate
+
+
+def _prepare_msc51_mirror_tree(source_root: Path) -> Path:
+    def _impl():
+        cached = _MSC51_MIRROR_CACHE.get(source_root)
+        if (
+            cached is not None
+            and cached.exists()
+            and (cached / "bin").exists()
+            and (cached / "include").exists()
+            and (cached / "lib").exists()
+        ):
+            return cached
+
+        mirror_root = Path(tempfile.mkdtemp(prefix="inertia-msc51-kvikdos-"))
+        bin_src = source_root / "bin"
+        if not bin_src.exists():
+            bin_src = source_root / "BIN"
+        include_src = source_root / "include"
+        if not include_src.exists():
+            include_src = source_root / "INCLUDE"
+        lib_src = source_root / "lib"
+        if not lib_src.exists():
+            lib_src = source_root / "LIB"
+        bin_dst = mirror_root / "bin"
+        bin_dst.mkdir(parents=True, exist_ok=True)
+
+        if include_src.exists():
+            (mirror_root / "include").symlink_to(include_src)
+        if lib_src.exists():
+            (mirror_root / "lib").symlink_to(lib_src)
+
+        for entry in bin_src.iterdir():
+            if not entry.is_file():
+                continue
+            dst = bin_dst / entry.name
+            if not dst.exists():
+                shutil.copy2(entry, dst)
+            lowered = bin_dst / entry.name.lower()
+            if not lowered.exists():
+                shutil.copy2(entry, lowered)
+
+        _MSC51_MIRROR_CACHE[source_root] = mirror_root
+        return mirror_root
+
+    return _impl()
+
+
+def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileCheckResult:
+    def _impl():
+        kvikdos = _resolve_kvikdos_path()
+        if kvikdos is None:
+            compile_payload = _compile_input_payload_8616(c_text, target=target)
+            checked_payload, checked_hash = _checked_payload_identity_8616(c_text)
+            return RecompileCheckResult(
+                passed=False,
+                target=target,
+                exit_code=127,
+                compiler=None,
+                stdout="",
+                stderr="kvikdos not found",
+                command=("kvikdos",),
+                checked_payload=checked_payload,
+                checked_payload_hash=checked_hash,
+                source_path=None,
+            )
+        msc_root = _resolve_msc51_root()
+        if msc_root is None:
+            compile_payload = _compile_input_payload_8616(c_text, target=target)
+            checked_payload, checked_hash = _checked_payload_identity_8616(c_text)
+            return RecompileCheckResult(
+                passed=False,
+                target=target,
+                exit_code=127,
+                compiler=str(kvikdos),
+                stdout="",
+                stderr="Microsoft C v5.1 root not found",
+                command=(str(kvikdos),),
+                checked_payload=checked_payload,
+                checked_payload_hash=checked_hash,
+                source_path=None,
+            )
+
+        mirror_root = _prepare_msc51_mirror_tree(msc_root)
+        tmpdir = Path(tempfile.mkdtemp(prefix="inertia-recompile-msc51-"))
+        src_path = tmpdir / "GEN.C"
+        compile_payload = _compile_input_payload_8616(c_text, target=target)
+        checked_payload, checked_hash = _checked_payload_identity_8616(c_text)
+        src_path.write_text(compile_payload, encoding="utf-8")
+        upper_src_path = tmpdir / "gen.c"
+        upper_src_path.write_text(compile_payload, encoding="utf-8")
+        command = (
+            str(kvikdos),
+            f"--mount=c-{mirror_root}/",
+            f"--mount=d-{tmpdir}/",
+            "--drive=d",
+            "--cwd-dos=d:\\",
+            "--env=INCLUDE=C:\\INCLUDE",
+            "--env=LIB=C:\\LIB",
+            r"c:\bin\cl.exe",
+            "/nologo",
+            "/c",
+            r"d:\gen.c",
+        )
+        try:
+            proc = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_recompile_timeout_sec(),
+            )
+        except subprocess.TimeoutExpired as ex:
+            return RecompileCheckResult(
+                passed=False,
+                target=target,
+                exit_code=124,
+                compiler=str(kvikdos),
+                stdout=(ex.stdout or ""),
+                stderr=((ex.stderr or "") + "\nrecompile timeout (msc-dos)"),
+                command=command,
+                checked_payload=checked_payload,
+                checked_payload_hash=checked_hash,
+                source_path=str(src_path),
+            )
+        stderr_text = proc.stderr or ""
+        stdout_text = proc.stdout or ""
+        combined_text = f"{stderr_text}\n{stdout_text}".lower()
+        has_hard_error = (" error " in combined_text) or ("error:" in combined_text) or ("fatal" in combined_text)
+        passed = proc.returncode == 0 and not has_hard_error
+        if passed:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            source_path = None
+        else:
+            source_path = str(src_path)
         return RecompileCheckResult(
-            passed=False,
+            passed=passed,
             target=target,
-            exit_code=127,
-            compiler=None,
-            stdout="",
-            stderr="gcc not found",
-            command=("gcc", "-std=c99", "-Wall", "-Werror", "-fsyntax-only"),
-            source_path=None,
+            exit_code=proc.returncode,
+            compiler=str(kvikdos),
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            command=command,
+            checked_payload=checked_payload,
+            checked_payload_hash=checked_hash,
+            source_path=source_path,
         )
 
-    tmpdir = Path(tempfile.mkdtemp(prefix="inertia-recompile-"))
-    src_path = tmpdir / "generated.c"
-    src_path.write_text(_sanitize_nested_block_comments(_with_runtime_header_8616(c_text, target=target)), encoding="utf-8")
-    command = (
-        compiler,
-        "-std=c99",
-        "-Wall",
-        "-Werror",
-        "-Wno-error=unused-but-set-variable",
-        "-Wno-error=parentheses",
-        "-Wno-error=unused-variable",
-        "-Wno-error=nonnull",
-        "-Wno-error=builtin-declaration-mismatch",
-        "-fno-builtin",
-        "-fsyntax-only",
-        str(src_path),
-    )
-    proc = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    stderr_text = proc.stderr or ""
-    stdout_text = proc.stdout or ""
-    combined_text = f"{stderr_text}\n{stdout_text}"
-    has_hard_error = re.search(r"(?mi)\berror:\b", combined_text) is not None
-    passed = proc.returncode == 0 or (proc.returncode != 0 and not has_hard_error)
-    if passed:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-        source_path = None
-    else:
-        source_path = str(src_path)
-    return RecompileCheckResult(
-        passed=passed,
-        target=target,
-        exit_code=proc.returncode,
-        compiler=compiler,
-        stdout=proc.stdout,
-        stderr=proc.stderr,
-        command=command,
-        source_path=source_path,
-    )
+    return _impl()
+
+
+def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> RecompileCheckResult:
+    def _impl():
+        if target == "msc-dos":
+            return _check_c_recompiles_msc51_8616(c_text, target=target)
+        compile_payload = _compile_input_payload_8616(c_text, target=target)
+        checked_payload, checked_hash = _checked_payload_identity_8616(c_text)
+        compiler = shutil.which("gcc")
+        if compiler is None:
+            return RecompileCheckResult(
+                passed=False,
+                target=target,
+                exit_code=127,
+                compiler=None,
+                stdout="",
+                stderr="gcc not found",
+                command=("gcc", "-std=c99", "-Wall", "-Werror", "-fsyntax-only"),
+                checked_payload=checked_payload,
+                checked_payload_hash=checked_hash,
+                source_path=None,
+            )
+
+        tmpdir = Path(tempfile.mkdtemp(prefix="inertia-recompile-"))
+        src_path = tmpdir / "generated.c"
+        src_path.write_text(compile_payload, encoding="utf-8")
+        command = (
+            compiler,
+            "-std=c99",
+            "-Wall",
+            "-Werror",
+            "-Wno-error=unused-but-set-variable",
+            "-Wno-error=parentheses",
+            "-Wno-error=unused-variable",
+            "-Wno-error=nonnull",
+            "-Wno-error=builtin-declaration-mismatch",
+            "-fno-builtin",
+            "-fsyntax-only",
+            str(src_path),
+        )
+        try:
+            proc = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_recompile_timeout_sec(),
+            )
+        except subprocess.TimeoutExpired as ex:
+            return RecompileCheckResult(
+                passed=False,
+                target=target,
+                exit_code=124,
+                compiler=compiler,
+                stdout=(ex.stdout or ""),
+                stderr=((ex.stderr or "") + "\nrecompile timeout (portable-flat)"),
+                command=command,
+                checked_payload=checked_payload,
+                checked_payload_hash=checked_hash,
+                source_path=str(src_path),
+            )
+        stderr_text = proc.stderr or ""
+        stdout_text = proc.stdout or ""
+        combined_text = f"{stderr_text}\n{stdout_text}"
+        has_hard_error = re.search(r"(?mi)\berror:\b", combined_text) is not None
+        passed = proc.returncode == 0 or (proc.returncode != 0 and not has_hard_error)
+        if passed:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            source_path = None
+        else:
+            source_path = str(src_path)
+        return RecompileCheckResult(
+            passed=passed,
+            target=target,
+            exit_code=proc.returncode,
+            compiler=compiler,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            command=command,
+            checked_payload=checked_payload,
+            checked_payload_hash=checked_hash,
+            source_path=source_path,
+        )
+
+    return _impl()
+
+
+def _sha256_text_8616(text: str) -> str:
+    return hashlib.sha256(str(text or "").encode("utf-8", errors="ignore")).hexdigest()

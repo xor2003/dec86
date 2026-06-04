@@ -454,6 +454,66 @@ def test_match_bp_stack_dereference_handles_nested_add_sub_chain_from_vvar_base(
     assert displacement == -10
 
 
+def test_match_bp_stack_dereference_matches_ss_sp_base_with_typed_probe_fact():
+    project, codegen = _codegen([])
+    codegen._inertia_typed_stack_probe_return_facts = {
+        1: TypedStackProbeReturnFact8616(call_node_id=1, segment_space="ss", width=2, carrier_keys=())
+    }
+    ss = _reg(project, "ss", codegen)
+    sp = _reg(project, "sp", codegen)
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Shl", ss, _const(4, codegen), codegen=codegen),
+            CBinaryOp("Sub", sp, _const(2, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    displacement = _match_bp_stack_dereference_8616(deref, project, codegen)
+
+    assert displacement == -2
+
+
+def test_match_bp_stack_dereference_follows_vvar_sp_carrier_chain():
+    project, codegen = _codegen([])
+    codegen._inertia_typed_stack_probe_return_facts = {
+        1: TypedStackProbeReturnFact8616(call_node_id=1, segment_space="ss", width=2, carrier_keys=())
+    }
+    temp = _reg(project, "ax", codegen)
+    temp.variable.name = "vvar_20"
+    ss = _reg(project, "ss", codegen)
+    sp = _reg(project, "sp", codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                temp,
+                sp,
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Mul", ss, _const(16, codegen), codegen=codegen),
+            CBinaryOp("Sub", temp, _const(2, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    displacement = _match_bp_stack_dereference_8616(deref, project, codegen)
+
+    assert displacement == -2
+
+
 def test_stack_bp_displacement_refuses_self_referential_stack_carrier_cycle():
     project, codegen = _codegen([])
     carrier = _stack(-2, codegen, name="s_2")
@@ -502,6 +562,86 @@ def test_real_mode_linear_stack_access_matches_sp_register_carrier_without_late_
 
     assert access is not None
     assert access.displacement == -2
+
+
+def test_real_mode_linear_stack_access_matches_vvar_chain_with_constant_tail():
+    project, codegen = _codegen([])
+    codegen._inertia_typed_stack_probe_return_facts = {
+        1: TypedStackProbeReturnFact8616(call_node_id=1, segment_space="ss", width=2, carrier_keys=())
+    }
+    ss = _reg(project, "ss", codegen)
+    carrier = _reg(project, "ax", codegen)
+    carrier.variable.name = "vvar_20"
+    frame_slot = CUnaryOp("Reference", _stack(-10, codegen, name="s_a"), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                carrier,
+                CBinaryOp("Add", frame_slot, _const(2, codegen), codegen=codegen),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    access_expr = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Mul", ss, _const(16, codegen), codegen=codegen),
+            CBinaryOp("Add", carrier, _const(-2, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    access = match_stable_ss_linear_stack_access_8616(access_expr, project, codegen)
+
+    assert access is not None
+    assert access.displacement == -10
+
+
+def test_real_mode_linear_stack_lowering_reuses_vvar_chain_with_constant_tail():
+    project, codegen = _codegen([])
+    codegen._inertia_typed_stack_probe_return_facts = {
+        1: TypedStackProbeReturnFact8616(call_node_id=1, segment_space="ss", width=2, carrier_keys=())
+    }
+    ss = _reg(project, "ss", codegen)
+    carrier = _reg(project, "ax", codegen)
+    carrier.variable.name = "vvar_20"
+    frame_slot = CUnaryOp("Reference", _stack(-10, codegen, name="s_a"), codegen=codegen)
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Mul", ss, _const(16, codegen), codegen=codegen),
+            CBinaryOp("Add", carrier, _const(-2, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                carrier,
+                CBinaryOp("Add", frame_slot, _const(2, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+            CAssignment(deref, _const(7, codegen), codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = lower_stable_ss_linear_stack_dereferences_8616(codegen)
+
+    assert changed is True
+    lhs = codegen.cfunc.statements.statements[1].lhs
+    assert isinstance(lhs, CVariable)
+    assert lhs.variable.offset == -10
 
 
 def test_real_mode_linear_stack_lowering_replaces_stable_ss_sp_carrier():

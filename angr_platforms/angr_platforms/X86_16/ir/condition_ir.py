@@ -459,85 +459,88 @@ def _split_fingerprint_args_8616(args_str: str) -> list[str]:
 
 
 def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
-    """Apply algebraic normalization to a condition fingerprint string.
+    def _impl():
+        """Apply algebraic normalization to a condition fingerprint string.
 
-    Rules (validation-only, deterministic, side-effect-free):
+        Rules (validation-only, deterministic, side-effect-free):
 
-        CmpEQ(Sub(x,const:c),const:0) → CmpEQ(x,const:c)
-        CmpNE(Sub(x,const:c),const:0) → CmpNE(x,const:c)
-        CmpEQ(Sub(x,y),const:0) → CmpEQ(x,y)
-        CmpNE(Sub(x,y),const:0) → CmpNE(x,y)
+            CmpEQ(Sub(x,const:c),const:0) → CmpEQ(x,const:c)
+            CmpNE(Sub(x,const:c),const:0) → CmpNE(x,const:c)
+            CmpEQ(Sub(x,y),const:0) → CmpEQ(x,y)
+            CmpNE(Sub(x,y),const:0) → CmpNE(x,y)
 
-    Also handles doubled Sub nesting:
+        Also handles doubled Sub nesting:
 
-        CmpEQ(Sub(Sub(x,const:a),const:b),const:0) → CmpEQ(x,const:a+b)
+            CmpEQ(Sub(Sub(x,const:a),const:b),const:0) → CmpEQ(x,const:a+b)
 
-    This is a pure string-level normalization that preserves the fingerprint
-    format.  It does not mutate IR or feed results back into recovery.
-    """
-    if not isinstance(value, str) or not value:
-        return value
+        This is a pure string-level normalization that preserves the fingerprint
+        format.  It does not mutate IR or feed results back into recovery.
+        """
+        if not isinstance(value, str) or not value:
+            return value
 
-    # Handle control-flow prefixes
-    for prefix in ("if:", "ifbreak:", "while:", "dowhile:", "for:", "switch:"):
-        if value.startswith(prefix):
-            return prefix + normalize_condition_fingerprint_algebraic_8616(value[len(prefix) :])
+        # Handle control-flow prefixes
+        for prefix in ("if:", "ifbreak:", "while:", "dowhile:", "for:", "switch:"):
+            if value.startswith(prefix):
+                return prefix + normalize_condition_fingerprint_algebraic_8616(value[len(prefix) :])
 
-    call = _split_fingerprint_call_8616(value)
-    if call is None:
-        return value
+        call = _split_fingerprint_call_8616(value)
+        if call is None:
+            return value
 
-    op, args_str = call
+        op, args_str = call
 
-    # Rule: CmpEQ(Sub(x,const:c),const:0) → CmpEQ(x,const:c)
-    # Rule: CmpNE(Sub(x,const:c),const:0) → CmpNE(x,const:c)
-    if op in ("CmpEQ", "CmpNE"):
-        args = _split_fingerprint_args_8616(args_str)
-        if len(args) == 2 and args[1] == "const:0":
-            lhs_call = _split_fingerprint_call_8616(args[0])
-            if lhs_call is not None:
-                lhs_op, lhs_args = lhs_call
-                if lhs_op == "Sub":
-                    sub_args = _split_fingerprint_args_8616(lhs_args)
-                    if len(sub_args) == 2:
-                        # Sub(x, const:c) == 0  →  x == const:c
-                        if sub_args[1].startswith("const:"):
+        # Rule: CmpEQ(Sub(x,const:c),const:0) → CmpEQ(x,const:c)
+        # Rule: CmpNE(Sub(x,const:c),const:0) → CmpNE(x,const:c)
+        if op in ("CmpEQ", "CmpNE"):
+            args = _split_fingerprint_args_8616(args_str)
+            if len(args) == 2 and args[1] == "const:0":
+                lhs_call = _split_fingerprint_call_8616(args[0])
+                if lhs_call is not None:
+                    lhs_op, lhs_args = lhs_call
+                    if lhs_op == "Sub":
+                        sub_args = _split_fingerprint_args_8616(lhs_args)
+                        if len(sub_args) == 2:
+                            # Sub(x, const:c) == 0  →  x == const:c
+                            if sub_args[1].startswith("const:"):
+                                return f"{op}({sub_args[0]},{sub_args[1]})"
+                            # Sub(x, y) == 0  →  x == y
                             return f"{op}({sub_args[0]},{sub_args[1]})"
-                        # Sub(x, y) == 0  →  x == y
-                        return f"{op}({sub_args[0]},{sub_args[1]})"
-                    # Handle nested Sub: Sub(Sub(x, a), b) == 0  →  x == a+b
-                    if len(sub_args) == 2:
-                        inner_call = _split_fingerprint_call_8616(sub_args[0])
-                        if inner_call is not None and inner_call[0] == "Sub":
-                            inner_args = _split_fingerprint_args_8616(inner_call[1])
-                            if (
-                                len(inner_args) == 2
-                                and inner_args[1].startswith("const:")
-                                and sub_args[1].startswith("const:")
-                            ):
-                                try:
-                                    a = (
-                                        int(inner_args[1].split(":")[-1], 0)
-                                        if inner_args[1].startswith("const:")
-                                        else 0
-                                    )
-                                    b = int(sub_args[1].split(":")[-1], 0) if sub_args[1].startswith("const:") else 0
-                                except (ValueError, IndexError):
-                                    return value
-                                c_sum = a + b
-                                if c_sum >= 0:
-                                    c_str = f"const:{c_sum:#x}"
-                                else:
-                                    c_str = f"const:{c_sum}"
-                                return f"{op}({inner_args[0]},{c_str})"
+                        # Handle nested Sub: Sub(Sub(x, a), b) == 0  →  x == a+b
+                        if len(sub_args) == 2:
+                            inner_call = _split_fingerprint_call_8616(sub_args[0])
+                            if inner_call is not None and inner_call[0] == "Sub":
+                                inner_args = _split_fingerprint_args_8616(inner_call[1])
+                                if (
+                                    len(inner_args) == 2
+                                    and inner_args[1].startswith("const:")
+                                    and sub_args[1].startswith("const:")
+                                ):
+                                    try:
+                                        a = (
+                                            int(inner_args[1].split(":")[-1], 0)
+                                            if inner_args[1].startswith("const:")
+                                            else 0
+                                        )
+                                        b = int(sub_args[1].split(":")[-1], 0) if sub_args[1].startswith("const:") else 0
+                                    except (ValueError, IndexError):
+                                        return value
+                                    c_sum = a + b
+                                    if c_sum >= 0:
+                                        c_str = f"const:{c_sum:#x}"
+                                    else:
+                                        c_str = f"const:{c_sum}"
+                                    return f"{op}({inner_args[0]},{c_str})"
 
-    # Recurse into args for nested normalization
-    args = _split_fingerprint_args_8616(args_str)
-    normalized_args = [_normalize_arg_fingerprint_8616(a) for a in args]
-    if normalized_args != args:
-        return f"{op}({','.join(normalized_args)})"
+        # Recurse into args for nested normalization
+        args = _split_fingerprint_args_8616(args_str)
+        normalized_args = [_normalize_arg_fingerprint_8616(a) for a in args]
+        if normalized_args != args:
+            return f"{op}({','.join(normalized_args)})"
 
-    return value
+        return value
+
+    return _impl()
 
 
 def _normalize_arg_fingerprint_8616(arg: str) -> str:

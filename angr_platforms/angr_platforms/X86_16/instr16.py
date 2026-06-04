@@ -56,6 +56,8 @@ from .string_helpers import (
     string_source_segment,
     string_store,
 )
+from angr_platforms.X86_16.emulator import Emulator
+from angr_platforms.X86_16.instruction import InstrData
 
 X86_16_OPCODE_HELPERS = (
     (0x40, 0x47, "inc_r16", 0),
@@ -71,7 +73,7 @@ class Instr16(InstrBase):
     _opcode_template_instrfuncs: list | None = None
     _opcode_template_chk: list | None = None
 
-    def __init__(self, emu: Emulator, instr: InstrData):
+    def __init__(self, emu: Emulator, instr: InstrData) -> None:
         super().__init__(emu, instr, mode32=False)  # X86Instruction
         cls = type(self)
         template_funcs = cls._opcode_template_instrfuncs

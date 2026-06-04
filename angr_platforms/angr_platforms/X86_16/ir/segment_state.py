@@ -124,45 +124,48 @@ def build_x86_16_segment_state_artifact(
     artifact: IRFunctionArtifact,
     function_ssa: SSAFunctionArtifact | None = None,
 ) -> SegmentStateArtifact:
-    blocks_by_addr = {block.addr: block for block in artifact.blocks}
-    predecessor_map = (
-        dict(getattr(function_ssa, "predecessor_map", {}) or {})
-        if function_ssa is not None
-        else {block.addr: () for block in artifact.blocks}
-    )
-    entry_states = {addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr}
-    exit_states = {addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr}
+    def _impl():
+        blocks_by_addr = {block.addr: block for block in artifact.blocks}
+        predecessor_map = (
+            dict(getattr(function_ssa, "predecessor_map", {}) or {})
+            if function_ssa is not None
+            else {block.addr: () for block in artifact.blocks}
+        )
+        entry_states = {addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr}
+        exit_states = {addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr}
 
-    changed = True
-    while changed:
-        changed = False
-        for block_addr in sorted(blocks_by_addr):
-            new_entry = _join_entry_state(predecessor_map, exit_states, block_addr)
-            new_exit = _transfer_block(blocks_by_addr[block_addr], new_entry)
-            if new_entry != entry_states[block_addr]:
-                entry_states[block_addr] = new_entry
-                changed = True
-            if new_exit != exit_states[block_addr]:
-                exit_states[block_addr] = new_exit
-                changed = True
+        changed = True
+        while changed:
+            changed = False
+            for block_addr in sorted(blocks_by_addr):
+                new_entry = _join_entry_state(predecessor_map, exit_states, block_addr)
+                new_exit = _transfer_block(blocks_by_addr[block_addr], new_entry)
+                if new_entry != entry_states[block_addr]:
+                    entry_states[block_addr] = new_entry
+                    changed = True
+                if new_exit != exit_states[block_addr]:
+                    exit_states[block_addr] = new_exit
+                    changed = True
 
-    explicit_write_count = sum(
-        1
-        for states in exit_states.values()
-        for state in states.values()
-        if state.value_kind in {"const_write", "register_write", "segment_copy"}
-    )
-    summary = {
-        "block_count": len(blocks_by_addr),
-        "explicit_write_count": explicit_write_count,
-        "proven_register_count": sum(
-            1 for states in exit_states.values() for state in states.values() if state.origin == SegmentOrigin.PROVEN
-        ),
-        "unknown_register_count": sum(
-            1 for states in exit_states.values() for state in states.values() if state.origin == SegmentOrigin.UNKNOWN
-        ),
-    }
-    return SegmentStateArtifact(entry_states=entry_states, exit_states=exit_states, summary=summary)
+        explicit_write_count = sum(
+            1
+            for states in exit_states.values()
+            for state in states.values()
+            if state.value_kind in {"const_write", "register_write", "segment_copy"}
+        )
+        summary = {
+            "block_count": len(blocks_by_addr),
+            "explicit_write_count": explicit_write_count,
+            "proven_register_count": sum(
+                1 for states in exit_states.values() for state in states.values() if state.origin == SegmentOrigin.PROVEN
+            ),
+            "unknown_register_count": sum(
+                1 for states in exit_states.values() for state in states.values() if state.origin == SegmentOrigin.UNKNOWN
+            ),
+        }
+        return SegmentStateArtifact(entry_states=entry_states, exit_states=exit_states, summary=summary)
+
+    return _impl()
 
 
 def apply_x86_16_segment_state_artifact(project, codegen) -> bool:  # noqa: ARG001

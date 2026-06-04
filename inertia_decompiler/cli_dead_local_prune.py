@@ -176,9 +176,10 @@ def _prune_dead_local_assignments(
         return lhs_args == rhs_args
 
     changed = False
+    dropped_unread_only = False
 
     def prune(node) -> None:
-        nonlocal changed
+        nonlocal changed, dropped_unread_only
         if not structured_codegen_node(node):
             return
 
@@ -223,9 +224,9 @@ def _prune_dead_local_assignments(
                     if storage_key is not None:
                         lhs_keys.add(("storage", storage_key))
                     unread_register_local = isinstance(lhs_variable, SimRegisterVariable) and lhs_exact_keys.isdisjoint(reads)
-                    self_only_rhs_read = bool(lhs_keys) and not lhs_keys.isdisjoint(rhs_reads) and lhs_keys.isdisjoint(reads - rhs_reads)
-                    if unread_register_local or lhs_keys.isdisjoint(reads) or self_only_rhs_read:
-                        changed = True
+                    self_referential_rhs = bool(lhs_keys) and not lhs_keys.isdisjoint(rhs_reads)
+                    if unread_register_local or (lhs_keys.isdisjoint(reads) and not self_referential_rhs):
+                        dropped_unread_only = True
                         continue
                     for key in lhs_keys:
                         if key in pending_assignment_indices:
@@ -257,7 +258,8 @@ def _prune_dead_local_assignments(
                 new_statements.append(stmt)
             if new_statements != list(node.statements):
                 node.statements = [stmt for stmt in new_statements if stmt is not None]
-                changed = True
+                if not dropped_unread_only:
+                    changed = True
             return
 
         for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "else_node", "retval"):

@@ -43,13 +43,14 @@ from .string_helpers import (
     string_load,
     string_source_segment,
 )
+from angr_platforms.X86_16.instruction import InstrData
 
 
 class Instr32(InstrBase):
     _opcode_template_instrfuncs: list | None = None
     _opcode_template_chk: list | None = None
 
-    def __init__(self, emu, instr):
+    def __init__(self, emu: object, instr: InstrData) -> None:
         super().__init__(emu, instr, mode32=True)  # X86Instruction
         cls = type(self)
         template_funcs = cls._opcode_template_instrfuncs

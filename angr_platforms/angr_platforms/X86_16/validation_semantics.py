@@ -45,28 +45,31 @@ class ValidationSemanticsReport8616:
 
 
 def _split_c_args_8616(arg_text: str) -> tuple[str, ...]:
-    text = str(arg_text or "").strip()
-    if not text or text == "void":
-        return ()
-    parts: list[str] = []
-    current: list[str] = []
-    depth = 0
-    for ch in text:
-        if ch == "," and depth == 0:
-            part = "".join(current).strip()
-            if part:
-                parts.append(part)
-            current = []
-            continue
-        current.append(ch)
-        if ch in "([{":
-            depth += 1
-        elif ch in ")]}" and depth > 0:
-            depth -= 1
-    tail = "".join(current).strip()
-    if tail:
-        parts.append(tail)
-    return tuple(parts)
+    def _impl():
+        text = str(arg_text or "").strip()
+        if not text or text == "void":
+            return ()
+        parts: list[str] = []
+        current: list[str] = []
+        depth = 0
+        for ch in text:
+            if ch == "," and depth == 0:
+                part = "".join(current).strip()
+                if part:
+                    parts.append(part)
+                current = []
+                continue
+            current.append(ch)
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}" and depth > 0:
+                depth -= 1
+        tail = "".join(current).strip()
+        if tail:
+            parts.append(tail)
+        return tuple(parts)
+
+    return _impl()
 
 
 def _iter_statement_calls_8616(c_text: str):
@@ -248,6 +251,14 @@ def validate_known_call_semantics_8616(
 
 def assert_known_call_semantics_8616(c_text: str, *, function_addr: int | None = None) -> None:
     report = validate_known_call_semantics_8616(c_text, function_addr=function_addr)
+    if _RAW_STACK_NAME_RE_8616.search(str(c_text or "")) is not None or _PLACEHOLDER_STACK_RE_8616.search(
+        str(c_text or "")
+    ) is not None:
+        raise PipelineHardError(
+            "function leaked unresolved stack locals into final C",
+            layer="final_emission_semantics",
+            function_addr=function_addr,
+        )
     if report.failure_count <= 0:
         return
     # Segment-linearization laundering is tracked as a diagnostic counter and

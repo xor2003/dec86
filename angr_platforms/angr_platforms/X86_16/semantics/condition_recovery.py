@@ -71,27 +71,30 @@ class RecoveredCondition:
 
 
 def _ir_value_from_vex_expr(expr, size_hint: int = 0) -> IRValue:
-    """Best-effort conversion of a VEX-style expression operand into IRValue."""
-    if expr is None:
-        return IRValue(MemSpace.UNKNOWN, size=size_hint or 1)
+    def _impl():
+        """Best-effort conversion of a VEX-style expression operand into IRValue."""
+        if expr is None:
+            return IRValue(MemSpace.UNKNOWN, size=size_hint or 1)
 
-    # Integer constants
-    if isinstance(expr, int):
-        return IRValue(MemSpace.CONST, const=expr, size=size_hint or _size_for_int(expr))
+        # Integer constants
+        if isinstance(expr, int):
+            return IRValue(MemSpace.CONST, const=expr, size=size_hint or _size_for_int(expr))
 
-    # VEX constant: has .value attribute
-    const_value = getattr(expr, "value", None)
-    if isinstance(const_value, int):
-        return IRValue(MemSpace.CONST, const=const_value, size=size_hint or _size_for_int(const_value))
+        # VEX constant: has .value attribute
+        const_value = getattr(expr, "value", None)
+        if isinstance(const_value, int):
+            return IRValue(MemSpace.CONST, const=const_value, size=size_hint or _size_for_int(const_value))
 
-    # Register operand: has .reg or .reg_name
-    reg_offset = getattr(expr, "reg", None)
-    reg_name = getattr(expr, "reg_name", None)
-    if isinstance(reg_offset, int):
-        return IRValue(MemSpace.REG, name=str(reg_name or f"reg_{reg_offset}"), offset=reg_offset, size=size_hint or 2)
+        # Register operand: has .reg or .reg_name
+        reg_offset = getattr(expr, "reg", None)
+        reg_name = getattr(expr, "reg_name", None)
+        if isinstance(reg_offset, int):
+            return IRValue(MemSpace.REG, name=str(reg_name or f"reg_{reg_offset}"), offset=reg_offset, size=size_hint or 2)
 
-    # Generic tmp
-    return IRValue(MemSpace.TMP, name=getattr(expr, "__class__", type(expr)).__name__, size=size_hint or 2)
+        # Generic tmp
+        return IRValue(MemSpace.TMP, name=getattr(expr, "__class__", type(expr)).__name__, size=size_hint or 2)
+
+    return _impl()
 
 
 def _size_for_int(value: int) -> int:
@@ -160,66 +163,69 @@ def build_typed_condition_from_flag_mask_8616(
     *,
     operands: tuple | None = None,
 ) -> RecoveredCondition | None:
-    """Recover a typed condition from a flag mask test like ``(flags & ZF) != 0``.
+    def _impl():
+        """Recover a typed condition from a flag mask test like ``(flags & ZF) != 0``.
 
-    Args:
-        flag_var: The flag variable node (CVariable or IRValue)
-        mask: The flag bitmask value
-        negate: Whether the test is negated (result is inverted)
-        operands: Optional (lhs, rhs) operands when the condition should be a comparison
+        Args:
+            flag_var: The flag variable node (CVariable or IRValue)
+            mask: The flag bitmask value
+            negate: Whether the test is negated (result is inverted)
+            operands: Optional (lhs, rhs) operands when the condition should be a comparison
 
-    Returns:
-        RecoveredCondition or None if recovery fails
-    """
-    flag_name, _ = classify_flag_mask_bit_8616(mask)
-    if flag_name is None:
-        return None
+        Returns:
+            RecoveredCondition or None if recovery fails
+        """
+        flag_name, _ = classify_flag_mask_bit_8616(mask)
+        if flag_name is None:
+            return None
 
-    if operands is not None and len(operands) == 2:
-        lhs, rhs = operands
-        lhs_val = _ir_value_from_vex_expr(lhs) if not isinstance(lhs, IRValue) else lhs
-        rhs_val = _ir_value_from_vex_expr(rhs) if not isinstance(rhs, IRValue) else rhs
-        lhs_val, rhs_val = harmonize_condition_args_8616(lhs_val, rhs_val)
+        if operands is not None and len(operands) == 2:
+            lhs, rhs = operands
+            lhs_val = _ir_value_from_vex_expr(lhs) if not isinstance(lhs, IRValue) else lhs
+            rhs_val = _ir_value_from_vex_expr(rhs) if not isinstance(rhs, IRValue) else rhs
+            lhs_val, rhs_val = harmonize_condition_args_8616(lhs_val, rhs_val)
 
-        if flag_name == "ZF":
-            kind: ConditionOp = "ne" if negate else "eq"
+            if flag_name == "ZF":
+                kind: ConditionOp = "ne" if negate else "eq"
+                return RecoveredCondition(
+                    build_condition_ir_8616(kind, lhs_val, rhs_val, expr=("flag_mask", flag_name)),
+                    confidence=ConditionConfidence.PROVEN,
+                )
+            if flag_name == "CF":
+                kind = "ult" if negate else "uge"
+                return RecoveredCondition(
+                    build_condition_ir_8616(kind, lhs_val, rhs_val, expr=("flag_mask", flag_name)),
+                    confidence=ConditionConfidence.PROVEN,
+                )
+            if flag_name == "SF":
+                kind = "slt" if negate else "sge"
+                return RecoveredCondition(
+                    build_condition_ir_8616(kind, lhs_val, rhs_val, expr=("flag_mask", flag_name)),
+                    confidence=ConditionConfidence.PROVEN,
+                )
+            if flag_name == "OF":
+                return RecoveredCondition(
+                    build_condition_ir_8616("compare", lhs_val, rhs_val, expr=("flag_mask", flag_name)),
+                    confidence=ConditionConfidence.LIKELY,
+                )
+
+        # Single-operand: zero/nonzero test
+        if operands is not None and len(operands) == 1:
+            (operand,) = operands
+            op_val = _ir_value_from_vex_expr(operand) if not isinstance(operand, IRValue) else operand
+            if flag_name == "ZF":
+                return RecoveredCondition(
+                    build_condition_ir_8616("nonzero" if negate else "zero", op_val, expr=("flag_mask", flag_name)),
+                    confidence=ConditionConfidence.PROVEN,
+                )
             return RecoveredCondition(
-                build_condition_ir_8616(kind, lhs_val, rhs_val, expr=("flag_mask", flag_name)),
-                confidence=ConditionConfidence.PROVEN,
-            )
-        if flag_name == "CF":
-            kind = "ult" if negate else "uge"
-            return RecoveredCondition(
-                build_condition_ir_8616(kind, lhs_val, rhs_val, expr=("flag_mask", flag_name)),
-                confidence=ConditionConfidence.PROVEN,
-            )
-        if flag_name == "SF":
-            kind = "slt" if negate else "sge"
-            return RecoveredCondition(
-                build_condition_ir_8616(kind, lhs_val, rhs_val, expr=("flag_mask", flag_name)),
-                confidence=ConditionConfidence.PROVEN,
-            )
-        if flag_name == "OF":
-            return RecoveredCondition(
-                build_condition_ir_8616("compare", lhs_val, rhs_val, expr=("flag_mask", flag_name)),
+                build_condition_ir_8616("nonzero" if negate else "zero", op_val, expr=("flag_mask", flag_name)),
                 confidence=ConditionConfidence.LIKELY,
             )
 
-    # Single-operand: zero/nonzero test
-    if operands is not None and len(operands) == 1:
-        (operand,) = operands
-        op_val = _ir_value_from_vex_expr(operand) if not isinstance(operand, IRValue) else operand
-        if flag_name == "ZF":
-            return RecoveredCondition(
-                build_condition_ir_8616("nonzero" if negate else "zero", op_val, expr=("flag_mask", flag_name)),
-                confidence=ConditionConfidence.PROVEN,
-            )
-        return RecoveredCondition(
-            build_condition_ir_8616("nonzero" if negate else "zero", op_val, expr=("flag_mask", flag_name)),
-            confidence=ConditionConfidence.LIKELY,
-        )
+        return None
 
-    return None
+    return _impl()
 
 
 def build_typed_condition_from_cmp_pair_8616(
@@ -324,29 +330,33 @@ def _jcc_to_condition_op_8616(mnemonic: str | None, lhs, rhs) -> ConditionOp:
 
 
 def _jcc_to_condition_op_with_zero_8616(mnemonic: str | None, lhs, rhs) -> ConditionOp:
-    """Map a JCC against zero to the appropriate condition op."""
-    if isinstance(mnemonic, str):
-        mnemonic = mnemonic.lower().strip()
-        if mnemonic in JCC_EQ_MNEMONICS_8616:
-            return "eq"
-        if mnemonic in JCC_NE_MNEMONICS_8616:
-            return "ne"
-        if mnemonic in JCC_SGT_MNEMONICS_8616:
-            return "sgt"
-        if mnemonic in JCC_SGE_MNEMONICS_8616:
-            return "sge"
-        if mnemonic in JCC_SLT_MNEMONICS_8616:
-            return "slt"
-        if mnemonic in JCC_SLE_MNEMONICS_8616:
-            return "sle"
-        if mnemonic in JCC_UGT_MNEMONICS_8616:
-            return "ugt"
-        if mnemonic in JCC_UGE_MNEMONICS_8616:
-            return "uge"
-        if mnemonic in JCC_ULT_MNEMONICS_8616:
-            return "ult"
-        if mnemonic in JCC_ULE_MNEMONICS_8616:
-            return "ule"
-        if mnemonic in _JCC_COMPARISON_MNEMONICS_8616:
-            return "compare"
-    return "ne"
+    def _impl():
+        nonlocal mnemonic
+        """Map a JCC against zero to the appropriate condition op."""
+        if isinstance(mnemonic, str):
+            mnemonic = mnemonic.lower().strip()
+            if mnemonic in JCC_EQ_MNEMONICS_8616:
+                return "eq"
+            if mnemonic in JCC_NE_MNEMONICS_8616:
+                return "ne"
+            if mnemonic in JCC_SGT_MNEMONICS_8616:
+                return "sgt"
+            if mnemonic in JCC_SGE_MNEMONICS_8616:
+                return "sge"
+            if mnemonic in JCC_SLT_MNEMONICS_8616:
+                return "slt"
+            if mnemonic in JCC_SLE_MNEMONICS_8616:
+                return "sle"
+            if mnemonic in JCC_UGT_MNEMONICS_8616:
+                return "ugt"
+            if mnemonic in JCC_UGE_MNEMONICS_8616:
+                return "uge"
+            if mnemonic in JCC_ULT_MNEMONICS_8616:
+                return "ult"
+            if mnemonic in JCC_ULE_MNEMONICS_8616:
+                return "ule"
+            if mnemonic in _JCC_COMPARISON_MNEMONICS_8616:
+                return "compare"
+        return "ne"
+
+    return _impl()

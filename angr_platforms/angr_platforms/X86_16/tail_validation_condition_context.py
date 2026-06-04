@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CDoWhileLoop,
@@ -65,12 +67,31 @@ def _decoded_jcc_condition_fingerprint(cond, project) -> str | None:
     if key is None:
         return None
     ins_addr, block_addr = key
-    codegen = getattr(cond, "codegen", None)
+    codegen = getattr(project, "_inertia_tail_validation_active_codegen", None) or getattr(cond, "codegen", None)
     decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
     if decoded is None:
+        if os.environ.get("INERTIA_DEBUG_TV_CONDITION_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}:
+            import sys
+
+            print(
+                f"[tv-condition-context] decode_failed block={block_addr:#x} ins={ins_addr:#x} "
+                f"active_codegen={getattr(project, '_inertia_tail_validation_active_codegen', None) is not None} "
+                f"cond_codegen={getattr(cond, 'codegen', None) is not None}",
+                file=sys.stderr,
+                flush=True,
+            )
         return None
     lhs = _expr_fingerprint(decoded.lhs, project)
     rhs = _expr_fingerprint(decoded.rhs, project)
+    if os.environ.get("INERTIA_DEBUG_TV_CONDITION_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}:
+        import sys
+
+        print(
+            f"[tv-condition-context] decoded block={block_addr:#x} ins={ins_addr:#x} "
+            f"op={decoded.op} lhs={lhs} rhs={rhs} expr={type(decoded.expr).__name__ if decoded.expr is not None else 'None'}",
+            file=sys.stderr,
+            flush=True,
+        )
     if lhs == rhs:
         return None
     return f"{decoded.op}({lhs},{rhs})"

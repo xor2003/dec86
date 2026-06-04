@@ -105,26 +105,29 @@ class GDBServer:
         self.dos_mem_start = self.DOS_MEM_START
 
     def _helper_name_for_addr(self, addr: int) -> str | None:
-        """Return a best-effort helper name for a concrete address."""
-        if self.project.is_hooked(addr):
-            proc = self.project.hooked_by(addr)
-            if proc is not None:
-                name = getattr(proc, "INT_NAME", None)
-                if isinstance(name, str) and name:
-                    return name
-                name = getattr(proc, "display_name", None)
-                if isinstance(name, str) and name:
-                    return name
-                return proc.__class__.__name__
+        def _impl():
+            """Return a best-effort helper name for a concrete address."""
+            if self.project.is_hooked(addr):
+                proc = self.project.hooked_by(addr)
+                if proc is not None:
+                    name = getattr(proc, "INT_NAME", None)
+                    if isinstance(name, str) and name:
+                        return name
+                    name = getattr(proc, "display_name", None)
+                    if isinstance(name, str) and name:
+                        return name
+                    return proc.__class__.__name__
 
-        kb = getattr(self.project, "kb", None)
-        functions = getattr(kb, "functions", None)
-        func = functions.function(addr=addr) if functions is not None else None
-        if func is not None:
-            name = getattr(func, "name", None)
-            if isinstance(name, str) and name:
-                return name
-        return None
+            kb = getattr(self.project, "kb", None)
+            functions = getattr(kb, "functions", None)
+            func = functions.function(addr=addr) if functions is not None else None
+            if func is not None:
+                name = getattr(func, "name", None)
+                if isinstance(name, str) and name:
+                    return name
+            return None
+
+        return _impl()
 
     def _build_helper_info(self) -> dict[str, object]:
         """Build helper metadata for the current execution point."""
@@ -273,37 +276,40 @@ class GDBServer:
         state.regs.bp = 0
 
     def _accept_and_serve(self) -> None:
-        """Accept client connections and serve GDB protocol."""
-        self._initialize_state_if_needed()
-        while self.running and self.socket is not None:
-            try:
-                self.client, addr = self.socket.accept()
-                print(f"[GDB] Client connected from {addr}")
+        def _impl():
+            """Accept client connections and serve GDB protocol."""
+            self._initialize_state_if_needed()
+            while self.running and self.socket is not None:
+                try:
+                    self.client, addr = self.socket.accept()
+                    print(f"[GDB] Client connected from {addr}")
 
-                # Send signal (stopped at entry)
-                self._send_packet("S05")
+                    # Send signal (stopped at entry)
+                    self._send_packet("S05")
 
-                # Command loop
-                while self.running and self.client is not None:
-                    data = self.client.recv(1024)
-                    if not data:
-                        break
+                    # Command loop
+                    while self.running and self.client is not None:
+                        data = self.client.recv(1024)
+                        if not data:
+                            break
 
-                    commands = data.decode('utf-8', errors='ignore').strip().split('\n')
-                    for cmd in commands:
-                        self._handle_command(cmd)
+                        commands = data.decode('utf-8', errors='ignore').strip().split('\n')
+                        for cmd in commands:
+                            self._handle_command(cmd)
 
-            except OSError:
-                break
-            except Exception as e:
-                print(f"[GDB] Error: {e}")
-            finally:
-                if self.client is not None:
-                    try:
-                        self.client.close()
-                    except OSError:
-                        pass
-                    self.client = None
+                except OSError:
+                    break
+                except Exception as e:
+                    print(f"[GDB] Error: {e}")
+                finally:
+                    if self.client is not None:
+                        try:
+                            self.client.close()
+                        except OSError:
+                            pass
+                        self.client = None
+
+        return _impl()
 
     def _initialize_state_if_needed(self) -> None:
         """Create the initial DOS execution state once."""
@@ -349,120 +355,156 @@ class GDBServer:
         packet = f"${data}#{checksum:02x}"
         self.client.sendall(packet.encode())
 
+    def _handle_q_command(self, cmd: str) -> bool:
+        def _impl():
+            if cmd.startswith('qSupported'):
+                self._send_packet(
+                    "PacketSize=3fff;qXfer:memory-map:read+;"
+                    "qXfer:features:read+;vContSupported+;"
+                    "multiprocess-;swbreak+;hwbreak+;"
+                    "ConditionalBreakpoints+;UnconditionalBreakpoints+;"
+                    "ExtendedMode+;QStartNoAckMode+"
+                )
+                return True
+            if cmd.startswith('qXfer:memory-map:read::'):
+                self._send_packet(self._get_memory_map_xml())
+                return True
+            if cmd.startswith('qXfer:features:read:'):
+                self._send_packet(self._get_target_description_xml())
+                return True
+            if cmd.startswith('qXfer:'):
+                self._send_packet("l")
+                return True
+            if cmd == 'qAttached':
+                self._send_packet("0")
+                return True
+            if cmd == 'qTStatus':
+                self._send_packet("")
+                return True
+            if cmd == 'qfThreadInfo':
+                threads_hex = ','.join(f"{tid:x}" for tid in self.threads.keys())
+                self._send_packet(f"m{threads_hex}")
+                return True
+            if cmd == 'qsThreadInfo':
+                self._send_packet("l")
+                return True
+            if cmd == 'qC':
+                self._send_packet(f"QC{self.current_thread:x}")
+                return True
+            if cmd == 'qOffsets':
+                self._send_packet("Text=0;Data=0;Bss=0")
+                return True
+            if cmd == 'qInertiaHelpers':
+                self._send_packet(json.dumps(self._build_helper_info(), separators=(",", ":")))
+                return True
+            if cmd.startswith('qSymbol'):
+                self._send_packet("OK")
+                return True
+            return False
+
+        return _impl()
+
+    def _handle_vcont_command(self, cmd: str) -> bool:
+        if cmd == 'vCont?':
+            self._send_packet("vCont;s;c")
+            return True
+        if not cmd.startswith('vCont'):
+            return False
+        if ':s' in cmd or cmd == 'vCont;s':
+            self._handle_step()
+        elif ':c' in cmd or cmd == 'vCont;c':
+            self._handle_continue()
+        else:
+            self._handle_continue()
+        return True
+
+    def _handle_thread_command(self, cmd: str) -> bool:
+        if cmd.startswith('Hg') or cmd.startswith('Hc'):
+            self._send_packet("OK")
+            return True
+        return False
+
+    def _handle_register_command(self, cmd: str) -> bool:
+        if cmd == 'g':
+            self._handle_read_all_registers()
+            return True
+        if cmd.startswith('p'):
+            self._handle_read_register(cmd)
+            return True
+        if cmd.startswith('P'):
+            self._handle_write_register(cmd)
+            return True
+        return False
+
+    def _handle_memory_command(self, cmd: str) -> bool:
+        if cmd.startswith('m'):
+            self._handle_read_memory(cmd)
+            return True
+        if cmd.startswith('M'):
+            self._handle_write_memory(cmd)
+            return True
+        if cmd.startswith('X'):
+            self._handle_write_memory_binary(cmd)
+            return True
+        return False
+
+    def _handle_execution_command(self, cmd: str) -> bool:
+        if cmd == 'c':
+            self._handle_continue()
+            return True
+        if cmd == 's':
+            self._handle_step()
+            return True
+        if cmd == 'n':
+            self._handle_step_over()
+            return True
+        if cmd == '?':
+            self._send_packet("S05")
+            return True
+        return False
+
+    def _handle_breakpoint_command(self, cmd: str) -> bool:
+        if cmd.startswith('Z0,') or cmd.startswith('Z1,'):
+            self._handle_set_breakpoint(cmd)
+            return True
+        if cmd.startswith('z0,') or cmd.startswith('z1,'):
+            self._handle_remove_breakpoint(cmd)
+            return True
+        if cmd.startswith('Z') or cmd.startswith('z'):
+            self._send_packet("")
+            return True
+        return False
+
     def _handle_command(self, cmd: str) -> None:
-        """Dispatch GDB RSP command."""
-        print(f"[GDB] Received raw command: {repr(cmd)}")
-        if not cmd or cmd.startswith('+'):
-            return
+        def _impl():
+            """Dispatch GDB RSP command."""
+            print(f"[GDB] Received raw command: {repr(cmd)}")
+            if not cmd or cmd.startswith('+'):
+                return
 
-        if cmd.startswith('$'):
-            cmd = cmd[1:].split('#')[0]
-        print(f"[GDB] Parsed command: {repr(cmd)}")
-
-        # === Cutter/rizin compatible queries ===
-        # qSupported - feature negotiation
-        if cmd.startswith('qSupported'):
-            self._send_packet(
-                "PacketSize=3fff;qXfer:memory-map:read+;"
-                "qXfer:features:read+;vContSupported+;"
-                "multiprocess-;swbreak+;hwbreak+;"
-                "ConditionalBreakpoints+;UnconditionalBreakpoints+;"
-                "ExtendedMode+;QStartNoAckMode+"
-            )
-
-        # qXfer - extended data transfer
-        elif cmd.startswith('qXfer:memory-map:read::'):
-            self._send_packet(self._get_memory_map_xml())
-        elif cmd.startswith('qXfer:features:read:'):
-            self._send_packet(self._get_target_description_xml())
-        elif cmd.startswith('qXfer:'):
-            self._send_packet("l")  # Empty/unsupported qXfer
-
-        # qAttached - check if attached to existing process
-        elif cmd == 'qAttached':
-            self._send_packet("0")  # Not attached (we launched it)
-
-        # qTStatus - trace status
-        elif cmd == 'qTStatus':
+            if cmd.startswith('$'):
+                cmd = cmd[1:].split('#')[0]
+            print(f"[GDB] Parsed command: {repr(cmd)}")
+            if self._handle_q_command(cmd):
+                return
+            if self._handle_vcont_command(cmd):
+                return
+            if self._handle_thread_command(cmd):
+                return
+            if self._handle_register_command(cmd):
+                return
+            if self._handle_memory_command(cmd):
+                return
+            if self._handle_execution_command(cmd):
+                return
+            if self._handle_breakpoint_command(cmd):
+                return
+            if cmd == 'QStartNoAckMode':
+                self._send_packet("OK")
+                return
             self._send_packet("")
 
-        # qfThreadInfo / qsThreadInfo - thread list
-        elif cmd == 'qfThreadInfo':
-            threads_hex = ','.join(f"{tid:x}" for tid in self.threads.keys())
-            self._send_packet(f"m{threads_hex}")
-        elif cmd == 'qsThreadInfo':
-            self._send_packet("l")  # End of list
-
-        # qC - current thread
-        elif cmd == 'qC':
-            self._send_packet(f"QC{self.current_thread:x}")
-
-        # qOffsets - section offsets
-        elif cmd == 'qOffsets':
-            self._send_packet("Text=0;Data=0;Bss=0")
-        elif cmd == 'qInertiaHelpers':
-            self._send_packet(json.dumps(self._build_helper_info(), separators=(",", ":")))
-
-        # qSymbol - symbol lookup (we don't have symbols)
-        elif cmd.startswith('qSymbol'):
-            self._send_packet("OK")
-
-        # vCont - verbose continue (Cutter uses this)
-        elif cmd == 'vCont?':
-            self._send_packet("vCont;s;c")
-        elif cmd.startswith('vCont'):
-            if ':s' in cmd or cmd == 'vCont;s':
-                self._handle_step()
-            elif ':c' in cmd or cmd == 'vCont;c':
-                self._handle_continue()
-            else:
-                self._handle_continue()  # Default to continue
-
-        # Hg/Hc - thread selection
-        elif cmd.startswith('Hg') or cmd.startswith('Hc'):
-            self._send_packet("OK")
-
-        # Registers
-        elif cmd == 'g':
-            self._handle_read_all_registers()
-        elif cmd.startswith('p'):
-            self._handle_read_register(cmd)
-        elif cmd.startswith('P'):
-            self._handle_write_register(cmd)
-
-        # Memory
-        elif cmd.startswith('m'):
-            self._handle_read_memory(cmd)
-        elif cmd.startswith('M'):
-            self._handle_write_memory(cmd)
-        elif cmd.startswith('X'):
-            self._handle_write_memory_binary(cmd)
-
-        # Execution
-        elif cmd == 'c':
-            self._handle_continue()
-        elif cmd == 's':
-            self._handle_step()
-        elif cmd == 'n':
-            self._handle_step_over()
-        elif cmd == '?':
-            self._send_packet("S05")  # Always stopped for now
-
-        # Breakpoints
-        elif cmd.startswith('Z0,') or cmd.startswith('Z1,'):
-            self._handle_set_breakpoint(cmd)
-        elif cmd.startswith('z0,') or cmd.startswith('z1,'):
-            self._handle_remove_breakpoint(cmd)
-        elif cmd.startswith('Z') or cmd.startswith('z'):
-            self._send_packet("")  # Watchpoints not supported
-
-        # Start no-ack mode
-        elif cmd == 'QStartNoAckMode':
-            self._send_packet("OK")
-
-        # Fallback
-        else:
-            self._send_packet("")  # Not supported
+        return _impl()
 
     def _handle_read_all_registers(self) -> None:
         """Read all registers (x86-16 format, little-endian byte order)."""
@@ -593,68 +635,71 @@ class GDBServer:
             self._send_packet("S05")
 
     def _handle_step_over(self) -> None:
-        """Step over instruction (execute calls without stepping into)."""
-        if not self.state:
-            return
+        def _impl():
+            """Step over instruction (execute calls without stepping into)."""
+            if not self.state:
+                return
 
-        try:
-            # Get current IP
-            ip = self.state.solver.eval(self.state.regs.ip)
+            try:
+                # Get current IP
+                ip = self.state.solver.eval(self.state.regs.ip)
             
-            # Read instruction at current IP
-            mem = self.state.memory.load(ip, 15)
-            concrete = self.state.solver.eval(mem, cast_to=bytes)
+                # Read instruction at current IP
+                mem = self.state.memory.load(ip, 15)
+                concrete = self.state.solver.eval(mem, cast_to=bytes)
             
-            # Check if it's a call instruction (0xE8 = call rel32, 0xFF/2 = call r/m)
-            is_call = False
-            insn_len = 0
+                # Check if it's a call instruction (0xE8 = call rel32, 0xFF/2 = call r/m)
+                is_call = False
+                insn_len = 0
             
-            if concrete[0] == 0xE8:
-                # call rel32
-                is_call = True
-                if len(concrete) >= 5:
-                    insn_len = 5
-                    next_ip = ip + insn_len
-            elif concrete[0] == 0xFF and len(concrete) >= 2:
-                # call r/m - check modrm
-                modrm = concrete[1]
-                if (modrm >> 3) & 0x7 == 2:  # call
+                if concrete[0] == 0xE8:
+                    # call rel32
                     is_call = True
-                    # Approximate length
-                    insn_len = 2
-                    if (modrm & 0xC0) == 0x00:
-                        if (modrm & 0x07) == 0x05:
+                    if len(concrete) >= 5:
+                        insn_len = 5
+                        next_ip = ip + insn_len
+                elif concrete[0] == 0xFF and len(concrete) >= 2:
+                    # call r/m - check modrm
+                    modrm = concrete[1]
+                    if (modrm >> 3) & 0x7 == 2:  # call
+                        is_call = True
+                        # Approximate length
+                        insn_len = 2
+                        if (modrm & 0xC0) == 0x00:
+                            if (modrm & 0x07) == 0x05:
+                                insn_len = 6  # disp32
+                            else:
+                                insn_len = 2
+                        elif (modrm & 0xC0) == 0x40:
+                            insn_len = 3  # disp8
+                        elif (modrm & 0xC0) == 0x80:
                             insn_len = 6  # disp32
                         else:
                             insn_len = 2
-                    elif (modrm & 0xC0) == 0x40:
-                        insn_len = 3  # disp8
-                    elif (modrm & 0xC0) == 0x80:
-                        insn_len = 6  # disp32
-                    else:
-                        insn_len = 2
-                    next_ip = ip + insn_len
+                        next_ip = ip + insn_len
             
-            if is_call and insn_len > 0:
-                # Set temporary breakpoint at next instruction
-                next_ip = ip + insn_len
-                self.breakpoints[next_ip] = Breakpoint(next_ip)
-                print(f"[GDB] Step over: setting temp BP at 0x{next_ip:x}")
+                if is_call and insn_len > 0:
+                    # Set temporary breakpoint at next instruction
+                    next_ip = ip + insn_len
+                    self.breakpoints[next_ip] = Breakpoint(next_ip)
+                    print(f"[GDB] Step over: setting temp BP at 0x{next_ip:x}")
                 
-                # Continue until breakpoint
-                self._handle_continue()
+                    # Continue until breakpoint
+                    self._handle_continue()
                 
-                # Remove temporary breakpoint
-                self.breakpoints.pop(next_ip, None)
-            else:
-                # Not a call, just step
-                succ = self.project.factory.successors(self.state, num_inst=1)
-                if succ.successors:
-                    self.state = succ.successors[0]
+                    # Remove temporary breakpoint
+                    self.breakpoints.pop(next_ip, None)
+                else:
+                    # Not a call, just step
+                    succ = self.project.factory.successors(self.state, num_inst=1)
+                    if succ.successors:
+                        self.state = succ.successors[0]
+                    self._send_packet("S05")
+            except Exception as e:
+                print(f"[GDB] Step over error: {e}")
                 self._send_packet("S05")
-        except Exception as e:
-            print(f"[GDB] Step over error: {e}")
-            self._send_packet("S05")
+
+        return _impl()
 
     def _handle_set_breakpoint(self, cmd: str) -> None:
         """Set breakpoint: Z0,<addr>,<kind>"""

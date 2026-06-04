@@ -125,53 +125,56 @@ def detect_natural_loop(
     dominators: DominatorInfo,
     region: Region,
 ) -> Optional[NaturalLoopInfo]:
-    """
-    Detect a natural loop rooted at `region`.
+    def _impl():
+        """
+        Detect a natural loop rooted at `region`.
 
-    Returns a typed summary or `None` if the region is not a loop header.
-    """
+        Returns a typed summary or `None` if the region is not a loop header.
+        """
 
-    if region not in graph.nodes:
-        return None
+        if region not in graph.nodes:
+            return None
 
-    preds = graph.predecessors(region)
-    back_edges = [pred for pred in preds if dominators.strictly_dominates(region, pred)]
-    if not back_edges:
-        return None
+        preds = graph.predecessors(region)
+        back_edges = [pred for pred in preds if dominators.strictly_dominates(region, pred)]
+        if not back_edges:
+            return None
 
-    body_regions = compute_loop_body(graph, dominators, region, back_edges)
-    if not body_regions:
-        return None
+        body_regions = compute_loop_body(graph, dominators, region, back_edges)
+        if not body_regions:
+            return None
 
-    exit_edges: list[tuple[Region, Region]] = []
-    exit_targets: set[Region] = set()
-    for body_region in body_regions:
-        for succ in graph.successors(body_region):
-            if succ in body_regions or succ == region:
-                continue
-            exit_edges.append((body_region, succ))
-            exit_targets.add(succ)
+        exit_edges: list[tuple[Region, Region]] = []
+        exit_targets: set[Region] = set()
+        for body_region in body_regions:
+            for succ in graph.successors(body_region):
+                if succ in body_regions or succ == region:
+                    continue
+                exit_edges.append((body_region, succ))
+                exit_targets.add(succ)
 
-    is_reducible = len(exit_targets) <= 1
-    if len(exit_targets) > 1:
-        is_reducible = is_well_structured_multi_exit(body_regions, exit_edges)
+        is_reducible = len(exit_targets) <= 1
+        if len(exit_targets) > 1:
+            is_reducible = is_well_structured_multi_exit(body_regions, exit_edges)
 
-    confidence = compute_loop_confidence(
-        region,
-        back_edges,
-        body_regions,
-        exit_edges,
-        is_reducible,
-    )
-    if confidence < 0.3:
-        return None
+        confidence = compute_loop_confidence(
+            region,
+            back_edges,
+            body_regions,
+            exit_edges,
+            is_reducible,
+        )
+        if confidence < 0.3:
+            return None
 
-    return NaturalLoopInfo(
-        header=region,
-        back_edges=back_edges,
-        body_regions=body_regions,
-        exit_edges=exit_edges,
-        is_reducible=is_reducible,
-        confidence=confidence,
-        has_single_exit=len(exit_targets) <= 1,
-    )
+        return NaturalLoopInfo(
+            header=region,
+            back_edges=back_edges,
+            body_regions=body_regions,
+            exit_edges=exit_edges,
+            is_reducible=is_reducible,
+            confidence=confidence,
+            has_single_exit=len(exit_targets) <= 1,
+        )
+
+    return _impl()

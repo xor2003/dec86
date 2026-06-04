@@ -33,31 +33,34 @@ class ValidationHelperReport:
 
 
 def build_x86_16_validation_helper_report(results: Sequence[Mapping[str, object]]) -> ValidationHelperReport:
-    summary = summarize_recovery_confidence(results)
-    rows: list[ValidationHelperFamilyRow] = []
-    for item in summary.get("helper_family_rows", ()) or ():
-        family = item.get("family")
-        likely_layer = item.get("likely_layer")
-        next_root_cause_file = item.get("next_root_cause_file")
-        signal = item.get("signal")
-        if not isinstance(family, str) or not family:
-            continue
-        if not isinstance(likely_layer, str) or not likely_layer:
-            continue
-        if not isinstance(next_root_cause_file, str) or not next_root_cause_file:
-            continue
-        if not isinstance(signal, str) or not signal:
-            continue
-        rows.append(
-            ValidationHelperFamilyRow(
-                family=family,
-                count=int(item.get("count", 0) or 0),
-                likely_layer=likely_layer,
-                next_root_cause_file=next_root_cause_file,
-                signal=signal,
+    def _impl():
+        summary = summarize_recovery_confidence(results)
+        rows: list[ValidationHelperFamilyRow] = []
+        for item in summary.get("helper_family_rows", ()) or ():
+            family = item.get("family")
+            likely_layer = item.get("likely_layer")
+            next_root_cause_file = item.get("next_root_cause_file")
+            signal = item.get("signal")
+            if not isinstance(family, str) or not family:
+                continue
+            if not isinstance(likely_layer, str) or not likely_layer:
+                continue
+            if not isinstance(next_root_cause_file, str) or not next_root_cause_file:
+                continue
+            if not isinstance(signal, str) or not signal:
+                continue
+            rows.append(
+                ValidationHelperFamilyRow(
+                    family=family,
+                    count=int(item.get("count", 0) or 0),
+                    likely_layer=likely_layer,
+                    next_root_cause_file=next_root_cause_file,
+                    signal=signal,
+                )
             )
-        )
-    return ValidationHelperReport(rows=tuple(rows))
+        return ValidationHelperReport(rows=tuple(rows))
+
+    return _impl()
 
 
 def describe_x86_16_validation_helper_report_surface() -> dict[str, object]:

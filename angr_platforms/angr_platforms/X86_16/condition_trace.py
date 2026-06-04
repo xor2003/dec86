@@ -78,40 +78,43 @@ def _node_condition_key_8616(node) -> tuple[int, int] | None:
 
 
 def _iter_condition_nodes_8616(codegen) -> Iterable[tuple[tuple[int, int], object, str]]:
-    cfunc = getattr(codegen, "cfunc", None)
-    root = None
-    for attr in ("body", "statements", "stmt"):
-        value = getattr(cfunc, attr, None)
-        if value is not None:
-            root = value
-            break
-    if root is None:
-        root = cfunc
-    if root is None:
-        return ()
-    rows: list[tuple[tuple[int, int], object, str]] = []
-    for node in _iter_c_nodes_deep_8616(root):
-        if isinstance(node, CIfElse):
-            for cond, _body in tuple(getattr(node, "condition_and_nodes", ()) or ()):
+    def _impl():
+        cfunc = getattr(codegen, "cfunc", None)
+        root = None
+        for attr in ("body", "statements", "stmt"):
+            value = getattr(cfunc, attr, None)
+            if value is not None:
+                root = value
+                break
+        if root is None:
+            root = cfunc
+        if root is None:
+            return ()
+        rows: list[tuple[tuple[int, int], object, str]] = []
+        for node in _iter_c_nodes_deep_8616(root):
+            if isinstance(node, CIfElse):
+                for cond, _body in tuple(getattr(node, "condition_and_nodes", ()) or ()):
+                    key = _node_condition_key_8616(cond)
+                    if key is not None:
+                        rows.append((key, cond, "if"))
+            elif isinstance(node, CIfBreak):
+                cond = getattr(node, "condition", None)
                 key = _node_condition_key_8616(cond)
                 if key is not None:
-                    rows.append((key, cond, "if"))
-        elif isinstance(node, CIfBreak):
-            cond = getattr(node, "condition", None)
-            key = _node_condition_key_8616(cond)
-            if key is not None:
-                rows.append((key, cond, "ifbreak"))
-        elif isinstance(node, CForLoop):
-            cond = getattr(node, "condition", None)
-            key = _node_condition_key_8616(cond)
-            if key is not None:
-                rows.append((key, cond, "for"))
-        elif hasattr(node, "condition"):
-            cond = getattr(node, "condition", None)
-            key = _node_condition_key_8616(cond)
-            if key is not None:
-                rows.append((key, cond, type(node).__name__))
-    return rows
+                    rows.append((key, cond, "ifbreak"))
+            elif isinstance(node, CForLoop):
+                cond = getattr(node, "condition", None)
+                key = _node_condition_key_8616(cond)
+                if key is not None:
+                    rows.append((key, cond, "for"))
+            elif hasattr(node, "condition"):
+                cond = getattr(node, "condition", None)
+                key = _node_condition_key_8616(cond)
+                if key is not None:
+                    rows.append((key, cond, type(node).__name__))
+        return rows
+
+    return _impl()
 
 
 def record_classified_conditions_trace_8616(project, codegen, conditions: list[ConditionIR]) -> None:

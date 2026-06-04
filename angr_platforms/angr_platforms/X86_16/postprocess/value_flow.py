@@ -41,20 +41,23 @@ def _is_side_effecting(expr) -> bool:
 
 
 def _has_variable_use(expr, target) -> bool:
-    """Check if expr contains a use of target variable."""
-    if expr is None:
+    def _impl():
+        """Check if expr contains a use of target variable."""
+        if expr is None:
+            return False
+        if _same_var(expr, target):
+            return True
+        if isinstance(expr, CBinaryOp):
+            return _has_variable_use(expr.lhs, target) or _has_variable_use(expr.rhs, target)
+        if isinstance(expr, CUnaryOp):
+            return _has_variable_use(expr.operand, target)
+        if isinstance(expr, CFunctionCall):
+            return any(_has_variable_use(arg, target) for arg in (getattr(expr, "args", ()) or ()))
+        if isinstance(expr, CAssignment):
+            return _has_variable_use(expr.rhs, target) or _has_variable_use(expr.lhs, target)
         return False
-    if _same_var(expr, target):
-        return True
-    if isinstance(expr, CBinaryOp):
-        return _has_variable_use(expr.lhs, target) or _has_variable_use(expr.rhs, target)
-    if isinstance(expr, CUnaryOp):
-        return _has_variable_use(expr.operand, target)
-    if isinstance(expr, CFunctionCall):
-        return any(_has_variable_use(arg, target) for arg in (getattr(expr, "args", ()) or ()))
-    if isinstance(expr, CAssignment):
-        return _has_variable_use(expr.rhs, target) or _has_variable_use(expr.lhs, target)
-    return False
+
+    return _impl()
 
 
 def _apply_value_flow_renaming_8616(codegen) -> bool:

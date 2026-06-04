@@ -8,6 +8,24 @@ from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 
+_LINEAR_TEMP_NAME_RE_8616 = re.compile(r"(?:v\d+|vvar_\d+|ir_\d+|tmp_\d+)")
+
+
+def _strip_typed_suffix_8616(name: object) -> str | None:
+    if not isinstance(name, str):
+        return None
+    if name.endswith("}"):
+        brace_pos = name.find("{")
+        if brace_pos > 0:
+            return name[:brace_pos]
+    return name
+
+
+def _is_linear_temp_name_8616(name: object) -> bool:
+    base = _strip_typed_suffix_8616(name)
+    return isinstance(base, str) and _LINEAR_TEMP_NAME_RE_8616.fullmatch(base) is not None
+
+
 def _rewrite_ss_stack_byte_offsets(
     project,
     codegen,
@@ -77,7 +95,7 @@ def _rewrite_ss_stack_byte_offsets(
         name = getattr(cvar, "name", None)
         if name is None:
             return True
-        return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+|ir_\d+|tmp_\d+)", name) is not None
+        return _is_linear_temp_name_8616(name)
 
     def _alias_keys_for_cvar(cvar) -> tuple[object, ...]:
         keys: list[object] = []
@@ -91,7 +109,9 @@ def _rewrite_ss_stack_byte_offsets(
                 keys.append(("reg", reg, size))
         name = getattr(cvar, "name", None) or getattr(variable, "name", None)
         if isinstance(name, str) and name:
-            keys.append(("name", name))
+            normalized_name = _strip_typed_suffix_8616(name)
+            if isinstance(normalized_name, str) and normalized_name:
+                keys.append(("name", normalized_name))
         return tuple(keys)
 
     def _alias_lookup_keys_for_cvar(cvar) -> tuple[object, ...]:
@@ -109,27 +129,30 @@ def _rewrite_ss_stack_byte_offsets(
             getattr(variable, "name", None),
         ):
             if isinstance(candidate, str) and candidate:
-                keys.append(("name", candidate))
+                normalized_name = _strip_typed_suffix_8616(candidate)
+                if isinstance(normalized_name, str) and normalized_name:
+                    keys.append(("name", normalized_name))
         return tuple(dict.fromkeys(keys))
 
     def _single_assignment_expr_for_virtual_name(name: str):
-        if not name:
+        normalized_name = _strip_typed_suffix_8616(name)
+        if not normalized_name:
             return None
-        cached = dirty_expr_single_assignment_cache.get(name)
+        cached = dirty_expr_single_assignment_cache.get(normalized_name)
         if cached is not None:
             return None if cached is _UNRESOLVED_SINGLE_ASSIGN else cached
         root = getattr(getattr(codegen, "cfunc", None), "statements", None)
         if root is None:
-            dirty_expr_single_assignment_cache[name] = _UNRESOLVED_SINGLE_ASSIGN
+            dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
             return None
 
         target_varid = None
-        if name.startswith("vvar_"):
-            suffix = name.removeprefix("vvar_")
+        if normalized_name.startswith("vvar_"):
+            suffix = normalized_name.removeprefix("vvar_")
             if suffix.isdigit():
                 target_varid = int(suffix)
         if not isinstance(target_varid, int):
-            dirty_expr_single_assignment_cache[name] = _UNRESOLVED_SINGLE_ASSIGN
+            dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
             return None
 
         matches = []
@@ -140,15 +163,16 @@ def _rewrite_ss_stack_byte_offsets(
             lhs_name = None
             if isinstance(lhs, structured_c.CVariable):
                 lhs_name = getattr(lhs, "name", None) or getattr(getattr(lhs, "variable", None), "name", None)
+            lhs_name = _strip_typed_suffix_8616(lhs_name)
             lhs_varid = getattr(getattr(lhs, "dirty", None), "varid", None)
-            if lhs_name != name and lhs_varid != target_varid:
+            if lhs_name != normalized_name and lhs_varid != target_varid:
                 continue
             matches.append(getattr(stmt, "rhs", None))
             if len(matches) > 1:
-                dirty_expr_single_assignment_cache[name] = _UNRESOLVED_SINGLE_ASSIGN
+                dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
                 return None
         resolved = matches[0] if len(matches) == 1 else None
-        dirty_expr_single_assignment_cache[name] = resolved if resolved is not None else _UNRESOLVED_SINGLE_ASSIGN
+        dirty_expr_single_assignment_cache[normalized_name] = resolved if resolved is not None else _UNRESOLVED_SINGLE_ASSIGN
         return resolved
 
     def _single_assignment_expr_for_cvar(node_cvar):
@@ -174,7 +198,9 @@ def _rewrite_ss_stack_byte_offsets(
             if lhs_var is node_var:
                 return True
             lhs_name = getattr(lhs, "name", None) or getattr(lhs_var, "name", None)
-            if isinstance(node_name, str) and node_name and lhs_name == node_name:
+            lhs_name = _strip_typed_suffix_8616(lhs_name)
+            normalized_node_name = _strip_typed_suffix_8616(node_name)
+            if isinstance(normalized_node_name, str) and normalized_node_name and lhs_name == normalized_node_name:
                 return True
             lhs_reg = getattr(lhs_var, "reg", None)
             lhs_size = getattr(lhs_var, "size", None)
@@ -493,6 +519,28 @@ def _rewrite_ss_stack_byte_offsets(
     def _return_if_changed(original, replacement):
         if replacement is original:
             return original
+        def _expr_contains_rewrite_alias_carrier(expr, *, seen_ids: set[int] | None = None) -> bool:
+            expr = unwrap_c_casts(expr)
+            if seen_ids is None:
+                seen_ids = set()
+            if expr is not None:
+                expr_id = id(expr)
+                if expr_id in seen_ids:
+                    return False
+                seen_ids.add(expr_id)
+            if _dirty_alias_key(expr) is not None:
+                return True
+            if isinstance(expr, structured_c.CVariable):
+                return _is_linear_temp(expr)
+            if isinstance(expr, structured_c.CUnaryOp):
+                return _expr_contains_rewrite_alias_carrier(getattr(expr, "operand", None), seen_ids=seen_ids)
+            if isinstance(expr, structured_c.CBinaryOp):
+                return _expr_contains_rewrite_alias_carrier(getattr(expr, "lhs", None), seen_ids=seen_ids) or _expr_contains_rewrite_alias_carrier(
+                    getattr(expr, "rhs", None), seen_ids=seen_ids
+                )
+            if isinstance(expr, structured_c.CTypeCast):
+                return _expr_contains_rewrite_alias_carrier(getattr(expr, "expr", None), seen_ids=seen_ids)
+            return False
         original_cvar = _stack_cvar_identity(original)
         replacement_cvar = _stack_cvar_identity(replacement)
         if original_cvar is not None and original_cvar == replacement_cvar:
@@ -500,6 +548,9 @@ def _rewrite_ss_stack_byte_offsets(
         original_deref = _stack_deref_identity(original)
         replacement_deref = _stack_deref_identity(replacement)
         if original_deref is not None and original_deref == replacement_deref:
+            if isinstance(original, structured_c.CUnaryOp) and original.op == "Dereference":
+                if _expr_contains_rewrite_alias_carrier(getattr(original, "operand", None)):
+                    return replacement
             return original
         return replacement
 

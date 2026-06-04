@@ -50,28 +50,31 @@ def _slot_role(base: str, offset: int) -> str:
 
 
 def build_x86_16_ir_frame_access_artifact(artifact: IRFunctionArtifact) -> FrameAccessArtifact:
-    slots: dict[tuple[str, int, int], StackFrameSlot] = {}
-    refusals: list[str] = []
-    for block in artifact.blocks:
-        for instr in block.instrs:
-            values = tuple(arg for arg in instr.args if isinstance(arg, IRAddress) and arg.space == MemSpace.SS)
-            for value in values:
-                base = value.base[0] if len(value.base) == 1 else None
-                if base not in {"bp", "sp"}:
-                    refusals.append("non_frame_ss_access")
-                    continue
-                size = int(value.size or instr.size or 0)
-                key = (base or "", value.offset, size)
-                slots.setdefault(
-                    key,
-                    StackFrameSlot(
-                        base=base or "sp",
-                        offset=value.offset,
-                        role=_slot_role(base or "sp", value.offset),
-                        size=size,
-                    ),
-                )
-    return FrameAccessArtifact(
-        slots=tuple(sorted(slots.values(), key=lambda item: (item.base, item.offset, item.size))),
-        refusals=tuple(sorted(set(refusals))),
-    )
+    def _impl():
+        slots: dict[tuple[str, int, int], StackFrameSlot] = {}
+        refusals: list[str] = []
+        for block in artifact.blocks:
+            for instr in block.instrs:
+                values = tuple(arg for arg in instr.args if isinstance(arg, IRAddress) and arg.space == MemSpace.SS)
+                for value in values:
+                    base = value.base[0] if len(value.base) == 1 else None
+                    if base not in {"bp", "sp"}:
+                        refusals.append("non_frame_ss_access")
+                        continue
+                    size = int(value.size or instr.size or 0)
+                    key = (base or "", value.offset, size)
+                    slots.setdefault(
+                        key,
+                        StackFrameSlot(
+                            base=base or "sp",
+                            offset=value.offset,
+                            role=_slot_role(base or "sp", value.offset),
+                            size=size,
+                        ),
+                    )
+        return FrameAccessArtifact(
+            slots=tuple(sorted(slots.values(), key=lambda item: (item.base, item.offset, item.size))),
+            refusals=tuple(sorted(set(refusals))),
+        )
+
+    return _impl()

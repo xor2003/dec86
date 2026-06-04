@@ -24,6 +24,7 @@ from . import cli_function_discovery as _cli_function_discovery
 from . import non_optimized_fallback as _non_optimized_fallback
 from . import project_loading as _project_loading
 from . import runtime_support as _runtime_support
+from . import sidecar_parsers as _sidecar_parsers
 from . import sidecar_metadata as _sidecar_metadata
 from . import tail_validation as _tail_validation
 from . import work_items as _work_items
@@ -71,6 +72,7 @@ _PROXY_MODULES = (
     _non_optimized_fallback,
     _project_loading,
     _runtime_support,
+    _sidecar_parsers,
     _sidecar_metadata,
     _tail_validation,
     _work_items,
@@ -130,39 +132,42 @@ def _probe_lift_break(project, addr: int, *, max_window: int = 0x80) -> str:
 
 def _match_adjacent_register_pair_var_expr(low_expr, high_expr, codegen):
     # Compatibility surface for legacy tests and callers importing from decompile/cli.
-    if isinstance(high_expr, structured_c.CBinaryOp) and high_expr.op in {"Mul", "Shl"}:
-        for maybe_inner, maybe_scale in ((high_expr.lhs, high_expr.rhs), (high_expr.rhs, high_expr.lhs)):
-            scale = _c_constant_value(_unwrap_c_casts(maybe_scale))
-            if scale not in {8, 0x100}:
-                continue
-            high_expr = _unwrap_c_casts(maybe_inner)
-            break
-    if not isinstance(low_expr, structured_c.CVariable) or not isinstance(high_expr, structured_c.CVariable):
-        return None
-    low_var = getattr(low_expr, "variable", None)
-    high_var = getattr(high_expr, "variable", None)
-    if not isinstance(low_var, SimRegisterVariable) or not isinstance(high_var, SimRegisterVariable):
-        return None
-    if getattr(low_var, "size", None) != 1 or getattr(high_var, "size", None) != 1:
-        return None
-    alias_state = _get_or_seed_inertia_alias_state(codegen)
-    if alias_state is None:
-        return None
-    analysis = analyze_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
-    if not analysis.ok:
-        return None
-    proof = getattr(analysis, "proof", None)
-    if proof is None:
-        return None
-    if getattr(proof, "register_pair", None) is None:
-        return None
-    if getattr(proof, "left_version", None) is None or getattr(proof, "right_version", None) is None:
-        return None
-    if getattr(proof, "left_version", None) != getattr(proof, "right_version", None):
-        return None
-    if not can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof):
-        return None
-    return join_adjacent_register_slices(low_expr, high_expr, codegen, alias_state=alias_state, proof=proof)
+    def _impl():
+        if isinstance(high_expr, structured_c.CBinaryOp) and high_expr.op in {"Mul", "Shl"}:
+            for maybe_inner, maybe_scale in ((high_expr.lhs, high_expr.rhs), (high_expr.rhs, high_expr.lhs)):
+                scale = _c_constant_value(_unwrap_c_casts(maybe_scale))
+                if scale not in {8, 0x100}:
+                    continue
+                high_expr = _unwrap_c_casts(maybe_inner)
+                break
+        if not isinstance(low_expr, structured_c.CVariable) or not isinstance(high_expr, structured_c.CVariable):
+            return None
+        low_var = getattr(low_expr, "variable", None)
+        high_var = getattr(high_expr, "variable", None)
+        if not isinstance(low_var, SimRegisterVariable) or not isinstance(high_var, SimRegisterVariable):
+            return None
+        if getattr(low_var, "size", None) != 1 or getattr(high_var, "size", None) != 1:
+            return None
+        alias_state = _get_or_seed_inertia_alias_state(codegen)
+        if alias_state is None:
+            return None
+        analysis = analyze_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+        if not analysis.ok:
+            return None
+        proof = getattr(analysis, "proof", None)
+        if proof is None:
+            return None
+        if getattr(proof, "register_pair", None) is None:
+            return None
+        if getattr(proof, "left_version", None) is None or getattr(proof, "right_version", None) is None:
+            return None
+        if getattr(proof, "left_version", None) != getattr(proof, "right_version", None):
+            return None
+        if not can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof):
+            return None
+        return join_adjacent_register_slices(low_expr, high_expr, codegen, alias_state=alias_state, proof=proof)
+
+    return _impl()
 
 
 class _CompatModule(ModuleType):

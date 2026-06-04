@@ -801,124 +801,148 @@ HTML_PAGE = """<!doctype html>
 
 
 def append_chat_entry(path: Path, role: str, message: str, *, at: str | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"role": role, "message": message, "at": at or datetime.now().astimezone().isoformat(timespec="seconds")}
-    with path.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(payload, sort_keys=True) + "\n")
+    def _impl():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"role": role, "message": message, "at": at or datetime.now().astimezone().isoformat(timespec="seconds")}
+        with path.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(payload, sort_keys=True) + "\n")
+    return _impl()
 
 
 def _parse_kv_file(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    data: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if "=" not in raw_line:
-            continue
-        key, value = raw_line.split("=", 1)
-        data[key.strip()] = value.strip()
-    return data
+    def _impl():
+        if not path.exists():
+            return {}
+        data: dict[str, str] = {}
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "=" not in raw_line:
+                continue
+            key, value = raw_line.split("=", 1)
+            data[key.strip()] = value.strip()
+        return data
+    return _impl()
 
 
 def _tail_text(path: Path, max_bytes: int = 64 * 1024) -> str:
-    if not path.exists():
-        return ""
-    with path.open("rb") as fp:
-        fp.seek(0, 2)
-        size = fp.tell()
-        fp.seek(max(0, size - max_bytes))
-        return fp.read().decode("utf-8", errors="replace")
+    def _impl():
+        if not path.exists():
+            return ""
+        with path.open("rb") as fp:
+            fp.seek(0, 2)
+            size = fp.tell()
+            fp.seek(max(0, size - max_bytes))
+            return fp.read().decode("utf-8", errors="replace")
+    return _impl()
 
 
 def _load_json(path: Path) -> dict[str, object] | list[object] | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    def _impl():
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+    return _impl()
 
 
 def _load_chat(path: Path, limit: int = 50) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    messages: list[dict[str, str]] = []
-    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]:
-        try:
-            entry = json.loads(raw_line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(entry, dict):
-            messages.append(
-                {
-                    "role": str(entry.get("role", "system")),
-                    "message": str(entry.get("message", "")),
-                    "at": str(entry.get("at", "")),
-                }
-            )
-    return messages
+    def _impl():
+        if not path.exists():
+            return []
+        messages: list[dict[str, str]] = []
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]:
+            try:
+                entry = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, dict):
+                messages.append(
+                    {
+                        "role": str(entry.get("role", "system")),
+                        "message": str(entry.get("message", "")),
+                        "at": str(entry.get("at", "")),
+                    }
+                )
+        return messages
+    return _impl()
 
 
 def _role_log_stats(log_dir: Path) -> dict[str, dict[str, int]]:
-    stats: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "total_bytes": 0, "max_bytes": 0})
-    for path in log_dir.glob("*.log"):
-        role = path.stem.split("_", 2)[-1]
-        size = path.stat().st_size
-        stats[role]["count"] += 1
-        stats[role]["total_bytes"] += size
-        stats[role]["max_bytes"] = max(stats[role]["max_bytes"], size)
-    for role in ("checker", "planner", "worker", "reviewer", "crash-reviewer"):
-        stats.setdefault(role, {"count": 0, "total_bytes": 0, "max_bytes": 0})
-    return dict(stats)
+    def _impl():
+        stats: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "total_bytes": 0, "max_bytes": 0})
+        for path in log_dir.glob("*.log"):
+            role = path.stem.split("_", 2)[-1]
+            size = path.stat().st_size
+            stats[role]["count"] += 1
+            stats[role]["total_bytes"] += size
+            stats[role]["max_bytes"] = max(stats[role]["max_bytes"], size)
+        for role in ("checker", "planner", "worker", "reviewer", "crash-reviewer"):
+            stats.setdefault(role, {"count": 0, "total_bytes": 0, "max_bytes": 0})
+        return dict(stats)
+    return _impl()
 
 
 def _free_disk_mb(root_dir: Path) -> int | None:
-    try:
-        result = subprocess.run(["df", "-Pm", str(root_dir)], capture_output=True, text=True, check=True)
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    lines = result.stdout.splitlines()
-    if len(lines) < 2:
-        return None
-    try:
-        return int(lines[1].split()[3])
-    except (IndexError, ValueError):
-        return None
+    def _impl():
+        try:
+            result = subprocess.run(["df", "-Pm", str(root_dir)], capture_output=True, text=True, check=True)
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        lines = result.stdout.splitlines()
+        if len(lines) < 2:
+            return None
+        try:
+            return int(lines[1].split()[3])
+        except (IndexError, ValueError):
+            return None
+    return _impl()
 
 
 def _free_ram_mb() -> int | None:
-    try:
-        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) // 1024
-    except OSError:
+    def _impl():
+        try:
+            for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+        except OSError:
+            return None
         return None
-    return None
+    return _impl()
 
 
 def _state_dir_mb(state_dir: Path) -> int | None:
-    try:
-        result = subprocess.run(["du", "-sm", str(state_dir)], capture_output=True, text=True, check=False)
-    except OSError:
-        return None
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    try:
-        return int(result.stdout.split()[0])
-    except (IndexError, ValueError):
-        return None
+    def _impl():
+        try:
+            result = subprocess.run(["du", "-sm", str(state_dir)], capture_output=True, text=True, check=False)
+        except OSError:
+            return None
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        try:
+            return int(result.stdout.split()[0])
+        except (IndexError, ValueError):
+            return None
+    return _impl()
 
 
 def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace").strip() if path.exists() else ""
+    def _impl():
+        return path.read_text(encoding="utf-8", errors="replace").strip() if path.exists() else ""
+    return _impl()
 
 
 def _remaining_steps_for_role(state_dir: Path, role: str) -> str:
-    return _read_text(state_dir / f"{role}.remaining")
+    def _impl():
+        return _read_text(state_dir / f"{role}.remaining")
+    return _impl()
 
 
 def _latest_log_for_role(state_dir: Path, role: str) -> Path | None:
-    text = _read_text(state_dir / f"{role}.lastlog")
-    return Path(text) if text else None
+    def _impl():
+        text = _read_text(state_dir / f"{role}.lastlog")
+        return Path(text) if text else None
+    return _impl()
 
 
 def _role_activity(
@@ -929,882 +953,963 @@ def _role_activity(
     cycle_steps: dict[str, object],
     log_stats: dict[str, dict[str, int]],
 ) -> list[dict[str, object]]:
-    roles: list[dict[str, object]] = []
-    role_to_model = {
-        "checker": cfg.checker_model,
-        "planner": cfg.planner_model,
-        "worker": cfg.worker_model,
-        "reviewer": cfg.reviewer_model,
-        "crash-reviewer": cfg.crash_reviewer_model,
-    }
-    active_step = status.get("step", "")
-    active_status = status.get("status", "")
-    active_extra = status.get("extra", "")
-    for role in ("checker", "planner", "worker", "reviewer", "crash-reviewer"):
-        latest_log = _latest_log_for_role(cfg.state_dir, role)
-        latest_log_bytes = 0
-        if latest_log is not None and latest_log.exists():
-            latest_log_bytes = latest_log.stat().st_size
-        step_state = cycle_steps.get(role, {})
-        role_status = "idle"
-        role_extra = ""
-        if isinstance(step_state, dict) and step_state:
-            role_status = str(step_state.get("status", "idle"))
-            role_extra = str(step_state.get("extra", ""))
-        if role == active_step:
-            role_status = active_status or role_status
-            role_extra = active_extra or role_extra
-        roles.append(
-            {
-                "name": role,
-                "provider": llm_cfg.provider_for_key(role),
-                "model": role_to_model[role],
-                "status": role_status,
-                "extra": role_extra,
-                "remaining_steps": _remaining_steps_for_role(cfg.state_dir, role),
-                "latest_log": latest_log.name if latest_log is not None else "",
-                "latest_log_path": str(latest_log) if latest_log is not None else "",
-                "latest_log_bytes": latest_log_bytes,
-                "log_count": log_stats.get(role, {}).get("count", 0),
-                "log_total_bytes": log_stats.get(role, {}).get("total_bytes", 0),
-            }
-        )
-    return roles
+    def _impl():
+        roles: list[dict[str, object]] = []
+        role_to_model = {
+            "checker": cfg.checker_model,
+            "planner": cfg.planner_model,
+            "worker": cfg.worker_model,
+            "reviewer": cfg.reviewer_model,
+            "crash-reviewer": cfg.crash_reviewer_model,
+        }
+        active_step = status.get("step", "")
+        active_status = status.get("status", "")
+        active_extra = status.get("extra", "")
+        for role in ("checker", "planner", "worker", "reviewer", "crash-reviewer"):
+            latest_log = _latest_log_for_role(cfg.state_dir, role)
+            latest_log_bytes = 0
+            if latest_log is not None and latest_log.exists():
+                latest_log_bytes = latest_log.stat().st_size
+            step_state = cycle_steps.get(role, {})
+            role_status = "idle"
+            role_extra = ""
+            if isinstance(step_state, dict) and step_state:
+                role_status = str(step_state.get("status", "idle"))
+                role_extra = str(step_state.get("extra", ""))
+            if role == active_step:
+                role_status = active_status or role_status
+                role_extra = active_extra or role_extra
+            roles.append(
+                {
+                    "name": role,
+                    "provider": llm_cfg.provider_for_key(role),
+                    "model": role_to_model[role],
+                    "status": role_status,
+                    "extra": role_extra,
+                    "remaining_steps": _remaining_steps_for_role(cfg.state_dir, role),
+                    "latest_log": latest_log.name if latest_log is not None else "",
+                    "latest_log_path": str(latest_log) if latest_log is not None else "",
+                    "latest_log_bytes": latest_log_bytes,
+                    "log_count": log_stats.get(role, {}).get("count", 0),
+                    "log_total_bytes": log_stats.get(role, {}).get("total_bytes", 0),
+                }
+            )
+        return roles
+    return _impl()
 
 
 def _usage_summary(log_dir: Path) -> dict[str, object]:
-    prompt_tokens = 0
-    completion_tokens = 0
-    total_tokens = 0
-    cost_usd = 0.0
-    saw_usage = False
-    sources_scanned = 0
-    for path in sorted(log_dir.glob("*.log"))[-40:]:
-        try:
-            text = _tail_text(path, max_bytes=64 * 1024)
-        except OSError:
-            continue
-        sources_scanned += 1
-        usage = parse_usage_metrics(text)
-        if usage.get("prompt_tokens") is not None:
-            prompt_tokens += int(usage["prompt_tokens"])
-            saw_usage = True
-        if usage.get("completion_tokens") is not None:
-            completion_tokens += int(usage["completion_tokens"])
-            saw_usage = True
-        if usage.get("total_tokens") is not None:
-            total_tokens += int(usage["total_tokens"])
-            saw_usage = True
-        if usage.get("cost_usd") is not None:
-            cost_usd += float(usage["cost_usd"])
-            saw_usage = True
-    if not saw_usage:
+    def _impl():
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        cost_usd = 0.0
+        saw_usage = False
+        sources_scanned = 0
+        for path in sorted(log_dir.glob("*.log"))[-40:]:
+            try:
+                text = _tail_text(path, max_bytes=64 * 1024)
+            except OSError:
+                continue
+            sources_scanned += 1
+            usage = parse_usage_metrics(text)
+            if usage.get("prompt_tokens") is not None:
+                prompt_tokens += int(usage["prompt_tokens"])
+                saw_usage = True
+            if usage.get("completion_tokens") is not None:
+                completion_tokens += int(usage["completion_tokens"])
+                saw_usage = True
+            if usage.get("total_tokens") is not None:
+                total_tokens += int(usage["total_tokens"])
+                saw_usage = True
+            if usage.get("cost_usd") is not None:
+                cost_usd += float(usage["cost_usd"])
+                saw_usage = True
+        if not saw_usage:
+            return {
+                "available": False,
+                "message": "Provider logs do not currently include structured token or cost telemetry.",
+                "sources_scanned": sources_scanned,
+            }
+        if total_tokens == 0:
+            total_tokens = prompt_tokens + completion_tokens
         return {
-            "available": False,
-            "message": "Provider logs do not currently include structured token or cost telemetry.",
+            "available": True,
+            "prompt_tokens": prompt_tokens or None,
+            "completion_tokens": completion_tokens or None,
+            "total_tokens": total_tokens or None,
+            "cost_usd": round(cost_usd, 6) if cost_usd else None,
             "sources_scanned": sources_scanned,
         }
-    if total_tokens == 0:
-        total_tokens = prompt_tokens + completion_tokens
-    return {
-        "available": True,
-        "prompt_tokens": prompt_tokens or None,
-        "completion_tokens": completion_tokens or None,
-        "total_tokens": total_tokens or None,
-        "cost_usd": round(cost_usd, 6) if cost_usd else None,
-        "sources_scanned": sources_scanned,
-    }
+    return _impl()
 
 
 def _html_escape(value: object) -> str:
-    return html.escape("" if value is None else str(value))
+    def _impl():
+        return html.escape("" if value is None else str(value))
+    return _impl()
 
 
 def _status_class(status: object) -> str:
-    text = str(status or "unknown").lower()
-    cleaned = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    return f"status-{cleaned or 'unknown'}"
+    def _impl():
+        text = str(status or "unknown").lower()
+        cleaned = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+        return f"status-{cleaned or 'unknown'}"
+    return _impl()
 
 
 def _pretty_bytes(bytes_value: object) -> str:
-    if bytes_value is None:
-        return "-"
-    try:
-        value = float(bytes_value)
-    except (TypeError, ValueError):
-        return "-"
-    units = ["B", "KB", "MB", "GB"]
-    unit = 0
-    while value >= 1024 and unit < len(units) - 1:
-        value /= 1024
-        unit += 1
-    if value >= 10 or unit == 0:
-        return f"{value:.0f} {units[unit]}"
-    return f"{value:.1f} {units[unit]}"
+    def _impl():
+        if bytes_value is None:
+            return "-"
+        try:
+            value = float(bytes_value)
+        except (TypeError, ValueError):
+            return "-"
+        units = ["B", "KB", "MB", "GB"]
+        unit = 0
+        while value >= 1024 and unit < len(units) - 1:
+            value /= 1024
+            unit += 1
+        if value >= 10 or unit == 0:
+            return f"{value:.0f} {units[unit]}"
+        return f"{value:.1f} {units[unit]}"
+    return _impl()
 
 
 def _render_stat_cards(data: dict[str, object]) -> str:
-    log_stats = data.get("log_stats", {})
-    worker_stats = log_stats.get("worker", {}) if isinstance(log_stats, dict) else {}
-    stats = [
-        ("Cycle", data.get("current_cycle") or "-"),
-        ("Step", data.get("status", {}).get("step", "-") if isinstance(data.get("status"), dict) else "-"),
-        ("Status", data.get("status", {}).get("status", "-") if isinstance(data.get("status"), dict) else "-"),
-        ("Green", data.get("current_green_level") or "-"),
-        ("Last Log", _pretty_bytes(data.get("console", {}).get("size_bytes")) if isinstance(data.get("console"), dict) else "-"),
-        ("Pending Msgs", "yes" if data.get("pending_comments") else "no"),
-        ("Worker Logs", f"{worker_stats.get('count', 0)} / {_pretty_bytes(worker_stats.get('total_bytes'))}"),
-    ]
-    return "".join(
-        f'<div class="stat"><div class="label">{_html_escape(label)}</div><div class="value">{_html_escape(value)}</div></div>'
-        for label, value in stats
-    )
+    def _impl():
+        log_stats = data.get("log_stats", {})
+        worker_stats = log_stats.get("worker", {}) if isinstance(log_stats, dict) else {}
+        stats = [
+            ("Cycle", data.get("current_cycle") or "-"),
+            ("Step", data.get("status", {}).get("step", "-") if isinstance(data.get("status"), dict) else "-"),
+            ("Status", data.get("status", {}).get("status", "-") if isinstance(data.get("status"), dict) else "-"),
+            ("Green", data.get("current_green_level") or "-"),
+            ("Last Log", _pretty_bytes(data.get("console", {}).get("size_bytes")) if isinstance(data.get("console"), dict) else "-"),
+            ("Pending Msgs", "yes" if data.get("pending_comments") else "no"),
+            ("Worker Logs", f"{worker_stats.get('count', 0)} / {_pretty_bytes(worker_stats.get('total_bytes'))}"),
+        ]
+        return "".join(
+            f'<div class="stat"><div class="label">{_html_escape(label)}</div><div class="value">{_html_escape(value)}</div></div>'
+            for label, value in stats
+        )
+    return _impl()
 
 
 def _render_task_packet_html(packet: dict[str, object], packet_status: str) -> str:
-    rows = [
-        ("Item", packet.get("item_id", "-"), packet.get("objective", "")),
-        ("Status", packet_status or "-", ""),
-        ("Targets", " ".join(packet.get("target_files", [])) if isinstance(packet.get("target_files"), list) else "-", " ".join(packet.get("target_refs", [])) if isinstance(packet.get("target_refs"), list) else ""),
-        ("Tests", " | ".join(packet.get("acceptance_tests", [])) if isinstance(packet.get("acceptance_tests"), list) else "-", ""),
-        ("Done", " | ".join(packet.get("done_conditions", [])) if isinstance(packet.get("done_conditions"), list) else "-", ""),
-    ]
-    return "".join(
-        '<div class="step"><div><strong>'
-        + _html_escape(label)
-        + '</strong><div class="meta">'
-        + _html_escape(meta)
-        + '</div></div><div>'
-        + _html_escape(value)
-        + "</div></div>"
-        for label, value, meta in rows
-    )
+    def _impl():
+        rows = [
+            ("Item", packet.get("item_id", "-"), packet.get("objective", "")),
+            ("Status", packet_status or "-", ""),
+            ("Targets", " ".join(packet.get("target_files", [])) if isinstance(packet.get("target_files"), list) else "-", " ".join(packet.get("target_refs", [])) if isinstance(packet.get("target_refs"), list) else ""),
+            ("Tests", " | ".join(packet.get("acceptance_tests", [])) if isinstance(packet.get("acceptance_tests"), list) else "-", ""),
+            ("Done", " | ".join(packet.get("done_conditions", [])) if isinstance(packet.get("done_conditions"), list) else "-", ""),
+        ]
+        return "".join(
+            '<div class="step"><div><strong>'
+            + _html_escape(label)
+            + '</strong><div class="meta">'
+            + _html_escape(meta)
+            + '</div></div><div>'
+            + _html_escape(value)
+            + "</div></div>"
+            for label, value, meta in rows
+        )
+    return _impl()
 
 
 def _render_policy_html(policy: dict[str, object], green_level: str) -> str:
-    rows = [
-        ("Green", green_level or "-", ""),
-        ("Decision", policy.get("decision", "-"), policy.get("reason", "")),
-        ("Updated", policy.get("updated_at", "-"), ""),
-    ]
-    return "".join(
-        '<div class="step"><div><strong>'
-        + _html_escape(label)
-        + '</strong><div class="meta">'
-        + _html_escape(meta)
-        + '</div></div><div>'
-        + _html_escape(value)
-        + "</div></div>"
-        for label, value, meta in rows
-    )
+    def _impl():
+        rows = [
+            ("Green", green_level or "-", ""),
+            ("Decision", policy.get("decision", "-"), policy.get("reason", "")),
+            ("Updated", policy.get("updated_at", "-"), ""),
+        ]
+        return "".join(
+            '<div class="step"><div><strong>'
+            + _html_escape(label)
+            + '</strong><div class="meta">'
+            + _html_escape(meta)
+            + '</div></div><div>'
+            + _html_escape(value)
+            + "</div></div>"
+            for label, value, meta in rows
+        )
+    return _impl()
 
 
 def _render_steps_html(state: dict[str, object]) -> str:
-    step_order = state.get("step_order", [])
-    cycle_steps = state.get("cycle_steps", {})
-    if not isinstance(step_order, list) or not step_order:
-        return '<div class="hint">No cycle data yet.</div>'
-    items = []
-    for name in step_order:
-        entry = cycle_steps.get(name, {}) if isinstance(cycle_steps, dict) else {}
-        status = entry.get("status", "pending") if isinstance(entry, dict) else "pending"
-        extra = entry.get("extra", "") if isinstance(entry, dict) else ""
-        items.append(
-            '<div class="step"><div><strong>'
-            + _html_escape(name)
-            + '</strong><div class="meta">'
-            + _html_escape(extra)
-            + '</div></div><div class="'
-            + _status_class(status)
-            + '">'
-            + _html_escape(status)
-            + "</div></div>"
-        )
-    return "".join(items)
+    def _impl():
+        step_order = state.get("step_order", [])
+        cycle_steps = state.get("cycle_steps", {})
+        if not isinstance(step_order, list) or not step_order:
+            return '<div class="hint">No cycle data yet.</div>'
+        items = []
+        for name in step_order:
+            entry = cycle_steps.get(name, {}) if isinstance(cycle_steps, dict) else {}
+            status = entry.get("status", "pending") if isinstance(entry, dict) else "pending"
+            extra = entry.get("extra", "") if isinstance(entry, dict) else ""
+            items.append(
+                '<div class="step"><div><strong>'
+                + _html_escape(name)
+                + '</strong><div class="meta">'
+                + _html_escape(extra)
+                + '</div></div><div class="'
+                + _status_class(status)
+                + '">'
+                + _html_escape(status)
+                + "</div></div>"
+            )
+        return "".join(items)
+    return _impl()
 
 
 def _render_processes_html(processes: object) -> str:
-    if not isinstance(processes, list) or not processes:
-        return '<div class="hint">No registered subprocesses.</div>'
-    items = []
-    for proc in processes:
-        if not isinstance(proc, dict):
-            continue
-        items.append(
-            '<div class="step"><div><strong>'
-            + _html_escape(proc.get("command", ""))
-            + '</strong><div class="meta">pid='
-            + _html_escape(proc.get("pid", ""))
-            + " started="
-            + _html_escape(proc.get("started_at", ""))
-            + '</div></div><div class="status-running">active</div></div>'
-        )
-    return "".join(items) or '<div class="hint">No registered subprocesses.</div>'
+    def _impl():
+        if not isinstance(processes, list) or not processes:
+            return '<div class="hint">No registered subprocesses.</div>'
+        items = []
+        for proc in processes:
+            if not isinstance(proc, dict):
+                continue
+            items.append(
+                '<div class="step"><div><strong>'
+                + _html_escape(proc.get("command", ""))
+                + '</strong><div class="meta">pid='
+                + _html_escape(proc.get("pid", ""))
+                + " started="
+                + _html_escape(proc.get("started_at", ""))
+                + '</div></div><div class="status-running">active</div></div>'
+            )
+        return "".join(items) or '<div class="hint">No registered subprocesses.</div>'
+    return _impl()
 
 
 def _render_resources_html(resources: dict[str, object]) -> str:
-    rows = [
-        ("Free Disk", f"{resources.get('free_disk_mb')} MB" if resources.get("free_disk_mb") is not None else "-", resources.get("disk_note", "")),
-        ("Free RAM", f"{resources.get('free_ram_mb')} MB" if resources.get("free_ram_mb") is not None else "unknown", resources.get("ram_note", "")),
-        ("State Dir", f"{resources.get('state_dir_mb')} MB" if resources.get("state_dir_mb") is not None else "-", resources.get("state_note", "")),
-        ("Active Procs", resources.get("active_process_count", 0), ""),
-    ]
-    return "".join(
-        '<div class="step"><div><strong>'
-        + _html_escape(label)
-        + '</strong><div class="meta">'
-        + _html_escape(meta)
-        + '</div></div><div>'
-        + _html_escape(value)
-        + "</div></div>"
-        for label, value, meta in rows
-    )
+    def _impl():
+        rows = [
+            ("Free Disk", f"{resources.get('free_disk_mb')} MB" if resources.get("free_disk_mb") is not None else "-", resources.get("disk_note", "")),
+            ("Free RAM", f"{resources.get('free_ram_mb')} MB" if resources.get("free_ram_mb") is not None else "unknown", resources.get("ram_note", "")),
+            ("State Dir", f"{resources.get('state_dir_mb')} MB" if resources.get("state_dir_mb") is not None else "-", resources.get("state_note", "")),
+            ("Active Procs", resources.get("active_process_count", 0), ""),
+        ]
+        return "".join(
+            '<div class="step"><div><strong>'
+            + _html_escape(label)
+            + '</strong><div class="meta">'
+            + _html_escape(meta)
+            + '</div></div><div>'
+            + _html_escape(value)
+            + "</div></div>"
+            for label, value, meta in rows
+        )
+    return _impl()
 
 
 def _render_usage_html(usage: dict[str, object]) -> str:
-    if not usage.get("available"):
-        return (
-            '<div class="step"><div><strong>Unavailable</strong><div class="meta">'
-            + _html_escape(usage.get("message", "No structured usage telemetry found yet."))
-            + '</div></div><div class="status-retrying-after-timeout">n/a</div></div>'
+    def _impl():
+        if not usage.get("available"):
+            return (
+                '<div class="step"><div><strong>Unavailable</strong><div class="meta">'
+                + _html_escape(usage.get("message", "No structured usage telemetry found yet."))
+                + '</div></div><div class="status-retrying-after-timeout">n/a</div></div>'
+            )
+        rows = [
+            ("Prompt Tokens", usage.get("prompt_tokens", "-"), f"{usage.get('sources_scanned', 0)} logs scanned"),
+            ("Completion Tokens", usage.get("completion_tokens", "-"), "aggregated from structured telemetry" if usage.get("cost_usd") is not None else ""),
+            ("Total Tokens", usage.get("total_tokens", "-"), ""),
+            ("Spend", f"${float(usage.get('cost_usd')):.4f}" if usage.get("cost_usd") is not None else "-", ""),
+        ]
+        return "".join(
+            '<div class="step"><div><strong>'
+            + _html_escape(label)
+            + '</strong><div class="meta">'
+            + _html_escape(meta)
+            + '</div></div><div>'
+            + _html_escape(value)
+            + "</div></div>"
+            for label, value, meta in rows
         )
-    rows = [
-        ("Prompt Tokens", usage.get("prompt_tokens", "-"), f"{usage.get('sources_scanned', 0)} logs scanned"),
-        ("Completion Tokens", usage.get("completion_tokens", "-"), "aggregated from structured telemetry" if usage.get("cost_usd") is not None else ""),
-        ("Total Tokens", usage.get("total_tokens", "-"), ""),
-        ("Spend", f"${float(usage.get('cost_usd')):.4f}" if usage.get("cost_usd") is not None else "-", ""),
-    ]
-    return "".join(
-        '<div class="step"><div><strong>'
-        + _html_escape(label)
-        + '</strong><div class="meta">'
-        + _html_escape(meta)
-        + '</div></div><div>'
-        + _html_escape(value)
-        + "</div></div>"
-        for label, value, meta in rows
-    )
+    return _impl()
 
 
 def _render_preflight_html(preflight: dict[str, object]) -> str:
-    commands = preflight.get("commands", {})
-    providers = preflight.get("providers", {})
-    command_text = " ".join(
-        f"{name}:{'ok' if ok else 'missing'}" for name, ok in commands.items()
-    ) if isinstance(commands, dict) else "-"
-    provider_text = " ".join(
-        f"{name}:{'ok' if ok else 'missing'}" for name, ok in providers.items()
-    ) if isinstance(providers, dict) else "-"
-    rows = [
-        ("Ready", "yes" if preflight.get("ready") else "no", f"updated {preflight.get('updated_at', '-') or '-'}"),
-        ("Python", "ok" if preflight.get("python_ok") else "missing", preflight.get("python_bin", "")),
-        ("Commands", command_text or "-", ""),
-        ("Providers", provider_text or "-", ""),
-        (
-            "Resources",
-            f"disk={preflight.get('free_disk_mb', '-')}MB ram={preflight.get('free_ram_mb', '-')}MB state={preflight.get('state_dir_mb', '-')}MB",
-            preflight.get("last_context", ""),
-        ),
-    ]
-    return "".join(
-        '<div class="step"><div><strong>'
-        + _html_escape(label)
-        + '</strong><div class="meta">'
-        + _html_escape(meta)
-        + '</div></div><div>'
-        + _html_escape(value)
-        + "</div></div>"
-        for label, value, meta in rows
-    )
+    def _impl():
+        commands = preflight.get("commands", {})
+        providers = preflight.get("providers", {})
+        command_text = " ".join(
+            f"{name}:{'ok' if ok else 'missing'}" for name, ok in commands.items()
+        ) if isinstance(commands, dict) else "-"
+        provider_text = " ".join(
+            f"{name}:{'ok' if ok else 'missing'}" for name, ok in providers.items()
+        ) if isinstance(providers, dict) else "-"
+        rows = [
+            ("Ready", "yes" if preflight.get("ready") else "no", f"updated {preflight.get('updated_at', '-') or '-'}"),
+            ("Python", "ok" if preflight.get("python_ok") else "missing", preflight.get("python_bin", "")),
+            ("Commands", command_text or "-", ""),
+            ("Providers", provider_text or "-", ""),
+            (
+                "Resources",
+                f"disk={preflight.get('free_disk_mb', '-')}MB ram={preflight.get('free_ram_mb', '-')}MB state={preflight.get('state_dir_mb', '-')}MB",
+                preflight.get("last_context", ""),
+            ),
+        ]
+        return "".join(
+            '<div class="step"><div><strong>'
+            + _html_escape(label)
+            + '</strong><div class="meta">'
+            + _html_escape(meta)
+            + '</div></div><div>'
+            + _html_escape(value)
+            + "</div></div>"
+            for label, value, meta in rows
+        )
+    return _impl()
 
 
 def _render_sessions_html(summary: dict[str, object]) -> str:
-    by_role = summary.get("by_role", {})
-    by_role_text = " ".join(f"{name}:{count}" for name, count in by_role.items()) if isinstance(by_role, dict) else "-"
-    rows = [
-        ("Sessions", summary.get("total_sessions", 0), ""),
-        ("Duration", f"{summary.get('total_duration_secs', 0)}s", ""),
-        ("Tokens", summary.get("total_tokens", "-"), ""),
-        ("Spend", f"${float(summary.get('total_cost_usd')):.4f}" if summary.get("total_cost_usd") is not None else "-", ""),
-        ("By Role", by_role_text or "-", ""),
-    ]
-    return "".join(
-        '<div class="step"><div><strong>'
-        + _html_escape(label)
-        + '</strong><div class="meta">'
-        + _html_escape(meta)
-        + '</div></div><div>'
-        + _html_escape(value)
-        + "</div></div>"
-        for label, value, meta in rows
-    )
+    def _impl():
+        by_role = summary.get("by_role", {})
+        by_role_text = " ".join(f"{name}:{count}" for name, count in by_role.items()) if isinstance(by_role, dict) else "-"
+        rows = [
+            ("Sessions", summary.get("total_sessions", 0), ""),
+            ("Duration", f"{summary.get('total_duration_secs', 0)}s", ""),
+            ("Tokens", summary.get("total_tokens", "-"), ""),
+            ("Spend", f"${float(summary.get('total_cost_usd')):.4f}" if summary.get("total_cost_usd") is not None else "-", ""),
+            ("By Role", by_role_text or "-", ""),
+        ]
+        return "".join(
+            '<div class="step"><div><strong>'
+            + _html_escape(label)
+            + '</strong><div class="meta">'
+            + _html_escape(meta)
+            + '</div></div><div>'
+            + _html_escape(value)
+            + "</div></div>"
+            for label, value, meta in rows
+        )
+    return _impl()
 
 
 def _render_roles_html(roles: object) -> str:
-    if not isinstance(roles, list) or not roles:
-        return '<div class="hint">No role activity yet.</div>'
-    items = []
-    for role in roles:
-        if not isinstance(role, dict):
-            continue
-        meta_tail = str(role.get("extra", "") or "")
-        if role.get("remaining_steps"):
-            meta_tail += f" remaining={role.get('remaining_steps')}"
-        items.append(
-            '<div class="step"><div><strong>'
-            + _html_escape(role.get("name", ""))
-            + '</strong><div class="meta">'
-            + _html_escape(f"{role.get('provider', '')}/{role.get('model', '')}")
-            + '</div><div class="meta">log='
-            + _html_escape(role.get("latest_log", "-") or "-")
-            + " size="
-            + _html_escape(_pretty_bytes(role.get("latest_log_bytes")))
-            + '</div><div class="meta">'
-            + _html_escape(meta_tail)
-            + '</div></div><div class="'
-            + _status_class(role.get("status"))
-            + '">'
-            + _html_escape(role.get("status", "idle"))
-            + "</div></div>"
-        )
-    return "".join(items) or '<div class="hint">No role activity yet.</div>'
+    def _impl():
+        if not isinstance(roles, list) or not roles:
+            return '<div class="hint">No role activity yet.</div>'
+        items = []
+        for role in roles:
+            if not isinstance(role, dict):
+                continue
+            meta_tail = str(role.get("extra", "") or "")
+            if role.get("remaining_steps"):
+                meta_tail += f" remaining={role.get('remaining_steps')}"
+            items.append(
+                '<div class="step"><div><strong>'
+                + _html_escape(role.get("name", ""))
+                + '</strong><div class="meta">'
+                + _html_escape(f"{role.get('provider', '')}/{role.get('model', '')}")
+                + '</div><div class="meta">log='
+                + _html_escape(role.get("latest_log", "-") or "-")
+                + " size="
+                + _html_escape(_pretty_bytes(role.get("latest_log_bytes")))
+                + '</div><div class="meta">'
+                + _html_escape(meta_tail)
+                + '</div></div><div class="'
+                + _status_class(role.get("status"))
+                + '">'
+                + _html_escape(role.get("status", "idle"))
+                + "</div></div>"
+            )
+        return "".join(items) or '<div class="hint">No role activity yet.</div>'
+    return _impl()
 
 
 def _render_chat_html(chat: object) -> str:
-    if not isinstance(chat, list) or not chat:
-        return '<div class="hint">No messages yet.</div>'
-    items = []
-    for msg in chat:
-        if not isinstance(msg, dict):
-            continue
-        items.append(
-            '<div class="msg '
-            + _html_escape(msg.get("role", "system"))
-            + '"><div class="head"><span>'
-            + _html_escape(msg.get("role", "system"))
-            + "</span><span>"
-            + _html_escape(msg.get("at", ""))
-            + "</span></div><div>"
-            + _html_escape(msg.get("message", "")).replace("\n", "<br>")
-            + "</div></div>"
-        )
-    return "".join(items) or '<div class="hint">No messages yet.</div>'
+    def _impl():
+        if not isinstance(chat, list) or not chat:
+            return '<div class="hint">No messages yet.</div>'
+        items = []
+        for msg in chat:
+            if not isinstance(msg, dict):
+                continue
+            items.append(
+                '<div class="msg '
+                + _html_escape(msg.get("role", "system"))
+                + '"><div class="head"><span>'
+                + _html_escape(msg.get("role", "system"))
+                + "</span><span>"
+                + _html_escape(msg.get("at", ""))
+                + "</span></div><div>"
+                + _html_escape(msg.get("message", "")).replace("\n", "<br>")
+                + "</div></div>"
+            )
+        return "".join(items) or '<div class="hint">No messages yet.</div>'
+    return _impl()
 
 
 def _history_events(path: Path, limit: int = 20) -> list[dict[str, object]]:
-    rows = load_jsonl(path, limit=limit)
-    events: list[dict[str, object]] = []
-    for row in rows:
-        detail_text = ""
-        details = row.get("details")
-        if isinstance(details, dict) and details:
-            detail_text = " ".join(f"{name}={value}" for name, value in details.items())
-        events.append(
-            {
-                "schema_version": str(row.get("schema_version", "")),
-                "at": str(row.get("at", "")),
-                "event": str(row.get("event", row.get("category", ""))),
-                "status": str(row.get("status", "")),
-                "failure_class": str(row.get("failure_class", "")),
-                "message": str(row.get("message", "")),
-                "detail_text": detail_text,
-            }
-        )
-    return events
+    def _impl():
+        rows = load_jsonl(path, limit=limit)
+        events: list[dict[str, object]] = []
+        for row in rows:
+            detail_text = ""
+            details = row.get("details")
+            if isinstance(details, dict) and details:
+                detail_text = " ".join(f"{name}={value}" for name, value in details.items())
+            events.append(
+                {
+                    "schema_version": str(row.get("schema_version", "")),
+                    "at": str(row.get("at", "")),
+                    "event": str(row.get("event", row.get("category", ""))),
+                    "status": str(row.get("status", "")),
+                    "failure_class": str(row.get("failure_class", "")),
+                    "message": str(row.get("message", "")),
+                    "detail_text": detail_text,
+                }
+            )
+        return events
+    return _impl()
 
 
 def _render_history_html(history: object) -> str:
-    if not isinstance(history, list) or not history:
-        return '<div class="hint">No recent events yet.</div>'
-    items = []
-    for event in history:
-        if not isinstance(event, dict):
-            continue
-        items.append(
-            '<div class="step"><div><strong>'
-            + _html_escape(event.get("message", "") or event.get("event", "event"))
-            + '</strong><div class="meta">'
-            + _html_escape(event.get("at", ""))
-            + '</div><div class="meta">'
-            + _html_escape(
-                " ".join(
-                    part for part in (
-                        str(event.get("event", "") or ""),
-                        str(event.get("status", "") or ""),
-                        str(event.get("failure_class", "") or ""),
-                    ) if part
+    def _impl():
+        if not isinstance(history, list) or not history:
+            return '<div class="hint">No recent events yet.</div>'
+        items = []
+        for event in history:
+            if not isinstance(event, dict):
+                continue
+            items.append(
+                '<div class="step"><div><strong>'
+                + _html_escape(event.get("message", "") or event.get("event", "event"))
+                + '</strong><div class="meta">'
+                + _html_escape(event.get("at", ""))
+                + '</div><div class="meta">'
+                + _html_escape(
+                    " ".join(
+                        part for part in (
+                            str(event.get("event", "") or ""),
+                            str(event.get("status", "") or ""),
+                            str(event.get("failure_class", "") or ""),
+                        ) if part
+                    )
                 )
+                + '</div><div class="meta">'
+                + _html_escape(event.get("detail_text", ""))
+                + '</div></div><div class="'
+                + _status_class(event.get("status"))
+                + '">'
+                + _html_escape(event.get("status", "-"))
+                + "</div></div>"
             )
-            + '</div><div class="meta">'
-            + _html_escape(event.get("detail_text", ""))
-            + '</div></div><div class="'
-            + _status_class(event.get("status"))
-            + '">'
-            + _html_escape(event.get("status", "-"))
-            + "</div></div>"
-        )
-    return "".join(items) or '<div class="hint">No recent events yet.</div>'
+        return "".join(items) or '<div class="hint">No recent events yet.</div>'
+    return _impl()
 
 
 def _operator_actions(history: list[dict[str, object]], limit: int = 10) -> list[dict[str, object]]:
-    rows = [event for event in history if isinstance(event, dict) and event.get("event") == "operator.action_requested"]
-    return rows[-limit:]
+    def _impl():
+        rows = [event for event in history if isinstance(event, dict) and event.get("event") == "operator.action_requested"]
+        return rows[-limit:]
+    return _impl()
 
 
 def _render_actions_html(actions: object) -> str:
-    if not isinstance(actions, list) or not actions:
-        return '<div class="hint">No operator actions recorded yet.</div>'
-    items = []
-    for event in actions:
-        if not isinstance(event, dict):
-            continue
-        items.append(
-            '<div class="step"><div><strong>'
-            + _html_escape(event.get("message", "") or event.get("event", "action"))
-            + '</strong><div class="meta">'
-            + _html_escape(event.get("at", ""))
-            + '</div><div class="meta">'
-            + _html_escape(event.get("detail_text", ""))
-            + '</div></div><div class="'
-            + _status_class(event.get("status"))
-            + '">'
-            + _html_escape(event.get("status", "-"))
-            + "</div></div>"
-        )
-    return "".join(items) or '<div class="hint">No operator actions recorded yet.</div>'
+    def _impl():
+        if not isinstance(actions, list) or not actions:
+            return '<div class="hint">No operator actions recorded yet.</div>'
+        items = []
+        for event in actions:
+            if not isinstance(event, dict):
+                continue
+            items.append(
+                '<div class="step"><div><strong>'
+                + _html_escape(event.get("message", "") or event.get("event", "action"))
+                + '</strong><div class="meta">'
+                + _html_escape(event.get("at", ""))
+                + '</div><div class="meta">'
+                + _html_escape(event.get("detail_text", ""))
+                + '</div></div><div class="'
+                + _status_class(event.get("status"))
+                + '">'
+                + _html_escape(event.get("status", "-"))
+                + "</div></div>"
+            )
+        return "".join(items) or '<div class="hint">No operator actions recorded yet.</div>'
+    return _impl()
 
 
 def _render_blockers_html(blockers: object) -> str:
-    if not isinstance(blockers, list) or not blockers:
-        return '<div class="hint">No blockers or recovery activity recorded.</div>'
-    items = []
-    for row in blockers:
-        if not isinstance(row, dict):
-            continue
-        items.append(
-            '<div class="step"><div><strong>'
-            + _html_escape(row.get("title", "-"))
-            + '</strong><div class="meta">'
-            + _html_escape(row.get("meta", ""))
-            + '</div></div><div class="'
-            + _status_class(row.get("status"))
-            + '">'
-            + _html_escape(row.get("status", "-"))
-            + "</div></div>"
-        )
-    return "".join(items) or '<div class="hint">No blockers or recovery activity recorded.</div>'
+    def _impl():
+        if not isinstance(blockers, list) or not blockers:
+            return '<div class="hint">No blockers or recovery activity recorded.</div>'
+        items = []
+        for row in blockers:
+            if not isinstance(row, dict):
+                continue
+            items.append(
+                '<div class="step"><div><strong>'
+                + _html_escape(row.get("title", "-"))
+                + '</strong><div class="meta">'
+                + _html_escape(row.get("meta", ""))
+                + '</div></div><div class="'
+                + _status_class(row.get("status"))
+                + '">'
+                + _html_escape(row.get("status", "-"))
+                + "</div></div>"
+            )
+        return "".join(items) or '<div class="hint">No blockers or recovery activity recorded.</div>'
+    return _impl()
 
 
 def _render_autonomy_html(autonomy: dict[str, object]) -> str:
-    rows = [
-        ("Closeout", autonomy.get("last_closeout_action", "-"), "auto-commit enabled" if autonomy.get("auto_commit_enabled") else "auto-commit disabled"),
-        ("Branch", autonomy.get("branch_name", "-"), autonomy.get("branch_note", "")),
-        ("Maintenance", autonomy.get("maintenance_updated_at", "-"), autonomy.get("maintenance_note", "")),
-        ("Compaction", autonomy.get("compaction_note", "-"), ""),
-        ("Recommendation", autonomy.get("top_recommendation", "-"), ""),
-    ]
-    return "".join(
-        '<div class="step"><div><strong>'
-        + _html_escape(label)
-        + '</strong><div class="meta">'
-        + _html_escape(meta)
-        + '</div></div><div>'
-        + _html_escape(value)
-        + "</div></div>"
-        for label, value, meta in rows
-    )
+    def _impl():
+        rows = [
+            ("Closeout", autonomy.get("last_closeout_action", "-"), "auto-commit enabled" if autonomy.get("auto_commit_enabled") else "auto-commit disabled"),
+            ("Branch", autonomy.get("branch_name", "-"), autonomy.get("branch_note", "")),
+            ("Maintenance", autonomy.get("maintenance_updated_at", "-"), autonomy.get("maintenance_note", "")),
+            ("Compaction", autonomy.get("compaction_note", "-"), ""),
+            ("Recommendation", autonomy.get("top_recommendation", "-"), ""),
+        ]
+        return "".join(
+            '<div class="step"><div><strong>'
+            + _html_escape(label)
+            + '</strong><div class="meta">'
+            + _html_escape(meta)
+            + '</div></div><div>'
+            + _html_escape(value)
+            + "</div></div>"
+            for label, value, meta in rows
+        )
+    return _impl()
 
 
 def _current_blockers(history: list[dict[str, object]]) -> list[dict[str, object]]:
-    blockers: list[dict[str, object]] = []
-    for event in reversed(history):
-        if not isinstance(event, dict):
-            continue
-        failure_class = str(event.get("failure_class", "") or "")
-        status = str(event.get("status", "") or "")
-        if failure_class or status in {"failed", "retrying", "blocked", "warning"}:
-            blockers.append(
-                {
-                    "title": str(event.get("message", "") or event.get("event", "event")),
-                    "meta": " ".join(
-                        part
-                        for part in (
-                            str(event.get("event", "") or ""),
-                            failure_class,
-                            str(event.get("detail_text", "") or ""),
-                        )
-                        if part
-                    ),
-                    "status": status,
-                }
-            )
-        if len(blockers) >= 6:
-            break
-    return list(reversed(blockers))
+    def _impl():
+        blockers: list[dict[str, object]] = []
+        for event in reversed(history):
+            if not isinstance(event, dict):
+                continue
+            failure_class = str(event.get("failure_class", "") or "")
+            status = str(event.get("status", "") or "")
+            if failure_class or status in {"failed", "retrying", "blocked", "warning"}:
+                blockers.append(
+                    {
+                        "title": str(event.get("message", "") or event.get("event", "event")),
+                        "meta": " ".join(
+                            part
+                            for part in (
+                                str(event.get("event", "") or ""),
+                                failure_class,
+                                str(event.get("detail_text", "") or ""),
+                            )
+                            if part
+                        ),
+                        "status": status,
+                    }
+                )
+            if len(blockers) >= 6:
+                break
+        return list(reversed(blockers))
+    return _impl()
 
 
 def _safe_bootstrap_json(payload: dict[str, object]) -> str:
-    return (
-        json.dumps(payload, sort_keys=True)
-        .replace("</", "<\\/")
-        .replace("\u2028", "\\u2028")
-        .replace("\u2029", "\\u2029")
-    )
+    def _impl():
+        return (
+            json.dumps(payload, sort_keys=True)
+            .replace("</", "<\\/")
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029")
+        )
+    return _impl()
 
 
 class HarnessWebUI:
     def __init__(self, cfg: RuntimeConfig, harness: object | None = None):
-        self.cfg = cfg
-        self.llm_cfg = LlmConfig.from_env()
-        self.harness = harness
-        self.server: ThreadingHTTPServer | None = None
-        self.thread: threading.Thread | None = None
-        self.url = ""
-        self._usage_cache: dict[str, object] = {
-            "marker": "",
-            "payload": {
-                "available": False,
-                "message": "Usage scan pending.",
-                "sources_scanned": 0,
-            },
-        }
+        def _impl():
+            self.cfg = cfg
+            self.llm_cfg = LlmConfig.from_env()
+            self.harness = harness
+            self.server: ThreadingHTTPServer | None = None
+            self.thread: threading.Thread | None = None
+            self.url = ""
+            self._usage_cache: dict[str, object] = {
+                "marker": "",
+                "payload": {
+                    "available": False,
+                    "message": "Usage scan pending.",
+                    "sources_scanned": 0,
+                },
+            }
+        return _impl()
 
     def _usage_marker(self) -> str:
-        try:
-            logs = sorted(self.cfg.log_dir.glob("*.log"))
-        except OSError:
-            return ""
-        if not logs:
-            return "empty"
-        recent = logs[-10:]
-        parts = []
-        for path in recent:
+        def _impl():
             try:
-                stat = path.stat()
+                logs = sorted(self.cfg.log_dir.glob("*.log"))
             except OSError:
-                continue
-            parts.append(f"{path.name}:{stat.st_size}:{int(stat.st_mtime)}")
-        return "|".join(parts)
+                return ""
+            if not logs:
+                return "empty"
+            recent = logs[-10:]
+            parts = []
+            for path in recent:
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                parts.append(f"{path.name}:{stat.st_size}:{int(stat.st_mtime)}")
+            return "|".join(parts)
+        return _impl()
 
     def _cached_usage_summary(self) -> dict[str, object]:
-        session_rows = load_jsonl(self.cfg.session_ledger_file, limit=200)
-        if session_rows:
-            summary = summarize_session_rows(session_rows)
-            return {
-                "available": summary.get("total_tokens") is not None or summary.get("total_cost_usd") is not None,
-                "prompt_tokens": None,
-                "completion_tokens": None,
-                "total_tokens": summary.get("total_tokens"),
-                "cost_usd": summary.get("total_cost_usd"),
-                "sources_scanned": summary.get("total_sessions", 0),
-                "message": "Aggregated from structured session ledger.",
-            }
-        marker = self._usage_marker()
-        cached_marker = str(self._usage_cache.get("marker", ""))
-        cached_payload = self._usage_cache.get("payload", {})
-        if marker == cached_marker and isinstance(cached_payload, dict):
-            return cached_payload
-        payload = _usage_summary(self.cfg.log_dir)
-        self._usage_cache = {"marker": marker, "payload": payload}
-        return payload
+        def _impl():
+            session_rows = load_jsonl(self.cfg.session_ledger_file, limit=200)
+            if session_rows:
+                summary = summarize_session_rows(session_rows)
+                return {
+                    "available": summary.get("total_tokens") is not None or summary.get("total_cost_usd") is not None,
+                    "prompt_tokens": None,
+                    "completion_tokens": None,
+                    "total_tokens": summary.get("total_tokens"),
+                    "cost_usd": summary.get("total_cost_usd"),
+                    "sources_scanned": summary.get("total_sessions", 0),
+                    "message": "Aggregated from structured session ledger.",
+                }
+            marker = self._usage_marker()
+            cached_marker = str(self._usage_cache.get("marker", ""))
+            cached_payload = self._usage_cache.get("payload", {})
+            if marker == cached_marker and isinstance(cached_payload, dict):
+                return cached_payload
+            payload = _usage_summary(self.cfg.log_dir)
+            self._usage_cache = {"marker": marker, "payload": payload}
+            return payload
+        return _impl()
 
     def _render_html_page(self, payload: dict[str, object]) -> str:
-        status = payload.get("status", {}) if isinstance(payload.get("status"), dict) else {}
-        history = payload.get("history", []) if isinstance(payload.get("history"), list) else []
-        latest_event = history[-1] if history else {}
-        latest_event_text = ""
-        if isinstance(latest_event, dict):
-            latest_event_text = str(latest_event.get("message", "") or latest_event.get("event", "") or "")
-        summary = (
-            f"{payload.get('project_name', self.cfg.project_name)} | "
-            f"updated {status.get('updated_at', '-') or '-'} | "
-            f"{latest_event_text or status.get('extra', 'idle') or 'idle'}"
-        )
-        badge_text = f"{status.get('step', '-') or '-'} / {status.get('status', '-') or '-'}"
-        html_page = HTML_PAGE.replace("__POLL_MS__", str(int(max(0.5, self.cfg.web_ui_poll_secs) * 1000)))
-        html_page = html_page.replace("__BOOTSTRAP_STATE__", _safe_bootstrap_json(payload))
-        html_page = html_page.replace("__SUMMARY__", _html_escape(summary))
-        html_page = html_page.replace("__BADGE_TEXT__", _html_escape(badge_text))
-        html_page = html_page.replace("__BADGE_CLASS__", _status_class(status.get("status")))
-        html_page = html_page.replace("__ERROR_CLASS__", "")
-        html_page = html_page.replace("__ERROR_TEXT__", "")
-        html_page = html_page.replace("__STATS_HTML__", _render_stat_cards(payload))
-        html_page = html_page.replace("__STEPS_HTML__", _render_steps_html(payload))
-        html_page = html_page.replace("__PROCESSES_HTML__", _render_processes_html(payload.get("child_processes")))
-        html_page = html_page.replace("__TASK_PACKET_HTML__", _render_task_packet_html(payload.get("current_task_packet", {}), str(payload.get("current_task_packet_status", ""))))
-        html_page = html_page.replace("__POLICY_HTML__", _render_policy_html(payload.get("last_policy_decision", {}), str(payload.get("current_green_level", ""))))
-        html_page = html_page.replace("__RESOURCES_HTML__", _render_resources_html(payload.get("resources", {})))
-        html_page = html_page.replace("__USAGE_HTML__", _render_usage_html(payload.get("usage", {})))
-        html_page = html_page.replace("__PREFLIGHT_HTML__", _render_preflight_html(payload.get("preflight", {})))
-        html_page = html_page.replace("__SESSIONS_HTML__", _render_sessions_html(payload.get("session_summary", {})))
-        html_page = html_page.replace("__ROLES_HTML__", _render_roles_html(payload.get("roles")))
-        html_page = html_page.replace("__HISTORY_HTML__", _render_history_html(payload.get("history")))
-        html_page = html_page.replace("__ACTIONS_HTML__", _render_actions_html(payload.get("actions")))
-        html_page = html_page.replace("__BLOCKERS_HTML__", _render_blockers_html(payload.get("blockers")))
-        html_page = html_page.replace("__AUTONOMY_HTML__", _render_autonomy_html(payload.get("autonomy", {})))
-        console = payload.get("console", {}) if isinstance(payload.get("console"), dict) else {}
-        console_meta = f"{console.get('path', '-') or '-'} | {_pretty_bytes(console.get('size_bytes'))} | tailing live"
-        html_page = html_page.replace("__CONSOLE_META__", _html_escape(console_meta))
-        html_page = html_page.replace("__CONSOLE_TEXT__", _html_escape(console.get("text", "")))
-        html_page = html_page.replace("__CHAT_HTML__", _render_chat_html(payload.get("chat")))
-        return html_page
+        def _impl():
+            status = payload.get("status", {}) if isinstance(payload.get("status"), dict) else {}
+            history = payload.get("history", []) if isinstance(payload.get("history"), list) else []
+            latest_event = history[-1] if history else {}
+            latest_event_text = ""
+            if isinstance(latest_event, dict):
+                latest_event_text = str(latest_event.get("message", "") or latest_event.get("event", "") or "")
+            summary = (
+                f"{payload.get('project_name', self.cfg.project_name)} | "
+                f"updated {status.get('updated_at', '-') or '-'} | "
+                f"{latest_event_text or status.get('extra', 'idle') or 'idle'}"
+            )
+            badge_text = f"{status.get('step', '-') or '-'} / {status.get('status', '-') or '-'}"
+            html_page = HTML_PAGE.replace("__POLL_MS__", str(int(max(0.5, self.cfg.web_ui_poll_secs) * 1000)))
+            html_page = html_page.replace("__BOOTSTRAP_STATE__", _safe_bootstrap_json(payload))
+            html_page = html_page.replace("__SUMMARY__", _html_escape(summary))
+            html_page = html_page.replace("__BADGE_TEXT__", _html_escape(badge_text))
+            html_page = html_page.replace("__BADGE_CLASS__", _status_class(status.get("status")))
+            html_page = html_page.replace("__ERROR_CLASS__", "")
+            html_page = html_page.replace("__ERROR_TEXT__", "")
+            html_page = html_page.replace("__STATS_HTML__", _render_stat_cards(payload))
+            html_page = html_page.replace("__STEPS_HTML__", _render_steps_html(payload))
+            html_page = html_page.replace("__PROCESSES_HTML__", _render_processes_html(payload.get("child_processes")))
+            html_page = html_page.replace("__TASK_PACKET_HTML__", _render_task_packet_html(payload.get("current_task_packet", {}), str(payload.get("current_task_packet_status", ""))))
+            html_page = html_page.replace("__POLICY_HTML__", _render_policy_html(payload.get("last_policy_decision", {}), str(payload.get("current_green_level", ""))))
+            html_page = html_page.replace("__RESOURCES_HTML__", _render_resources_html(payload.get("resources", {})))
+            html_page = html_page.replace("__USAGE_HTML__", _render_usage_html(payload.get("usage", {})))
+            html_page = html_page.replace("__PREFLIGHT_HTML__", _render_preflight_html(payload.get("preflight", {})))
+            html_page = html_page.replace("__SESSIONS_HTML__", _render_sessions_html(payload.get("session_summary", {})))
+            html_page = html_page.replace("__ROLES_HTML__", _render_roles_html(payload.get("roles")))
+            html_page = html_page.replace("__HISTORY_HTML__", _render_history_html(payload.get("history")))
+            html_page = html_page.replace("__ACTIONS_HTML__", _render_actions_html(payload.get("actions")))
+            html_page = html_page.replace("__BLOCKERS_HTML__", _render_blockers_html(payload.get("blockers")))
+            html_page = html_page.replace("__AUTONOMY_HTML__", _render_autonomy_html(payload.get("autonomy", {})))
+            console = payload.get("console", {}) if isinstance(payload.get("console"), dict) else {}
+            console_meta = f"{console.get('path', '-') or '-'} | {_pretty_bytes(console.get('size_bytes'))} | tailing live"
+            html_page = html_page.replace("__CONSOLE_META__", _html_escape(console_meta))
+            html_page = html_page.replace("__CONSOLE_TEXT__", _html_escape(console.get("text", "")))
+            html_page = html_page.replace("__CHAT_HTML__", _render_chat_html(payload.get("chat")))
+            return html_page
+        return _impl()
 
     def _state_payload(self) -> dict[str, object]:
-        status = _parse_kv_file(self.cfg.status_file)
-        latest_cycle = self.cfg.state_dir / "latest_cycle"
-        cycle_dir = latest_cycle.resolve() if latest_cycle.exists() else None
-        cycle_state = _load_json(cycle_dir / "cycle.state.json") if cycle_dir is not None else None
-        child_processes = _load_json(self.cfg.state_dir / "child_processes.json")
-        if not isinstance(child_processes, list):
-            child_processes = []
-        cycle_steps = {}
-        if isinstance(cycle_state, dict):
-            raw_steps = cycle_state.get("steps", {})
-            if isinstance(raw_steps, dict):
-                cycle_steps = raw_steps
-        log_stats = _role_log_stats(self.cfg.log_dir)
-        session_rows = load_jsonl(self.cfg.session_ledger_file, limit=200)
-        preflight = read_json(self.cfg.preflight_state_file)
-        maintenance = read_json(self.cfg.maintenance_file)
-        history = _history_events(self.cfg.history_log_file)
-        actions = _operator_actions(history)
-        blockers = _current_blockers(history)
-        autonomy: dict[str, object] = {}
-        if isinstance(cycle_state, dict):
-            freshness = cycle_state.get("branch_freshness", {})
-            branch_note = ""
-            if isinstance(freshness, dict):
-                if freshness.get("stale"):
-                    branch_note = f"behind main by {freshness.get('behind', 0)} commit(s)"
-                elif freshness.get("main_available"):
-                    branch_note = f"ahead={freshness.get('ahead', 0)} behind={freshness.get('behind', 0)}"
-            recommendations = maintenance.get("recommendations", []) if isinstance(maintenance, dict) else []
-            compaction = maintenance.get("compaction", {}) if isinstance(maintenance, dict) else {}
-            compaction_note = ""
-            if isinstance(compaction, dict):
-                top_failures = compaction.get("top_failure_classes", [])
-                if isinstance(top_failures, list) and top_failures:
-                    first = top_failures[0]
-                    if isinstance(first, dict):
-                        compaction_note = f"{first.get('name', '-')}: {first.get('count', 0)}"
-            autonomy = {
-                "last_closeout_action": cycle_state.get("last_closeout_action", ""),
-                "auto_commit_enabled": self.cfg.auto_commit_enabled,
-                "branch_name": cycle_state.get("branch_name", ""),
-                "branch_note": branch_note,
-                "maintenance_updated_at": maintenance.get("updated_at", "") if isinstance(maintenance, dict) else "",
-                "maintenance_note": maintenance.get("reason", "") if isinstance(maintenance, dict) else "",
-                "compaction_note": compaction_note,
-                "top_recommendation": recommendations[0] if isinstance(recommendations, list) and recommendations else "",
+        def _impl():
+            status = _parse_kv_file(self.cfg.status_file)
+            latest_cycle = self.cfg.state_dir / "latest_cycle"
+            cycle_dir = latest_cycle.resolve() if latest_cycle.exists() else None
+            cycle_state = _load_json(cycle_dir / "cycle.state.json") if cycle_dir is not None else None
+            child_processes = _load_json(self.cfg.state_dir / "child_processes.json")
+            if not isinstance(child_processes, list):
+                child_processes = []
+            cycle_steps = {}
+            if isinstance(cycle_state, dict):
+                raw_steps = cycle_state.get("steps", {})
+                if isinstance(raw_steps, dict):
+                    cycle_steps = raw_steps
+            log_stats = _role_log_stats(self.cfg.log_dir)
+            session_rows = load_jsonl(self.cfg.session_ledger_file, limit=200)
+            preflight = read_json(self.cfg.preflight_state_file)
+            maintenance = read_json(self.cfg.maintenance_file)
+            history = _history_events(self.cfg.history_log_file)
+            actions = _operator_actions(history)
+            blockers = _current_blockers(history)
+            autonomy: dict[str, object] = {}
+            if isinstance(cycle_state, dict):
+                freshness = cycle_state.get("branch_freshness", {})
+                branch_note = ""
+                if isinstance(freshness, dict):
+                    if freshness.get("stale"):
+                        branch_note = f"behind main by {freshness.get('behind', 0)} commit(s)"
+                    elif freshness.get("main_available"):
+                        branch_note = f"ahead={freshness.get('ahead', 0)} behind={freshness.get('behind', 0)}"
+                recommendations = maintenance.get("recommendations", []) if isinstance(maintenance, dict) else []
+                compaction = maintenance.get("compaction", {}) if isinstance(maintenance, dict) else {}
+                compaction_note = ""
+                if isinstance(compaction, dict):
+                    top_failures = compaction.get("top_failure_classes", [])
+                    if isinstance(top_failures, list) and top_failures:
+                        first = top_failures[0]
+                        if isinstance(first, dict):
+                            compaction_note = f"{first.get('name', '-')}: {first.get('count', 0)}"
+                autonomy = {
+                    "last_closeout_action": cycle_state.get("last_closeout_action", ""),
+                    "auto_commit_enabled": self.cfg.auto_commit_enabled,
+                    "branch_name": cycle_state.get("branch_name", ""),
+                    "branch_note": branch_note,
+                    "maintenance_updated_at": maintenance.get("updated_at", "") if isinstance(maintenance, dict) else "",
+                    "maintenance_note": maintenance.get("reason", "") if isinstance(maintenance, dict) else "",
+                    "compaction_note": compaction_note,
+                    "top_recommendation": recommendations[0] if isinstance(recommendations, list) and recommendations else "",
+                }
+            return {
+                "project_name": self.cfg.project_name,
+                "current_cycle": cycle_dir.name if cycle_dir is not None else "",
+                "status": status,
+                "step_order": list(("full-sweep", "checker", "planner", "worker", "reviewer")),
+                "cycle_steps": cycle_steps,
+                "current_task_packet": cycle_state.get("current_task_packet", {}) if isinstance(cycle_state, dict) else {},
+                "current_task_packet_status": cycle_state.get("current_task_packet_status", "") if isinstance(cycle_state, dict) else "",
+                "current_green_level": cycle_state.get("current_green_level", "") if isinstance(cycle_state, dict) else "",
+                "last_policy_decision": cycle_state.get("last_policy_decision", {}) if isinstance(cycle_state, dict) else {},
+                "console": {
+                    "path": str(self.cfg.last_log_file),
+                    "size_bytes": self.cfg.last_log_file.stat().st_size if self.cfg.last_log_file.exists() else 0,
+                    "text": _tail_text(self.cfg.last_log_file),
+                },
+                "pending_comments": self.cfg.operator_comments_file.read_text(encoding="utf-8", errors="replace").strip()
+                if self.cfg.operator_comments_file.exists()
+                else "",
+                "chat": _load_chat(self.cfg.chat_log_file),
+                "child_processes": child_processes,
+                "log_stats": log_stats,
+                "resources": {
+                    "free_disk_mb": _free_disk_mb(self.cfg.root_dir),
+                    "free_ram_mb": _free_ram_mb(),
+                    "state_dir_mb": _state_dir_mb(self.cfg.state_dir),
+                    "active_process_count": len(child_processes),
+                    "disk_note": f"minimum target {self.cfg.min_free_disk_mb} MB",
+                    "ram_note": f"minimum target {self.cfg.min_free_ram_mb} MB",
+                    "state_note": f"budget {self.cfg.max_state_dir_mb} MB",
+                },
+                "roles": _role_activity(
+                    self.cfg,
+                    self.llm_cfg,
+                    status=status,
+                    cycle_steps=cycle_steps,
+                    log_stats=log_stats,
+                ),
+                "preflight": preflight,
+                "history": history,
+                "actions": actions,
+                "blockers": blockers,
+                "autonomy": autonomy,
+                "sessions": session_rows,
+                "session_summary": summarize_session_rows(session_rows),
+                "usage": self._cached_usage_summary(),
             }
-        return {
-            "project_name": self.cfg.project_name,
-            "current_cycle": cycle_dir.name if cycle_dir is not None else "",
-            "status": status,
-            "step_order": list(("full-sweep", "checker", "planner", "worker", "reviewer")),
-            "cycle_steps": cycle_steps,
-            "current_task_packet": cycle_state.get("current_task_packet", {}) if isinstance(cycle_state, dict) else {},
-            "current_task_packet_status": cycle_state.get("current_task_packet_status", "") if isinstance(cycle_state, dict) else "",
-            "current_green_level": cycle_state.get("current_green_level", "") if isinstance(cycle_state, dict) else "",
-            "last_policy_decision": cycle_state.get("last_policy_decision", {}) if isinstance(cycle_state, dict) else {},
-            "console": {
-                "path": str(self.cfg.last_log_file),
-                "size_bytes": self.cfg.last_log_file.stat().st_size if self.cfg.last_log_file.exists() else 0,
-                "text": _tail_text(self.cfg.last_log_file),
-            },
-            "pending_comments": self.cfg.operator_comments_file.read_text(encoding="utf-8", errors="replace").strip()
-            if self.cfg.operator_comments_file.exists()
-            else "",
-            "chat": _load_chat(self.cfg.chat_log_file),
-            "child_processes": child_processes,
-            "log_stats": log_stats,
-            "resources": {
-                "free_disk_mb": _free_disk_mb(self.cfg.root_dir),
-                "free_ram_mb": _free_ram_mb(),
-                "state_dir_mb": _state_dir_mb(self.cfg.state_dir),
-                "active_process_count": len(child_processes),
-                "disk_note": f"minimum target {self.cfg.min_free_disk_mb} MB",
-                "ram_note": f"minimum target {self.cfg.min_free_ram_mb} MB",
-                "state_note": f"budget {self.cfg.max_state_dir_mb} MB",
-            },
-            "roles": _role_activity(
-                self.cfg,
-                self.llm_cfg,
-                status=status,
-                cycle_steps=cycle_steps,
-                log_stats=log_stats,
-            ),
-            "preflight": preflight,
-            "history": history,
-            "actions": actions,
-            "blockers": blockers,
-            "autonomy": autonomy,
-            "sessions": session_rows,
-            "session_summary": summarize_session_rows(session_rows),
-            "usage": self._cached_usage_summary(),
-        }
+        return _impl()
 
     def _write_operator_comment(self, message: str) -> None:
-        existing = ""
-        if self.cfg.operator_comments_file.exists():
-            existing = self.cfg.operator_comments_file.read_text(encoding="utf-8", errors="replace").strip()
-        new_text = f"{existing}\n\n{message}".strip() if existing else message
-        self.cfg.operator_comments_file.write_text(new_text + "\n", encoding="utf-8")
-        append_chat_entry(self.cfg.chat_log_file, "operator", message)
+        def _impl():
+            existing = ""
+            if self.cfg.operator_comments_file.exists():
+                existing = self.cfg.operator_comments_file.read_text(encoding="utf-8", errors="replace").strip()
+            new_text = f"{existing}\n\n{message}".strip() if existing else message
+            self.cfg.operator_comments_file.write_text(new_text + "\n", encoding="utf-8")
+            append_chat_entry(self.cfg.chat_log_file, "operator", message)
+        return _impl()
 
     def _apply_action(self, action: str) -> dict[str, object]:
-        harness = self.harness
-        if action == "pause":
-            if harness is not None and hasattr(harness, "pause_requested_by_operator"):
-                return harness.pause_requested_by_operator()
-            self.cfg.stop_file.write_text("paused by web ui\n", encoding="utf-8")
-            return {"ok": True, "action": action, "message": "pause requested"}
-        if action == "resume":
-            if harness is not None and hasattr(harness, "resume_requested_by_operator"):
-                return harness.resume_requested_by_operator()
-            self.cfg.stop_file.unlink(missing_ok=True)
-            return {"ok": True, "action": action, "message": "resume requested"}
-        if action == "force-planner-rewrite":
-            if harness is not None and hasattr(harness, "request_planner_rewrite"):
-                return harness.request_planner_rewrite()
-            latest_cycle = self.cfg.state_dir / "latest_cycle"
-            cycle_dir = latest_cycle.resolve() if latest_cycle.exists() else None
-            state_path = cycle_dir / "cycle.state.json" if cycle_dir is not None else None
-            payload = read_json(state_path) if state_path is not None else {}
-            if not payload:
-                return {"ok": False, "error": "no-active-cycle", "message": "no active cycle state to rewrite"}
-            payload["next_cycle_start_step"] = "planner"
-            payload["plan_rewrite_target"] = str(payload.get("current_plan_item", "") or "")
-            payload["last_closeout_action"] = "rewrite"
-            if state_path is not None:
-                write_json(state_path, payload)
-            return {"ok": True, "action": action, "message": "planner rewrite queued"}
-        if action == "force-stronger-worker":
-            if harness is not None and hasattr(harness, "request_stronger_worker"):
-                return harness.request_stronger_worker()
-            latest_cycle = self.cfg.state_dir / "latest_cycle"
-            cycle_dir = latest_cycle.resolve() if latest_cycle.exists() else None
-            state_path = cycle_dir / "cycle.state.json" if cycle_dir is not None else None
-            payload = read_json(state_path) if state_path is not None else {}
-            if not payload:
-                return {"ok": False, "error": "no-active-cycle", "message": "no active cycle state for worker override"}
-            payload["manual_worker_model_override"] = self.cfg.worker_stall_model
-            payload["manual_worker_failure_limit_override"] = self.cfg.worker_stall_failure_limit
-            if state_path is not None:
-                write_json(state_path, payload)
-            return {"ok": True, "action": action, "message": "stronger worker queued"}
-        if action == "run-maintenance":
-            if harness is not None and hasattr(harness, "run_background_maintenance"):
-                return harness.run_background_maintenance()
-            return {"ok": False, "error": "maintenance-unavailable", "message": "live maintenance requires active harness"}
-        return {"ok": False, "error": "unknown-action", "message": f"unknown action: {action}"}
+        def _impl():
+            harness = self.harness
+            if action == "pause":
+                if harness is not None and hasattr(harness, "pause_requested_by_operator"):
+                    return harness.pause_requested_by_operator()
+                self.cfg.stop_file.write_text("paused by web ui\n", encoding="utf-8")
+                return {"ok": True, "action": action, "message": "pause requested"}
+            if action == "resume":
+                if harness is not None and hasattr(harness, "resume_requested_by_operator"):
+                    return harness.resume_requested_by_operator()
+                self.cfg.stop_file.unlink(missing_ok=True)
+                return {"ok": True, "action": action, "message": "resume requested"}
+            if action == "force-planner-rewrite":
+                if harness is not None and hasattr(harness, "request_planner_rewrite"):
+                    return harness.request_planner_rewrite()
+                latest_cycle = self.cfg.state_dir / "latest_cycle"
+                cycle_dir = latest_cycle.resolve() if latest_cycle.exists() else None
+                state_path = cycle_dir / "cycle.state.json" if cycle_dir is not None else None
+                payload = read_json(state_path) if state_path is not None else {}
+                if not payload:
+                    return {"ok": False, "error": "no-active-cycle", "message": "no active cycle state to rewrite"}
+                payload["next_cycle_start_step"] = "planner"
+                payload["plan_rewrite_target"] = str(payload.get("current_plan_item", "") or "")
+                payload["last_closeout_action"] = "rewrite"
+                if state_path is not None:
+                    write_json(state_path, payload)
+                return {"ok": True, "action": action, "message": "planner rewrite queued"}
+            if action == "force-stronger-worker":
+                if harness is not None and hasattr(harness, "request_stronger_worker"):
+                    return harness.request_stronger_worker()
+                latest_cycle = self.cfg.state_dir / "latest_cycle"
+                cycle_dir = latest_cycle.resolve() if latest_cycle.exists() else None
+                state_path = cycle_dir / "cycle.state.json" if cycle_dir is not None else None
+                payload = read_json(state_path) if state_path is not None else {}
+                if not payload:
+                    return {"ok": False, "error": "no-active-cycle", "message": "no active cycle state for worker override"}
+                payload["manual_worker_model_override"] = self.cfg.worker_stall_model
+                payload["manual_worker_failure_limit_override"] = self.cfg.worker_stall_failure_limit
+                if state_path is not None:
+                    write_json(state_path, payload)
+                return {"ok": True, "action": action, "message": "stronger worker queued"}
+            if action == "run-maintenance":
+                if harness is not None and hasattr(harness, "run_background_maintenance"):
+                    return harness.run_background_maintenance()
+                return {"ok": False, "error": "maintenance-unavailable", "message": "live maintenance requires active harness"}
+            return {"ok": False, "error": "unknown-action", "message": f"unknown action: {action}"}
+        return _impl()
 
     def _build_handler(self):
-        outer = self
+        def _impl():
+            outer = self
 
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, _format: str, *_args: object) -> None:
-                return
-
-            def _send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
-                body = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store, max-age=0")
-                self.send_header("Pragma", "no-cache")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _send_html(self, body: str) -> None:
-                data = body.encode("utf-8")
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Cache-Control", "no-store, max-age=0")
-                self.send_header("Pragma", "no-cache")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-
-            def do_GET(self) -> None:
-                parsed = urlparse(self.path)
-                if parsed.path == "/":
-                    self._send_html(outer._render_html_page(outer._state_payload()))
-                    return
-                if parsed.path == "/api/state":
-                    self._send_json(outer._state_payload())
-                    return
-                if parsed.path == "/api/console":
-                    query = parse_qs(parsed.query)
-                    max_bytes = int(query.get("tail_bytes", ["65536"])[0])
-                    self._send_json(
-                        {
-                            "path": str(outer.cfg.last_log_file),
-                            "size_bytes": outer.cfg.last_log_file.stat().st_size if outer.cfg.last_log_file.exists() else 0,
-                            "text": _tail_text(outer.cfg.last_log_file, max_bytes=max_bytes),
-                        }
-                    )
-                    return
-                self.send_error(HTTPStatus.NOT_FOUND, "Not found")
-
-            def do_POST(self) -> None:
-                content_length = int(self.headers.get("Content-Length", "0"))
-                raw = self.rfile.read(content_length).decode("utf-8", errors="replace")
-                try:
-                    payload = json.loads(raw) if raw else {}
-                except json.JSONDecodeError:
-                    self._send_json({"ok": False, "error": "invalid-json"}, status=HTTPStatus.BAD_REQUEST)
-                    return
-                if self.path == "/api/comment":
-                    message = str(payload.get("message", "")).strip()
-                    if not message:
-                        self._send_json({"ok": False, "error": "empty-message"}, status=HTTPStatus.BAD_REQUEST)
+            class Handler(BaseHTTPRequestHandler):
+                def log_message(self, _format: str, *_args: object) -> None:
+                    def _impl():
                         return
-                    outer._write_operator_comment(message)
-                    self._send_json({"ok": True})
-                    return
-                if self.path == "/api/action":
-                    action = str(payload.get("action", "")).strip()
-                    if not action:
-                        self._send_json({"ok": False, "error": "empty-action"}, status=HTTPStatus.BAD_REQUEST)
-                        return
-                    result = outer._apply_action(action)
-                    self._send_json(result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST)
-                    return
-                self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+                    return _impl()
+
+                def _send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
+                    def _impl():
+                        body = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+                        self.send_response(status)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store, max-age=0")
+                        self.send_header("Pragma", "no-cache")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                    return _impl()
+
+                def _send_html(self, body: str) -> None:
+                    def _impl():
+                        data = body.encode("utf-8")
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store, max-age=0")
+                        self.send_header("Pragma", "no-cache")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                    return _impl()
+
+                def do_GET(self) -> None:
+                    def _impl():
+                        parsed = urlparse(self.path)
+                        if parsed.path == "/":
+                            self._send_html(outer._render_html_page(outer._state_payload()))
+                            return
+                        if parsed.path == "/api/state":
+                            self._send_json(outer._state_payload())
+                            return
+                        if parsed.path == "/api/console":
+                            query = parse_qs(parsed.query)
+                            max_bytes = int(query.get("tail_bytes", ["65536"])[0])
+                            self._send_json(
+                                {
+                                    "path": str(outer.cfg.last_log_file),
+                                    "size_bytes": outer.cfg.last_log_file.stat().st_size if outer.cfg.last_log_file.exists() else 0,
+                                    "text": _tail_text(outer.cfg.last_log_file, max_bytes=max_bytes),
+                                }
+                            )
+                            return
+                        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+                    return _impl()
+
+                def do_POST(self) -> None:
+                    def _impl():
+                        content_length = int(self.headers.get("Content-Length", "0"))
+                        raw = self.rfile.read(content_length).decode("utf-8", errors="replace")
+                        try:
+                            payload = json.loads(raw) if raw else {}
+                        except json.JSONDecodeError:
+                            self._send_json({"ok": False, "error": "invalid-json"}, status=HTTPStatus.BAD_REQUEST)
+                            return
+                        if self.path == "/api/comment":
+                            message = str(payload.get("message", "")).strip()
+                            if not message:
+                                self._send_json({"ok": False, "error": "empty-message"}, status=HTTPStatus.BAD_REQUEST)
+                                return
+                            outer._write_operator_comment(message)
+                            self._send_json({"ok": True})
+                            return
+                        if self.path == "/api/action":
+                            action = str(payload.get("action", "")).strip()
+                            if not action:
+                                self._send_json({"ok": False, "error": "empty-action"}, status=HTTPStatus.BAD_REQUEST)
+                                return
+                            result = outer._apply_action(action)
+                            self._send_json(
+                                result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
+                            )
+                            return
+                        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+                    return _impl()
 
         return Handler
 
     def start(self) -> str:
-        host = self.cfg.web_ui_host
-        port = self.cfg.web_ui_port
-        try:
-            self.server = ThreadingHTTPServer((host, port), self._build_handler())
-        except OSError:
-            self.server = ThreadingHTTPServer((host, 0), self._build_handler())
-        actual_host, actual_port = self.server.server_address[:2]
-        self.url = f"http://{actual_host}:{actual_port}/"
-        self.thread = threading.Thread(target=self.server.serve_forever, name="meta-harness-webui", daemon=True)
-        self.thread.start()
-        if self.cfg.web_ui_auto_open:
+        def _impl():
+            host = self.cfg.web_ui_host
+            port = self.cfg.web_ui_port
             try:
-                webbrowser.open(self.url)
-            except Exception:
-                pass
-        return self.url
+                self.server = ThreadingHTTPServer((host, port), self._build_handler())
+            except OSError:
+                self.server = ThreadingHTTPServer((host, 0), self._build_handler())
+            actual_host, actual_port = self.server.server_address[:2]
+            self.url = f"http://{actual_host}:{actual_port}/"
+            self.thread = threading.Thread(target=self.server.serve_forever, name="meta-harness-webui", daemon=True)
+            self.thread.start()
+            if self.cfg.web_ui_auto_open:
+                try:
+                    webbrowser.open(self.url)
+                except Exception:
+                    pass
+            return self.url
+        return _impl()
 
     def stop(self) -> None:
-        if self.server is None:
-            return
-        self.server.shutdown()
-        self.server.server_close()
-        if self.thread is not None:
-            self.thread.join(timeout=2)
+        def _impl():
+            if self.server is None:
+                return
+            self.server.shutdown()
+            self.server.server_close()
+            if self.thread is not None:
+                self.thread.join(timeout=2)
+        return _impl()
 
 
 def launch_web_ui(cfg: RuntimeConfig, harness: object | None = None) -> HarnessWebUI | None:
-    if not cfg.web_ui_enabled:
-        return None
-    ui = HarnessWebUI(cfg, harness=harness)
-    ui.start()
-    return ui
+    def _impl():
+        if not cfg.web_ui_enabled:
+            return None
+        ui = HarnessWebUI(cfg, harness=harness)
+        ui.start()
+        return ui
+    return _impl()

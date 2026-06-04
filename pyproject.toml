@@ -31,6 +31,9 @@ dev = [
     "monkeytype",
     "mypy",
     "ruff",
+    "pyright",
+    "vulture",
+    "radon",
 ]
 
 [project.scripts]
@@ -56,6 +59,9 @@ select = [
     "E",
     "F",
     "I",
+]
+ignore = [
+    "E501",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -88,3 +94,34 @@ exclude = [
 testpaths = [
     "angr_platforms/tests",
 ]
+
+[tool.pyright]
+include = [
+    "angr_platforms/angr_platforms/X86_16",
+    "angr_platforms/tests",
+    "inertia_decompiler",
+]
+exclude = [
+    "**/__pycache__",
+    ".venv",
+    "build",
+    "dist",
+]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+
+[tool.vulture]
+exclude = [
+    ".venv/",
+    "build/",
+    "dist/",
+    "__pycache__/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+]
+ignore_names = [
+    "test_*",
+    "pytest_*",
+]
+min_confidence = 80

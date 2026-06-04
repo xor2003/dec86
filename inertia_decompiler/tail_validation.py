@@ -91,33 +91,58 @@ def _compute_cfg_hash_from_result(result: Any, item: Any) -> str | None:
 
 
 def tail_validation_record_for_result(item: Any, result: Any) -> dict[str, object] | None:
-    snapshot = getattr(result, "tail_validation", None)
-    function = getattr(result, "function", None) or getattr(item, "function", None)
-    project = getattr(function, "project", None)
-    binary_name = getattr(project, "filename", None)
-    cod_file = Path(binary_name).name if isinstance(binary_name, (str, os.PathLike)) else None
-    proc_name = getattr(function, "name", None) or "sub"
-    proc_kind = None
-    lst_metadata = getattr(project, "_inertia_lst_metadata", None)
-    cod_proc_kinds = getattr(lst_metadata, "cod_proc_kinds", None)
-    if isinstance(cod_proc_kinds, Mapping):
-        kind = cod_proc_kinds.get(getattr(function, "addr", None))
-        if isinstance(kind, str) and kind:
-            proc_kind = kind.upper()
-    identity = {
-        "cod_file": cod_file,
-        "proc_name": proc_name,
-        "proc_kind": proc_kind,
-        "function_addr": getattr(function, "addr", 0),
-        "function_name": proc_name,
-    }
-    block_count = getattr(result, "block_count", None)
-    byte_count = getattr(result, "byte_count", None)
-    cfg_hash = _compute_cfg_hash_from_result(result, item)
-    if isinstance(snapshot, dict) and snapshot:
+    def _impl():
+        snapshot = getattr(result, "tail_validation", None)
+        function = getattr(result, "function", None) or getattr(item, "function", None)
+        project = getattr(function, "project", None)
+        binary_name = getattr(project, "filename", None)
+        cod_file = Path(binary_name).name if isinstance(binary_name, (str, os.PathLike)) else None
+        proc_name = getattr(function, "name", None) or "sub"
+        proc_kind = None
+        lst_metadata = getattr(project, "_inertia_lst_metadata", None)
+        cod_proc_kinds = getattr(lst_metadata, "cod_proc_kinds", None)
+        if isinstance(cod_proc_kinds, Mapping):
+            kind = cod_proc_kinds.get(getattr(function, "addr", None))
+            if isinstance(kind, str) and kind:
+                proc_kind = kind.upper()
+        identity = {
+            "cod_file": cod_file,
+            "proc_name": proc_name,
+            "proc_kind": proc_kind,
+            "function_addr": getattr(function, "addr", 0),
+            "function_name": proc_name,
+        }
+        block_count = getattr(result, "block_count", None)
+        byte_count = getattr(result, "byte_count", None)
+        cfg_hash = _compute_cfg_hash_from_result(result, item)
+        if isinstance(snapshot, dict) and snapshot:
+            record = {
+                **identity,
+                **snapshot,
+            }
+            if block_count is not None:
+                record["block_count"] = block_count
+            if byte_count is not None:
+                record["byte_count"] = byte_count
+            if cfg_hash is not None:
+                record["cfg_hash"] = cfg_hash
+            return record
+        status = getattr(result, "status", None)
+        payload = getattr(result, "payload", None)
+        debug_output = getattr(result, "debug_output", None)
+        exit_detail = None
+        for candidate in (payload, debug_output):
+            if isinstance(candidate, str) and candidate.strip():
+                exit_detail = candidate.strip()
+                break
+        if exit_detail is None:
+            exit_detail = "tail validation snapshot missing"
+        exit_kind = status if isinstance(status, str) and status else "uncollected"
         record = {
             **identity,
-            **snapshot,
+            "tail_validation_uncollected": True,
+            "exit_kind": exit_kind,
+            "exit_detail": exit_detail,
         }
         if block_count is not None:
             record["block_count"] = block_count
@@ -126,30 +151,8 @@ def tail_validation_record_for_result(item: Any, result: Any) -> dict[str, objec
         if cfg_hash is not None:
             record["cfg_hash"] = cfg_hash
         return record
-    status = getattr(result, "status", None)
-    payload = getattr(result, "payload", None)
-    debug_output = getattr(result, "debug_output", None)
-    exit_detail = None
-    for candidate in (payload, debug_output):
-        if isinstance(candidate, str) and candidate.strip():
-            exit_detail = candidate.strip()
-            break
-    if exit_detail is None:
-        exit_detail = "tail validation snapshot missing"
-    exit_kind = status if isinstance(status, str) and status else "uncollected"
-    record = {
-        **identity,
-        "tail_validation_uncollected": True,
-        "exit_kind": exit_kind,
-        "exit_detail": exit_detail,
-    }
-    if block_count is not None:
-        record["block_count"] = block_count
-    if byte_count is not None:
-        record["byte_count"] = byte_count
-    if cfg_hash is not None:
-        record["cfg_hash"] = cfg_hash
-    return record
+
+    return _impl()
 
 
 def collect_tail_validation_records(
@@ -192,45 +195,48 @@ def emit_tail_validation_surface_summary(
     console_cache_path: Path | None,
     detail_cache_path: Path | None,
 ) -> None:
-    emitted_any = False
-    rendered = render_x86_16_tail_validation_console_summary(surface, cache_path=console_cache_path)
-    detail_artifact = cache_x86_16_tail_validation_detail_artifact(surface, cache_path=detail_cache_path)
-    for line in rendered.get("lines", ()):
-        if isinstance(line, str) and line:
-            print(f"{TAIL_VALIDATION_STDERR_PREFIX}{line}", file=sys.stderr)
+    def _impl():
+        emitted_any = False
+        rendered = render_x86_16_tail_validation_console_summary(surface, cache_path=console_cache_path)
+        detail_artifact = cache_x86_16_tail_validation_detail_artifact(surface, cache_path=detail_cache_path)
+        for line in rendered.get("lines", ()):
+            if isinstance(line, str) and line:
+                print(f"{TAIL_VALIDATION_STDERR_PREFIX}{line}", file=sys.stderr)
+                emitted_any = True
+        if surface.get("severity") != "clean":
+            detail_artifact_path = detail_artifact.get("path")
+            if isinstance(detail_artifact_path, Path):
+                print(f"{TAIL_VALIDATION_STDERR_PREFIX}detail artifact {detail_artifact_path}", file=sys.stderr)
+                emitted_any = True
+            elif detail_cache_path is not None:
+                print(f"{TAIL_VALIDATION_STDERR_PREFIX}detail artifact {detail_cache_path}", file=sys.stderr)
+                emitted_any = True
+            if rendered.get("cache_hit"):
+                print(f"{TAIL_VALIDATION_STDERR_PREFIX}console summary cache hit", file=sys.stderr)
+                emitted_any = True
+            if detail_artifact.get("cache_hit"):
+                print(f"{TAIL_VALIDATION_STDERR_PREFIX}detail artifact cache hit", file=sys.stderr)
+                emitted_any = True
+        if os.environ.get(TAIL_VALIDATION_METADATA_ENV) == "1":
+            payload = {
+                "scanned": int(scanned),
+                "records": [dict(record) for record in records if isinstance(record, Mapping)],
+                "summary": dict(summary or {}),
+                "surface": dict(surface or {}),
+                "console_cache_hit": bool(rendered.get("cache_hit")),
+                "console_cache_path": str(console_cache_path) if console_cache_path is not None else None,
+                "detail_cache_hit": bool(detail_artifact.get("cache_hit")),
+                "detail_cache_path": str(detail_cache_path) if detail_cache_path is not None else None,
+            }
+            print(
+                f"{TAIL_VALIDATION_METADATA_PREFIX}{json.dumps(payload, sort_keys=True)}",
+                file=sys.stderr,
+            )
             emitted_any = True
-    if surface.get("severity") != "clean":
-        detail_artifact_path = detail_artifact.get("path")
-        if isinstance(detail_artifact_path, Path):
-            print(f"{TAIL_VALIDATION_STDERR_PREFIX}detail artifact {detail_artifact_path}", file=sys.stderr)
-            emitted_any = True
-        elif detail_cache_path is not None:
-            print(f"{TAIL_VALIDATION_STDERR_PREFIX}detail artifact {detail_cache_path}", file=sys.stderr)
-            emitted_any = True
-        if rendered.get("cache_hit"):
-            print(f"{TAIL_VALIDATION_STDERR_PREFIX}console summary cache hit", file=sys.stderr)
-            emitted_any = True
-        if detail_artifact.get("cache_hit"):
-            print(f"{TAIL_VALIDATION_STDERR_PREFIX}detail artifact cache hit", file=sys.stderr)
-            emitted_any = True
-    if os.environ.get(TAIL_VALIDATION_METADATA_ENV) == "1":
-        payload = {
-            "scanned": int(scanned),
-            "records": [dict(record) for record in records if isinstance(record, Mapping)],
-            "summary": dict(summary or {}),
-            "surface": dict(surface or {}),
-            "console_cache_hit": bool(rendered.get("cache_hit")),
-            "console_cache_path": str(console_cache_path) if console_cache_path is not None else None,
-            "detail_cache_hit": bool(detail_artifact.get("cache_hit")),
-            "detail_cache_path": str(detail_cache_path) if detail_cache_path is not None else None,
-        }
-        print(
-            f"{TAIL_VALIDATION_METADATA_PREFIX}{json.dumps(payload, sort_keys=True)}",
-            file=sys.stderr,
-        )
-        emitted_any = True
-    if emitted_any:
-        sys.stderr.flush()
+        if emitted_any:
+            sys.stderr.flush()
+
+    return _impl()
 
 
 def tail_validation_snapshot_for_function_run(project, function) -> dict[str, object]:
@@ -329,31 +335,34 @@ def tail_validation_cache_label(
     *,
     cache_salt: str | None = None,
 ) -> str | None:
-    if binary_path is None:
-        return None
-    resolved = Path(binary_path).resolve()
-    base_name = resolved.stem or resolved.name or "binary"
-    labels: list[str] = []
-    for item in function_tasks:
-        function = getattr(item, "function", None)
-        name = getattr(function, "name", None)
-        addr = getattr(function, "addr", None)
-        if isinstance(name, str) and name:
-            label = name
-        elif isinstance(addr, int):
-            label = f"sub_{addr:x}"
-        else:
-            label = "function"
-        if isinstance(addr, int):
-            label = f"{label}@{addr:x}"
-        labels.append(label)
-    payload = f"{resolved}\n" + "\n".join(labels or ["whole-binary"])
-    if isinstance(cache_salt, str) and cache_salt:
-        payload += f"\ncache_salt={cache_salt}"
-    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
-    if len(labels) == 1:
-        return f"{base_name}.{digest}"
-    return f"{base_name}.{max(len(labels), 1)}f.{digest}"
+    def _impl():
+        if binary_path is None:
+            return None
+        resolved = Path(binary_path).resolve()
+        base_name = resolved.stem or resolved.name or "binary"
+        labels: list[str] = []
+        for item in function_tasks:
+            function = getattr(item, "function", None)
+            name = getattr(function, "name", None)
+            addr = getattr(function, "addr", None)
+            if isinstance(name, str) and name:
+                label = name
+            elif isinstance(addr, int):
+                label = f"sub_{addr:x}"
+            else:
+                label = "function"
+            if isinstance(addr, int):
+                label = f"{label}@{addr:x}"
+            labels.append(label)
+        payload = f"{resolved}\n" + "\n".join(labels or ["whole-binary"])
+        if isinstance(cache_salt, str) and cache_salt:
+            payload += f"\ncache_salt={cache_salt}"
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+        if len(labels) == 1:
+            return f"{base_name}.{digest}"
+        return f"{base_name}.{max(len(labels), 1)}f.{digest}"
+
+    return _impl()
 
 
 def tail_validation_console_cache_path(
@@ -386,37 +395,40 @@ def tail_validation_display_status(
     expected_stages: Sequence[str] = ("structuring", "postprocess"),
     fallback_kind: str | None = None,
 ) -> str:
-    if fallback_kind is not None:
-        return TailValidationDisplayStatus.FAILED.value
-    if not isinstance(snapshot, Mapping) or not snapshot:
-        return TailValidationDisplayStatus.UNCOLLECTED.value
-    if bool(snapshot.get("tail_validation_uncollected")):
-        return TailValidationDisplayStatus.FAILED.value
-    passed = x86_16_tail_validation_snapshot_passed(dict(snapshot), expected_stages=expected_stages)
-    if passed:
-        return TailValidationDisplayStatus.PASSED.value
+    def _impl():
+        if fallback_kind is not None:
+            return TailValidationDisplayStatus.FAILED.value
+        if not isinstance(snapshot, Mapping) or not snapshot:
+            return TailValidationDisplayStatus.UNCOLLECTED.value
+        if bool(snapshot.get("tail_validation_uncollected")):
+            return TailValidationDisplayStatus.FAILED.value
+        passed = x86_16_tail_validation_snapshot_passed(dict(snapshot), expected_stages=expected_stages)
+        if passed:
+            return TailValidationDisplayStatus.PASSED.value
 
-    failed_stages: list[str] = []
-    for stage_name in expected_stages:
-        entry = snapshot.get(stage_name)
-        if not isinstance(entry, Mapping):
-            failed_stages.append(f"{stage_name}=missing")
-            continue
-        changed = bool(entry.get("changed"))
-        if changed:
-            failed_stages.append(f"{stage_name}=changed")
-            continue
-        status = entry.get("status")
-        if not isinstance(status, str):
-            failed_stages.append(f"{stage_name}=missing_status")
-            continue
-        if status not in _TAIL_VALIDATION_STABLE_STATUSES:
-            failed_stages.append(f"{stage_name}={status}")
+        failed_stages: list[str] = []
+        for stage_name in expected_stages:
+            entry = snapshot.get(stage_name)
+            if not isinstance(entry, Mapping):
+                failed_stages.append(f"{stage_name}=missing")
+                continue
+            changed = bool(entry.get("changed"))
+            if changed:
+                failed_stages.append(f"{stage_name}=changed")
+                continue
+            status = entry.get("status")
+            if not isinstance(status, str):
+                failed_stages.append(f"{stage_name}=missing_status")
+                continue
+            if status not in _TAIL_VALIDATION_STABLE_STATUSES:
+                failed_stages.append(f"{stage_name}={status}")
 
-    if failed_stages:
+        if failed_stages:
+            return TailValidationDisplayStatus.FAILED.value
+
         return TailValidationDisplayStatus.FAILED.value
 
-    return TailValidationDisplayStatus.FAILED.value
+    return _impl()
 
 
 def format_tail_validation_diagnostic(
@@ -430,56 +442,59 @@ def format_tail_validation_diagnostic(
     exit_kind: str | None = None,
     exit_detail: str | None = None,
 ) -> list[str]:
-    """Format a tail validation snapshot as human-readable diagnostic lines.
+    def _impl():
+        """Format a tail validation snapshot as human-readable diagnostic lines.
 
-    Returns lines suitable for printing as stdout comments (/* ... */).
-    When the snapshot is missing or uncollected, reports the exit kind/detail.
-    """
-    lines: list[str] = []
-    header = f"/* tail validation: {function_name} ({function_addr:#x}) */"
-    lines.append(header)
+        Returns lines suitable for printing as stdout comments (/* ... */).
+        When the snapshot is missing or uncollected, reports the exit kind/detail.
+        """
+        lines: list[str] = []
+        header = f"/* tail validation: {function_name} ({function_addr:#x}) */"
+        lines.append(header)
 
-    # Block/byte/cfg metadata
-    meta_parts: list[str] = []
-    if block_count is not None:
-        meta_parts.append(f"blocks={block_count}")
-    if byte_count is not None:
-        meta_parts.append(f"bytes={byte_count}")
-    if cfg_hash is not None:
-        meta_parts.append(f"cfg_hash={cfg_hash}")
-    if meta_parts:
-        lines.append(f"/* tail validation metadata: {', '.join(meta_parts)} */")
+        # Block/byte/cfg metadata
+        meta_parts: list[str] = []
+        if block_count is not None:
+            meta_parts.append(f"blocks={block_count}")
+        if byte_count is not None:
+            meta_parts.append(f"bytes={byte_count}")
+        if cfg_hash is not None:
+            meta_parts.append(f"cfg_hash={cfg_hash}")
+        if meta_parts:
+            lines.append(f"/* tail validation metadata: {', '.join(meta_parts)} */")
 
-    if not isinstance(snapshot, Mapping) or not snapshot:
-        reason = exit_kind or "uncollected"
-        detail = exit_detail or "no tail validation snapshot available"
-        lines.append(f"/* tail validation result: {reason} — {detail} */")
+        if not isinstance(snapshot, Mapping) or not snapshot:
+            reason = exit_kind or "uncollected"
+            detail = exit_detail or "no tail validation snapshot available"
+            lines.append(f"/* tail validation result: {reason} — {detail} */")
+            return lines
+
+        if snapshot.get("tail_validation_uncollected"):
+            reason = exit_kind or str(snapshot.get("exit_kind", "uncollected"))
+            detail = exit_detail or str(snapshot.get("exit_detail", "snapshot marked uncollected"))
+            lines.append(f"/* tail validation result: {reason} — {detail} */")
+            return lines
+
+        for stage_key in ("structuring", "postprocess"):
+            entry = snapshot.get(stage_key)
+            if not isinstance(entry, Mapping):
+                lines.append(f"/* tail validation {stage_key}: missing */")
+                continue
+            changed = bool(entry.get("changed", False))
+            status = entry.get("status", "changed" if changed else "stable")
+            mode = entry.get("mode", "unknown")
+            if isinstance(mode, str) and mode:
+                status_str = f"status={status} mode={mode} changed={changed}"
+            else:
+                status_str = f"status={status} changed={changed}"
+            lines.append(f"/* tail validation {stage_key}: {status_str} */")
+            verdict = entry.get("verdict")
+            if isinstance(verdict, str) and verdict:
+                lines.append(f"/* tail validation {stage_key} verdict: {verdict} */")
+            summary_text = entry.get("summary_text")
+            if isinstance(summary_text, str) and summary_text:
+                lines.append(f"/* tail validation {stage_key} detail: {summary_text} */")
+
         return lines
 
-    if snapshot.get("tail_validation_uncollected"):
-        reason = exit_kind or str(snapshot.get("exit_kind", "uncollected"))
-        detail = exit_detail or str(snapshot.get("exit_detail", "snapshot marked uncollected"))
-        lines.append(f"/* tail validation result: {reason} — {detail} */")
-        return lines
-
-    for stage_key in ("structuring", "postprocess"):
-        entry = snapshot.get(stage_key)
-        if not isinstance(entry, Mapping):
-            lines.append(f"/* tail validation {stage_key}: missing */")
-            continue
-        changed = bool(entry.get("changed", False))
-        status = entry.get("status", "changed" if changed else "stable")
-        mode = entry.get("mode", "unknown")
-        if isinstance(mode, str) and mode:
-            status_str = f"status={status} mode={mode} changed={changed}"
-        else:
-            status_str = f"status={status} changed={changed}"
-        lines.append(f"/* tail validation {stage_key}: {status_str} */")
-        verdict = entry.get("verdict")
-        if isinstance(verdict, str) and verdict:
-            lines.append(f"/* tail validation {stage_key} verdict: {verdict} */")
-        summary_text = entry.get("summary_text")
-        if isinstance(summary_text, str) and summary_text:
-            lines.append(f"/* tail validation {stage_key} detail: {summary_text} */")
-
-    return lines
+    return _impl()

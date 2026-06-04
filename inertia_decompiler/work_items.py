@@ -63,6 +63,8 @@ class FunctionWorkResult:
     byte_count: int | None = None
     same_family_retry_stops: int = 0
     fallback_family_labels: tuple[str, ...] = ()
+    validated_payload_hash: str | None = None
+    gcc_checked_payload_hash: str | None = None
 
 
 def emit_tail_validation_for_function_run_or_uncollected(

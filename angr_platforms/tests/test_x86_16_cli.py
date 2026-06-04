@@ -10790,6 +10790,39 @@ def test_prune_void_function_return_values_text_drops_bare_returns_from_nonvoid_
     assert decompile._prune_void_function_return_values_text(text) == ("unsigned short _dos_getProcessId(void)\n{\n}\n")
 
 
+def test_prune_void_function_return_values_text_keeps_nonvoid_return_with_forward_decl() -> None:
+    text = (
+        "void helper(void);\n\n"
+        "int rel_i16(int a, int b)\n\n"
+        "{\n"
+        "    int sp_0;\n"
+        "    return sp_0;\n"
+        "}\n"
+    )
+
+    assert decompile._prune_void_function_return_values_text(text) == text
+
+
+def test_dedupe_duplicate_local_declarations_text_keeps_nonvoid_return_value() -> None:
+    text = (
+        "void helper(void);\n\n"
+        "int rel_i16(int a, int b)\n\n"
+        "{\n"
+        "    int sp_0;\n"
+        "    unsigned int b;\n"
+        "    if (a < b)\n"
+        "    {\n"
+        "        return sp_0;\n"
+        "    }\n"
+        "    return b;\n"
+        "}\n"
+    )
+    deduped = decompile._dedupe_duplicate_local_declarations_text(text)
+
+    assert "return sp_0;" in deduped
+    assert "return b;" in deduped
+
+
 def test_simplify_x86_16_stack_byte_pointers_rewrites_far_pointer_stack_stores():
     metadata = SimpleNamespace(stack_aliases={0xA: "cs", 0xC: "ss"})
     text = "    *((unsigned short *)(ds * 16 + (unsigned int)cs_2)) = ir_3_2;\n"
@@ -10871,6 +10904,59 @@ def test_simplify_x86_16_stack_byte_pointers_splits_reused_temp_windows_for_sour
     assert "    *cs = exeLoadParams.cs;\n" in simplified
     assert "    *ss = exeLoadParams.ss;\n" in simplified
     assert simplified.index("    *cs = exeLoadParams.cs;\n") < simplified.index("    *ss = exeLoadParams.ss;\n")
+
+
+def test_simplify_x86_16_stack_byte_pointers_skips_invalid_source_lvalue_rewrite_candidates():
+    metadata = SimpleNamespace(
+        stack_aliases={},
+        global_names=("exeLoadParams",),
+        source_lines=(
+            "vvar_4 - 2 = exeLoadParams.cs;",
+            "*cs = exeLoadParams.cs;",
+        ),
+    )
+    text = (
+        "unsigned short demo(const char *file, unsigned short *cs)\n"
+        "{\n"
+        "    ir_3_2 = exeLoadParams.cs;\n"
+        "    *cs = ir_3_2;\n"
+        "    return 0;\n"
+        "}\n"
+    )
+
+    simplified = decompile._simplify_x86_16_stack_byte_pointers(text, metadata)
+
+    assert "vvar_4 - 2 = exeLoadParams.cs;" not in simplified
+    assert "ir_3_2 = exeLoadParams.cs;" in simplified
+    assert "    *cs = exeLoadParams.cs;\n" in simplified
+
+
+def test_simplify_x86_16_stack_byte_pointers_keeps_only_valid_source_lvalues():
+    metadata = SimpleNamespace(
+        stack_aliases={},
+        global_names=("exeLoadParams",),
+        source_lines=(
+            "vvar_4 - 2 = exeLoadParams.cs;",
+            "*cs = exeLoadParams.cs;",
+            "field[7] = exeLoadParams.ss;",
+        ),
+    )
+    text = (
+        "unsigned short demo(const char *file, unsigned short *cs, unsigned short *field)\n"
+        "{\n"
+        "    ir_3_2 = exeLoadParams.cs;\n"
+        "    *cs = ir_3_2;\n"
+        "    ir_3_3 = exeLoadParams.ss;\n"
+        "    field[7] = ir_3_3;\n"
+        "    return 0;\n"
+        "}\n"
+    )
+
+    simplified = decompile._simplify_x86_16_stack_byte_pointers(text, metadata)
+
+    assert "vvar_4 - 2 = exeLoadParams.cs;" not in simplified
+    assert "    *cs = exeLoadParams.cs;\n" in simplified
+    assert "    field[7] = exeLoadParams.ss;\n" in simplified
 
 
 def test_dedupe_codegen_variable_names_tolerates_none_sort_fields():

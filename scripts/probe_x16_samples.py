@@ -18,7 +18,7 @@ REPORT_DIR.mkdir(exist_ok=True)
 OUT_JSON = REPORT_DIR / "x16_decompile_report.json"
 OUT_TXT = REPORT_DIR / "x16_decompile_report.txt"
 
-TIMEOUT_PER = 30  # seconds per sample
+TIMEOUT_PER = 70  # seconds per sample
 PY = sys.executable
 DECOMPILE_SCRIPT = ROOT / "decompile.py"
 
@@ -33,7 +33,7 @@ for path in sorted(SAMPLES.rglob("*")):
         # still try other files but prefer known sample types
         pass
     rel = path.relative_to(ROOT)
-    cmd = [PY, str(DECOMPILE_SCRIPT), str(path), "--timeout", "10", "--max-functions", "6"]
+    cmd = [PY, str(DECOMPILE_SCRIPT), str(path), "--timeout", "60", "--max-functions", "6"]
     print(f"Running: {' '.join(cmd)}")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_PER)

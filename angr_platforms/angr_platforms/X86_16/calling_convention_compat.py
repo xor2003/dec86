@@ -44,77 +44,83 @@ def _count_ax_dx_puts_8616(irsb, arch) -> int:
 
 
 def _guess_retval_type_8616(self, cc, ret_val_size):
-    ret_type = _guess_retval_type_8616._orig(self, cc, ret_val_size)
-    if self.project.arch.bits != 16 or ret_type is None:
-        return ret_type
-    if getattr(ret_type, "__class__", None).__name__ != "SimTypeShort":
-        return ret_type
-    if not getattr(cc, "OVERFLOW_RETURN_VAL", None) or getattr(cc, "RETURN_VAL", None) is None:
-        return ret_type
-    if getattr(self._function, "_argument_registers", None) or getattr(
-        self._function, "_argument_stack_variables", None
-    ):
+    def _impl():
+        ret_type = _guess_retval_type_8616._orig(self, cc, ret_val_size)
+        if self.project.arch.bits != 16 or ret_type is None:
+            return ret_type
+        if getattr(ret_type, "__class__", None).__name__ != "SimTypeShort":
+            return ret_type
+        if not getattr(cc, "OVERFLOW_RETURN_VAL", None) or getattr(cc, "RETURN_VAL", None) is None:
+            return ret_type
+        if getattr(self._function, "_argument_registers", None) or getattr(
+            self._function, "_argument_stack_variables", None
+        ):
+            return ret_type
+
+        for ret_block in getattr(self._function, "ret_sites", ()):
+            retval_updated, overflow_updated = False, False
+            try:
+                irsb = self.project.factory.block(ret_block.addr, size=ret_block.size).vex
+            except SimTranslationError:
+                continue
+            if _irsb_reads_word_bp_8616(irsb, self.project.arch):
+                continue
+            for stmt in irsb.statements:
+                if isinstance(stmt, Put):
+                    reg_name = self.project.arch.translate_register_name(stmt.offset, size=self.project.arch.bytes)
+                    if reg_name == cc.RETURN_VAL.reg_name:
+                        retval_updated = True
+                    elif reg_name == cc.OVERFLOW_RETURN_VAL.reg_name:
+                        overflow_updated = True
+            if retval_updated and overflow_updated:
+                return SimTypeLong().with_arch(self.project.arch)
         return ret_type
 
-    for ret_block in getattr(self._function, "ret_sites", ()):
-        retval_updated, overflow_updated = False, False
-        try:
-            irsb = self.project.factory.block(ret_block.addr, size=ret_block.size).vex
-        except SimTranslationError:
-            continue
-        if _irsb_reads_word_bp_8616(irsb, self.project.arch):
-            continue
-        for stmt in irsb.statements:
-            if isinstance(stmt, Put):
-                reg_name = self.project.arch.translate_register_name(stmt.offset, size=self.project.arch.bytes)
-                if reg_name == cc.RETURN_VAL.reg_name:
-                    retval_updated = True
-                elif reg_name == cc.OVERFLOW_RETURN_VAL.reg_name:
-                    overflow_updated = True
-        if retval_updated and overflow_updated:
-            return SimTypeLong().with_arch(self.project.arch)
-    return ret_type
+    return _impl()
 
 
 def _promote_wide_stack_return_to_wide_arg_8616(self, prototype):
-    if self.project.arch.bits != 16 or prototype is None:
-        return prototype
-    if len(prototype.args) == 0 and isinstance(prototype.returnty, SimTypeLong):
+    def _impl():
+        if self.project.arch.bits != 16 or prototype is None:
+            return prototype
+        if len(prototype.args) == 0 and isinstance(prototype.returnty, SimTypeLong):
+            block_addrs = sorted(getattr(self._function, "block_addrs_set", ()) or ())
+            if block_addrs:
+                try:
+                    irsb = self.project.factory.block(block_addrs[0]).vex
+                except SimTranslationError:
+                    irsb = None
+                if irsb is not None:
+                    if _irsb_reads_word_bp_8616(irsb, self.project.arch):
+                        if _count_ax_dx_puts_8616(irsb, self.project.arch) == 2:
+                            wide_ty = SimTypeLong().with_arch(self.project.arch)
+                            return prototype.__class__([wide_ty], wide_ty).with_arch(self.project.arch)
+        if len(prototype.args) != 2:
+            return prototype
+        if not all(type(arg) is SimTypeShort for arg in prototype.args):
+            return prototype
+        if type(prototype.returnty) is not SimTypeShort:
+            return prototype
+
         block_addrs = sorted(getattr(self._function, "block_addrs_set", ()) or ())
-        if block_addrs:
-            try:
-                irsb = self.project.factory.block(block_addrs[0]).vex
-            except SimTranslationError:
-                irsb = None
-            if irsb is not None:
-                if _irsb_reads_word_bp_8616(irsb, self.project.arch):
-                    if _count_ax_dx_puts_8616(irsb, self.project.arch) == 2:
-                        wide_ty = SimTypeLong().with_arch(self.project.arch)
-                        return prototype.__class__([wide_ty], wide_ty).with_arch(self.project.arch)
-    if len(prototype.args) != 2:
-        return prototype
-    if not all(type(arg) is SimTypeShort for arg in prototype.args):
-        return prototype
-    if type(prototype.returnty) is not SimTypeShort:
-        return prototype
+        if not block_addrs:
+            return prototype
 
-    block_addrs = sorted(getattr(self._function, "block_addrs_set", ()) or ())
-    if not block_addrs:
-        return prototype
+        try:
+            irsb = self.project.factory.block(block_addrs[0]).vex
+        except SimTranslationError:
+            return prototype
 
-    try:
-        irsb = self.project.factory.block(block_addrs[0]).vex
-    except SimTranslationError:
-        return prototype
+        if not _irsb_reads_word_bp_8616(irsb, self.project.arch):
+            return prototype
 
-    if not _irsb_reads_word_bp_8616(irsb, self.project.arch):
-        return prototype
+        if _count_ax_dx_puts_8616(irsb, self.project.arch) != 2:
+            return prototype
 
-    if _count_ax_dx_puts_8616(irsb, self.project.arch) != 2:
-        return prototype
+        wide_ty = SimTypeLong().with_arch(self.project.arch)
+        return prototype.__class__([wide_ty], wide_ty).with_arch(self.project.arch)
 
-    wide_ty = SimTypeLong().with_arch(self.project.arch)
-    return prototype.__class__([wide_ty], wide_ty).with_arch(self.project.arch)
+    return _impl()
 
 
 def _fallback_wide_stack_return_prototype_8616(self):

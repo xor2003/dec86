@@ -1,3 +1,5 @@
+from typing import Callable
+
 try:
     import pyvex_compat
 
@@ -256,7 +258,7 @@ _LAZY_EXPORTS = {
 }
 
 
-def __getattr__(name):
+def __getattr__(name: str) -> Callable:
     target = _LAZY_EXPORTS.get(name)
     if target is None:
         raise AttributeError(name)

@@ -58,7 +58,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     _base_opcode_template_instrfuncs: list[OpcodeHandler] | None = None
     _base_opcode_template_chk: list[int] | None = None
 
-    def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):
+    def __init__(self, emu: Emulator, instr: InstrData, mode32: bool) -> None:
         super().__init__(emu)
         super(ExecInstr, self).__init__(emu, instr, mode32)  # ParseInstr
         super(ParseInstr, self).__init__(emu, instr, mode32)  # EmuInstr

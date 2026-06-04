@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 import time
 from typing import Any, Callable, Sequence
 
@@ -37,6 +37,27 @@ class SliceRecoveryAttemptOutcome:
     snapshot: dict[str, object] | None = None
     attempt_trace: SliceRecoveryAttemptTrace | None = None
     verdict: BoundedSliceVerdict | None = None
+
+    def __iter__(self):
+        yield self.status
+        yield self.payload
+
+    def __len__(self):
+        return 2
+
+    def __getitem__(self, index: int) -> str:
+        if index == 0:
+            return self.status
+        if index == 1:
+            return self.payload
+        raise IndexError(index)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, tuple):
+            return (self.status, self.payload) == other
+        if isinstance(other, SliceRecoveryAttemptOutcome):
+            return asdict(self) == asdict(other)
+        return NotImplemented
 
 
 def _build_bounded_slice_verdict(

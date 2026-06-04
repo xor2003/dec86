@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from monkeytype.config import DefaultConfig
-from monkeytype.db.sqlite import SQLiteStore
+from monkeytype.config import DefaultConfig  # pyright: ignore[reportMissingImports]
+from monkeytype.db.sqlite import SQLiteStore  # pyright: ignore[reportMissingImports]
 
 from inertia_decompiler.monkeytype_tools import MONKEYTYPE_DB_PATH, ensure_monkeytype_dirs, monkeytype_code_filter
 

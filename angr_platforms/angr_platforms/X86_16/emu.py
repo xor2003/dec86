@@ -12,10 +12,12 @@ from .stack_helpers import (
     push_far_return_frame32,
     push_privilege_stack32,
 )
+from angr_platforms.X86_16.emulator import Emulator
+from angr_platforms.X86_16.instruction import InstrData
 
 
 class EmuInstr(X86Instruction):
-    def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):
+    def __init__(self, emu: Emulator, instr: InstrData, mode32: bool) -> None:
         super().__init__(emu, instr, mode32)
 
     def type_descriptor(self, instr: Dict[str, Any], sel: int) -> int:

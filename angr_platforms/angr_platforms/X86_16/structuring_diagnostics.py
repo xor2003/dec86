@@ -270,114 +270,117 @@ def suggest_recovery_hints(stats: object, region_ids: tuple[int, ...] = ()) -> l
 
 
 def apply_x86_16_structuring_diagnostics(codegen) -> bool:
-    """
-    Decompiler pass: Attach structuring diagnostics to functions.
+    def _impl():
+        """
+        Decompiler pass: Attach structuring diagnostics to functions.
 
-    This pass:
-    1. Collects diagnostics from structuring analysis
-    2. Classifies failure reasons (if any)
-    3. Generates recovery hints for diagnostics output
-    4. Attaches metadata to decompiled functions
+        This pass:
+        1. Collects diagnostics from structuring analysis
+        2. Classifies failure reasons (if any)
+        3. Generates recovery hints for diagnostics output
+        4. Attaches metadata to decompiled functions
 
-    Args:
-        codegen: Decompiler code generator
+        Args:
+            codegen: Decompiler code generator
 
-    Returns:
-        True if pass succeeded (even if structuring itself failed)
-    """
-    try:
-        # Handle missing or empty cfunc gracefully
-        if not hasattr(codegen, "cfunc") or not codegen.cfunc:
-            return True
+        Returns:
+            True if pass succeeded (even if structuring itself failed)
+        """
+        try:
+            # Handle missing or empty cfunc gracefully
+            if not hasattr(codegen, "cfunc") or not codegen.cfunc:
+                return True
 
-        cfunc = codegen.cfunc
-        func_addr = getattr(cfunc, "addr", 0)
-        func_name = getattr(cfunc, "name", f"func_{hex(func_addr)}")
+            cfunc = codegen.cfunc
+            func_addr = getattr(cfunc, "addr", 0)
+            func_name = getattr(cfunc, "name", f"func_{hex(func_addr)}")
 
-        # Check if structuring info is available
-        succeeded = True
-        final_iteration = 0
-        structuring_stats = None
+            # Check if structuring info is available
+            succeeded = True
+            final_iteration = 0
+            structuring_stats = None
 
-        if hasattr(cfunc, "_structuring_stats"):
-            structuring_stats = cfunc._structuring_stats
-            final_iteration = getattr(structuring_stats, "iterations", 0)
-            max_iter_reached = getattr(structuring_stats, "max_iterations_reached", False)
-            succeeded = not max_iter_reached
+            if hasattr(cfunc, "_structuring_stats"):
+                structuring_stats = cfunc._structuring_stats
+                final_iteration = getattr(structuring_stats, "iterations", 0)
+                max_iter_reached = getattr(structuring_stats, "max_iterations_reached", False)
+                succeeded = not max_iter_reached
 
-        # Build diagnostics collector
-        collector = DiagnosticsCollector(max_iterations=1000)
-        collector.current_iteration = final_iteration
+            # Build diagnostics collector
+            collector = DiagnosticsCollector(max_iterations=1000)
+            collector.current_iteration = final_iteration
 
-        # Determine failure reason
-        failure_reason = None
-        if structuring_stats:
-            failure_reason = build_failure_reason_from_stats(structuring_stats)
+            # Determine failure reason
+            failure_reason = None
+            if structuring_stats:
+                failure_reason = build_failure_reason_from_stats(structuring_stats)
 
-        cfg_grouping = build_cfg_grouping_artifact(codegen)
-        cfg_indirect = cfg_grouping.indirect if cfg_grouping is not None else None
-        cfg_ownership = cfg_indirect.ownership if cfg_indirect is not None else None
-        cfg_snapshot = cfg_ownership.snapshot if cfg_ownership is not None else None
+            cfg_grouping = build_cfg_grouping_artifact(codegen)
+            cfg_indirect = cfg_grouping.indirect if cfg_grouping is not None else None
+            cfg_ownership = cfg_indirect.ownership if cfg_indirect is not None else None
+            cfg_snapshot = cfg_ownership.snapshot if cfg_ownership is not None else None
 
-        # Build diagnostics report
-        report = StructuringDiagnosticsReport(
-            func_addr=func_addr,
-            func_name=func_name,
-            succeeded=succeeded,
-            final_iteration=final_iteration,
-            max_iterations=1000,
-            diagnostics_collector=collector,
-            failure_reason=failure_reason,
-            cfg_snapshot=cfg_snapshot,
-            cfg_ownership=cfg_ownership,
-            cfg_indirect=cfg_indirect,
-            cfg_grouping=cfg_grouping,
-            ir_hints=build_structuring_ir_hint_artifact(codegen, succeeded=succeeded, iterations=final_iteration),
-        )
-
-        if cfg_snapshot is not None:
-            collector.add_progress(cfg_snapshot.summary_line())
-        if cfg_ownership is not None:
-            collector.add_progress(cfg_ownership.summary_line())
-        if cfg_indirect is not None:
-            collector.add_progress(cfg_indirect.summary_line())
-        if cfg_grouping is not None:
-            collector.add_progress(cfg_grouping.summary_line())
-        if report.ir_hints is not None:
-            readiness = report.ir_hints.readiness
-            collector.add_progress(
-                "ir_readiness "
-                f"level={readiness.level} "
-                f"cond={readiness.condition_count} "
-                f"phi={readiness.phi_node_count} "
-                f"defaulted={readiness.defaulted_segment_count} "
-                f"provisional={readiness.provisional_address_count}"
+            # Build diagnostics report
+            report = StructuringDiagnosticsReport(
+                func_addr=func_addr,
+                func_name=func_name,
+                succeeded=succeeded,
+                final_iteration=final_iteration,
+                max_iterations=1000,
+                diagnostics_collector=collector,
+                failure_reason=failure_reason,
+                cfg_snapshot=cfg_snapshot,
+                cfg_ownership=cfg_ownership,
+                cfg_indirect=cfg_indirect,
+                cfg_grouping=cfg_grouping,
+                ir_hints=build_structuring_ir_hint_artifact(codegen, succeeded=succeeded, iterations=final_iteration),
             )
 
-        # Generate recovery hints
-        if not succeeded and structuring_stats:
-            hints = suggest_recovery_hints(structuring_stats)
-            for hint in hints:
-                report.add_recovery_hint(hint)
-        if report.ir_hints is not None:
-            for hint in report.ir_hints.hints:
-                report.add_recovery_hint(hint)
+            if cfg_snapshot is not None:
+                collector.add_progress(cfg_snapshot.summary_line())
+            if cfg_ownership is not None:
+                collector.add_progress(cfg_ownership.summary_line())
+            if cfg_indirect is not None:
+                collector.add_progress(cfg_indirect.summary_line())
+            if cfg_grouping is not None:
+                collector.add_progress(cfg_grouping.summary_line())
+            if report.ir_hints is not None:
+                readiness = report.ir_hints.readiness
+                collector.add_progress(
+                    "ir_readiness "
+                    f"level={readiness.level} "
+                    f"cond={readiness.condition_count} "
+                    f"phi={readiness.phi_node_count} "
+                    f"defaulted={readiness.defaulted_segment_count} "
+                    f"provisional={readiness.provisional_address_count}"
+                )
 
-        # Attach to function
-        metadata = get_codegen_side_metadata(codegen)
-        metadata["structuring_diagnostics"] = report
-        try:
-            cfunc_metadata = getattr(cfunc, "_recovery_metadata", None)
-            if not isinstance(cfunc_metadata, dict):
-                cfunc_metadata = {}
-                cfunc._recovery_metadata = cfunc_metadata
-            cfunc_metadata["structuring_diagnostics"] = report
+            # Generate recovery hints
+            if not succeeded and structuring_stats:
+                hints = suggest_recovery_hints(structuring_stats)
+                for hint in hints:
+                    report.add_recovery_hint(hint)
+            if report.ir_hints is not None:
+                for hint in report.ir_hints.hints:
+                    report.add_recovery_hint(hint)
+
+            # Attach to function
+            metadata = get_codegen_side_metadata(codegen)
+            metadata["structuring_diagnostics"] = report
+            try:
+                cfunc_metadata = getattr(cfunc, "_recovery_metadata", None)
+                if not isinstance(cfunc_metadata, dict):
+                    cfunc_metadata = {}
+                    cfunc._recovery_metadata = cfunc_metadata
+                cfunc_metadata["structuring_diagnostics"] = report
+            except Exception:
+                pass
+
+            return True
+
         except Exception:
             pass
 
-        return True
+        return False
 
-    except Exception:
-        pass
-
-    return False
+    return _impl()

@@ -117,42 +117,45 @@ def _make_phi_target(
 
 
 def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifact:
-    local_blocks = tuple(build_x86_16_block_local_ssa(block) for block in artifact.blocks)
-    local_by_addr = {block.addr: block for block in local_blocks}
-    pred_map = _predecessor_map(artifact)
-    exits_by_addr = {block.addr: _block_exit_versions(block) for block in local_blocks}
-    phi_nodes: list[SSAPhiNode] = []
+    def _impl():
+        local_blocks = tuple(build_x86_16_block_local_ssa(block) for block in artifact.blocks)
+        local_by_addr = {block.addr: block for block in local_blocks}
+        pred_map = _predecessor_map(artifact)
+        exits_by_addr = {block.addr: _block_exit_versions(block) for block in local_blocks}
+        phi_nodes: list[SSAPhiNode] = []
 
-    for block_addr, preds in pred_map.items():
-        if len(preds) < 2:
-            continue
-        candidate_keys = sorted({key for pred in preds for key in exits_by_addr.get(pred, {})})
-        for key in candidate_keys:
-            incoming = tuple(
-                SSAIncomingValue(source_block_addr=pred, value=exits_by_addr[pred][key])
-                for pred in preds
-                if key in exits_by_addr.get(pred, {})
-            )
-            if len(incoming) < 2 or not _distinct_incoming_values(incoming):
+        for block_addr, preds in pred_map.items():
+            if len(preds) < 2:
                 continue
-            phi_nodes.append(
-                SSAPhiNode(
-                    block_addr=block_addr,
-                    key=key,
-                    target=_make_phi_target(block_addr, key, incoming),
-                    incoming=tuple(sorted(incoming, key=lambda item: item.source_block_addr)),
+            candidate_keys = sorted({key for pred in preds for key in exits_by_addr.get(pred, {})})
+            for key in candidate_keys:
+                incoming = tuple(
+                    SSAIncomingValue(source_block_addr=pred, value=exits_by_addr[pred][key])
+                    for pred in preds
+                    if key in exits_by_addr.get(pred, {})
                 )
-            )
+                if len(incoming) < 2 or not _distinct_incoming_values(incoming):
+                    continue
+                phi_nodes.append(
+                    SSAPhiNode(
+                        block_addr=block_addr,
+                        key=key,
+                        target=_make_phi_target(block_addr, key, incoming),
+                        incoming=tuple(sorted(incoming, key=lambda item: item.source_block_addr)),
+                    )
+                )
 
-    summary = {
-        "block_count": len(local_blocks),
-        "phi_node_count": len(phi_nodes),
-        "join_block_count": sum(1 for preds in pred_map.values() if len(preds) > 1),
-    }
-    return SSAFunctionArtifact(
-        function_addr=artifact.function_addr,
-        blocks=tuple(sorted(local_by_addr.values(), key=lambda block: block.addr)),
-        phi_nodes=tuple(sorted(phi_nodes, key=lambda node: (node.block_addr, node.key))),
-        predecessor_map=pred_map,
-        summary=summary,
-    )
+        summary = {
+            "block_count": len(local_blocks),
+            "phi_node_count": len(phi_nodes),
+            "join_block_count": sum(1 for preds in pred_map.values() if len(preds) > 1),
+        }
+        return SSAFunctionArtifact(
+            function_addr=artifact.function_addr,
+            blocks=tuple(sorted(local_by_addr.values(), key=lambda block: block.addr)),
+            phi_nodes=tuple(sorted(phi_nodes, key=lambda node: (node.block_addr, node.key))),
+            predecessor_map=pred_map,
+            summary=summary,
+        )
+
+    return _impl()

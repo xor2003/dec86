@@ -85,40 +85,44 @@ def _build_offset_expr_8616(terms: tuple[tuple[int, object], ...], codegen):
 
 
 def _match_segmented_memory_expr_8616(node, *, project, access: str) -> SegmentedMemoryExpr | None:
-    if access == "read" or access == "write":
-        node = _strip_casts_8616(node)
-        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
-            return None
-        base_expr = node.operand
-        width_bits = getattr(getattr(node, "type", None), "size", None) or 16
-        codegen = getattr(node, "codegen", None)
-    else:
-        base_expr = node
-        width_bits = 0
-        codegen = getattr(node, "codegen", None)
-
-    segment_name = None
-    segment_expr = None
-    offset_terms: list[tuple[int, object]] = []
-    for sign, term in _flatten_signed_terms_8616(base_expr):
-        local_name, local_expr = _extract_segment_scale_8616(term, project)
-        if local_name is not None:
-            if sign != 1 or segment_name is not None:
+    def _impl():
+        nonlocal node
+        if access == "read" or access == "write":
+            node = _strip_casts_8616(node)
+            if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
                 return None
-            segment_name = local_name.upper()
-            segment_expr = local_expr
-            continue
-        offset_terms.append((sign, term))
+            base_expr = node.operand
+            width_bits = getattr(getattr(node, "type", None), "size", None) or 16
+            codegen = getattr(node, "codegen", None)
+        else:
+            base_expr = node
+            width_bits = 0
+            codegen = getattr(node, "codegen", None)
 
-    if segment_name not in {"DS", "ES", "SS"} or segment_expr is None:
-        return None
-    return SegmentedMemoryExpr(
-        space=segment_name,
-        segment_expr=segment_expr,
-        offset_expr=_build_offset_expr_8616(tuple(offset_terms), codegen),
-        width_bits=int(width_bits),
-        access=access,
-    )
+        segment_name = None
+        segment_expr = None
+        offset_terms: list[tuple[int, object]] = []
+        for sign, term in _flatten_signed_terms_8616(base_expr):
+            local_name, local_expr = _extract_segment_scale_8616(term, project)
+            if local_name is not None:
+                if sign != 1 or segment_name is not None:
+                    return None
+                segment_name = local_name.upper()
+                segment_expr = local_expr
+                continue
+            offset_terms.append((sign, term))
+
+        if segment_name not in {"DS", "ES", "SS"} or segment_expr is None:
+            return None
+        return SegmentedMemoryExpr(
+            space=segment_name,
+            segment_expr=segment_expr,
+            offset_expr=_build_offset_expr_8616(tuple(offset_terms), codegen),
+            width_bits=int(width_bits),
+            access=access,
+        )
+
+    return _impl()
 
 
 def _seg_macro_for_width_bits_8616(width_bits: int) -> str | None:

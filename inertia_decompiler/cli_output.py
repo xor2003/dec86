@@ -34,30 +34,33 @@ def _looks_like_diagnostic_line(line: str) -> bool:
 
 
 def _timestamped_print(*args, **kwargs):
-    sep = kwargs.pop("sep", " ")
-    end = kwargs.pop("end", "\n")
-    file = kwargs.pop("file", None)
-    flush = kwargs.pop("flush", False)
-    text = sep.join(str(arg) for arg in args)
-    pytest_mode = "PYTEST_CURRENT_TEST" in os.environ
-    if pytest_mode or _brief_mode():
-        return _RAW_PRINT(text, end=end, file=file, flush=flush)
-    if file is None and text:
-        lines = text.splitlines()
-        if lines and all((not line.strip()) or _looks_like_diagnostic_line(line) for line in lines):
-            target = sys.stderr
-            stamped = "\n".join(
-                (
-                    line
-                    if re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s+", line.lstrip())
-                    else f"{_timestamp_prefix()} {line}"
+    def _impl():
+        sep = kwargs.pop("sep", " ")
+        end = kwargs.pop("end", "\n")
+        file = kwargs.pop("file", None)
+        flush = kwargs.pop("flush", False)
+        text = sep.join(str(arg) for arg in args)
+        pytest_mode = "PYTEST_CURRENT_TEST" in os.environ
+        if pytest_mode or _brief_mode():
+            return _RAW_PRINT(text, end=end, file=file, flush=flush)
+        if file is None and text:
+            lines = text.splitlines()
+            if lines and all((not line.strip()) or _looks_like_diagnostic_line(line) for line in lines):
+                target = sys.stderr
+                stamped = "\n".join(
+                    (
+                        line
+                        if re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s+", line.lstrip())
+                        else f"{_timestamp_prefix()} {line}"
+                    )
+                    if line.strip()
+                    else line
+                    for line in lines
                 )
-                if line.strip()
-                else line
-                for line in lines
-            )
-            return _RAW_PRINT(stamped, end=end, file=target, flush=flush)
-    return _RAW_PRINT(text, end=end, file=file, flush=flush)
+                return _RAW_PRINT(stamped, end=end, file=target, flush=flush)
+        return _RAW_PRINT(text, end=end, file=file, flush=flush)
+
+    return _impl()
 
 
 def _print_diagnostic_text(text: str) -> None:

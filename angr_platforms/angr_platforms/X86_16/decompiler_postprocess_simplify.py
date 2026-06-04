@@ -20,6 +20,10 @@ from .decompiler_postprocess_utils import (
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
+from .lowering.stack_lowering_from_facts import (
+    _canonical_stack_offset_8616,
+    _stack_object_name,
+)
 from .semantics.alias_query import _storage_domain_for_expr
 from .widening_alias import join_adjacent_register_slices
 from .widening_model import prove_adjacent_storage_slices
@@ -222,11 +226,14 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
         if joined.space == "stack" and joined.stack_slot is not None:
             stack_slot = joined.stack_slot
+            offset = _canonical_stack_offset_8616(stack_slot.offset)
+            if not isinstance(offset, int):
+                return None
             variable = SimStackVariable(
-                stack_slot.offset,
+                offset,
                 2,
                 base=stack_slot.base,
-                name=f"s_{stack_slot.offset & 0xFFFF:x}",
+                name=_stack_object_name(offset, codegen=codegen),
                 region=stack_slot.region if stack_slot.region is not None else region,
             )
             return CVariable(variable, variable_type=vartype, codegen=codegen)

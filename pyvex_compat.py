@@ -4,6 +4,8 @@ import functools
 import logging
 import threading
 
+from inertia_decompiler.runtime_support import AnalysisTimeout
+
 _LOCK = threading.Lock()
 _APPLIED = False
 
@@ -136,7 +138,10 @@ def apply_pyvex_runtime_compatibility() -> None:
                         log.debug("Lifting instruction %s", instr.name)
                     past_window.reset(0, i)
                     future_window.reset(i + 1, len(instructions))
-                    instr(irsb_c, past_window, future_window)
+                    try:
+                        instr(irsb_c, past_window, future_window)
+                    except AnalysisTimeout:
+                        raise LiftingException("Instruction lifting timed out")
                     if irsb_c.irsb.jumpkind != JumpKind.Invalid:
                         break
                     if (i + 1) == max_inst:

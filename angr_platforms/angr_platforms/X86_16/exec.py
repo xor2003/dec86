@@ -11,7 +11,7 @@ from .regs import coerce_reg8_t, coerce_reg16_t, coerce_reg32_t, coerce_sgreg_t,
 
 
 class ExecInstr(X86Instruction):
-    def __init__(self, emu):
+    def __init__(self, emu: object) -> None:
         self.instrfuncs = [None] * 0x200  # Initialize with None for all opcodes
         # self.chsz_ad = False
 

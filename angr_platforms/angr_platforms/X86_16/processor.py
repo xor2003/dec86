@@ -254,39 +254,42 @@ class Processor(Eflags, CR):
         return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_16))
 
     def get_gpreg(self, n):
-        if isinstance(n, VexValue):
+        def _impl():
+            if isinstance(n, VexValue):
+                if self.lifter_instruction is not None:
+                    return n
+                raise ValueError("Cannot get gpreg from a non-constant VexValue without an active lifter instruction")
+            name = register_name_8616(n)
+            if isinstance(n, reg8_t):
+                base = self.get_gpreg(self._reg8_base(n))
+                if self._reg8_is_high(n):
+                    return (base >> 8).cast_to(Type.int_8) if self.lifter_instruction is not None else (base >> 8) & 0xFF
+                return base.cast_to(Type.int_8) if self.lifter_instruction is not None else base & 0xFF
             if self.lifter_instruction is not None:
-                return n
-            raise ValueError("Cannot get gpreg from a non-constant VexValue without an active lifter instruction")
-        name = register_name_8616(n)
-        if isinstance(n, reg8_t):
-            base = self.get_gpreg(self._reg8_base(n))
-            if self._reg8_is_high(n):
-                return (base >> 8).cast_to(Type.int_8) if self.lifter_instruction is not None else (base >> 8) & 0xFF
-            return base.cast_to(Type.int_8) if self.lifter_instruction is not None else base & 0xFF
-        if self.lifter_instruction is not None:
-            if self.vex_offsets is None:
-                raise ValueError("vex_offsets not initialized for lifting mode")
-            offset = self.vex_offsets.get(name, 0)
-            return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, TYPES[type(n)]))
-        # concrete mode
-        if isinstance(n, reg32_t):
-            idx = n.value
-            if idx < reg32_t.GPREGS_COUNT.value:
-                return self.gpregs[idx].reg32
-            elif idx == reg32_t.EIP.value:
-                return self.eip
-            elif idx == reg32_t.EFLAGS.value:
-                return self.flags
-        elif isinstance(n, reg16_t):
-            idx = n.value
-            if idx < reg32_t.GPREGS_COUNT.value:  # 8 for 16-bit views
-                return self.gpregs[idx].reg16
-            elif idx == reg16_t.IP.value:
-                return self.eip & 0xFFFF
-            elif idx == reg16_t.FLAGS.value:
-                return self.flags & 0xFFFF
-        raise ValueError(f"Cannot get gpreg {n} without lifter_instruction in concrete mode")
+                if self.vex_offsets is None:
+                    raise ValueError("vex_offsets not initialized for lifting mode")
+                offset = self.vex_offsets.get(name, 0)
+                return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, TYPES[type(n)]))
+            # concrete mode
+            if isinstance(n, reg32_t):
+                idx = n.value
+                if idx < reg32_t.GPREGS_COUNT.value:
+                    return self.gpregs[idx].reg32
+                elif idx == reg32_t.EIP.value:
+                    return self.eip
+                elif idx == reg32_t.EFLAGS.value:
+                    return self.flags
+            elif isinstance(n, reg16_t):
+                idx = n.value
+                if idx < reg32_t.GPREGS_COUNT.value:  # 8 for 16-bit views
+                    return self.gpregs[idx].reg16
+                elif idx == reg16_t.IP.value:
+                    return self.eip & 0xFFFF
+                elif idx == reg16_t.FLAGS.value:
+                    return self.flags & 0xFFFF
+            raise ValueError(f"Cannot get gpreg {n} without lifter_instruction in concrete mode")
+
+        return _impl()
 
     def constant(self, n, type_=Type.int_8):
         if self.lifter_instruction is not None:
@@ -348,63 +351,67 @@ class Processor(Eflags, CR):
         self.set_gpreg(reg16_t.IP, value)
 
     def set_gpreg(self, n, value):
-        name = register_name_8616(n)
-        if isinstance(n, reg8_t):
-            if isinstance(value, int):
-                value = self.constant(value, Type.int_8) if self.lifter_instruction is not None else value & 0xFF
-            base_reg = self._reg8_base(n)
-            if self.lifter_instruction is not None:
-                base = self.get_gpreg(base_reg)
-                if isinstance(base, VexValue):
-                    base = VexValue(self.lifter_instruction, base.rdt)
-                if isinstance(value, VexValue):
-                    value_v = VexValue(self.lifter_instruction, value.rdt)
-                else:
-                    value_v = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
-                if self._reg8_is_high(n):
-                    new_base = (value_v.cast_to(Type.int_16) << 8) | (base & 0x00FF)
-                else:
-                    new_base = (base & 0xFF00) | value_v.cast_to(Type.int_16)
-                self.set_gpreg(base_reg, new_base)
-                return
+        def _impl():
+            nonlocal value
+            name = register_name_8616(n)
+            if isinstance(n, reg8_t):
+                if isinstance(value, int):
+                    value = self.constant(value, Type.int_8) if self.lifter_instruction is not None else value & 0xFF
+                base_reg = self._reg8_base(n)
+                if self.lifter_instruction is not None:
+                    base = self.get_gpreg(base_reg)
+                    if isinstance(base, VexValue):
+                        base = VexValue(self.lifter_instruction, base.rdt)
+                    if isinstance(value, VexValue):
+                        value_v = VexValue(self.lifter_instruction, value.rdt)
+                    else:
+                        value_v = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
+                    if self._reg8_is_high(n):
+                        new_base = (value_v.cast_to(Type.int_16) << 8) | (base & 0x00FF)
+                    else:
+                        new_base = (base & 0xFF00) | value_v.cast_to(Type.int_16)
+                    self.set_gpreg(base_reg, new_base)
+                    return
 
-            idx = base_reg.value
-            if self._reg8_is_high(n):
-                self.gpregs[idx].reg8_h = value
-            else:
-                self.gpregs[idx].reg8_l = value
-            return
-        if self.lifter_instruction is not None:
-            if self.vex_offsets is None:
-                raise ValueError("vex_offsets not initialized for lifting mode")
-            offset = self.vex_offsets.get(name, 0)
+                idx = base_reg.value
+                if self._reg8_is_high(n):
+                    self.gpregs[idx].reg8_h = value
+                else:
+                    self.gpregs[idx].reg8_l = value
+                return
+            if self.lifter_instruction is not None:
+                if self.vex_offsets is None:
+                    raise ValueError("vex_offsets not initialized for lifting mode")
+                offset = self.vex_offsets.get(name, 0)
+                if isinstance(value, int):
+                    value = self.constant(value, TYPES[type(n)])
+                if isinstance(value, VexValue):
+                    value = value.rdt
+                self.lifter_instruction._append_stmt(Put(value, offset))
+                return
+            # concrete mode
             if isinstance(value, int):
-                value = self.constant(value, TYPES[type(n)])
-            if isinstance(value, VexValue):
-                value = value.rdt
-            self.lifter_instruction._append_stmt(Put(value, offset))
-            return
-        # concrete mode
-        if isinstance(value, int):
-            if isinstance(n, reg32_t):
-                idx = n.value
-                if idx < reg32_t.GPREGS_COUNT.value:
-                    self.gpregs[idx].reg32 = value
-                elif idx == reg32_t.EIP.value:
-                    self.eip = value
-                elif idx == reg32_t.EFLAGS.value:
-                    self.flags = value
-                return
-            elif isinstance(n, reg16_t):
-                idx = n.value
-                if idx < reg32_t.GPREGS_COUNT.value:
-                    self.gpregs[idx].reg16 = value
-                elif idx == reg16_t.IP.value:
-                    self.eip = (self.eip & 0xFFFF0000) | (value & 0xFFFF)
-                elif idx == reg16_t.FLAGS.value:
-                    self.flags = (self.flags & 0xFFFF0000) | (value & 0xFFFF)
-                return
-        raise TypeError(f"Cannot set {n} from non-concrete value of type {type(value)} in concrete mode")
+                if isinstance(n, reg32_t):
+                    idx = n.value
+                    if idx < reg32_t.GPREGS_COUNT.value:
+                        self.gpregs[idx].reg32 = value
+                    elif idx == reg32_t.EIP.value:
+                        self.eip = value
+                    elif idx == reg32_t.EFLAGS.value:
+                        self.flags = value
+                    return
+                elif isinstance(n, reg16_t):
+                    idx = n.value
+                    if idx < reg32_t.GPREGS_COUNT.value:
+                        self.gpregs[idx].reg16 = value
+                    elif idx == reg16_t.IP.value:
+                        self.eip = (self.eip & 0xFFFF0000) | (value & 0xFFFF)
+                    elif idx == reg16_t.FLAGS.value:
+                        self.flags = (self.flags & 0xFFFF0000) | (value & 0xFFFF)
+                    return
+            raise TypeError(f"Cannot set {n} from non-concrete value of type {type(value)} in concrete mode")
+
+        return _impl()
 
     def set_sgreg(self, n, reg):
         name = register_name_8616(n)

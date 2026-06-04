@@ -114,95 +114,101 @@ def _has_any_sp_stable(semantic_accesses: Iterable) -> bool:
 
 
 def _looks_like_frame_evidence(obj: object) -> bool:
-    """Check for BP frame evidence using structured IR artifacts, NOT text parsing.
+    def _impl():
+        """Check for BP frame evidence using structured IR artifacts, NOT text parsing.
 
-    Accepts CapstoneInsn objects (already-parsed structured disassembly)
-    or VEX IRSB objects.  Rejects plain strings / COD text.
-    """
+        Accepts CapstoneInsn objects (already-parsed structured disassembly)
+        or VEX IRSB objects.  Rejects plain strings / COD text.
+        """
 
-    import sys
+        import sys
 
-    sys.stderr.flush()
+        sys.stderr.flush()
 
-    # ── Capstone instruction (structured, NOT text) ──
-    mnemonic = getattr(obj, "mnemonic", None)
-    if mnemonic is not None:
-        mnem_str = str(mnemonic).lower()
-        operands = getattr(obj, "operands", None) or []
+        # ── Capstone instruction (structured, NOT text) ──
+        mnemonic = getattr(obj, "mnemonic", None)
+        if mnemonic is not None:
+            mnem_str = str(mnemonic).lower()
+            operands = getattr(obj, "operands", None) or []
 
-        # push bp — register-based detection using capstone reg IDs
-        if mnem_str == "push":
-            for op in operands:
-                reg_val = getattr(op, "reg", None)
-                if isinstance(reg_val, int) and reg_val == 6:  # X86_REG_BP = 6
-                    return True
+            # push bp — register-based detection using capstone reg IDs
+            if mnem_str == "push":
+                for op in operands:
+                    reg_val = getattr(op, "reg", None)
+                    if isinstance(reg_val, int) and reg_val == 6:  # X86_REG_BP = 6
+                        return True
 
-        # mov bp, sp
-        elif mnem_str == "mov":
-            if len(operands) >= 2:
-                dst_reg = getattr(operands[0], "reg", None)
-                src_reg = getattr(operands[1], "reg", None)
-                if isinstance(dst_reg, int) and dst_reg == 6 and isinstance(src_reg, int) and src_reg == 47:
-                    return True
+            # mov bp, sp
+            elif mnem_str == "mov":
+                if len(operands) >= 2:
+                    dst_reg = getattr(operands[0], "reg", None)
+                    src_reg = getattr(operands[1], "reg", None)
+                    if isinstance(dst_reg, int) and dst_reg == 6 and isinstance(src_reg, int) and src_reg == 47:
+                        return True
+
+            return False
+
+        # ── VEX IRSB (direct) — check statement tags for push-bp / mov-bp-sp ──
+        statements = getattr(obj, "statements", None)
+        if statements is not None:
+            return _vex_irsb_has_bp_frame(obj)
+
+        # ── angr Block — iterate capstone instructions for frame patterns ──
+        capstone = getattr(obj, "capstone", None)
+        if capstone is not None:
+            insns = getattr(capstone, "insns", None)
+            if insns is not None:
+                for insn in insns:
+                    if _looks_like_frame_evidence(insn):
+                        return True
+
+        # ── Reject string/COD artifacts ──
+        if isinstance(obj, str):
+            return False
 
         return False
 
-    # ── VEX IRSB (direct) — check statement tags for push-bp / mov-bp-sp ──
-    statements = getattr(obj, "statements", None)
-    if statements is not None:
-        return _vex_irsb_has_bp_frame(obj)
-
-    # ── angr Block — iterate capstone instructions for frame patterns ──
-    capstone = getattr(obj, "capstone", None)
-    if capstone is not None:
-        insns = getattr(capstone, "insns", None)
-        if insns is not None:
-            for insn in insns:
-                if _looks_like_frame_evidence(insn):
-                    return True
-
-    # ── Reject string/COD artifacts ──
-    if isinstance(obj, str):
-        return False
-
-    return False
+    return _impl()
 
 
 def _vex_irsb_has_bp_frame(irsb) -> bool:
-    """Inspect VEX IRSB statements for BP frame setup patterns.
+    def _impl():
+        """Inspect VEX IRSB statements for BP frame setup patterns.
 
-    push bp  → Ist_Store(base=SS*16+SP-2, data=GET(BP))  after  Ist_Put(SP)=SUB(GET(SP), 2)
-    mov bp,sp → Ist_Put(BP) = GET(SP)
-    """
-    has_push_bp = False
-    has_mov_bp_sp = False
+        push bp  → Ist_Store(base=SS*16+SP-2, data=GET(BP))  after  Ist_Put(SP)=SUB(GET(SP), 2)
+        mov bp,sp → Ist_Put(BP) = GET(SP)
+        """
+        has_push_bp = False
+        has_mov_bp_sp = False
 
-    try:
-        arch = getattr(irsb, "arch", None)
-        if arch is None:
+        try:
+            arch = getattr(irsb, "arch", None)
+            if arch is None:
+                return False
+            sp_off = getattr(arch, "sp_offset", None)
+            bp_off = getattr(arch, "bp_offset", None)
+            if sp_off is None or bp_off is None:
+                return False
+        except Exception:
             return False
-        sp_off = getattr(arch, "sp_offset", None)
-        bp_off = getattr(arch, "bp_offset", None)
-        if sp_off is None or bp_off is None:
-            return False
-    except Exception:
-        return False
 
-    for stmt in getattr(irsb, "statements", ()) or ():
-        tag = getattr(stmt, "tag", "")
-        if tag == "Ist_Put":
-            put_off = getattr(stmt, "offset", None)
-            data = getattr(stmt, "data", None)
-            if put_off == bp_off and data is not None:
-                # PUT(BP) = GET(SP)  →  mov bp, sp
-                if _is_reg_get(data, sp_off):
-                    has_mov_bp_sp = True
-            elif put_off == sp_off and data is not None:
-                # PUT(SP) = SUB(GET(SP), 2)  →  sub sp, 2 (push)
-                if _is_sub_constant(data, 2):
-                    has_push_bp = True
+        for stmt in getattr(irsb, "statements", ()) or ():
+            tag = getattr(stmt, "tag", "")
+            if tag == "Ist_Put":
+                put_off = getattr(stmt, "offset", None)
+                data = getattr(stmt, "data", None)
+                if put_off == bp_off and data is not None:
+                    # PUT(BP) = GET(SP)  →  mov bp, sp
+                    if _is_reg_get(data, sp_off):
+                        has_mov_bp_sp = True
+                elif put_off == sp_off and data is not None:
+                    # PUT(SP) = SUB(GET(SP), 2)  →  sub sp, 2 (push)
+                    if _is_sub_constant(data, 2):
+                        has_push_bp = True
 
-    return has_push_bp and has_mov_bp_sp
+        return has_push_bp and has_mov_bp_sp
+
+    return _impl()
 
 
 def _is_reg_get(vex_expr, reg_offset: int) -> bool:
@@ -249,68 +255,71 @@ def _gather_ir_artifacts_from_function_blocks(project, function_addr: int) -> li
 
 
 def _detect_sp_proven_delta_from_blocks(project, function_addr: int) -> int | None:
-    """Detect proven SP delta from IR/VEX block analysis.
+    def _impl():
+        """Detect proven SP delta from IR/VEX block analysis.
 
-    Returns the SP delta (e.g. -8, -12) if proven, or None if not determinable.
-    The delta is the function's frame size from ``sub sp, N`` after BP setup.
+        Returns the SP delta (e.g. -8, -12) if proven, or None if not determinable.
+        The delta is the function's frame size from ``sub sp, N`` after BP setup.
 
-    Uses VEX IRSB statement analysis, NOT text parsing.
-    """
-    kb = getattr(project, "kb", None) if project is not None else None
-    if kb is None:
-        return None
-    func = kb.functions.function(addr=function_addr, create=False)
-    if func is None:
-        return None
+        Uses VEX IRSB statement analysis, NOT text parsing.
+        """
+        kb = getattr(project, "kb", None) if project is not None else None
+        if kb is None:
+            return None
+        func = kb.functions.function(addr=function_addr, create=False)
+        if func is None:
+            return None
 
-    # Gather all IRSBs for this function
-    irsbs = []
-    for blk in func.blocks:
-        irsb = getattr(blk, "vex", None) or getattr(blk, "irsb", None)
-        if irsb is not None:
-            irsbs.append(irsb)
+        # Gather all IRSBs for this function
+        irsbs = []
+        for blk in func.blocks:
+            irsb = getattr(blk, "vex", None) or getattr(blk, "irsb", None)
+            if irsb is not None:
+                irsbs.append(irsb)
 
-    if not irsbs:
-        return None
+        if not irsbs:
+            return None
 
-    seen_bp_established = False
-    sp_delta = None
+        seen_bp_established = False
+        sp_delta = None
 
-    for irsb in irsbs:
-        try:
-            arch = getattr(irsb, "arch", None)
-            if arch is None:
-                continue
-            sp_off = getattr(arch, "sp_offset", None)
-            bp_off = getattr(arch, "bp_offset", None)
-            if sp_off is None or bp_off is None:
-                continue
-        except Exception:
-            continue
-
-        for stmt in getattr(irsb, "statements", ()) or ():
-            tag = getattr(stmt, "tag", "")
-            if tag != "Ist_Put":
+        for irsb in irsbs:
+            try:
+                arch = getattr(irsb, "arch", None)
+                if arch is None:
+                    continue
+                sp_off = getattr(arch, "sp_offset", None)
+                bp_off = getattr(arch, "bp_offset", None)
+                if sp_off is None or bp_off is None:
+                    continue
+            except Exception:
                 continue
 
-            put_off = getattr(stmt, "offset", None)
-            data = getattr(stmt, "data", None)
-            if put_off is None or data is None:
-                continue
+            for stmt in getattr(irsb, "statements", ()) or ():
+                tag = getattr(stmt, "tag", "")
+                if tag != "Ist_Put":
+                    continue
 
-            # Detect mov bp, sp → BP frame established
-            if put_off == bp_off and _is_reg_get(data, sp_off):
-                seen_bp_established = True
-                continue
+                put_off = getattr(stmt, "offset", None)
+                data = getattr(stmt, "data", None)
+                if put_off is None or data is None:
+                    continue
 
-            # Detect sub sp, N → compute frame size only AFTER BP established
-            if seen_bp_established and put_off == sp_off:
-                delta = _extract_sub_constant(data)
-                if delta is not None and delta < 0:
-                    sp_delta = delta
-                    break  # first sub sp,N after mov bp,sp is the frame size
+                # Detect mov bp, sp → BP frame established
+                if put_off == bp_off and _is_reg_get(data, sp_off):
+                    seen_bp_established = True
+                    continue
 
-    return sp_delta
+                # Detect sub sp, N → compute frame size only AFTER BP established
+                if seen_bp_established and put_off == sp_off:
+                    delta = _extract_sub_constant(data)
+                    if delta is not None and delta < 0:
+                        sp_delta = delta
+                        break  # first sub sp,N after mov bp,sp is the frame size
+
+        return sp_delta
+
+    return _impl()
 
 
 def _extract_sub_constant(vex_expr) -> int | None:

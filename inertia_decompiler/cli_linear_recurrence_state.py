@@ -39,61 +39,68 @@ class LinearRecurrenceState:
     recurrence_reasons: dict[str, int] = field(default_factory=dict)
 
     def prepare(self) -> None:
-        debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
-        if not isinstance(debug_stats, dict):
-            debug_stats = {}
-            self.codegen._inertia_stack_lowering_debug = debug_stats
-        debug_stats.setdefault("recurrence_candidates", 0)
-        debug_stats.setdefault("recurrence_bound_to_materialized_local", 0)
-        debug_stats.setdefault("recurrence_failed_to_bind", 0)
-        debug_stats.setdefault("recurrence_reasons", {})
-        self.expr_aliases.update(self.seed_adjacent_byte_pair_aliases(self.project, self.codegen))
-        for walk_node in self.iter_c_nodes_deep(self.codegen.cfunc.statements):
-            if isinstance(walk_node, structured_c.CUnaryOp) and walk_node.op == "Dereference":
-                self.collect_variable_ids(getattr(walk_node, "operand", None), self.dereferenced_variable_ids)
-            if isinstance(walk_node, structured_c.CVariable):
-                variable = getattr(walk_node, "variable", None)
-                if variable is not None:
-                    key = id(variable)
-                    self.variable_use_counts[key] = self.variable_use_counts.get(key, 0) + 1
-        for alias_var_id, alias_expr in self.expr_aliases.items():
-            alias_expr = self.unwrap_c_casts(alias_expr)
-            if not isinstance(alias_expr, structured_c.CUnaryOp) or alias_expr.op != "Dereference":
-                continue
-            self.protected_linear_alias_ids.add(alias_var_id)
-            self.collect_variable_ids(getattr(alias_expr, "operand", None), self.protected_linear_alias_ids)
-        for alias_var_id, alias_expr in list(self.expr_aliases.items()):
-            resolved_alias = self.resolve_known_copy_alias_expr(alias_expr)
-            if self.expr_contains_dereference(resolved_alias):
+        def _impl():
+            debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
+            if not isinstance(debug_stats, dict):
+                debug_stats = {}
+                self.codegen._inertia_stack_lowering_debug = debug_stats
+            debug_stats.setdefault("recurrence_candidates", 0)
+            debug_stats.setdefault("recurrence_bound_to_materialized_local", 0)
+            debug_stats.setdefault("recurrence_failed_to_bind", 0)
+            debug_stats.setdefault("recurrence_reasons", {})
+            self.expr_aliases.update(self.seed_adjacent_byte_pair_aliases(self.project, self.codegen))
+            for walk_node in self.iter_c_nodes_deep(self.codegen.cfunc.statements):
+                if isinstance(walk_node, structured_c.CUnaryOp) and walk_node.op == "Dereference":
+                    self.collect_variable_ids(getattr(walk_node, "operand", None), self.dereferenced_variable_ids)
+                if isinstance(walk_node, structured_c.CVariable):
+                    variable = getattr(walk_node, "variable", None)
+                    if variable is not None:
+                        key = id(variable)
+                        self.variable_use_counts[key] = self.variable_use_counts.get(key, 0) + 1
+            for alias_var_id, alias_expr in self.expr_aliases.items():
+                alias_expr = self.unwrap_c_casts(alias_expr)
+                if not isinstance(alias_expr, structured_c.CUnaryOp) or alias_expr.op != "Dereference":
+                    continue
                 self.protected_linear_alias_ids.add(alias_var_id)
-                self.collect_variable_ids(resolved_alias, self.protected_linear_alias_ids)
+                self.collect_variable_ids(getattr(alias_expr, "operand", None), self.protected_linear_alias_ids)
+            for alias_var_id, alias_expr in list(self.expr_aliases.items()):
+                resolved_alias = self.resolve_known_copy_alias_expr(alias_expr)
+                if self.expr_contains_dereference(resolved_alias):
+                    self.protected_linear_alias_ids.add(alias_var_id)
+                    self.collect_variable_ids(resolved_alias, self.protected_linear_alias_ids)
+
+        return _impl()
 
     def collect_variable_ids(self, expr, ids: set[int]) -> None:
-        expr = self.unwrap_c_casts(expr)
-        if isinstance(expr, structured_c.CVariable):
-            variable = getattr(expr, "variable", None)
-            if variable is not None:
-                ids.add(id(variable))
-            return
-        for attr in ("lhs", "rhs", "operand", "expr"):
-            if not hasattr(expr, attr):
-                continue
-            try:
-                value = getattr(expr, attr)
-            except Exception:
-                continue
-            if self.structured_codegen_node(value):
-                self.collect_variable_ids(value, ids)
-        for attr in ("args", "operands", "statements"):
-            if not hasattr(expr, attr):
-                continue
-            try:
-                items = getattr(expr, attr)
-            except Exception:
-                continue
-            for item in items or ():
-                if self.structured_codegen_node(item):
-                    self.collect_variable_ids(item, ids)
+        def _impl():
+            nonlocal expr
+            expr = self.unwrap_c_casts(expr)
+            if isinstance(expr, structured_c.CVariable):
+                variable = getattr(expr, "variable", None)
+                if variable is not None:
+                    ids.add(id(variable))
+                return
+            for attr in ("lhs", "rhs", "operand", "expr"):
+                if not hasattr(expr, attr):
+                    continue
+                try:
+                    value = getattr(expr, attr)
+                except Exception:
+                    continue
+                if self.structured_codegen_node(value):
+                    self.collect_variable_ids(value, ids)
+            for attr in ("args", "operands", "statements"):
+                if not hasattr(expr, attr):
+                    continue
+                try:
+                    items = getattr(expr, attr)
+                except Exception:
+                    continue
+                for item in items or ():
+                    if self.structured_codegen_node(item):
+                        self.collect_variable_ids(item, ids)
+
+        return _impl()
 
     def is_linear_register_temp(self, cvar) -> bool:
         if not isinstance(cvar, structured_c.CVariable):
@@ -110,60 +117,68 @@ class LinearRecurrenceState:
         return isinstance(self.unwrap_c_casts(expr), structured_c.CVariable)
 
     def expr_contains_stack_base_carrier(self, expr, active_expr_ids: set[int] | None = None) -> bool:
-        expr = self.unwrap_c_casts(expr)
-        active_expr_ids = set() if active_expr_ids is None else active_expr_ids
-        expr_id = id(expr)
-        if expr_id in active_expr_ids:
-            return False
-        active_expr_ids.add(expr_id)
-        if isinstance(expr, structured_c.CFakeVariable) and getattr(expr, "name", None) == "stack_base":
-            active_expr_ids.discard(expr_id)
-            return True
-        for attr in ("lhs", "rhs", "operand", "expr", "variable", "index"):
-            if not hasattr(expr, attr):
-                continue
-            try:
-                value = getattr(expr, attr)
-            except Exception:
-                continue
-            if value is not None and self.expr_contains_stack_base_carrier(value, active_expr_ids):
+        def _impl():
+            nonlocal expr, active_expr_ids
+            expr = self.unwrap_c_casts(expr)
+            active_expr_ids = set() if active_expr_ids is None else active_expr_ids
+            expr_id = id(expr)
+            if expr_id in active_expr_ids:
+                return False
+            active_expr_ids.add(expr_id)
+            if isinstance(expr, structured_c.CFakeVariable) and getattr(expr, "name", None) == "stack_base":
                 active_expr_ids.discard(expr_id)
                 return True
-        for attr in ("args", "operands"):
-            if not hasattr(expr, attr):
-                continue
-            try:
-                items = getattr(expr, attr)
-            except Exception:
-                continue
-            for item in items or ():
-                if self.expr_contains_stack_base_carrier(item, active_expr_ids):
+            for attr in ("lhs", "rhs", "operand", "expr", "variable", "index"):
+                if not hasattr(expr, attr):
+                    continue
+                try:
+                    value = getattr(expr, attr)
+                except Exception:
+                    continue
+                if value is not None and self.expr_contains_stack_base_carrier(value, active_expr_ids):
                     active_expr_ids.discard(expr_id)
                     return True
-        active_expr_ids.discard(expr_id)
-        return False
+            for attr in ("args", "operands"):
+                if not hasattr(expr, attr):
+                    continue
+                try:
+                    items = getattr(expr, attr)
+                except Exception:
+                    continue
+                for item in items or ():
+                    if self.expr_contains_stack_base_carrier(item, active_expr_ids):
+                        active_expr_ids.discard(expr_id)
+                        return True
+            active_expr_ids.discard(expr_id)
+            return False
+
+        return _impl()
 
     def extract_linear_delta(self, expr):
-        expr = self.unwrap_c_casts(expr)
-        if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
-            return None, int(expr.value)
-        if isinstance(expr, structured_c.CBinaryOp) and expr.op == "Or":
-            duplicate_word_base = self.match_duplicate_word_base_expr(expr, self.resolve_known_copy_alias_expr)
-            if duplicate_word_base is not None:
-                return duplicate_word_base, 0
-        if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
-            return expr, 0
-        left_base, left_delta = self.extract_linear_delta(expr.lhs)
-        right_base, right_delta = self.extract_linear_delta(expr.rhs)
-        if left_base is not None and right_base is not None:
-            if self.same_c_expression(left_base, right_base) and expr.op == "Add":
-                return left_base, left_delta + right_delta
-            return expr, 0
-        if left_base is not None:
-            return (left_base, left_delta + right_delta) if expr.op == "Add" else (left_base, left_delta - right_delta)
-        if right_base is not None:
-            return (right_base, left_delta + right_delta) if expr.op == "Add" else (expr, 0)
-        return (None, left_delta + right_delta) if expr.op == "Add" else (None, left_delta - right_delta)
+        def _impl():
+            nonlocal expr
+            expr = self.unwrap_c_casts(expr)
+            if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
+                return None, int(expr.value)
+            if isinstance(expr, structured_c.CBinaryOp) and expr.op == "Or":
+                duplicate_word_base = self.match_duplicate_word_base_expr(expr, self.resolve_known_copy_alias_expr)
+                if duplicate_word_base is not None:
+                    return duplicate_word_base, 0
+            if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
+                return expr, 0
+            left_base, left_delta = self.extract_linear_delta(expr.lhs)
+            right_base, right_delta = self.extract_linear_delta(expr.rhs)
+            if left_base is not None and right_base is not None:
+                if self.same_c_expression(left_base, right_base) and expr.op == "Add":
+                    return left_base, left_delta + right_delta
+                return expr, 0
+            if left_base is not None:
+                return (left_base, left_delta + right_delta) if expr.op == "Add" else (left_base, left_delta - right_delta)
+            if right_base is not None:
+                return (right_base, left_delta + right_delta) if expr.op == "Add" else (expr, 0)
+            return (None, left_delta + right_delta) if expr.op == "Add" else (None, left_delta - right_delta)
+
+        return _impl()
 
     def build_linear_expr(self, base_expr, delta):
         if delta == 0:
@@ -188,57 +203,61 @@ class LinearRecurrenceState:
         )
 
     def inline_known_linear_defs(self, expr, seen_vars: set[int] | None = None, seen_exprs: set[int] | None = None, depth: int = 0):
-        expr = self.unwrap_c_casts(expr)
-        if depth > 64:
-            return expr
-        seen_vars = set() if seen_vars is None else seen_vars
-        seen_exprs = set() if seen_exprs is None else seen_exprs
-        expr_key = id(expr)
-        if expr_key in seen_exprs:
-            return expr
-        seen_exprs.add(expr_key)
-        if isinstance(expr, structured_c.CVariable):
-            if self.is_materialized_stack_local(expr):
+        def _impl():
+            nonlocal expr, seen_vars, seen_exprs
+            expr = self.unwrap_c_casts(expr)
+            if depth > 64:
                 return expr
-            linear = None
-            variable = getattr(expr, "variable", None)
-            if variable is not None:
-                var_id = id(variable)
-                if var_id in self.dereferenced_variable_ids or var_id in self.protected_linear_alias_ids or var_id in seen_vars:
-                    return expr
-                seen_vars.add(var_id)
-                alias = self.expr_aliases.get(var_id)
-                if alias is not None:
-                    aliased = self.inline_known_linear_defs(alias, seen_vars, seen_exprs, depth + 1)
-                    if aliased is not expr:
-                        return aliased
-                linear = self.linear_defs.get(var_id)
-            if linear is not None:
-                base_expr, delta = linear
-                if id(variable) in self.protected_linear_defs:
-                    return expr
-                if self.expr_contains_stack_base_carrier(base_expr):
-                    return expr
-                if self.match_duplicate_word_base_expr(self.resolve_known_copy_alias_expr(base_expr), self.resolve_known_copy_alias_expr) is not None:
-                    return expr
-                return self.build_linear_expr(base_expr, delta)
-            return expr
-        if isinstance(expr, structured_c.CBinaryOp):
-            lhs = self.inline_known_linear_defs(expr.lhs, seen_vars, seen_exprs, depth + 1)
-            rhs = self.inline_known_linear_defs(expr.rhs, seen_vars, seen_exprs, depth + 1)
-            if lhs is not expr.lhs or rhs is not expr.rhs:
-                expr = structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=self.codegen)
-            linear_expr = self.match_linear_word_delta_expr(expr)
-            if linear_expr is not None and not self.same_c_expression(linear_expr, expr):
-                return linear_expr
-            return expr
-        if isinstance(expr, structured_c.CUnaryOp):
-            if expr.op == "Dereference":
+            seen_vars = set() if seen_vars is None else seen_vars
+            seen_exprs = set() if seen_exprs is None else seen_exprs
+            expr_key = id(expr)
+            if expr_key in seen_exprs:
                 return expr
-            operand = self.inline_known_linear_defs(expr.operand, seen_vars, seen_exprs, depth + 1)
-            if operand is not expr.operand:
-                return structured_c.CUnaryOp(expr.op, operand, codegen=self.codegen)
-        return expr
+            seen_exprs.add(expr_key)
+            if isinstance(expr, structured_c.CVariable):
+                if self.is_materialized_stack_local(expr):
+                    return expr
+                linear = None
+                variable = getattr(expr, "variable", None)
+                if variable is not None:
+                    var_id = id(variable)
+                    if var_id in self.dereferenced_variable_ids or var_id in self.protected_linear_alias_ids or var_id in seen_vars:
+                        return expr
+                    seen_vars.add(var_id)
+                    alias = self.expr_aliases.get(var_id)
+                    if alias is not None:
+                        aliased = self.inline_known_linear_defs(alias, seen_vars, seen_exprs, depth + 1)
+                        if aliased is not expr:
+                            return aliased
+                    linear = self.linear_defs.get(var_id)
+                if linear is not None:
+                    base_expr, delta = linear
+                    if id(variable) in self.protected_linear_defs:
+                        return expr
+                    if self.expr_contains_stack_base_carrier(base_expr):
+                        return expr
+                    if self.match_duplicate_word_base_expr(self.resolve_known_copy_alias_expr(base_expr), self.resolve_known_copy_alias_expr) is not None:
+                        return expr
+                    return self.build_linear_expr(base_expr, delta)
+                return expr
+            if isinstance(expr, structured_c.CBinaryOp):
+                lhs = self.inline_known_linear_defs(expr.lhs, seen_vars, seen_exprs, depth + 1)
+                rhs = self.inline_known_linear_defs(expr.rhs, seen_vars, seen_exprs, depth + 1)
+                if lhs is not expr.lhs or rhs is not expr.rhs:
+                    expr = structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=self.codegen)
+                linear_expr = self.match_linear_word_delta_expr(expr)
+                if linear_expr is not None and not self.same_c_expression(linear_expr, expr):
+                    return linear_expr
+                return expr
+            if isinstance(expr, structured_c.CUnaryOp):
+                if expr.op == "Dereference":
+                    return expr
+                operand = self.inline_known_linear_defs(expr.operand, seen_vars, seen_exprs, depth + 1)
+                if operand is not expr.operand:
+                    return structured_c.CUnaryOp(expr.op, operand, codegen=self.codegen)
+            return expr
+
+        return _impl()
 
     def extract_shift_delta(self, expr):
         expr = self.unwrap_c_casts(expr)
@@ -263,95 +282,103 @@ class LinearRecurrenceState:
         return self.describe_alias_storage(expr).identity
 
     def resolve_known_copy_alias_expr(self, expr, active_expr_ids: set[int] | None = None, seen_var_ids: set[int] | None = None, seen_storage: set[object] | None = None, depth: int = 0):
-        expr = self.unwrap_c_casts(expr)
-        if isinstance(expr, structured_c.CVariable) and self.is_materialized_stack_local(expr):
-            return self.canonicalize_stack_cvar_expr(expr, self.codegen)
-        if depth > 64:
-            return self.canonicalize_stack_cvar_expr(expr, self.codegen)
-        active_expr_ids = set() if active_expr_ids is None else active_expr_ids
-        expr_id = id(expr)
-        if expr_id in active_expr_ids:
-            return self.canonicalize_stack_cvar_expr(expr, self.codegen)
-        active_expr_ids.add(expr_id)
-        seen_var_ids = set() if seen_var_ids is None else seen_var_ids
-        seen_storage = set() if seen_storage is None else seen_storage
-        while isinstance(expr, structured_c.CVariable):
-            variable = getattr(expr, "variable", None)
-            if variable is None:
-                break
-            key = id(variable)
-            storage_key = self.alias_storage_key(expr)
-            if key in seen_var_ids:
-                break
-            seen_var_ids.add(key)
-            if storage_key is not None:
-                if storage_key in seen_storage:
+        def _impl():
+            nonlocal expr, active_expr_ids, seen_var_ids, seen_storage
+            expr = self.unwrap_c_casts(expr)
+            if isinstance(expr, structured_c.CVariable) and self.is_materialized_stack_local(expr):
+                return self.canonicalize_stack_cvar_expr(expr, self.codegen)
+            if depth > 64:
+                return self.canonicalize_stack_cvar_expr(expr, self.codegen)
+            active_expr_ids = set() if active_expr_ids is None else active_expr_ids
+            expr_id = id(expr)
+            if expr_id in active_expr_ids:
+                return self.canonicalize_stack_cvar_expr(expr, self.codegen)
+            active_expr_ids.add(expr_id)
+            seen_var_ids = set() if seen_var_ids is None else seen_var_ids
+            seen_storage = set() if seen_storage is None else seen_storage
+            while isinstance(expr, structured_c.CVariable):
+                variable = getattr(expr, "variable", None)
+                if variable is None:
                     break
-                seen_storage.add(storage_key)
-            alias = self.expr_aliases.get(key)
-            if alias is None and storage_key is not None:
-                alias = self.expr_aliases.get(storage_key)
-            if alias is not None and self.expr_contains_stack_base_carrier(alias):
-                alias = None
-            if alias is None:
-                linear = self.linear_defs.get(key)
-                if linear is not None:
-                    base_expr, delta = linear
-                    if not self.expr_contains_stack_base_carrier(base_expr):
-                        alias = self.build_linear_expr(base_expr, delta)
-            if alias is None:
-                break
-            expr = self.unwrap_c_casts(alias)
-        if isinstance(expr, structured_c.CTypeCast):
-            inner = self.resolve_known_copy_alias_expr(expr.expr, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
+                key = id(variable)
+                storage_key = self.alias_storage_key(expr)
+                if key in seen_var_ids:
+                    break
+                seen_var_ids.add(key)
+                if storage_key is not None:
+                    if storage_key in seen_storage:
+                        break
+                    seen_storage.add(storage_key)
+                alias = self.expr_aliases.get(key)
+                if alias is None and storage_key is not None:
+                    alias = self.expr_aliases.get(storage_key)
+                if alias is not None and self.expr_contains_stack_base_carrier(alias):
+                    alias = None
+                if alias is None:
+                    linear = self.linear_defs.get(key)
+                    if linear is not None:
+                        base_expr, delta = linear
+                        if not self.expr_contains_stack_base_carrier(base_expr):
+                            alias = self.build_linear_expr(base_expr, delta)
+                if alias is None:
+                    break
+                expr = self.unwrap_c_casts(alias)
+            if isinstance(expr, structured_c.CTypeCast):
+                inner = self.resolve_known_copy_alias_expr(expr.expr, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
+                active_expr_ids.discard(expr_id)
+                if inner is not expr.expr:
+                    return structured_c.CTypeCast(None, expr.type, inner, codegen=getattr(expr, "codegen", None))
+                return self.canonicalize_stack_cvar_expr(expr, self.codegen)
+            if isinstance(expr, structured_c.CUnaryOp):
+                operand = self.resolve_known_copy_alias_expr(expr.operand, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
+                active_expr_ids.discard(expr_id)
+                if operand is not expr.operand:
+                    return structured_c.CUnaryOp(expr.op, operand, codegen=getattr(expr, "codegen", None))
+                return self.canonicalize_stack_cvar_expr(expr, self.codegen)
+            if isinstance(expr, structured_c.CBinaryOp):
+                lhs = self.resolve_known_copy_alias_expr(expr.lhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
+                rhs = self.resolve_known_copy_alias_expr(expr.rhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
+                active_expr_ids.discard(expr_id)
+                if lhs is not expr.lhs or rhs is not expr.rhs:
+                    return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
+                return self.canonicalize_stack_cvar_expr(expr, self.codegen)
             active_expr_ids.discard(expr_id)
-            if inner is not expr.expr:
-                return structured_c.CTypeCast(None, expr.type, inner, codegen=getattr(expr, "codegen", None))
             return self.canonicalize_stack_cvar_expr(expr, self.codegen)
-        if isinstance(expr, structured_c.CUnaryOp):
-            operand = self.resolve_known_copy_alias_expr(expr.operand, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
-            active_expr_ids.discard(expr_id)
-            if operand is not expr.operand:
-                return structured_c.CUnaryOp(expr.op, operand, codegen=getattr(expr, "codegen", None))
-            return self.canonicalize_stack_cvar_expr(expr, self.codegen)
-        if isinstance(expr, structured_c.CBinaryOp):
-            lhs = self.resolve_known_copy_alias_expr(expr.lhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
-            rhs = self.resolve_known_copy_alias_expr(expr.rhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
-            active_expr_ids.discard(expr_id)
-            if lhs is not expr.lhs or rhs is not expr.rhs:
-                return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
-            return self.canonicalize_stack_cvar_expr(expr, self.codegen)
-        active_expr_ids.discard(expr_id)
-        return self.canonicalize_stack_cvar_expr(expr, self.codegen)
+
+        return _impl()
 
     def expr_contains_dereference(self, expr, active_expr_ids: set[int] | None = None) -> bool:
-        expr = self.unwrap_c_casts(expr)
-        active_expr_ids = set() if active_expr_ids is None else active_expr_ids
-        expr_id = id(expr)
-        if expr_id in active_expr_ids:
-            return False
-        active_expr_ids.add(expr_id)
-        if isinstance(expr, structured_c.CUnaryOp):
-            if expr.op == "Dereference":
+        def _impl():
+            nonlocal expr, active_expr_ids
+            expr = self.unwrap_c_casts(expr)
+            active_expr_ids = set() if active_expr_ids is None else active_expr_ids
+            expr_id = id(expr)
+            if expr_id in active_expr_ids:
+                return False
+            active_expr_ids.add(expr_id)
+            if isinstance(expr, structured_c.CUnaryOp):
+                if expr.op == "Dereference":
+                    active_expr_ids.discard(expr_id)
+                    return True
+                result = self.expr_contains_dereference(expr.operand, active_expr_ids)
                 active_expr_ids.discard(expr_id)
-                return True
-            result = self.expr_contains_dereference(expr.operand, active_expr_ids)
+                return result
+            if isinstance(expr, structured_c.CBinaryOp):
+                result = self.expr_contains_dereference(expr.lhs, active_expr_ids) or self.expr_contains_dereference(expr.rhs, active_expr_ids)
+                active_expr_ids.discard(expr_id)
+                return result
+            if isinstance(expr, structured_c.CTypeCast):
+                result = self.expr_contains_dereference(expr.expr, active_expr_ids)
+                active_expr_ids.discard(expr_id)
+                return result
+            if isinstance(expr, structured_c.CFunctionCall):
+                result = any(self.expr_contains_dereference(arg, active_expr_ids) for arg in getattr(expr, "args", ()) or ())
+                active_expr_ids.discard(expr_id)
+                return result
             active_expr_ids.discard(expr_id)
-            return result
-        if isinstance(expr, structured_c.CBinaryOp):
-            result = self.expr_contains_dereference(expr.lhs, active_expr_ids) or self.expr_contains_dereference(expr.rhs, active_expr_ids)
-            active_expr_ids.discard(expr_id)
-            return result
-        if isinstance(expr, structured_c.CTypeCast):
-            result = self.expr_contains_dereference(expr.expr, active_expr_ids)
-            active_expr_ids.discard(expr_id)
-            return result
-        if isinstance(expr, structured_c.CFunctionCall):
-            result = any(self.expr_contains_dereference(arg, active_expr_ids) for arg in getattr(expr, "args", ()) or ())
-            active_expr_ids.discard(expr_id)
-            return result
-        active_expr_ids.discard(expr_id)
-        return False
+            return False
+
+        return _impl()
 
     def match_linear_word_delta_expr(self, expr):
         analysis = self.analyze_widening_expr(expr, self.resolve_known_copy_alias_expr, self.match_high_byte_projection_base)
@@ -389,34 +416,37 @@ class LinearRecurrenceState:
         setattr(self.codegen, "_inertia_has_rebound_materialized_recurrence", True)
 
     def is_materialized_stack_local(self, cvar) -> bool:
-        if not isinstance(cvar, structured_c.CVariable):
-            return False
-        variable = getattr(cvar, "variable", None)
-        if not isinstance(variable, SimStackVariable):
-            return False
-        name = getattr(cvar, "name", None) or getattr(variable, "name", None)
-        if not isinstance(name, str):
-            return False
-        # `local_*` / `arg_*` are already materialized stack locals/args even if
-        # they still carry generic names. Reject only synthetic carriers/temps.
-        if not re.fullmatch(r"(?:s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name):
-            return True
-        bindings = getattr(self.codegen, "_inertia_stack_variable_bindings", None)
-        offset = getattr(variable, "offset", None)
-        size = getattr(variable, "size", None)
-        if not isinstance(bindings, tuple | list) or not isinstance(offset, int) or not isinstance(size, int):
-            return False
-        for binding in bindings:
-            binding_offset = getattr(binding, "bp_offset", None)
-            if binding_offset is None:
-                binding_offset = getattr(binding, "offset", None)
-            binding_size = getattr(binding, "size", None)
-            if (
-                isinstance(binding_offset, int)
-                and isinstance(binding_size, int)
-                and binding_size >= 2
-                and binding_offset == offset
-                and size >= 2
-            ):
+        def _impl():
+            if not isinstance(cvar, structured_c.CVariable):
+                return False
+            variable = getattr(cvar, "variable", None)
+            if not isinstance(variable, SimStackVariable):
+                return False
+            name = getattr(cvar, "name", None) or getattr(variable, "name", None)
+            if not isinstance(name, str):
+                return False
+            # `local_*` / `arg_*` are already materialized stack locals/args even if
+            # they still carry generic names. Reject only synthetic carriers/temps.
+            if not re.fullmatch(r"(?:s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name):
                 return True
-        return False
+            bindings = getattr(self.codegen, "_inertia_stack_variable_bindings", None)
+            offset = getattr(variable, "offset", None)
+            size = getattr(variable, "size", None)
+            if not isinstance(bindings, tuple | list) or not isinstance(offset, int) or not isinstance(size, int):
+                return False
+            for binding in bindings:
+                binding_offset = getattr(binding, "bp_offset", None)
+                if binding_offset is None:
+                    binding_offset = getattr(binding, "offset", None)
+                binding_size = getattr(binding, "size", None)
+                if (
+                    isinstance(binding_offset, int)
+                    and isinstance(binding_size, int)
+                    and binding_size >= 2
+                    and binding_offset == offset
+                    and size >= 2
+                ):
+                    return True
+            return False
+
+        return _impl()

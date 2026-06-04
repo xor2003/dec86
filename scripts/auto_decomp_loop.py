@@ -92,46 +92,49 @@ _DEAD_SETUP_SUMMARY_RE = re.compile(
 
 
 def _parse_tail_stats(output: str) -> tuple[TailVerdict, int, int, int, int, int, int]:
-    clean = 0
-    failed = 0
-    unknown = 0
-    uncollected = 0
-    missing = 0
-    total = 0
+    def _impl():
+        clean = 0
+        failed = 0
+        unknown = 0
+        uncollected = 0
+        missing = 0
+        total = 0
 
-    for m in _TAIL_CLEAN_RE.finditer(output):
-        clean += int(m.group(1))
-    for m in _TAIL_FAILED_RE.finditer(output):
-        failed += int(m.group(1))
-    for m in _TAIL_UNKNOWN_RE.finditer(output):
-        unknown += int(m.group(1))
-    for m in _TAIL_UNCOLLECTED_RE.finditer(output):
-        uncollected += int(m.group(1))
-    for m in _TAIL_COVERAGE_RE.finditer(output):
-        total = max(total, int(m.group(1)))
-        missing = max(missing, int(m.group(2)))
-        unknown = max(unknown, int(m.group(3),))
+        for m in _TAIL_CLEAN_RE.finditer(output):
+            clean += int(m.group(1))
+        for m in _TAIL_FAILED_RE.finditer(output):
+            failed += int(m.group(1))
+        for m in _TAIL_UNKNOWN_RE.finditer(output):
+            unknown += int(m.group(1))
+        for m in _TAIL_UNCOLLECTED_RE.finditer(output):
+            uncollected += int(m.group(1))
+        for m in _TAIL_COVERAGE_RE.finditer(output):
+            total = max(total, int(m.group(1)))
+            missing = max(missing, int(m.group(2)))
+            unknown = max(unknown, int(m.group(3),))
 
-    if total == 0:
-        # fallback estimate from verdict counts
-        total = clean + failed + unknown + uncollected
-    if missing == 0 and total > 0:
-        seen = clean + failed + unknown + uncollected
-        missing = max(0, total - seen)
+        if total == 0:
+            # fallback estimate from verdict counts
+            total = clean + failed + unknown + uncollected
+        if missing == 0 and total > 0:
+            seen = clean + failed + unknown + uncollected
+            missing = max(0, total - seen)
 
-    if failed > 0:
-        verdict = TailVerdict.FAILED
-    elif uncollected > 0:
-        verdict = TailVerdict.UNCOLLECTED
-    elif unknown > 0:
-        verdict = TailVerdict.UNKNOWN
-    elif missing > 0:
-        verdict = TailVerdict.MISSING
-    elif clean > 0:
-        verdict = TailVerdict.CLEAN
-    else:
-        verdict = TailVerdict.UNCOLLECTED
-    return verdict, total, clean, failed, unknown, uncollected, missing
+        if failed > 0:
+            verdict = TailVerdict.FAILED
+        elif uncollected > 0:
+            verdict = TailVerdict.UNCOLLECTED
+        elif unknown > 0:
+            verdict = TailVerdict.UNKNOWN
+        elif missing > 0:
+            verdict = TailVerdict.MISSING
+        elif clean > 0:
+            verdict = TailVerdict.CLEAN
+        else:
+            verdict = TailVerdict.UNCOLLECTED
+        return verdict, total, clean, failed, unknown, uncollected, missing
+
+    return _impl()
 
 
 def _count_functions(output: str) -> int:

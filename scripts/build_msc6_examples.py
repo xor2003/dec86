@@ -718,6 +718,7 @@ def _decompile(
 
     try:
         all_selection_failures = True
+        saw_decompile_timeout = False
         for candidate in candidates:
             candidate_cmd = _candidate_command(candidate)
             candidate_attempt: dict[str, object] = {
@@ -750,19 +751,28 @@ def _decompile(
                 stderr_path.write_text(proc.stderr, encoding="utf-8")
                 return True, stdout_path, stderr_path, elapsed, run_profile
 
+            if run_profile.get("timeout"):
+                saw_decompile_timeout = True
             if not _is_proc_selection_failure(proc.stderr):
                 all_selection_failures = False
-                if decompile_mode == "main":
+
+            if decompile_mode == "main" and attempts:
+                if run_profile.get("timeout"):
+                    # Timeout can be backend-specific; try alternate entrypoint candidate if present.
+                    continue
+                if not all_selection_failures:
                     # Real rejection is enough to stop probing this candidate chain.
-                    if attempts:
-                        break
+                    break
             last_profile = run_profile
             if decompile_mode != "main":
                 break
 
         if (
             decompile_mode == "main"
-            and all_selection_failures
+            and (
+                all_selection_failures
+                or (saw_decompile_timeout and attempts and attempts[-1]["candidate"].get("kind") != "max-functions")
+            )
             and attempts
             and attempts[-1]["candidate"].get("kind") != "max-functions"
         ):

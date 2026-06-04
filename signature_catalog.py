@@ -43,32 +43,34 @@ def discover_signature_inputs(
     *,
     recursive: bool = True,
 ) -> tuple[Path, ...]:
-    inputs: list[Path] = []
-    seen: set[Path] = set()
-    suffixes = {".pat", ".obj", ".lib"}
-    for root in roots:
-        root = root.resolve()
-        if root.is_file():
-            if root.suffix.lower() in suffixes and root not in seen:
-                seen.add(root)
-                inputs.append(root)
-            continue
-        if not root.is_dir():
-            continue
-        iterator = root.rglob("*") if recursive else root.glob("*")
-        for candidate in sorted(iterator):
-            if not candidate.is_file():
+    def _impl():
+        inputs: list[Path] = []
+        seen: set[Path] = set()
+        suffixes = {".pat", ".obj", ".lib"}
+        for root in roots:
+            root = root.resolve()
+            if root.is_file():
+                if root.suffix.lower() in suffixes and root not in seen:
+                    seen.add(root)
+                    inputs.append(root)
                 continue
-            if candidate.suffix.lower() not in suffixes:
+            if not root.is_dir():
                 continue
-            if any(part in {".inertia_pat_cache", "__pycache__"} for part in candidate.parts):
-                continue
-            resolved = candidate.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            inputs.append(resolved)
-    return tuple(inputs)
+            iterator = root.rglob("*") if recursive else root.glob("*")
+            for candidate in sorted(iterator):
+                if not candidate.is_file():
+                    continue
+                if candidate.suffix.lower() not in suffixes:
+                    continue
+                if any(part in {".inertia_pat_cache", "__pycache__"} for part in candidate.parts):
+                    continue
+                resolved = candidate.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                inputs.append(resolved)
+        return tuple(inputs)
+    return _impl()
 
 
 def build_signature_catalog(
@@ -79,54 +81,56 @@ def build_signature_catalog(
     flair_root: Path | None = None,
     cache_dir: Path | None = None,
 ) -> SignatureCatalogBuildResult:
-    discovered = discover_signature_inputs(roots, recursive=recursive)
-    resolved_output = output_path.resolve()
-    selected_inputs = tuple(path for path in discovered if path.resolve() != resolved_output)
-    effective_cache_dir = cache_dir or (resolved_output.parent / ".signature_catalog_cache")
-    effective_cache_dir.mkdir(parents=True, exist_ok=True)
+    def _impl():
+        discovered = discover_signature_inputs(roots, recursive=recursive)
+        resolved_output = output_path.resolve()
+        selected_inputs = tuple(path for path in discovered if path.resolve() != resolved_output)
+        effective_cache_dir = cache_dir or (resolved_output.parent / ".signature_catalog_cache")
+        effective_cache_dir.mkdir(parents=True, exist_ok=True)
 
-    unique_modules: dict[tuple[object, ...], PatModule] = {}
-    imported_module_count = 0
-    duplicate_module_count = 0
-    for input_path in selected_inputs:
-        pat_path = ensure_pat_from_omf_input(input_path, effective_cache_dir, flair_root=flair_root)
-        if pat_path is None:
-            continue
-        for module in parse_pat_file(pat_path):
-            imported_module_count += 1
-            key = (
-                module.pattern_bytes,
-                module.module_length,
-                _normalized_pat_name_key(module.public_names),
-                _normalized_pat_name_key(module.referenced_names),
-                module.tail_bytes,
-            )
-            if key in unique_modules:
-                duplicate_module_count += 1
-                unique_modules[key] = _merge_pat_module_provenance(unique_modules[key], module)
+        unique_modules: dict[tuple[object, ...], PatModule] = {}
+        imported_module_count = 0
+        duplicate_module_count = 0
+        for input_path in selected_inputs:
+            pat_path = ensure_pat_from_omf_input(input_path, effective_cache_dir, flair_root=flair_root)
+            if pat_path is None:
                 continue
-            unique_modules[key] = module
+            for module in parse_pat_file(pat_path):
+                imported_module_count += 1
+                key = (
+                    module.pattern_bytes,
+                    module.module_length,
+                    _normalized_pat_name_key(module.public_names),
+                    _normalized_pat_name_key(module.referenced_names),
+                    module.tail_bytes,
+                )
+                if key in unique_modules:
+                    duplicate_module_count += 1
+                    unique_modules[key] = _merge_pat_module_provenance(unique_modules[key], module)
+                    continue
+                unique_modules[key] = module
 
-    ordered_modules = sorted(
-        unique_modules.values(),
-        key=lambda module: (
-            module.module_name.lower(),
-            module.module_length,
-            tuple((public.offset, public.name) for public in module.public_names),
-            tuple((ref.offset, ref.name) for ref in module.referenced_names),
-            tuple(-1 if byte is None else byte for byte in module.tail_bytes),
-        ),
-    )
-    resolved_output.parent.mkdir(parents=True, exist_ok=True)
-    resolved_output.write_text("".join(f"{format_pat_module_line(module)}\n" for module in ordered_modules) + "---\n")
-    return SignatureCatalogBuildResult(
-        output_path=resolved_output,
-        input_count=len(selected_inputs),
-        imported_module_count=imported_module_count,
-        unique_module_count=len(ordered_modules),
-        duplicate_module_count=duplicate_module_count,
-        source_paths=selected_inputs,
-    )
+        ordered_modules = sorted(
+            unique_modules.values(),
+            key=lambda module: (
+                module.module_name.lower(),
+                module.module_length,
+                tuple((public.offset, public.name) for public in module.public_names),
+                tuple((ref.offset, ref.name) for ref in module.referenced_names),
+                tuple(-1 if byte is None else byte for byte in module.tail_bytes),
+            ),
+        )
+        resolved_output.parent.mkdir(parents=True, exist_ok=True)
+        resolved_output.write_text("".join(f"{format_pat_module_line(module)}\n" for module in ordered_modules) + "---\n")
+        return SignatureCatalogBuildResult(
+            output_path=resolved_output,
+            input_count=len(selected_inputs),
+            imported_module_count=imported_module_count,
+            unique_module_count=len(ordered_modules),
+            duplicate_module_count=duplicate_module_count,
+            source_paths=selected_inputs,
+        )
+    return _impl()
 
 
 def _merge_pat_module_provenance(existing: PatModule, incoming: PatModule) -> PatModule:
@@ -166,53 +170,55 @@ def match_signature_catalog(
     cache_dir: Path | None = None,
     compiler_names: tuple[str, ...] = (),
 ) -> LocalPatMatchResult:
-    if signature_matching_disabled():
-        return LocalPatMatchResult({}, {}, ())
-    if not catalog_path.exists():
-        return LocalPatMatchResult({}, {}, ())
-    main_object = getattr(getattr(project, "loader", None), "main_object", None)
-    memory = getattr(getattr(project, "loader", None), "memory", None)
-    if main_object is None or memory is None:
-        return LocalPatMatchResult({}, {}, ())
-    min_addr = getattr(main_object, "min_addr", None)
-    max_addr = getattr(main_object, "max_addr", None)
-    if not isinstance(min_addr, int) or not isinstance(max_addr, int) or max_addr < min_addr:
-        return LocalPatMatchResult({}, {}, ())
-    size = max_addr - min_addr + 1
-    try:
-        image_bytes = bytes(memory.load(min_addr, size))
-    except Exception:
-        return LocalPatMatchResult({}, {}, ())
-    cache_key = _signature_catalog_match_cache_key(
-        catalog_path=catalog_path,
-        binary_path=binary_path,
-        backend=backend,
-        compiler_names=compiler_names,
-    )
-    if cache_key is not None:
-        cached = _load_cache_json("signature_catalog_match", cache_key)
-        cached_result = _decode_signature_catalog_match(cached)
-        if cached_result is not None:
-            return cached_result
+    def _impl():
+        if signature_matching_disabled():
+            return LocalPatMatchResult({}, {}, ())
+        if not catalog_path.exists():
+            return LocalPatMatchResult({}, {}, ())
+        main_object = getattr(getattr(project, "loader", None), "main_object", None)
+        memory = getattr(getattr(project, "loader", None), "memory", None)
+        if main_object is None or memory is None:
+            return LocalPatMatchResult({}, {}, ())
+        min_addr = getattr(main_object, "min_addr", None)
+        max_addr = getattr(main_object, "max_addr", None)
+        if not isinstance(min_addr, int) or not isinstance(max_addr, int) or max_addr < min_addr:
+            return LocalPatMatchResult({}, {}, ())
+        size = max_addr - min_addr + 1
+        try:
+            image_bytes = bytes(memory.load(min_addr, size))
+        except Exception:
+            return LocalPatMatchResult({}, {}, ())
+        cache_key = _signature_catalog_match_cache_key(
+            catalog_path=catalog_path,
+            binary_path=binary_path,
+            backend=backend,
+            compiler_names=compiler_names,
+        )
+        if cache_key is not None:
+            cached = _load_cache_json("signature_catalog_match", cache_key)
+            cached_result = _decode_signature_catalog_match(cached)
+            if cached_result is not None:
+                return cached_result
 
-    effective_cache_dir = cache_dir or (binary_path.parent / ".inertia_pat_cache")
-    specs = load_cached_pat_regex_specs(catalog_path, effective_cache_dir)
-    if not specs:
-        return LocalPatMatchResult({}, {}, ())
-    filtered_specs = _filter_specs_by_compiler_names(specs, compiler_names)
-    if filtered_specs:
-        specs = filtered_specs
-    code_labels, code_ranges, matched_compiler_names = match_pat_modules(
-        image_bytes,
-        min_addr,
-        specs,
-        backend=backend,
-    )
-    source_formats = ("signature_catalog",) if code_labels or code_ranges else ()
-    result = LocalPatMatchResult(code_labels, code_ranges, source_formats, matched_compiler_names)
-    if cache_key is not None:
-        _store_cache_json("signature_catalog_match", cache_key, _encode_signature_catalog_match(result))
-    return result
+        effective_cache_dir = cache_dir or (binary_path.parent / ".inertia_pat_cache")
+        specs = load_cached_pat_regex_specs(catalog_path, effective_cache_dir)
+        if not specs:
+            return LocalPatMatchResult({}, {}, ())
+        filtered_specs = _filter_specs_by_compiler_names(specs, compiler_names)
+        if filtered_specs:
+            specs = filtered_specs
+        code_labels, code_ranges, matched_compiler_names = match_pat_modules(
+            image_bytes,
+            min_addr,
+            specs,
+            backend=backend,
+        )
+        source_formats = ("signature_catalog",) if code_labels or code_ranges else ()
+        result = LocalPatMatchResult(code_labels, code_ranges, source_formats, matched_compiler_names)
+        if cache_key is not None:
+            _store_cache_json("signature_catalog_match", cache_key, _encode_signature_catalog_match(result))
+        return result
+    return _impl()
 
 
 def _signature_catalog_match_cache_key(
@@ -247,52 +253,56 @@ def _encode_signature_catalog_match(result: LocalPatMatchResult) -> dict[str, ob
 
 
 def _decode_signature_catalog_match(payload: dict[str, object] | None) -> LocalPatMatchResult | None:
-    if not isinstance(payload, dict):
-        return None
-    raw_labels = payload.get("code_labels")
-    raw_ranges = payload.get("code_ranges")
-    if not isinstance(raw_labels, dict) or not isinstance(raw_ranges, dict):
-        return None
-    code_labels: dict[int, str] = {}
-    code_ranges: dict[int, tuple[int, int]] = {}
-    try:
-        for addr_text, name in raw_labels.items():
-            if not isinstance(name, str):
-                return None
-            code_labels[int(addr_text)] = name
-        for addr_text, span in raw_ranges.items():
-            if not (isinstance(span, list) and len(span) == 2 and all(isinstance(value, int) for value in span)):
-                return None
-            code_ranges[int(addr_text)] = (span[0], span[1])
-    except (TypeError, ValueError):
-        return None
-    raw_formats = payload.get("source_formats", ())
-    raw_compilers = payload.get("matched_compiler_names", ())
-    source_formats = tuple(value for value in raw_formats if isinstance(value, str))
-    matched_compiler_names = tuple(value for value in raw_compilers if isinstance(value, str))
-    return LocalPatMatchResult(code_labels, code_ranges, source_formats, matched_compiler_names)
+    def _impl():
+        if not isinstance(payload, dict):
+            return None
+        raw_labels = payload.get("code_labels")
+        raw_ranges = payload.get("code_ranges")
+        if not isinstance(raw_labels, dict) or not isinstance(raw_ranges, dict):
+            return None
+        code_labels: dict[int, str] = {}
+        code_ranges: dict[int, tuple[int, int]] = {}
+        try:
+            for addr_text, name in raw_labels.items():
+                if not isinstance(name, str):
+                    return None
+                code_labels[int(addr_text)] = name
+            for addr_text, span in raw_ranges.items():
+                if not (isinstance(span, list) and len(span) == 2 and all(isinstance(value, int) for value in span)):
+                    return None
+                code_ranges[int(addr_text)] = (span[0], span[1])
+        except (TypeError, ValueError):
+            return None
+        raw_formats = payload.get("source_formats", ())
+        raw_compilers = payload.get("matched_compiler_names", ())
+        source_formats = tuple(value for value in raw_formats if isinstance(value, str))
+        matched_compiler_names = tuple(value for value in raw_compilers if isinstance(value, str))
+        return LocalPatMatchResult(code_labels, code_ranges, source_formats, matched_compiler_names)
+    return _impl()
 
 
 def _filter_specs_by_compiler_names(
     specs: tuple[CachedPatRegexSpec, ...],
     compiler_names: tuple[str, ...],
 ) -> tuple[CachedPatRegexSpec, ...]:
-    ignored_filters = {"ida flair", "flair", "unknown"}
-    normalized_filters = tuple(
-        name.strip().lower()
-        for name in compiler_names
-        if name and name.strip() and name.strip().lower() not in ignored_filters
-    )
-    if not normalized_filters:
-        return ()
-    filtered: list[CachedPatRegexSpec] = []
-    for spec in specs:
-        compiler_name = getattr(spec, "compiler_name", "").strip().lower()
-        if not compiler_name:
-            continue
-        if any(
-            compiler_filter in compiler_name or compiler_name in compiler_filter
-            for compiler_filter in normalized_filters
-        ):
-            filtered.append(spec)
-    return tuple(filtered)
+    def _impl():
+        ignored_filters = {"ida flair", "flair", "unknown"}
+        normalized_filters = tuple(
+            name.strip().lower()
+            for name in compiler_names
+            if name and name.strip() and name.strip().lower() not in ignored_filters
+        )
+        if not normalized_filters:
+            return ()
+        filtered: list[CachedPatRegexSpec] = []
+        for spec in specs:
+            compiler_name = getattr(spec, "compiler_name", "").strip().lower()
+            if not compiler_name:
+                continue
+            if any(
+                compiler_filter in compiler_name or compiler_name in compiler_filter
+                for compiler_filter in normalized_filters
+            ):
+                filtered.append(spec)
+        return tuple(filtered)
+    return _impl()

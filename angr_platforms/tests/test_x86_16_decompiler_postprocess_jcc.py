@@ -3,7 +3,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CIfElse, CStatements, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CBinaryOp,
+    CConstant,
+    CITE,
+    CIfElse,
+    CStatements,
+    CUnaryOp,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
@@ -154,8 +162,106 @@ def test_rewrite_decoded_jcc_conditions_rewrites_direct_condition_attr(monkeypat
     changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
 
     assert changed is True
-    assert isinstance(if_stmt.condition, CBinaryOp)
-    assert if_stmt.condition.op == "CmpGT"
+    assert isinstance(if_stmt.condition_and_nodes[0][0], CBinaryOp)
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
+
+
+def test_rewrite_decoded_jcc_conditions_refuses_conflicting_repeated_key(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    key = {"ins_addr": 0x4020, "vex_block_addr": 0x4000}
+    cond1 = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags=key,
+    )
+    cond2 = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x80, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags=key,
+    )
+    if_stmt = CIfElse(
+        [
+            (cond1, CStatements([], codegen=codegen)),
+            (cond2, CStatements([], codegen=codegen)),
+        ],
+        codegen=codegen,
+    )
+    if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    decode_calls = []
+
+    def _decode(_project, _codegen, _block_addr, _jcc_addr):
+        decode_calls.append(1)
+        if len(decode_calls) == 1:
+            return _DecodedCmpGuard8616(lhs=_reg(project, "ax", codegen), rhs=_reg(project, "bx", codegen), op="CmpGT")
+        return _DecodedCmpGuard8616(lhs=_reg(project, "ax", codegen), rhs=_reg(project, "bx", codegen), op="CmpLT")
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        _decode,
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is False
+    assert if_stmt.condition_and_nodes[0][0] is cond1
+    assert if_stmt.condition_and_nodes[1][0] is cond2
+
+
+def test_rewrite_decoded_jcc_conditions_allows_matching_repeated_key(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    key = {"ins_addr": 0x4020, "vex_block_addr": 0x4000}
+    cond1 = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags=key,
+    )
+    cond2 = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x80, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags=key,
+    )
+    if_stmt = CIfElse(
+        [
+            (cond1, CStatements([], codegen=codegen)),
+            (cond2, CStatements([], codegen=codegen)),
+        ],
+        codegen=codegen,
+    )
+    if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=_reg(project, "ax", codegen),
+            rhs=_reg(project, "bx", codegen),
+            op="CmpGT",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(if_stmt.condition_and_nodes[0][0], CBinaryOp)
+    assert isinstance(if_stmt.condition_and_nodes[1][0], CBinaryOp)
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
+    assert if_stmt.condition_and_nodes[1][0].op == "CmpGT"
 
 
 def test_rewrite_decoded_jcc_conditions_finds_nested_tags_on_direct_condition(monkeypatch):
@@ -188,8 +294,180 @@ def test_rewrite_decoded_jcc_conditions_finds_nested_tags_on_direct_condition(mo
     changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
 
     assert changed is True
-    assert isinstance(if_stmt.condition, CBinaryOp)
-    assert if_stmt.condition.op == "CmpGT"
+    assert isinstance(if_stmt.condition_and_nodes[0][0], CBinaryOp)
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
+
+
+def test_rewrite_decoded_jcc_conditions_rewrites_not_cite_condition(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    inner = CITE(
+        CBinaryOp(
+            "CmpEQ",
+            CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+            _const(0, codegen),
+            codegen=codegen,
+        ),
+        _const(0, codegen),
+        _const(1, codegen),
+        codegen=codegen,
+    )
+    cond = CUnaryOp("Not", inner, codegen=codegen, tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000})
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
+    if_stmt.condition = cond
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=_reg(project, "ax", codegen),
+            rhs=_reg(project, "bx", codegen),
+            op="CmpGT",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(if_stmt.condition_and_nodes[0][0], CBinaryOp)
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
+
+
+def test_rewrite_decoded_jcc_conditions_allows_argument_bp_positive_slots(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    arg = _stack(4, codegen, "arg_4")
+    codegen.cfunc.arg_list = (arg,)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=arg,
+            rhs=_const(5, codegen),
+            op="CmpGT",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(if_stmt.condition_and_nodes[0][0], CBinaryOp)
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
+
+
+def test_rewrite_decoded_jcc_conditions_allows_argument_bp_positive_slots_from_variables_in_use(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    arg_slot = _stack(6, codegen, "iSecond")
+    codegen.cfunc.arg_list = ()
+    codegen.cfunc.variables_in_use = {arg_slot.variable: arg_slot}
+    codegen.cfunc.unified_local_vars = {}
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=arg_slot,
+            rhs=_const(5, codegen),
+            op="CmpGT",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(if_stmt.condition_and_nodes[0][0], CBinaryOp)
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
+
+
+def test_rewrite_decoded_jcc_conditions_rejects_nonargument_bp_positive_slots(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.arg_list = ()
+    local = _stack(4, codegen, "tmp_4")
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=local,
+            rhs=_const(5, codegen),
+            op="CmpGT",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is False
+    assert if_stmt.condition_and_nodes[0][0] is cond
+
+
+def test_rewrite_decoded_jcc_conditions_rejects_nonargument_bp_positive_slots_in_variables_in_use(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    local_slot = _stack(4, codegen, "tmp_4")
+    codegen.cfunc.arg_list = ()
+    codegen.cfunc.variables_in_use = {local_slot.variable: local_slot}
+    codegen.cfunc.unified_local_vars = {}
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=local_slot,
+            rhs=_const(5, codegen),
+            op="CmpGT",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is False
+    assert if_stmt.condition_and_nodes[0][0] is cond
 
 
 def test_rewrite_decoded_jcc_conditions_rewrites_tuple_condition_pairs(monkeypatch):

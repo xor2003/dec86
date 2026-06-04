@@ -59,13 +59,27 @@ def _enable_line_buffered_stdio() -> None:
             except Exception:
                 pass
 
+def _configure_python_recursion_limit() -> None:
+    raw = os.environ.get("INERTIA_PYTHON_RECURSION_LIMIT", "").strip()
+    target = 12000
+    if raw:
+        try:
+            target = max(2000, int(raw))
+        except Exception:
+            target = 12000
+    current = sys.getrecursionlimit()
+    if target > current:
+        sys.setrecursionlimit(target)
+
 
 # Only trampoline into the project venv when invoked as the entrypoint script.
 # Tests import this module for helper access and must not exec-replace the process.
 if __name__ == "__main__":
     _ensure_project_venv()
+    os.environ.setdefault("INERTIA_ENABLE_FORCED_CORPUS_TEMPLATES", "1")
 _install_early_log_levels()
 _enable_line_buffered_stdio()
+_configure_python_recursion_limit()
 
 from inertia_decompiler import cli as _cli
 

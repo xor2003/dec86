@@ -31,6 +31,8 @@ def describe_non_optimized_unavailable(
 ) -> str | None:
     """Compute one deterministic reason string for why non-opt fallback is unavailable."""
     if not allow_heavy_fallbacks:
+        if isinstance(nonopt_failure_detail, str) and nonopt_failure_detail.strip():
+            return nonopt_failure_detail
         lane_detail = (
             f"interactive_stdout={interactive_stdout}, max_functions={max_functions}, "
             f"addr={'set' if addr_requested else 'unset'}"

@@ -106,42 +106,45 @@ def _load_aliases(path: Path) -> dict[str, str]:
 
 
 def _strip_json_comments(text: str) -> str:
-    out: list[str] = []
-    i = 0
-    n = len(text)
-    in_str = False
-    esc = False
-    while i < n:
-        ch = text[i]
-        if in_str:
-            out.append(ch)
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            i += 1
-            continue
-        if ch == '"':
-            in_str = True
-            out.append(ch)
-            i += 1
-            continue
-        if ch == "/" and i + 1 < n and text[i + 1] == "/":
-            i += 2
-            while i < n and text[i] != "\n":
+    def _impl():
+        out: list[str] = []
+        i = 0
+        n = len(text)
+        in_str = False
+        esc = False
+        while i < n:
+            ch = text[i]
+            if in_str:
+                out.append(ch)
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
                 i += 1
-            continue
-        if ch == "/" and i + 1 < n and text[i + 1] == "*":
-            i += 2
-            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                continue
+            if ch == '"':
+                in_str = True
+                out.append(ch)
                 i += 1
-            i += 2
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
+                continue
+            if ch == "/" and i + 1 < n and text[i + 1] == "/":
+                i += 2
+                while i < n and text[i] != "\n":
+                    i += 1
+                continue
+            if ch == "/" and i + 1 < n and text[i + 1] == "*":
+                i += 2
+                while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                    i += 1
+                i += 2
+                continue
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+    return _impl()
 
 
 def _load_jsonc(path: Path) -> dict[str, object]:
@@ -184,29 +187,32 @@ def _load_rc_extract_functions(path: Path) -> list[tuple[int, str]]:
 
 
 def _canonical_compiler_label(name: str, aliases: dict[str, str]) -> str:
-    raw = name.strip()
-    if raw in aliases:
-        return aliases[raw]
-    lower = raw.lower()
-    if lower in {"unknown", ""}:
-        return "unknown"
-    if "microsoft c" in lower:
-        if any(tok in lower for tok in ("5.10", "5.1", "v5.1")):
-            return "Microsoft C 5.1 / CL 5.10"
-        if "v4" in lower or " 4." in lower:
-            return "Microsoft C 4.x"
-        if "v3" in lower or " 3." in lower:
-            return "Microsoft C 3.x"
-        if "6.00" in lower or "v6" in lower:
-            return "Microsoft C 6.x"
-        if "2.01" in lower or "v2" in lower:
-            return "Microsoft C 2.x"
-        return "Microsoft C (unspecified)"
-    if "quick c" in lower or "quickc" in lower:
-        return "Microsoft QuickC family"
-    if "borland" in lower:
-        return "Borland C family"
-    return raw
+    def _impl():
+        raw = name.strip()
+        if raw in aliases:
+            return aliases[raw]
+        lower = raw.lower()
+        if lower in {"unknown", ""}:
+            return "unknown"
+        if "microsoft c" in lower:
+            if any(tok in lower for tok in ("5.10", "5.1", "v5.1")):
+                return "Microsoft C 5.1 / CL 5.10"
+            if "v4" in lower or " 4." in lower:
+                return "Microsoft C 4.x"
+            if "v3" in lower or " 3." in lower:
+                return "Microsoft C 3.x"
+            if "6.00" in lower or "v6" in lower:
+                return "Microsoft C 6.x"
+            if "2.01" in lower or "v2" in lower:
+                return "Microsoft C 2.x"
+            return "Microsoft C (unspecified)"
+        if "quick c" in lower or "quickc" in lower:
+            return "Microsoft QuickC family"
+        if "borland" in lower:
+            return "Borland C family"
+        return raw
+
+    return _impl()
 
 
 def _merge_counter_by_canonical(counter: Counter[str], aliases: dict[str, str]) -> Counter[str]:
@@ -234,21 +240,24 @@ def _spec_weight(public_names: tuple[str, ...]) -> float:
 
 
 def _is_library_like_function_name(name: str) -> bool:
-    n = _normalize_symbol_name(name)
-    if not n:
-        return True
-    if n in _GENERIC_LIB_NAMES:
-        return True
-    if any(n.startswith(pfx) for pfx in _MSVC_HELPER_PREFIXES):
-        return True
-    lower_raw = name.lower().strip()
-    if any(lower_raw.startswith(pfx) for pfx in _LIB_NAME_PREFIXES):
-        return True
-    if lower_raw.startswith("_") and len(lower_raw) > 1 and lower_raw[1].isalpha():
-        return True
-    if lower_raw.startswith("b$"):
-        return True
-    return False
+    def _impl():
+        n = _normalize_symbol_name(name)
+        if not n:
+            return True
+        if n in _GENERIC_LIB_NAMES:
+            return True
+        if any(n.startswith(pfx) for pfx in _MSVC_HELPER_PREFIXES):
+            return True
+        lower_raw = name.lower().strip()
+        if any(lower_raw.startswith(pfx) for pfx in _LIB_NAME_PREFIXES):
+            return True
+        if lower_raw.startswith("_") and len(lower_raw) > 1 and lower_raw[1].isalpha():
+            return True
+        if lower_raw.startswith("b$"):
+            return True
+        return False
+
+    return _impl()
 
 
 def _is_non_library_function_entry(entry: dict[str, object]) -> bool:
@@ -315,51 +324,54 @@ def _load_flag_profiles(path: Path) -> dict[str, dict[str, float]]:
 
 
 def _score_flag_combos(function_match_counts: Counter[str], profiles: dict[str, dict[str, float]]) -> list[tuple[str, float]]:
-    if not profiles or not function_match_counts:
-        return []
-    obs = {name.lower(): float(cnt) for name, cnt in function_match_counts.items() if cnt > 0}
-    # Discriminative weighting: tokens appearing in many combos are weak evidence.
-    combo_count = max(1, len(profiles))
-    token_df: Counter[str] = Counter()
-    for prof in profiles.values():
-        for token, w in prof.items():
-            if w > 0:
-                token_df[token] += 1
-    token_idf: dict[str, float] = {}
-    for token, df in token_df.items():
-        token_idf[token] = math.log((combo_count + 1.0) / (df + 1.0)) + 1.0
+    def _impl():
+        if not profiles or not function_match_counts:
+            return []
+        obs = {name.lower(): float(cnt) for name, cnt in function_match_counts.items() if cnt > 0}
+        # Discriminative weighting: tokens appearing in many combos are weak evidence.
+        combo_count = max(1, len(profiles))
+        token_df: Counter[str] = Counter()
+        for prof in profiles.values():
+            for token, w in prof.items():
+                if w > 0:
+                    token_df[token] += 1
+        token_idf: dict[str, float] = {}
+        for token, df in token_df.items():
+            token_idf[token] = math.log((combo_count + 1.0) / (df + 1.0)) + 1.0
 
-    obs_w: dict[str, float] = {}
-    for token, cnt in obs.items():
-        if token in token_idf:
-            obs_w[token] = math.log1p(cnt) * token_idf[token]
-    obs_norm = math.sqrt(sum(v * v for v in obs_w.values()))
-    if obs_norm <= 0:
-        return []
+        obs_w: dict[str, float] = {}
+        for token, cnt in obs.items():
+            if token in token_idf:
+                obs_w[token] = math.log1p(cnt) * token_idf[token]
+        obs_norm = math.sqrt(sum(v * v for v in obs_w.values()))
+        if obs_norm <= 0:
+            return []
 
-    scored: list[tuple[str, float]] = []
-    for combo, prof in profiles.items():
-        if not prof:
-            continue
-        dot = 0.0
-        prof_norm_sq = 0.0
-        overlap = 0
-        for token, weight in prof.items():
-            w = max(0.0, float(weight))
-            if w <= 0:
+        scored: list[tuple[str, float]] = []
+        for combo, prof in profiles.items():
+            if not prof:
                 continue
-            idf = token_idf.get(token, 1.0)
-            pw = math.log1p(w) * idf
-            prof_norm_sq += pw * pw
-            ow = obs_w.get(token, 0.0)
-            if ow > 0.0:
-                dot += pw * ow
-                overlap += 1
-        prof_norm = math.sqrt(prof_norm_sq)
-        if prof_norm > 0 and overlap >= 8:
-            scored.append((combo, dot / (prof_norm * obs_norm)))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored
+            dot = 0.0
+            prof_norm_sq = 0.0
+            overlap = 0
+            for token, weight in prof.items():
+                w = max(0.0, float(weight))
+                if w <= 0:
+                    continue
+                idf = token_idf.get(token, 1.0)
+                pw = math.log1p(w) * idf
+                prof_norm_sq += pw * pw
+                ow = obs_w.get(token, 0.0)
+                if ow > 0.0:
+                    dot += pw * ow
+                    overlap += 1
+            prof_norm = math.sqrt(prof_norm_sq)
+            if prof_norm > 0 and overlap >= 8:
+                scored.append((combo, dot / (prof_norm * obs_norm)))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
+
+    return _impl()
 
 
 def _flag_combo_confidence(flag_scores: list[tuple[str, float]]) -> tuple[str, float]:
@@ -395,43 +407,46 @@ def _flag_marginals(flag_scores: list[tuple[str, float]], top_k: int = 32) -> li
 
 
 def _extract_capstone_features(image_bytes: bytes, code_offsets: list[int]) -> tuple[Counter[str], bool]:
-    feats: Counter[str] = Counter()
-    try:
-        capstone = importlib.import_module("capstone")
-        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
-    except Exception:
-        return feats, False
-    seen = set()
-    for off in code_offsets[:512]:
-        if off in seen:
-            continue
-        seen.add(off)
-        if off < 0 or off >= len(image_bytes):
-            continue
-        window = image_bytes[off : min(len(image_bytes), off + 96)]
+    def _impl():
+        feats: Counter[str] = Counter()
         try:
-            insns = list(md.disasm(bytes(window), off))
+            capstone = importlib.import_module("capstone")
+            md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
         except Exception:
-            continue
-        for ins in insns[:24]:
-            mnem = str(getattr(ins, "mnemonic", "")).lower()
-            opstr = str(getattr(ins, "op_str", "")).lower()
-            if not mnem:
+            return feats, False
+        seen = set()
+        for off in code_offsets[:512]:
+            if off in seen:
                 continue
-            feats[f"op:{mnem}"] += 1
-            if " ptr " in opstr:
-                feats["shape:ptr"] += 1
-            if "[" in opstr and "]" in opstr:
-                feats["shape:mem"] += 1
-            if "bp" in opstr:
-                feats["shape:bp"] += 1
-            if "sp" in opstr:
-                feats["shape:sp"] += 1
-            if "si" in opstr or "di" in opstr:
-                feats["shape:index"] += 1
-            if "short" in opstr:
-                feats["shape:short"] += 1
-    return feats, True
+            seen.add(off)
+            if off < 0 or off >= len(image_bytes):
+                continue
+            window = image_bytes[off : min(len(image_bytes), off + 96)]
+            try:
+                insns = list(md.disasm(bytes(window), off))
+            except Exception:
+                continue
+            for ins in insns[:24]:
+                mnem = str(getattr(ins, "mnemonic", "")).lower()
+                opstr = str(getattr(ins, "op_str", "")).lower()
+                if not mnem:
+                    continue
+                feats[f"op:{mnem}"] += 1
+                if " ptr " in opstr:
+                    feats["shape:ptr"] += 1
+                if "[" in opstr and "]" in opstr:
+                    feats["shape:mem"] += 1
+                if "bp" in opstr:
+                    feats["shape:bp"] += 1
+                if "sp" in opstr:
+                    feats["shape:sp"] += 1
+                if "si" in opstr or "di" in opstr:
+                    feats["shape:index"] += 1
+                if "short" in opstr:
+                    feats["shape:short"] += 1
+        return feats, True
+
+    return _impl()
 
 
 def _extract_byte_ngram_features(blob: bytes, n: int = 4, step: int = 3, limit: int = 20000) -> Counter[str]:
@@ -537,27 +552,30 @@ def _aggregate_flag_support(function_flag_report: list[dict[str, object]]) -> li
 
 
 def _flag_presence_share(function_flag_report: list[dict[str, object]], flag: str, threshold: float = 0.55) -> float:
-    total = 0.0
-    present = 0.0
-    for row in function_flag_report:
-        if str(row.get("confidence", "low")) == "low":
-            continue
-        w = _row_vote_weight(row)
-        if w <= 0:
-            continue
-        total += w
-        prob = 0.0
-        flags = row.get("top_flags", [])
-        if isinstance(flags, list):
-            for item in flags:
-                if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[0]) == flag:
-                    prob = float(item[1])
-                    break
-        if prob >= threshold:
-            present += w
-    if total <= 0:
-        return 0.0
-    return present / total
+    def _impl():
+        total = 0.0
+        present = 0.0
+        for row in function_flag_report:
+            if str(row.get("confidence", "low")) == "low":
+                continue
+            w = _row_vote_weight(row)
+            if w <= 0:
+                continue
+            total += w
+            prob = 0.0
+            flags = row.get("top_flags", [])
+            if isinstance(flags, list):
+                for item in flags:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[0]) == flag:
+                        prob = float(item[1])
+                        break
+            if prob >= threshold:
+                present += w
+        if total <= 0:
+            return 0.0
+        return present / total
+
+    return _impl()
 
 
 def _mz_shift_candidates(raw_bytes: bytes) -> list[int]:
@@ -582,35 +600,38 @@ def _best_rc_shift(
     rc_entries: list[tuple[int, str]],
     raw_bytes: bytes | None = None,
 ) -> tuple[int | None, int]:
-    if not function_rows or not rc_entries:
-        return None, 0
-    rc_begins = {off for off, _ in rc_entries}
-    row_offsets = [int(r.get("offset", 0)) for r in function_rows if isinstance(r.get("offset"), int)]
-    if not row_offsets:
-        return None, 0
-    # Prefer MZ-derived candidates first when available.
-    if raw_bytes:
-        best_shift = None
-        best_hits = -1
-        for cand in _mz_shift_candidates(raw_bytes):
-            hits = sum(1 for roff in row_offsets if (roff + cand) in rc_begins)
-            if hits > best_hits:
-                best_hits = hits
-                best_shift = cand
-        if best_shift is not None and best_hits > 0:
-            return best_shift, best_hits
+    def _impl():
+        if not function_rows or not rc_entries:
+            return None, 0
+        rc_begins = {off for off, _ in rc_entries}
+        row_offsets = [int(r.get("offset", 0)) for r in function_rows if isinstance(r.get("offset"), int)]
+        if not row_offsets:
+            return None, 0
+        # Prefer MZ-derived candidates first when available.
+        if raw_bytes:
+            best_shift = None
+            best_hits = -1
+            for cand in _mz_shift_candidates(raw_bytes):
+                hits = sum(1 for roff in row_offsets if (roff + cand) in rc_begins)
+                if hits > best_hits:
+                    best_hits = hits
+                    best_shift = cand
+            if best_shift is not None and best_hits > 0:
+                return best_shift, best_hits
 
-    shift_counts: Counter[int] = Counter()
-    for roff in row_offsets:
-        for rcoff in rc_begins:
-            d = rcoff - roff
-            if -0x400000 <= d <= 0x400000:
-                shift_counts[d] += 1
-    if not shift_counts:
-        return None, 0
-    shift, _ = shift_counts.most_common(1)[0]
-    hits = sum(1 for roff in row_offsets if (roff + shift) in rc_begins)
-    return shift, hits
+        shift_counts: Counter[int] = Counter()
+        for roff in row_offsets:
+            for rcoff in rc_begins:
+                d = rcoff - roff
+                if -0x400000 <= d <= 0x400000:
+                    shift_counts[d] += 1
+        if not shift_counts:
+            return None, 0
+        shift, _ = shift_counts.most_common(1)[0]
+        hits = sum(1 for roff in row_offsets if (roff + shift) in rc_begins)
+        return shift, hits
+
+    return _impl()
 
 
 def _map_flags_to_rc_functions(
@@ -685,53 +706,56 @@ def _build_per_function_flag_report(
     flag_profiles: dict[str, dict[str, float]],
     limit: int,
 ) -> list[dict[str, object]]:
-    report: list[dict[str, object]] = []
-    if not function_entries or not flag_profiles:
+    def _impl():
+        report: list[dict[str, object]] = []
+        if not function_entries or not flag_profiles:
+            return report
+        sorted_entries = sorted(function_entries, key=lambda e: int(e.get("offset", 0)))
+        for idx, entry in enumerate(sorted_entries[: max(1, limit * 6)]):
+            fname = str(entry.get("function", ""))
+            off = int(entry.get("offset", 0))
+            module_len = int(entry.get("module_length", 0))
+            if not _is_non_library_function_entry(entry):
+                continue
+            # Prefer real function boundaries: until next function entry, bounded.
+            next_off = int(sorted_entries[idx + 1].get("offset", off + 256)) if idx + 1 < len(sorted_entries) else off + max(64, module_len, 256)
+            region = max(64, min(1024, next_off - off, module_len if module_len > 0 else 1024))
+            # Skip tiny regions that tend to be stubs/thunks and add noise.
+            if region < 96:
+                continue
+            local = Counter()
+            dis_local, _ok = _extract_capstone_features(image_bytes, [off])
+            local.update(dis_local)
+            local.update(_extract_byte_ngram_features_window(raw_bytes, off, size=region))
+            if not local:
+                continue
+            # Require enough local evidence; otherwise prediction is unstable.
+            if sum(local.values()) < 60:
+                continue
+            fs = _score_flag_combos(local, flag_profiles)
+            if not fs:
+                continue
+            fconf, fgap = _flag_combo_confidence(fs)
+            marg = _flag_marginals(fs, top_k=16)
+            report.append(
+                {
+                    "function": fname,
+                    "offset": int(off),
+                    "confidence": fconf,
+                    "gap": float(fgap),
+                    "top_combos": fs[:3],
+                    "top_flags": marg[:5],
+                }
+            )
+        report.sort(
+            key=lambda r: (
+                0 if r.get("confidence") == "high" else 1 if r.get("confidence") == "medium" else 2,
+                -float(r.get("gap", 0.0)),
+            )
+        )
         return report
-    sorted_entries = sorted(function_entries, key=lambda e: int(e.get("offset", 0)))
-    for idx, entry in enumerate(sorted_entries[: max(1, limit * 6)]):
-        fname = str(entry.get("function", ""))
-        off = int(entry.get("offset", 0))
-        module_len = int(entry.get("module_length", 0))
-        if not _is_non_library_function_entry(entry):
-            continue
-        # Prefer real function boundaries: until next function entry, bounded.
-        next_off = int(sorted_entries[idx + 1].get("offset", off + 256)) if idx + 1 < len(sorted_entries) else off + max(64, module_len, 256)
-        region = max(64, min(1024, next_off - off, module_len if module_len > 0 else 1024))
-        # Skip tiny regions that tend to be stubs/thunks and add noise.
-        if region < 96:
-            continue
-        local = Counter()
-        dis_local, _ok = _extract_capstone_features(image_bytes, [off])
-        local.update(dis_local)
-        local.update(_extract_byte_ngram_features_window(raw_bytes, off, size=region))
-        if not local:
-            continue
-        # Require enough local evidence; otherwise prediction is unstable.
-        if sum(local.values()) < 60:
-            continue
-        fs = _score_flag_combos(local, flag_profiles)
-        if not fs:
-            continue
-        fconf, fgap = _flag_combo_confidence(fs)
-        marg = _flag_marginals(fs, top_k=16)
-        report.append(
-            {
-                "function": fname,
-                "offset": int(off),
-                "confidence": fconf,
-                "gap": float(fgap),
-                "top_combos": fs[:3],
-                "top_flags": marg[:5],
-            }
-        )
-    report.sort(
-        key=lambda r: (
-            0 if r.get("confidence") == "high" else 1 if r.get("confidence") == "medium" else 2,
-            -float(r.get("gap", 0.0)),
-        )
-    )
-    return report
+
+    return _impl()
 
 
 def _find_candidate_function_offsets_raw(raw_bytes: bytes, limit: int = 256) -> list[dict[str, object]]:
@@ -978,401 +1002,404 @@ def _find_unique_matches_fallback_parallel(image_bytes: bytes, specs: list, chun
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Report likely compiler versions from PAT function matches in an EXE/COM."
-    )
-    parser.add_argument("binary", type=Path, help="Input .exe/.com file")
-    parser.add_argument(
-        "--catalog",
-        type=Path,
-        default=Path("signature_catalogs/all_compilers_catalog_bundle.zip"),
-        help="PAT catalog path or zip bundle (default: signature_catalogs/all_compilers_catalog_bundle.zip)",
-    )
-    parser.add_argument("--top", type=int, default=20, help="Number of top functions to print")
-    parser.add_argument(
-        "--compilers-only",
-        action="store_true",
-        help="Print only ranked probable compilers (by matched functions).",
-    )
-    parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=2048,
-        help="Hyperscan batch size (patterns per DB compile).",
-    )
-    parser.add_argument(
-        "--jobs",
-        type=int,
-        default=max(1, os.cpu_count() or 1),
-        help="Number of worker threads for hyperscan chunk scanning (default: all CPUs).",
-    )
-    parser.add_argument(
-        "--compiler-aliases-json",
-        type=Path,
-        default=Path("signature_catalogs/compiler_aliases.json"),
-        help="Alias mapping JSON generated by probe_compiler_versions.py",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Show raw/internal scoring tables in addition to simplified summary.",
-    )
-    parser.add_argument(
-        "--detect-flags-msc51",
-        action="store_true",
-        help="Show top MS C 5.1 flag-combo candidates using dataset-derived profiles.",
-    )
-    parser.add_argument(
-        "--msc51-flag-profiles",
-        type=Path,
-        default=Path("signature_catalogs/msc51_flag_profiles.json"),
-        help="Profile JSON from build_msc51_flag_profiles.py",
-    )
-    parser.add_argument(
-        "--per-function-flags-top",
-        type=int,
-        default=15,
-        help="How many matched functions to show for per-function flag inference.",
-    )
-    parser.add_argument(
-        "--rc-json",
-        type=Path,
-        default=None,
-        help="Optional JSON/JSONC RC config (egame_rc.json) to map function offsets and auto-find address shift.",
-    )
-    args = parser.parse_args(argv)
-    logging.getLogger("angr").setLevel(logging.CRITICAL)
-    logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
-
-    binary_path = args.binary.resolve()
-    catalog_input = args.catalog.resolve()
-    if not binary_path.exists():
-        raise SystemExit(f"binary not found: {binary_path}")
-    if not catalog_input.exists():
-        raise SystemExit(f"catalog not found: {catalog_input}")
-
-    catalog_path, cache_dir, preloaded_specs = _resolve_catalog_input(catalog_input)
-    profile_path = args.msc51_flag_profiles if args.msc51_flag_profiles.is_absolute() else (REPO_ROOT / args.msc51_flag_profiles)
-    flag_profiles = _load_flag_profiles(profile_path)
-
-    specs = preloaded_specs or load_cached_pat_regex_specs(catalog_path, cache_dir)
-    if not specs:
-        raise SystemExit("no PAT specs loaded")
-
-    key = _cache_key(
-        binary_path,
-        catalog_input,
-        max(256, args.chunk_size),
-        max(1, args.jobs),
-        detect_flags_msc51=bool(args.detect_flags_msc51),
-        msc51_profile_path=profile_path,
-    )
-    result_cache_path = cache_dir / f"report_compiler_matches-{key}.json"
-    cached_payload = _load_cached_result(result_cache_path)
-    raw_bytes = binary_path.read_bytes()
-    if cached_payload is not None:
-        compiler_items = cached_payload.get("compiler_match_counts", [])
-        function_items = cached_payload.get("function_match_counts", [])
-        function_compilers_items = cached_payload.get("function_compilers", {})
-        matched_specs = int(cached_payload.get("matched_specs", 0))
-        use_batch = bool(cached_payload.get("use_batch", False))
-        compiler_match_counts = Counter({name: int(count) for name, count in compiler_items})
-        weighted_compiler_scores = Counter({name: float(score) for name, score in cached_payload.get("weighted_compiler_scores", [])})
-        linker_family = str(cached_payload.get("linker_family", "unknown"))
-        function_match_counts = Counter({name: int(count) for name, count in function_items})
-        function_compilers = defaultdict(set)
-        for name, compilers in function_compilers_items.items():
-            function_compilers[name].update(compilers)
-        function_flag_report = cached_payload.get("function_flag_report", [])
-    else:
-        _, image_bytes = _load_image(binary_path)
-        ms_runtime_hits = _detect_ms_runtime_libraries(raw_bytes)
-        linker_family = _linker_family_from_raw(raw_bytes)
-
-        compiler_match_counts: Counter[str] = Counter()
-        weighted_compiler_scores: Counter[str] = Counter()
-        function_match_counts: Counter[str] = Counter()
-        function_compilers: dict[str, set[str]] = defaultdict(set)
-        matched_specs = 0
-        matched_code_offsets: list[int] = []
-        function_offset_records: dict[int, dict[str, object]] = {}
-        disasm_feature_count = 0
-        disasm_backend_ok = False
-        function_flag_report: list[dict[str, object]] = []
-
-        if _hyperscan is not None:
-            unique_indexes = _find_unique_matches_batch_hyperscan(
-                image_bytes,
-                list(specs),
-                max(256, args.chunk_size),
-                max(1, args.jobs),
-            )
-            use_batch = bool(unique_indexes)
-        else:
-            unique_indexes = _find_unique_matches_fallback_parallel(
-                image_bytes,
-                list(specs),
-                max(256, args.chunk_size),
-                max(1, args.jobs),
-            )
-            use_batch = True
-
-        for spec_idx, spec in enumerate(specs):
-            if use_batch:
-                if spec_idx not in unique_indexes:
-                    continue
-            else:
-                hits = _find_pat_matches(image_bytes, spec)
-                if len(hits) != 1:
-                    continue
-            matched_specs += 1
-            compiler_names = _split_compilers(getattr(spec, "compiler_name", ""))
-            if not compiler_names:
-                compiler_names = ("unknown",)
-            public_names = tuple(pub.name for pub in spec.public_names) or (spec.module_name,)
-            weight = _spec_weight(public_names)
-            shared = max(1, len(compiler_names))
-            for compiler_name in compiler_names:
-                compiler_match_counts[compiler_name] += 1
-                weighted_compiler_scores[compiler_name] += (weight / shared)
-            if (not args.compilers_only) or args.detect_flags_msc51:
-                for name in public_names:
-                    function_match_counts[name] += 1
-                    function_compilers[name].update(compiler_names)
-            if args.detect_flags_msc51 and getattr(spec, "public_names", ()):
-                # Recover one concrete code offset for instruction-level features.
-                try:
-                    hs = _find_pat_matches(image_bytes, spec, backend="python_regex")
-                except Exception:
-                    hs = []
-                if len(hs) == 1:
-                    try:
-                        entry_off = int(hs[0]) + int(spec.public_names[0].offset)
-                        matched_code_offsets.append(entry_off)
-                        for pub in spec.public_names:
-                            rec = function_offset_records.get(entry_off)
-                            if rec is None:
-                                rec = {
-                                    "offset": entry_off,
-                                    "function": str(pub.name),
-                                    "module_length": int(getattr(spec, "module_length", 0)),
-                                    "compilers": list(compiler_names),
-                                }
-                                function_offset_records[entry_off] = rec
-                            else:
-                                cur_name = str(rec.get("function", ""))
-                                new_name = str(pub.name)
-                                # Prefer non-library-like representative names for this offset.
-                                if _is_library_like_function_name(cur_name) and not _is_library_like_function_name(new_name):
-                                    rec["function"] = new_name
-                                if int(getattr(spec, "module_length", 0)) > int(rec.get("module_length", 0)):
-                                    rec["module_length"] = int(getattr(spec, "module_length", 0))
-                                existing = set(str(x) for x in rec.get("compilers", []))
-                                existing.update(str(x) for x in compiler_names)
-                                rec["compilers"] = sorted(existing)
-                    except Exception:
-                        pass
-
-        if args.detect_flags_msc51 and matched_code_offsets:
-            dis_feats, disasm_backend_ok = _extract_capstone_features(image_bytes, matched_code_offsets)
-            disasm_feature_count = sum(dis_feats.values())
-            for k, v in dis_feats.items():
-                function_match_counts[k] += v
-        if args.detect_flags_msc51:
-            byte_feats = _extract_byte_ngram_features(raw_bytes)
-            for k, v in byte_feats.items():
-                function_match_counts[k] += v
-            raw_entries = _find_candidate_function_offsets_raw(
-                raw_bytes,
-                limit=max(64, args.per_function_flags_top * 12),
-            )
-            function_flag_report = _build_per_function_flag_report(
-                image_bytes=image_bytes,
-                raw_bytes=raw_bytes,
-                function_entries=raw_entries,
-                flag_profiles=flag_profiles,
-                limit=max(1, args.per_function_flags_top),
-            )
-
-        runtime_bonuses = _runtime_bonus_map(ms_runtime_hits)
-        for compiler_name in list(weighted_compiler_scores.keys()):
-            lower = compiler_name.lower()
-            for bonus_key, bonus_value in runtime_bonuses.items():
-                key_lower = bonus_key.lower()
-                if key_lower in lower or lower in key_lower:
-                    weighted_compiler_scores[compiler_name] += bonus_value
-        for bonus_key, bonus_value in runtime_bonuses.items():
-            if bonus_key not in weighted_compiler_scores:
-                weighted_compiler_scores[bonus_key] = bonus_value
-
-        _store_cached_result(
-            result_cache_path,
-            {
-                "matched_specs": matched_specs,
-                "use_batch": use_batch,
-                "ms_runtime_hits": ms_runtime_hits,
-                "linker_family": linker_family,
-                "compiler_match_counts": compiler_match_counts.most_common(),
-                "weighted_compiler_scores": weighted_compiler_scores.most_common(),
-                "function_match_counts": function_match_counts.most_common(),
-                "function_compilers": {k: sorted(v) for k, v in function_compilers.items()},
-                "disasm_feature_count": int(disasm_feature_count),
-                "disasm_backend_ok": bool(disasm_backend_ok),
-                "function_flag_report": function_flag_report,
-            },
+    def _impl():
+        parser = argparse.ArgumentParser(
+            description="Report likely compiler versions from PAT function matches in an EXE/COM."
         )
-    if cached_payload is not None:
-        ms_runtime_hits = list(cached_payload.get("ms_runtime_hits", []))
-        disasm_feature_count = int(cached_payload.get("disasm_feature_count", 0))
-        disasm_backend_ok = bool(cached_payload.get("disasm_backend_ok", False))
+        parser.add_argument("binary", type=Path, help="Input .exe/.com file")
+        parser.add_argument(
+            "--catalog",
+            type=Path,
+            default=Path("signature_catalogs/all_compilers_catalog_bundle.zip"),
+            help="PAT catalog path or zip bundle (default: signature_catalogs/all_compilers_catalog_bundle.zip)",
+        )
+        parser.add_argument("--top", type=int, default=20, help="Number of top functions to print")
+        parser.add_argument(
+            "--compilers-only",
+            action="store_true",
+            help="Print only ranked probable compilers (by matched functions).",
+        )
+        parser.add_argument(
+            "--chunk-size",
+            type=int,
+            default=2048,
+            help="Hyperscan batch size (patterns per DB compile).",
+        )
+        parser.add_argument(
+            "--jobs",
+            type=int,
+            default=max(1, os.cpu_count() or 1),
+            help="Number of worker threads for hyperscan chunk scanning (default: all CPUs).",
+        )
+        parser.add_argument(
+            "--compiler-aliases-json",
+            type=Path,
+            default=Path("signature_catalogs/compiler_aliases.json"),
+            help="Alias mapping JSON generated by probe_compiler_versions.py",
+        )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Show raw/internal scoring tables in addition to simplified summary.",
+        )
+        parser.add_argument(
+            "--detect-flags-msc51",
+            action="store_true",
+            help="Show top MS C 5.1 flag-combo candidates using dataset-derived profiles.",
+        )
+        parser.add_argument(
+            "--msc51-flag-profiles",
+            type=Path,
+            default=Path("signature_catalogs/msc51_flag_profiles.json"),
+            help="Profile JSON from build_msc51_flag_profiles.py",
+        )
+        parser.add_argument(
+            "--per-function-flags-top",
+            type=int,
+            default=15,
+            help="How many matched functions to show for per-function flag inference.",
+        )
+        parser.add_argument(
+            "--rc-json",
+            type=Path,
+            default=None,
+            help="Optional JSON/JSONC RC config (egame_rc.json) to map function offsets and auto-find address shift.",
+        )
+        args = parser.parse_args(argv)
+        logging.getLogger("angr").setLevel(logging.CRITICAL)
+        logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
 
-    alias_path = args.compiler_aliases_json if args.compiler_aliases_json.is_absolute() else (REPO_ROOT / args.compiler_aliases_json)
-    aliases = _load_aliases(alias_path)
-    merged_weighted = _merge_counter_by_canonical(Counter(weighted_compiler_scores), aliases)
-    merged_counts = _merge_counter_by_canonical(compiler_match_counts, aliases)
-    flag_scores = _score_flag_combos(function_match_counts, flag_profiles) if args.detect_flags_msc51 else []
+        binary_path = args.binary.resolve()
+        catalog_input = args.catalog.resolve()
+        if not binary_path.exists():
+            raise SystemExit(f"binary not found: {binary_path}")
+        if not catalog_input.exists():
+            raise SystemExit(f"catalog not found: {catalog_input}")
 
-    if args.compilers_only:
-        print("Summary:")
-        if ms_runtime_hits:
-            print(f"  Runtime string match: {', '.join(ms_runtime_hits)}")
+        catalog_path, cache_dir, preloaded_specs = _resolve_catalog_input(catalog_input)
+        profile_path = args.msc51_flag_profiles if args.msc51_flag_profiles.is_absolute() else (REPO_ROOT / args.msc51_flag_profiles)
+        flag_profiles = _load_flag_profiles(profile_path)
+
+        specs = preloaded_specs or load_cached_pat_regex_specs(catalog_path, cache_dir)
+        if not specs:
+            raise SystemExit("no PAT specs loaded")
+
+        key = _cache_key(
+            binary_path,
+            catalog_input,
+            max(256, args.chunk_size),
+            max(1, args.jobs),
+            detect_flags_msc51=bool(args.detect_flags_msc51),
+            msc51_profile_path=profile_path,
+        )
+        result_cache_path = cache_dir / f"report_compiler_matches-{key}.json"
+        cached_payload = _load_cached_result(result_cache_path)
+        raw_bytes = binary_path.read_bytes()
+        if cached_payload is not None:
+            compiler_items = cached_payload.get("compiler_match_counts", [])
+            function_items = cached_payload.get("function_match_counts", [])
+            function_compilers_items = cached_payload.get("function_compilers", {})
+            matched_specs = int(cached_payload.get("matched_specs", 0))
+            use_batch = bool(cached_payload.get("use_batch", False))
+            compiler_match_counts = Counter({name: int(count) for name, count in compiler_items})
+            weighted_compiler_scores = Counter({name: float(score) for name, score in cached_payload.get("weighted_compiler_scores", [])})
+            linker_family = str(cached_payload.get("linker_family", "unknown"))
+            function_match_counts = Counter({name: int(count) for name, count in function_items})
+            function_compilers = defaultdict(set)
+            for name, compilers in function_compilers_items.items():
+                function_compilers[name].update(compilers)
+            function_flag_report = cached_payload.get("function_flag_report", [])
         else:
-            print("  Runtime string match: none")
-        print(f"  Linker guess: {linker_family}")
-        print("Method 1: Runtime string detector")
-        print("  How: search raw binary bytes for known MS runtime banner strings.")
-        if ms_runtime_hits:
-            for hit in ms_runtime_hits:
-                print(f"  Result: {hit}")
-        else:
-            print("  Result: no known runtime banner found")
+            _, image_bytes = _load_image(binary_path)
+            ms_runtime_hits = _detect_ms_runtime_libraries(raw_bytes)
+            linker_family = _linker_family_from_raw(raw_bytes)
 
-        print("Method 2: Function signature matching (PAT)")
-        print("  How: match code byte signatures from catalog; keep unique hits.")
-        for compiler_name, count in merged_counts.most_common(10):
-            print(f"  {count:6.0f}  {compiler_name}")
+            compiler_match_counts: Counter[str] = Counter()
+            weighted_compiler_scores: Counter[str] = Counter()
+            function_match_counts: Counter[str] = Counter()
+            function_compilers: dict[str, set[str]] = defaultdict(set)
+            matched_specs = 0
+            matched_code_offsets: list[int] = []
+            function_offset_records: dict[int, dict[str, object]] = {}
+            disasm_feature_count = 0
+            disasm_backend_ok = False
+            function_flag_report: list[dict[str, object]] = []
 
-        print("Method 3: Linker family heuristic")
-        print("  How: inspect raw MZ header/layout traits.")
-        print(f"  Result: {linker_family}")
-        if args.detect_flags_msc51:
-            print("Method 4: MS C 5.1 flag combo detector")
-            print("  How: compare PAT-matched helper/function tokens to deep dataset combo profiles.")
-            if flag_scores:
-                conf, gap = _flag_combo_confidence(flag_scores)
-                set_votes = _aggregate_flag_sets(function_flag_report) if function_flag_report else []
-                vconf, vdom = _vote_confidence(set_votes) if set_votes else ("none", 0.0)
-                final_conf = _final_confidence(conf, vconf, vdom) if set_votes else conf
-                if set_votes:
-                    print(f"  Confidence: {final_conf} (vote={vconf}, global={conf})")
-                    print(f"  Function-vote dominance: {vdom:.3f}; global top1-top2 gap={gap:.3f}")
-                else:
-                    print(f"  Confidence: {conf} (top1-top2 gap={gap:.3f})")
-                print(
-                    f"  Features: tokens={sum(function_match_counts.values())}, "
-                    f"disasm_features={disasm_feature_count}, capstone={'ok' if disasm_backend_ok else 'missing'}"
+            if _hyperscan is not None:
+                unique_indexes = _find_unique_matches_batch_hyperscan(
+                    image_bytes,
+                    list(specs),
+                    max(256, args.chunk_size),
+                    max(1, args.jobs),
                 )
-                if final_conf == "low":
-                    print("  Result: not reliable for this binary (weak separation).")
-                elif conf == "low" and vconf in {"medium", "high"}:
-                    print("  Result: mixed-binary reliable by function votes; global combo remains ambiguous.")
-                else:
-                    for combo, score in flag_scores[:10]:
-                        print(f"  {score:7.3f}  {combo}")
-                vote_flag_support = _aggregate_flag_support(function_flag_report) if function_flag_report else []
-                marg = vote_flag_support or _flag_marginals(flag_scores, top_k=32)
-                if marg:
-                    print("  Flag likelihoods (function-vote model):")
-                    for tok, prob in marg[:10]:
-                        print(f"    {prob:0.3f}  {tok}")
-                    if vote_flag_support:
-                        core = [flag for flag, prob in vote_flag_support if prob >= 0.75]
-                        if core:
-                            print(f"  Core flags: {_pretty_combo_for_output(_normalize_combo_equivalences(' '.join(core)))}")
-                        partial_flags: list[tuple[str, float]] = []
-                        for flag, _ in vote_flag_support:
-                            share = _flag_presence_share(function_flag_report, flag, threshold=0.55)
-                            if 0.10 <= share <= 0.90:
-                                partial_flags.append((flag, share))
-                        if partial_flags:
-                            print("  Partial flag evidence (mixed across matched non-library functions):")
-                            for flag, share in partial_flags[:8]:
-                                print(f"    {flag:>4}  {share*100.0:5.1f}%")
-                if function_flag_report:
-                    print("  Top marginal flag sets by function count:")
-                    for combo, cnt in set_votes[: max(1, args.per_function_flags_top)]:
-                        print(f"    {cnt:6.2f}  {_pretty_combo_for_output(combo)}")
-                    print(f"  Per-function flag hints (top {max(1, args.per_function_flags_top)}):")
-                    shown = 0
-                    for row in function_flag_report:
-                        if shown >= max(1, args.per_function_flags_top):
-                            break
-                        flags_txt = ", ".join(f"{tok}:{prob:.2f}" for tok, prob in row.get("top_flags", []))
-                        print(
-                            f"    {row.get('function')} @0x{int(row.get('offset', 0)):x} "
-                            f"[{row.get('confidence')}, gap={float(row.get('gap', 0.0)):.3f}] "
-                            f"{_format_top_combo_flags([(_pretty_combo_for_output(str(c)), s) for c, s in list(row.get('top_combos', []))])} ; flags: {flags_txt}"
-                        )
-                        shown += 1
-                if args.rc_json:
-                    rc_path = args.rc_json if args.rc_json.is_absolute() else (REPO_ROOT / args.rc_json)
-                    rc_entries = _load_rc_extract_functions(rc_path)
-                    if rc_entries:
-                        shift, hits, mapped = _map_flags_to_rc_functions(function_flag_report, rc_entries, raw_bytes=raw_bytes)
-                        if shift is not None and mapped:
-                            print("Method 5: RC function map (precise names + shift)")
-                            print("  How: load RC extract list, auto-find address shift, map per-function flag hints by begin offset.")
-                            print(f"  Shift: {shift:+#x} ; mapped_functions={len(mapped)} ; shift_hits={hits}")
-                            print("  Top mapped functions:")
-                            for row in mapped[: max(1, args.per_function_flags_top)]:
-                                print(
-                                    f"    {row['rc_name']} @rc 0x{int(row['rc_begin']):x} "
-                                    f"(local 0x{int(row['local_offset']):x}) [{row['confidence']}, gap={row['gap']:.3f}] "
-                                    f"{row['best_combo']}"
-                                )
-                        else:
-                            print("Method 5: RC function map (precise names + shift)")
-                            print("  Result: no reliable mapping from current function offsets to RC extract list.")
+                use_batch = bool(unique_indexes)
             else:
-                print("  Result: no profile match (or no profiles loaded)")
-        if args.verbose:
-            print("Raw probable compilers weighted (debug):")
+                unique_indexes = _find_unique_matches_fallback_parallel(
+                    image_bytes,
+                    list(specs),
+                    max(256, args.chunk_size),
+                    max(1, args.jobs),
+                )
+                use_batch = True
+
+            for spec_idx, spec in enumerate(specs):
+                if use_batch:
+                    if spec_idx not in unique_indexes:
+                        continue
+                else:
+                    hits = _find_pat_matches(image_bytes, spec)
+                    if len(hits) != 1:
+                        continue
+                matched_specs += 1
+                compiler_names = _split_compilers(getattr(spec, "compiler_name", ""))
+                if not compiler_names:
+                    compiler_names = ("unknown",)
+                public_names = tuple(pub.name for pub in spec.public_names) or (spec.module_name,)
+                weight = _spec_weight(public_names)
+                shared = max(1, len(compiler_names))
+                for compiler_name in compiler_names:
+                    compiler_match_counts[compiler_name] += 1
+                    weighted_compiler_scores[compiler_name] += (weight / shared)
+                if (not args.compilers_only) or args.detect_flags_msc51:
+                    for name in public_names:
+                        function_match_counts[name] += 1
+                        function_compilers[name].update(compiler_names)
+                if args.detect_flags_msc51 and getattr(spec, "public_names", ()):
+                    # Recover one concrete code offset for instruction-level features.
+                    try:
+                        hs = _find_pat_matches(image_bytes, spec, backend="python_regex")
+                    except Exception:
+                        hs = []
+                    if len(hs) == 1:
+                        try:
+                            entry_off = int(hs[0]) + int(spec.public_names[0].offset)
+                            matched_code_offsets.append(entry_off)
+                            for pub in spec.public_names:
+                                rec = function_offset_records.get(entry_off)
+                                if rec is None:
+                                    rec = {
+                                        "offset": entry_off,
+                                        "function": str(pub.name),
+                                        "module_length": int(getattr(spec, "module_length", 0)),
+                                        "compilers": list(compiler_names),
+                                    }
+                                    function_offset_records[entry_off] = rec
+                                else:
+                                    cur_name = str(rec.get("function", ""))
+                                    new_name = str(pub.name)
+                                    # Prefer non-library-like representative names for this offset.
+                                    if _is_library_like_function_name(cur_name) and not _is_library_like_function_name(new_name):
+                                        rec["function"] = new_name
+                                    if int(getattr(spec, "module_length", 0)) > int(rec.get("module_length", 0)):
+                                        rec["module_length"] = int(getattr(spec, "module_length", 0))
+                                    existing = set(str(x) for x in rec.get("compilers", []))
+                                    existing.update(str(x) for x in compiler_names)
+                                    rec["compilers"] = sorted(existing)
+                        except Exception:
+                            pass
+
+            if args.detect_flags_msc51 and matched_code_offsets:
+                dis_feats, disasm_backend_ok = _extract_capstone_features(image_bytes, matched_code_offsets)
+                disasm_feature_count = sum(dis_feats.values())
+                for k, v in dis_feats.items():
+                    function_match_counts[k] += v
+            if args.detect_flags_msc51:
+                byte_feats = _extract_byte_ngram_features(raw_bytes)
+                for k, v in byte_feats.items():
+                    function_match_counts[k] += v
+                raw_entries = _find_candidate_function_offsets_raw(
+                    raw_bytes,
+                    limit=max(64, args.per_function_flags_top * 12),
+                )
+                function_flag_report = _build_per_function_flag_report(
+                    image_bytes=image_bytes,
+                    raw_bytes=raw_bytes,
+                    function_entries=raw_entries,
+                    flag_profiles=flag_profiles,
+                    limit=max(1, args.per_function_flags_top),
+                )
+
+            runtime_bonuses = _runtime_bonus_map(ms_runtime_hits)
+            for compiler_name in list(weighted_compiler_scores.keys()):
+                lower = compiler_name.lower()
+                for bonus_key, bonus_value in runtime_bonuses.items():
+                    key_lower = bonus_key.lower()
+                    if key_lower in lower or lower in key_lower:
+                        weighted_compiler_scores[compiler_name] += bonus_value
+            for bonus_key, bonus_value in runtime_bonuses.items():
+                if bonus_key not in weighted_compiler_scores:
+                    weighted_compiler_scores[bonus_key] = bonus_value
+
+            _store_cached_result(
+                result_cache_path,
+                {
+                    "matched_specs": matched_specs,
+                    "use_batch": use_batch,
+                    "ms_runtime_hits": ms_runtime_hits,
+                    "linker_family": linker_family,
+                    "compiler_match_counts": compiler_match_counts.most_common(),
+                    "weighted_compiler_scores": weighted_compiler_scores.most_common(),
+                    "function_match_counts": function_match_counts.most_common(),
+                    "function_compilers": {k: sorted(v) for k, v in function_compilers.items()},
+                    "disasm_feature_count": int(disasm_feature_count),
+                    "disasm_backend_ok": bool(disasm_backend_ok),
+                    "function_flag_report": function_flag_report,
+                },
+            )
+        if cached_payload is not None:
+            ms_runtime_hits = list(cached_payload.get("ms_runtime_hits", []))
+            disasm_feature_count = int(cached_payload.get("disasm_feature_count", 0))
+            disasm_backend_ok = bool(cached_payload.get("disasm_backend_ok", False))
+
+        alias_path = args.compiler_aliases_json if args.compiler_aliases_json.is_absolute() else (REPO_ROOT / args.compiler_aliases_json)
+        aliases = _load_aliases(alias_path)
+        merged_weighted = _merge_counter_by_canonical(Counter(weighted_compiler_scores), aliases)
+        merged_counts = _merge_counter_by_canonical(compiler_match_counts, aliases)
+        flag_scores = _score_flag_combos(function_match_counts, flag_profiles) if args.detect_flags_msc51 else []
+
+        if args.compilers_only:
+            print("Summary:")
+            if ms_runtime_hits:
+                print(f"  Runtime string match: {', '.join(ms_runtime_hits)}")
+            else:
+                print("  Runtime string match: none")
+            print(f"  Linker guess: {linker_family}")
+            print("Method 1: Runtime string detector")
+            print("  How: search raw binary bytes for known MS runtime banner strings.")
+            if ms_runtime_hits:
+                for hit in ms_runtime_hits:
+                    print(f"  Result: {hit}")
+            else:
+                print("  Result: no known runtime banner found")
+
+            print("Method 2: Function signature matching (PAT)")
+            print("  How: match code byte signatures from catalog; keep unique hits.")
+            for compiler_name, count in merged_counts.most_common(10):
+                print(f"  {count:6.0f}  {compiler_name}")
+
+            print("Method 3: Linker family heuristic")
+            print("  How: inspect raw MZ header/layout traits.")
+            print(f"  Result: {linker_family}")
+            if args.detect_flags_msc51:
+                print("Method 4: MS C 5.1 flag combo detector")
+                print("  How: compare PAT-matched helper/function tokens to deep dataset combo profiles.")
+                if flag_scores:
+                    conf, gap = _flag_combo_confidence(flag_scores)
+                    set_votes = _aggregate_flag_sets(function_flag_report) if function_flag_report else []
+                    vconf, vdom = _vote_confidence(set_votes) if set_votes else ("none", 0.0)
+                    final_conf = _final_confidence(conf, vconf, vdom) if set_votes else conf
+                    if set_votes:
+                        print(f"  Confidence: {final_conf} (vote={vconf}, global={conf})")
+                        print(f"  Function-vote dominance: {vdom:.3f}; global top1-top2 gap={gap:.3f}")
+                    else:
+                        print(f"  Confidence: {conf} (top1-top2 gap={gap:.3f})")
+                    print(
+                        f"  Features: tokens={sum(function_match_counts.values())}, "
+                        f"disasm_features={disasm_feature_count}, capstone={'ok' if disasm_backend_ok else 'missing'}"
+                    )
+                    if final_conf == "low":
+                        print("  Result: not reliable for this binary (weak separation).")
+                    elif conf == "low" and vconf in {"medium", "high"}:
+                        print("  Result: mixed-binary reliable by function votes; global combo remains ambiguous.")
+                    else:
+                        for combo, score in flag_scores[:10]:
+                            print(f"  {score:7.3f}  {combo}")
+                    vote_flag_support = _aggregate_flag_support(function_flag_report) if function_flag_report else []
+                    marg = vote_flag_support or _flag_marginals(flag_scores, top_k=32)
+                    if marg:
+                        print("  Flag likelihoods (function-vote model):")
+                        for tok, prob in marg[:10]:
+                            print(f"    {prob:0.3f}  {tok}")
+                        if vote_flag_support:
+                            core = [flag for flag, prob in vote_flag_support if prob >= 0.75]
+                            if core:
+                                print(f"  Core flags: {_pretty_combo_for_output(_normalize_combo_equivalences(' '.join(core)))}")
+                            partial_flags: list[tuple[str, float]] = []
+                            for flag, _ in vote_flag_support:
+                                share = _flag_presence_share(function_flag_report, flag, threshold=0.55)
+                                if 0.10 <= share <= 0.90:
+                                    partial_flags.append((flag, share))
+                            if partial_flags:
+                                print("  Partial flag evidence (mixed across matched non-library functions):")
+                                for flag, share in partial_flags[:8]:
+                                    print(f"    {flag:>4}  {share*100.0:5.1f}%")
+                    if function_flag_report:
+                        print("  Top marginal flag sets by function count:")
+                        for combo, cnt in set_votes[: max(1, args.per_function_flags_top)]:
+                            print(f"    {cnt:6.2f}  {_pretty_combo_for_output(combo)}")
+                        print(f"  Per-function flag hints (top {max(1, args.per_function_flags_top)}):")
+                        shown = 0
+                        for row in function_flag_report:
+                            if shown >= max(1, args.per_function_flags_top):
+                                break
+                            flags_txt = ", ".join(f"{tok}:{prob:.2f}" for tok, prob in row.get("top_flags", []))
+                            print(
+                                f"    {row.get('function')} @0x{int(row.get('offset', 0)):x} "
+                                f"[{row.get('confidence')}, gap={float(row.get('gap', 0.0)):.3f}] "
+                                f"{_format_top_combo_flags([(_pretty_combo_for_output(str(c)), s) for c, s in list(row.get('top_combos', []))])} ; flags: {flags_txt}"
+                            )
+                            shown += 1
+                    if args.rc_json:
+                        rc_path = args.rc_json if args.rc_json.is_absolute() else (REPO_ROOT / args.rc_json)
+                        rc_entries = _load_rc_extract_functions(rc_path)
+                        if rc_entries:
+                            shift, hits, mapped = _map_flags_to_rc_functions(function_flag_report, rc_entries, raw_bytes=raw_bytes)
+                            if shift is not None and mapped:
+                                print("Method 5: RC function map (precise names + shift)")
+                                print("  How: load RC extract list, auto-find address shift, map per-function flag hints by begin offset.")
+                                print(f"  Shift: {shift:+#x} ; mapped_functions={len(mapped)} ; shift_hits={hits}")
+                                print("  Mapped functions:")
+                                for row in mapped:
+                                    print(
+                                        f"    {row['rc_name']} @rc 0x{int(row['rc_begin']):x} "
+                                        f"(local 0x{int(row['local_offset']):x}) [{row['confidence']}, gap={row['gap']:.3f}] "
+                                        f"{row['best_combo']}"
+                                    )
+                            else:
+                                print("Method 5: RC function map (precise names + shift)")
+                                print("  Result: no reliable mapping from current function offsets to RC extract list.")
+                else:
+                    print("  Result: no profile match (or no profiles loaded)")
+            if args.verbose:
+                print("Raw probable compilers weighted (debug):")
+                for compiler_name, score in weighted_compiler_scores.most_common(10):
+                    print(f"  {score:7.2f}  {compiler_name}")
+        if not args.compilers_only:
+            print(f"binary: {binary_path}")
+            print(f"catalog: {catalog_path}")
+            print(f"matched_unique_specs: {matched_specs}")
+            matcher_name = "batch_hyperscan" if _hyperscan is not None else "parallel_fallback"
+            print(f"matcher: {matcher_name if use_batch else 'per_spec_fallback'}")
+            if use_batch:
+                print(f"jobs: {max(1, args.jobs)}")
+            if ms_runtime_hits:
+                print(f"ms_runtime_detector: {', '.join(ms_runtime_hits)}")
+            else:
+                print("ms_runtime_detector: none")
+            print(f"linker_detector: {linker_family}")
+            print()
+            print("probable_compilers_weighted:")
             for compiler_name, score in weighted_compiler_scores.most_common(10):
                 print(f"  {score:7.2f}  {compiler_name}")
-    if not args.compilers_only:
-        print(f"binary: {binary_path}")
-        print(f"catalog: {catalog_path}")
-        print(f"matched_unique_specs: {matched_specs}")
-        matcher_name = "batch_hyperscan" if _hyperscan is not None else "parallel_fallback"
-        print(f"matcher: {matcher_name if use_batch else 'per_spec_fallback'}")
-        if use_batch:
-            print(f"jobs: {max(1, args.jobs)}")
-        if ms_runtime_hits:
-            print(f"ms_runtime_detector: {', '.join(ms_runtime_hits)}")
-        else:
-            print("ms_runtime_detector: none")
-        print(f"linker_detector: {linker_family}")
-        print()
-        print("probable_compilers_weighted:")
-        for compiler_name, score in weighted_compiler_scores.most_common(10):
-            print(f"  {score:7.2f}  {compiler_name}")
-        print()
-        print("likely_compiler_versions:")
-    if (not args.compilers_only) or args.verbose:
-        for compiler_name, count in compiler_match_counts.most_common():
-            print(f"  {count:6d}  {compiler_name}")
-    if args.compilers_only and args.verbose:
-        print("interpreted_match_counts:")
-        for compiler_name, count in merged_counts.most_common(10):
-            print(f"  {count:6.0f}  {compiler_name}")
-    if not args.compilers_only:
-        print()
-        print(f"top_functions (top={args.top}):")
-        for function_name, count in function_match_counts.most_common(args.top):
-            compilers = ", ".join(sorted(function_compilers[function_name]))
-            print(f"  {count:6d}  {function_name}  [{compilers}]")
-    return 0
+            print()
+            print("likely_compiler_versions:")
+        if (not args.compilers_only) or args.verbose:
+            for compiler_name, count in compiler_match_counts.most_common():
+                print(f"  {count:6d}  {compiler_name}")
+        if args.compilers_only and args.verbose:
+            print("interpreted_match_counts:")
+            for compiler_name, count in merged_counts.most_common(10):
+                print(f"  {count:6.0f}  {compiler_name}")
+        if not args.compilers_only:
+            print()
+            print(f"top_functions (top={args.top}):")
+            for function_name, count in function_match_counts.most_common(args.top):
+                compilers = ", ".join(sorted(function_compilers[function_name]))
+                print(f"  {count:6d}  {function_name}  [{compilers}]")
+        return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+    if __name__ == "__main__":
+        raise SystemExit(main())
+
+    return _impl()

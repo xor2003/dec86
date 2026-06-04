@@ -81,88 +81,95 @@ def _rewrite_linear_condition(node, state, *, structured_codegen_node, same_c_ex
 
 
 def _match_self_delta_assignment(stmt, state):
-    if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] low-delta reject: stmt=%s", _node_summary_8616(stmt))
-        return None
-    lhs = stmt.lhs
-    rhs = state.resolve_known_copy_alias_expr(stmt.rhs)
-    base_expr, delta = state.extract_linear_delta(rhs)
-    if base_expr is None:
+    def _impl():
+        if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
+            if _linear_recurrence_debug_enabled():
+                log.warning("[linear-recurrence] low-delta reject: stmt=%s", _node_summary_8616(stmt))
+            return None
+        lhs = stmt.lhs
+        rhs = state.resolve_known_copy_alias_expr(stmt.rhs)
+        base_expr, delta = state.extract_linear_delta(rhs)
+        if base_expr is None:
+            if _linear_recurrence_debug_enabled():
+                log.warning(
+                    "[linear-recurrence] low-delta reject: no linear delta lhs=%s rhs=%s",
+                    _node_summary_8616(lhs),
+                    _node_summary_8616(rhs),
+                )
+            return None
+        if not state.same_c_expression(state.unwrap_c_casts(base_expr), state.unwrap_c_casts(lhs)):
+            if _linear_recurrence_debug_enabled():
+                log.warning(
+                    "[linear-recurrence] low-delta reject: base mismatch lhs=%s base=%s delta=%r",
+                    _node_summary_8616(lhs),
+                    _node_summary_8616(base_expr),
+                    delta,
+                )
+            return None
+        if delta not in {1, -1}:
+            if _linear_recurrence_debug_enabled():
+                log.warning(
+                    "[linear-recurrence] low-delta reject: unsupported delta lhs=%s delta=%r rhs=%s",
+                    _node_summary_8616(lhs),
+                    delta,
+                    _node_summary_8616(rhs),
+                )
+            return None
         if _linear_recurrence_debug_enabled():
             log.warning(
-                "[linear-recurrence] low-delta reject: no linear delta lhs=%s rhs=%s",
-                _node_summary_8616(lhs),
-                _node_summary_8616(rhs),
-            )
-        return None
-    if not state.same_c_expression(state.unwrap_c_casts(base_expr), state.unwrap_c_casts(lhs)):
-        if _linear_recurrence_debug_enabled():
-            log.warning(
-                "[linear-recurrence] low-delta reject: base mismatch lhs=%s base=%s delta=%r",
+                "[linear-recurrence] low-delta match lhs=%s base=%s delta=%r",
                 _node_summary_8616(lhs),
                 _node_summary_8616(base_expr),
                 delta,
             )
-        return None
-    if delta not in {1, -1}:
-        if _linear_recurrence_debug_enabled():
-            log.warning(
-                "[linear-recurrence] low-delta reject: unsupported delta lhs=%s delta=%r rhs=%s",
-                _node_summary_8616(lhs),
-                delta,
-                _node_summary_8616(rhs),
-            )
-        return None
-    if _linear_recurrence_debug_enabled():
-        log.warning(
-            "[linear-recurrence] low-delta match lhs=%s base=%s delta=%r",
-            _node_summary_8616(lhs),
-            _node_summary_8616(base_expr),
-            delta,
-        )
-    return delta
+        return delta
+
+    return _impl()
 
 
 def _match_byte_carrier_high_update(expr, state):
-    expr = state.unwrap_c_casts(expr)
-    if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] high-carry reject: expr=%s", _node_summary_8616(expr))
-        return None
-    shift = state.c_constant_value(state.unwrap_c_casts(expr.rhs))
-    if shift != 8:
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] high-carry reject: shift=%r expr=%s", shift, _node_summary_8616(expr))
-        return None
-    inner = state.unwrap_c_casts(expr.lhs)
-    if not isinstance(inner, structured_c.CBinaryOp) or inner.op not in {"Add", "Sub"}:
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] high-carry reject: inner=%s", _node_summary_8616(inner))
-        return None
-    for maybe_low, maybe_const in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
-        const = state.c_constant_value(state.unwrap_c_casts(maybe_const))
-        if const != 1:
-            continue
-        low_expr = state.unwrap_c_casts(maybe_low)
-        duplicate_word_base = state.match_duplicate_word_base_expr(
-            state.resolve_known_copy_alias_expr(low_expr),
-            state.resolve_known_copy_alias_expr,
-        )
-        if duplicate_word_base is not None:
-            low_expr = state.unwrap_c_casts(duplicate_word_base)
-        if isinstance(low_expr, structured_c.CVariable):
+    def _impl():
+        nonlocal expr
+        expr = state.unwrap_c_casts(expr)
+        if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
             if _linear_recurrence_debug_enabled():
-                log.warning(
-                    "[linear-recurrence] high-carry match low=%s delta=%r expr=%s",
-                    _node_summary_8616(low_expr),
-                    (1 if inner.op == "Add" else -1),
-                    _node_summary_8616(expr),
-                )
-            return low_expr, (1 if inner.op == "Add" else -1)
-    if _linear_recurrence_debug_enabled():
-        log.warning("[linear-recurrence] high-carry reject: no variable low expr inner=%s", _node_summary_8616(inner))
-    return None
+                log.warning("[linear-recurrence] high-carry reject: expr=%s", _node_summary_8616(expr))
+            return None
+        shift = state.c_constant_value(state.unwrap_c_casts(expr.rhs))
+        if shift != 8:
+            if _linear_recurrence_debug_enabled():
+                log.warning("[linear-recurrence] high-carry reject: shift=%r expr=%s", shift, _node_summary_8616(expr))
+            return None
+        inner = state.unwrap_c_casts(expr.lhs)
+        if not isinstance(inner, structured_c.CBinaryOp) or inner.op not in {"Add", "Sub"}:
+            if _linear_recurrence_debug_enabled():
+                log.warning("[linear-recurrence] high-carry reject: inner=%s", _node_summary_8616(inner))
+            return None
+        for maybe_low, maybe_const in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+            const = state.c_constant_value(state.unwrap_c_casts(maybe_const))
+            if const != 1:
+                continue
+            low_expr = state.unwrap_c_casts(maybe_low)
+            duplicate_word_base = state.match_duplicate_word_base_expr(
+                state.resolve_known_copy_alias_expr(low_expr),
+                state.resolve_known_copy_alias_expr,
+            )
+            if duplicate_word_base is not None:
+                low_expr = state.unwrap_c_casts(duplicate_word_base)
+            if isinstance(low_expr, structured_c.CVariable):
+                if _linear_recurrence_debug_enabled():
+                    log.warning(
+                        "[linear-recurrence] high-carry match low=%s delta=%r expr=%s",
+                        _node_summary_8616(low_expr),
+                        (1 if inner.op == "Add" else -1),
+                        _node_summary_8616(expr),
+                    )
+                return low_expr, (1 if inner.op == "Add" else -1)
+        if _linear_recurrence_debug_enabled():
+            log.warning("[linear-recurrence] high-carry reject: no variable low expr inner=%s", _node_summary_8616(inner))
+        return None
+
+    return _impl()
 
 
 def _collect_body_assignments_8616(node) -> list[structured_c.CAssignment]:
@@ -199,148 +206,171 @@ def _find_low_delta_stmt_8616(assignments, state, low_carrier, candidate_delta):
 
 
 def _remove_statement_from_tree_8616(node, target_stmt) -> bool:
-    if node is None or target_stmt is None:
-        return False
-    removed = False
-    if isinstance(node, structured_c.CStatements):
-        new_statements = []
-        for stmt in getattr(node, "statements", ()) or ():
-            if stmt is target_stmt:
-                removed = True
+    def _impl():
+        if node is None or target_stmt is None:
+            return False
+        removed = False
+        if isinstance(node, structured_c.CStatements):
+            new_statements = []
+            for stmt in getattr(node, "statements", ()) or ():
+                if stmt is target_stmt:
+                    removed = True
+                    continue
+                child_removed = _remove_statement_from_tree_8616(stmt, target_stmt)
+                removed = removed or child_removed
+                new_statements.append(stmt)
+            if removed:
+                node.statements = new_statements
+            return removed
+        for attr in ("body", "else_node"):
+            child = getattr(node, attr, None)
+            if child is None:
                 continue
-            child_removed = _remove_statement_from_tree_8616(stmt, target_stmt)
+            child_removed = _remove_statement_from_tree_8616(child, target_stmt)
             removed = removed or child_removed
-            new_statements.append(stmt)
-        if removed:
-            node.statements = new_statements
         return removed
-    for attr in ("body", "else_node"):
-        child = getattr(node, attr, None)
-        if child is None:
-            continue
-        child_removed = _remove_statement_from_tree_8616(child, target_stmt)
-        removed = removed or child_removed
-    return removed
+
+    return _impl()
 
 
 def _rebind_for_loop_byte_carrier_recurrence(loop, state, *, rules) -> bool:
-    _debug_loop_structure_8616(loop)
-    init = getattr(loop, "initializer", None)
-    if init is None:
-        init = getattr(loop, "init", None)
-    iteration_attr = "iteration" if getattr(loop, "iteration", None) is not None else "iterator"
-    iteration = getattr(loop, iteration_attr, None)
-    body = getattr(loop, "body", None)
-    if not isinstance(init, structured_c.CAssignment):
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] reject loop: init not assignment")
-        return False
-    if not isinstance(init.lhs, structured_c.CVariable):
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] reject loop: init lhs not CVariable")
-        return False
-    if not state.is_materialized_stack_local(init.lhs):
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] reject loop: init lhs not materialized local: %r", init.lhs)
-        return False
-    if not isinstance(iteration, structured_c.CAssignment):
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] reject loop: iteration attr=%s value=%r", iteration_attr, iteration)
-        iteration = None
-    if not isinstance(body, structured_c.CStatements) or not getattr(body, "statements", None):
-        if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] reject loop: body=%r", body)
-        return False
-
-    iterator_local = init.lhs
-    body_assignments = _collect_body_assignments_8616(body)
-    if _linear_recurrence_debug_enabled():
-        log.warning("[linear-recurrence] body_assignment_count=%d", len(body_assignments))
-        for idx, stmt in enumerate(body_assignments):
-            log.warning("[linear-recurrence] assignment[%d]=%s", idx, _node_summary_8616(stmt))
-    candidate_delta = None
-    low_carrier = None
-    low_stmt = None
-
-    if isinstance(iteration, structured_c.CAssignment):
-        carry_base = state.match_duplicate_word_increment_shift_expr(
-            iteration.rhs,
-            state.resolve_known_copy_alias_expr,
-            state.codegen,
-        )
-        carry_rewrite = rules._carry_base_rewrite_plan(
-            carry_base,
-            expr_contains_dereference=state.expr_contains_dereference,
-            extract_linear_delta=state.extract_linear_delta,
-        )
-        if carry_rewrite is not None:
-            candidate_expr = state.resolve_known_copy_alias_expr(carry_rewrite["replacement"])
-            candidate_base, candidate_delta = state.extract_linear_delta(candidate_expr)
-            if candidate_base is None or candidate_delta not in {1, -1}:
-                state._record_recurrence_reason("ambiguous_delta")
-                return False
-            if not state.same_c_expression(state.unwrap_c_casts(candidate_base), state.unwrap_c_casts(iterator_local)):
-                state._record_recurrence_reason("not_materialized_local")
-                return False
-            low_stmt = _find_low_delta_stmt_8616(body_assignments, state, iterator_local, candidate_delta)
-        else:
-            reduced = _match_byte_carrier_high_update(iteration.rhs, state)
-            if reduced is not None:
-                low_carrier, candidate_delta = reduced
-                low_stmt = _find_low_delta_stmt_8616(body_assignments, state, low_carrier, candidate_delta)
-
-    if low_stmt is None:
-        for idx, stmt in enumerate(body_assignments[:-1]):
-            reduced = _match_byte_carrier_high_update(stmt.rhs, state)
-            if reduced is None:
-                continue
-            maybe_low_carrier, maybe_delta = reduced
+    def _impl():
+        def _debug_reject(reason: str, *args) -> None:
             if _linear_recurrence_debug_enabled():
-                log.warning(
-                    "[linear-recurrence] high-carry candidate[%d] lhs=%s low=%s delta=%r",
-                    idx,
-                    _node_summary_8616(stmt.lhs),
-                    _node_summary_8616(maybe_low_carrier),
-                    maybe_delta,
-                )
-            maybe_low_stmt = _find_low_delta_stmt_8616(body_assignments[idx + 1 :], state, maybe_low_carrier, maybe_delta)
-            if maybe_low_stmt is None:
+                log.warning(f"[linear-recurrence] reject loop: {reason}", *args)
+
+        def _initial_loop_parts():
+            init_local = getattr(loop, "initializer", None) or getattr(loop, "init", None)
+            iteration_attr_local = "iteration" if getattr(loop, "iteration", None) is not None else "iterator"
+            iteration_local = getattr(loop, iteration_attr_local, None)
+            body_local = getattr(loop, "body", None)
+            return init_local, iteration_attr_local, iteration_local, body_local
+
+        def _valid_loop_inputs(init_local, iteration_local, iteration_attr_local, body_local) -> bool:
+            if not isinstance(init_local, structured_c.CAssignment):
+                _debug_reject("init not assignment")
+                return False
+            if not isinstance(init_local.lhs, structured_c.CVariable):
+                _debug_reject("init lhs not CVariable")
+                return False
+            if not state.is_materialized_stack_local(init_local.lhs):
+                _debug_reject("init lhs not materialized local: %r", init_local.lhs)
+                return False
+            if not isinstance(iteration_local, structured_c.CAssignment):
                 if _linear_recurrence_debug_enabled():
-                    log.warning("[linear-recurrence] candidate[%d] rejected: no matching low-delta stmt", idx)
-                continue
-            low_carrier = maybe_low_carrier
-            candidate_delta = maybe_delta
-            low_stmt = maybe_low_stmt
-            break
+                    log.warning("[linear-recurrence] reject loop: iteration attr=%s value=%r", iteration_attr_local, iteration_local)
+            if not isinstance(body_local, structured_c.CStatements) or not getattr(body_local, "statements", None):
+                _debug_reject("body=%r", body_local)
+                return False
+            return True
 
-    if candidate_delta not in {1, -1} or low_stmt is None:
-        state._record_recurrence_reason("no_carry_pattern")
-        return False
+        def _candidate_from_iteration(iteration_local, iterator_local, body_assignments):
+            if not isinstance(iteration_local, structured_c.CAssignment):
+                return None, None, None
+            carry_base = state.match_duplicate_word_increment_shift_expr(
+                iteration_local.rhs,
+                state.resolve_known_copy_alias_expr,
+                state.codegen,
+            )
+            carry_rewrite = rules._carry_base_rewrite_plan(
+                carry_base,
+                expr_contains_dereference=state.expr_contains_dereference,
+                extract_linear_delta=state.extract_linear_delta,
+            )
+            if carry_rewrite is not None:
+                candidate_expr = state.resolve_known_copy_alias_expr(carry_rewrite["replacement"])
+                candidate_base, candidate_delta_local = state.extract_linear_delta(candidate_expr)
+                if candidate_base is None or candidate_delta_local not in {1, -1}:
+                    state._record_recurrence_reason("ambiguous_delta")
+                    return None, None, False
+                if not state.same_c_expression(state.unwrap_c_casts(candidate_base), state.unwrap_c_casts(iterator_local)):
+                    state._record_recurrence_reason("not_materialized_local")
+                    return None, None, False
+                return iterator_local, candidate_delta_local, _find_low_delta_stmt_8616(
+                    body_assignments, state, iterator_local, candidate_delta_local
+                )
+            reduced = _match_byte_carrier_high_update(iteration_local.rhs, state)
+            if reduced is None:
+                return None, None, None
+            low_carrier_local, candidate_delta_local = reduced
+            return low_carrier_local, candidate_delta_local, _find_low_delta_stmt_8616(
+                body_assignments, state, low_carrier_local, candidate_delta_local
+            )
 
-    state._record_recurrence_candidate()
+        def _candidate_from_body_scan(body_assignments):
+            for idx, stmt in enumerate(body_assignments[:-1]):
+                reduced = _match_byte_carrier_high_update(stmt.rhs, state)
+                if reduced is None:
+                    continue
+                maybe_low_carrier, maybe_delta = reduced
+                if _linear_recurrence_debug_enabled():
+                    log.warning(
+                        "[linear-recurrence] high-carry candidate[%d] lhs=%s low=%s delta=%r",
+                        idx,
+                        _node_summary_8616(stmt.lhs),
+                        _node_summary_8616(maybe_low_carrier),
+                        maybe_delta,
+                    )
+                maybe_low_stmt = _find_low_delta_stmt_8616(body_assignments[idx + 1 :], state, maybe_low_carrier, maybe_delta)
+                if maybe_low_stmt is None:
+                    if _linear_recurrence_debug_enabled():
+                        log.warning("[linear-recurrence] candidate[%d] rejected: no matching low-delta stmt", idx)
+                    continue
+                return maybe_low_carrier, maybe_delta, maybe_low_stmt
+            return None, None, None
 
-    if low_carrier is not None and not state.same_c_expression(
-        state.unwrap_c_casts(low_stmt.lhs),
-        state.unwrap_c_casts(low_carrier),
-    ):
-        state._record_recurrence_reason("carrier_pair_mismatch")
-        return False
+        _debug_loop_structure_8616(loop)
+        init, iteration_attr, iteration, body = _initial_loop_parts()
+        if not _valid_loop_inputs(init, iteration, iteration_attr, body):
+            return False
 
-    setattr(
-        loop,
-        iteration_attr,
-        structured_c.CAssignment(
-        iterator_local,
-        state.build_linear_expr(iterator_local, candidate_delta),
-        codegen=state.codegen,
-        ),
-    )
-    removed_low_stmt = _remove_statement_from_tree_8616(body, low_stmt)
-    if _linear_recurrence_debug_enabled():
-        log.warning("[linear-recurrence] removed_low_stmt=%s", removed_low_stmt)
-    state.changed = True
-    state._record_recurrence_success()
-    return True
+        iterator_local = init.lhs
+        body_assignments = _collect_body_assignments_8616(body)
+        if _linear_recurrence_debug_enabled():
+            log.warning("[linear-recurrence] body_assignment_count=%d", len(body_assignments))
+            for idx, stmt in enumerate(body_assignments):
+                log.warning("[linear-recurrence] assignment[%d]=%s", idx, _node_summary_8616(stmt))
+        candidate_delta = None
+        low_carrier = None
+        low_stmt = None
+
+        low_carrier, candidate_delta, low_stmt = _candidate_from_iteration(iteration, iterator_local, body_assignments)
+        if low_stmt is False:
+            return False
+
+        if low_stmt is None:
+            low_carrier, candidate_delta, low_stmt = _candidate_from_body_scan(body_assignments)
+
+        if candidate_delta not in {1, -1} or low_stmt is None:
+            state._record_recurrence_reason("no_carry_pattern")
+            return False
+
+        state._record_recurrence_candidate()
+
+        if low_carrier is not None and not state.same_c_expression(
+            state.unwrap_c_casts(low_stmt.lhs),
+            state.unwrap_c_casts(low_carrier),
+        ):
+            state._record_recurrence_reason("carrier_pair_mismatch")
+            return False
+
+        setattr(
+            loop,
+            iteration_attr,
+            structured_c.CAssignment(
+            iterator_local,
+            state.build_linear_expr(iterator_local, candidate_delta),
+            codegen=state.codegen,
+            ),
+        )
+        removed_low_stmt = _remove_statement_from_tree_8616(body, low_stmt)
+        if _linear_recurrence_debug_enabled():
+            log.warning("[linear-recurrence] removed_low_stmt=%s", removed_low_stmt)
+        state.changed = True
+        state._record_recurrence_success()
+        return True
+
+    return _impl()
 
 
 def _coalesce_linear_recurrence_statements(

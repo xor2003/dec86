@@ -10,13 +10,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler.monkeytype_tools import (
+from inertia_decompiler.monkeytype_tools import (  # noqa: E402
     DEFAULT_STUB_MODULE_PREFIXES,
     MONKEYTYPE_DB_PATH,
     ensure_monkeytype_dirs,
     parse_list_modules_output,
     stub_path_for_module,
 )
+
 PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 
 
@@ -34,7 +35,7 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export MonkeyType stubs into .cache/monkeytype/stubs.")
     parser.add_argument(
         "--module-prefix",
@@ -42,34 +43,52 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="Module prefix to export. Can be repeated. Defaults to the repo prefixes.",
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def _resolve_modules(prefixes: tuple[str, ...]) -> tuple[str, ...]:
+    listed = _run("list-modules")
+    if listed.returncode:
+        raise SystemExit(listed.stderr.strip() or listed.stdout.strip() or "monkeytype list-modules failed")
+    return parse_list_modules_output(listed.stdout, prefixes=prefixes)
+
+
+def _export_stub(module_name: str) -> str | None:
+    completed = _run("stub", module_name)
+    if completed.returncode:
+        return f"{module_name}: {completed.stderr.strip() or completed.stdout.strip()}"
+    stub = completed.stdout
+    if not stub.strip():
+        return None
+    stub_path = stub_path_for_module(module_name)
+    stub_path.parent.mkdir(parents=True, exist_ok=True)
+    stub_path.write_text(stub, encoding="utf-8")
+    print(stub_path.relative_to(REPO_ROOT))
+    return None
+
+
+def _write_failures(failures: list[str]) -> None:
+    failures_path = REPO_ROOT / ".cache" / "monkeytype" / "stub_failures.txt"
+    failures_path.write_text("\n\n".join(failures) + "\n", encoding="utf-8")
+    print(".cache/monkeytype/stub_failures.txt")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
 
     ensure_monkeytype_dirs()
     if not MONKEYTYPE_DB_PATH.exists():
         raise SystemExit(f"MonkeyType DB not found: {MONKEYTYPE_DB_PATH}")
 
     prefixes = tuple(args.module_prefix) if args.module_prefix else DEFAULT_STUB_MODULE_PREFIXES
-    listed = _run("list-modules")
-    if listed.returncode:
-        raise SystemExit(listed.stderr.strip() or listed.stdout.strip() or "monkeytype list-modules failed")
-    modules = parse_list_modules_output(listed.stdout, prefixes=prefixes)
+    modules = _resolve_modules(prefixes)
     failures: list[str] = []
     for module_name in modules:
-        completed = _run("stub", module_name)
-        if completed.returncode:
-            failures.append(f"{module_name}: {completed.stderr.strip() or completed.stdout.strip()}")
-            continue
-        stub = completed.stdout
-        if not stub.strip():
-            continue
-        stub_path = stub_path_for_module(module_name)
-        stub_path.parent.mkdir(parents=True, exist_ok=True)
-        stub_path.write_text(stub, encoding="utf-8")
-        print(stub_path.relative_to(REPO_ROOT))
+        failure = _export_stub(module_name)
+        if failure is not None:
+            failures.append(failure)
     if failures:
-        failures_path = REPO_ROOT / ".cache" / "monkeytype" / "stub_failures.txt"
-        failures_path.write_text("\n\n".join(failures) + "\n", encoding="utf-8")
-        print(f".cache/monkeytype/stub_failures.txt")
+        _write_failures(failures)
     return 0
 
 

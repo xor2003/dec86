@@ -7,6 +7,8 @@ from pyvex.lifting import register
 from pyvex.lifting.util import GymratLifter, Instruction, JumpKind, ParseError
 from pyvex.lifting.util.vex_helper import Type
 
+from inertia_decompiler.runtime_support import AnalysisTimeout
+
 from .arch_86_16 import Arch86_16
 from .emulator import Emulator
 from .instr16 import Instr16
@@ -154,78 +156,99 @@ class Instruction_ANY(Instruction):
         return self.instr32
 
     def parse(self, bitstrm):
-        self.start = bitstrm.bytepos
-        raw = bytes(bitstrm[self.start * 8 : self.start * 8 + 15 * 8])
-        cs_prefix_len = 0
-        instr = list(self.arch.capstone.disasm(raw, self.addr, 1))
-        if not instr:
-            # Capstone rejects several LOCK-prefixed forms that the real 286 still
-            # executes, and also segment-override + LOCK combinations.
-            # Decode the underlying opcode for mnemonic discovery, but let our
-            # own parser consume the real prefix byte stream below.
-            for strip_len in range(1, min(4, len(raw))):
-                instr = list(self.arch.capstone.disasm(raw[strip_len:], self.addr + strip_len, 1))
-                if instr:
-                    cs_prefix_len = strip_len
-                    break
-        if not instr:
-            raise ParseError("Couldn't disassemble instruction")
-        self.cs = instr[0]
-        logger.debug("cs dis: %s %s", self.cs.mnemonic, self.cs.op_str)
-        self.name = self.cs.insn_name()
-        self.simple_semantics = self._match_simple_semantics()
-        if self.simple_semantics is not None:
-            bitstrm.bytepos = self.start + cs_prefix_len + self.cs.size
-            self.bitwidth = (cs_prefix_len + self.cs.size) * 8
-            self.is_mode32 = False
-            self.chsz_op = False
-            return {"x": "00000000"}
+        def _impl():
+            try:
+                self.start = bitstrm.bytepos
+                raw = bytes(bitstrm[self.start * 8 : self.start * 8 + 15 * 8])
+                cs_prefix_len = 0
+                try:
+                    instr = list(self.arch.capstone.disasm(raw, self.addr, 1))
+                except AnalysisTimeout as ex:
+                    raise ParseError("Instruction disassembly timed out") from ex
+                if not instr:
+                    # Capstone rejects several LOCK-prefixed forms that the real 286 still
+                    # executes, and also segment-override + LOCK combinations.
+                    # Decode the underlying opcode for mnemonic discovery, but let our
+                    # own parser consume the real prefix byte stream below.
+                    for strip_len in range(1, min(4, len(raw))):
+                        try:
+                            instr = list(self.arch.capstone.disasm(raw[strip_len:], self.addr + strip_len, 1))
+                        except AnalysisTimeout as ex:
+                            raise ParseError("Instruction disassembly timed out") from ex
+                        if instr:
+                            cs_prefix_len = strip_len
+                            break
+                if not instr:
+                    raise ParseError("Couldn't disassemble instruction")
+                self.cs = instr[0]
+                logger.debug("cs dis: %s %s", self.cs.mnemonic, self.cs.op_str)
+                self.name = self.cs.insn_name()
+                self.simple_semantics = self._match_simple_semantics()
+                if self.simple_semantics is not None:
+                    bitstrm.bytepos = self.start + cs_prefix_len + self.cs.size
+                    self.bitwidth = (cs_prefix_len + self.cs.size) * 8
+                    self.is_mode32 = False
+                    self.chsz_op = False
+                    return {"x": "00000000"}
 
-        self.is_mode32 = False  # emu.is_mode32()
-        prefix = self.instr32.parse_prefix() if self.is_mode32 else self.instr16.parse_prefix()
-        self.chsz_op = prefix & CHSZ_OP
-        chsz_ad = prefix & CHSZ_AD
+                self.is_mode32 = False  # emu.is_mode32()
+                prefix = self.instr32.parse_prefix() if self.is_mode32 else self.instr16.parse_prefix()
+                self.chsz_op = prefix & CHSZ_OP
+                chsz_ad = prefix & CHSZ_AD
 
-        if self.is_mode32 ^ bool(self.chsz_op):
-            instr32 = self._ensure_instr32()
-            instr32.set_chsz_ad(not (self.is_mode32 ^ bool(chsz_ad)))
-            instr32.parse()
-            # assert self.name == self.instr32.instrfuncs[self.instr32.instr.opcode].__name__.split('_')[0]
-        else:
-            self.instr16.set_chsz_ad(self.is_mode32 ^ bool(chsz_ad))
-            self.instr16.parse()
-            # assert self.name == self.instr16.instrfuncs[self.instr16.instr.opcode].__name__.split('_')[0]
-        self.bitwidth = (bitstrm.bytepos - self.start) * 8
-        return {"x": "00000000"}
+                if self.is_mode32 ^ bool(self.chsz_op):
+                    instr32 = self._ensure_instr32()
+                    instr32.set_chsz_ad(not (self.is_mode32 ^ bool(chsz_ad)))
+                    instr32.parse()
+                else:
+                    self.instr16.set_chsz_ad(self.is_mode32 ^ bool(chsz_ad))
+                    self.instr16.parse()
+                self.bitwidth = (bitstrm.bytepos - self.start) * 8
+                return {"x": "00000000"}
+            except AnalysisTimeout as ex:
+                raise ParseError("Instruction parse timed out") from ex
+
+        return _impl()
 
     def _match_simple_semantics(self):
         ops = getattr(self.cs, "operands", ())
-        if self.cs.mnemonic == "nop":
-            return ("nop",)
-        if self.cs.mnemonic == "ret":
-            if len(ops) == 1 and ops[0].type == 2:
-                return ("ret_imm16", ops[0].imm & 0xFFFF)
-            return ("ret",)
-        if self.cs.mnemonic == "leave":
-            return ("leave",)
-        if self.cs.mnemonic == "enter" and len(ops) == 2 and all(op.type == 2 for op in ops):
-            return ("enter", ops[0].imm & 0xFFFF, ops[1].imm & 0xFF)
-        if self.cs.mnemonic in {"push", "pop"} and len(ops) == 1:
-            reg_name = self._reg16_name(ops[0])
-            mem = self._bp_mem(ops[0])
-            if reg_name:
-                return (f"{self.cs.mnemonic}_reg16", reg_name)
-            if self.cs.mnemonic == "push" and ops[0].type == 2:
-                return ("push_imm16", ops[0].imm & 0xFFFF)
-            if self.cs.mnemonic == "push" and mem:
-                return ("push_mem16", mem)
-        if self.cs.mnemonic == "call" and len(ops) == 1 and ops[0].type == 2:
-            return ("call", ops[0].imm)
-        if self.cs.mnemonic in {"jmp", *self._SIMPLE_JCC_8616} and len(ops) == 1 and ops[0].type == 2:
-            return (self.cs.mnemonic, ops[0].imm)
+        unary = self._match_simple_unary_semantics_8616(ops)
+        if unary is not None:
+            return unary
         if len(ops) != 2:
             return None
+        return self._match_simple_binary_semantics_8616(ops)
 
+    def _match_simple_unary_semantics_8616(self, ops):
+        def _impl():
+            if self.cs.mnemonic == "nop":
+                return ("nop",)
+            if self.cs.mnemonic == "ret":
+                if len(ops) == 1 and ops[0].type == 2:
+                    return ("ret_imm16", ops[0].imm & 0xFFFF)
+                return ("ret",)
+            if self.cs.mnemonic == "leave":
+                return ("leave",)
+            if self.cs.mnemonic == "enter" and len(ops) == 2 and all(op.type == 2 for op in ops):
+                return ("enter", ops[0].imm & 0xFFFF, ops[1].imm & 0xFF)
+            if self.cs.mnemonic in {"push", "pop"} and len(ops) == 1:
+                reg_name = self._reg16_name(ops[0])
+                mem = self._bp_mem(ops[0])
+                if reg_name:
+                    return (f"{self.cs.mnemonic}_reg16", reg_name)
+                if self.cs.mnemonic == "push" and ops[0].type == 2:
+                    return ("push_imm16", ops[0].imm & 0xFFFF)
+                if self.cs.mnemonic == "push" and mem:
+                    return ("push_mem16", mem)
+            if self.cs.mnemonic == "call" and len(ops) == 1 and ops[0].type == 2:
+                return ("call", ops[0].imm)
+            if self.cs.mnemonic in {"jmp", *self._SIMPLE_JCC_8616} and len(ops) == 1 and ops[0].type == 2:
+                return (self.cs.mnemonic, ops[0].imm)
+            return None
+
+        return _impl()
+
+    def _match_simple_binary_semantics_8616(self, ops):
         dst, src = ops
         dst_reg = self._reg16_name(dst)
         src_reg = self._reg16_name(src)
@@ -239,47 +262,216 @@ class Instruction_ANY(Instruction):
         src_reg8 = self._reg8_name(src)
         dst_reg8 = self._reg8_name(dst)
 
-        if self.cs.mnemonic == "mov" and dst_reg and src_imm is not None:
-            return ("mov_reg_imm16", dst_reg, src_imm)
-        if self.cs.mnemonic == "mov" and dst_reg and src_reg:
-            return ("mov_reg_reg16", dst_reg, src_reg)
-        if self.cs.mnemonic == "mov" and dst_reg and src_mem:
-            return ("mov_reg_mem16", dst_reg, src_mem)
-        if self.cs.mnemonic == "mov" and dst_mem and src_reg:
-            return ("mov_mem_reg16", dst_mem, src_reg)
-        if self.cs.mnemonic == "mov" and dst_mem and src_imm is not None:
-            return ("mov_mem_imm16", dst_mem, src_imm)
-        if self.cs.mnemonic == "lea" and dst_reg and src_mem:
-            return ("lea_reg_bpdisp16", dst_reg, src_mem)
-        if self.cs.mnemonic == "cmp" and dst_reg:
-            if src_reg:
-                return (f"{self.cs.mnemonic}_reg_reg16", dst_reg, src_reg)
-            if src_mem:
-                return (f"{self.cs.mnemonic}_reg_mem16", dst_reg, src_mem)
-            if src_imm is not None:
-                return (f"{self.cs.mnemonic}_reg_imm16", dst_reg, src_imm)
-        if self.cs.mnemonic == "cmp" and dst_mem:
-            if src_reg:
-                return ("cmp_mem_reg16", dst_mem, src_reg)
-            if src_imm is not None:
-                return ("cmp_mem_imm16", dst_mem, src_imm)
-        if self.cs.mnemonic == "cmp" and dst_abs_mem is not None:
-            if src_imm is not None:
-                return ("cmp_abs_imm16", dst_abs_mem, src_imm)
-            if src_reg:
-                return ("cmp_abs_reg16", dst_abs_mem, src_reg)
-        if self.cs.mnemonic == "cmp" and dst_reg and src_abs_mem is not None:
-            return ("cmp_reg_abs16", dst_reg, src_abs_mem)
-        if self.cs.mnemonic == "cmp" and dst_abs_mem8 is not None:
-            if src_imm8 is not None:
-                return ("cmp_abs_imm8", dst_abs_mem8, src_imm8)
-            if src_reg8:
-                return ("cmp_abs_reg8", dst_abs_mem8, src_reg8)
-        if self.cs.mnemonic == "cmp" and dst_reg8 and dst_reg8 in self._REG8_NAMES:
-            src_abs_mem8 = self._direct_mem8(src)
-            if src_abs_mem8 is not None:
-                return ("cmp_reg_abs8", dst_reg8, src_abs_mem8)
+        mov_sem = self._match_mov_lea_binary_semantics_8616(dst_reg, src_imm, src_reg, src_mem, dst_mem)
+        if mov_sem is not None:
+            return mov_sem
+        cmp_sem = self._match_cmp_binary_semantics_8616(
+            dst_reg,
+            src_reg,
+            src_mem,
+            src_imm,
+            dst_mem,
+            dst_abs_mem,
+            src_abs_mem,
+            dst_abs_mem8,
+            src_imm8,
+            src_reg8,
+            dst_reg8,
+            src,
+        )
+        if cmp_sem is not None:
+            return cmp_sem
         return None
+
+    def _match_mov_lea_binary_semantics_8616(self, dst_reg, src_imm, src_reg, src_mem, dst_mem):
+        def _impl():
+            if self.cs.mnemonic == "mov" and dst_reg and src_imm is not None:
+                return ("mov_reg_imm16", dst_reg, src_imm)
+            if self.cs.mnemonic == "mov" and dst_reg and src_reg:
+                return ("mov_reg_reg16", dst_reg, src_reg)
+            if self.cs.mnemonic == "mov" and dst_reg and src_mem:
+                return ("mov_reg_mem16", dst_reg, src_mem)
+            if self.cs.mnemonic == "mov" and dst_mem and src_reg:
+                return ("mov_mem_reg16", dst_mem, src_reg)
+            if self.cs.mnemonic == "mov" and dst_mem and src_imm is not None:
+                return ("mov_mem_imm16", dst_mem, src_imm)
+            if self.cs.mnemonic == "lea" and dst_reg and src_mem:
+                return ("lea_reg_bpdisp16", dst_reg, src_mem)
+            return None
+
+        return _impl()
+
+    def _match_cmp_binary_semantics_8616(
+        self,
+        dst_reg,
+        src_reg,
+        src_mem,
+        src_imm,
+        dst_mem,
+        dst_abs_mem,
+        src_abs_mem,
+        dst_abs_mem8,
+        src_imm8,
+        src_reg8,
+        dst_reg8,
+        src,
+    ):
+        def _impl():
+            if self.cs.mnemonic != "cmp":
+                return None
+            if dst_reg:
+                if src_reg:
+                    return ("cmp_reg_reg16", dst_reg, src_reg)
+                if src_mem:
+                    return ("cmp_reg_mem16", dst_reg, src_mem)
+                if src_imm is not None:
+                    return ("cmp_reg_imm16", dst_reg, src_imm)
+                if src_abs_mem is not None:
+                    return ("cmp_reg_abs16", dst_reg, src_abs_mem)
+            if dst_mem:
+                if src_reg:
+                    return ("cmp_mem_reg16", dst_mem, src_reg)
+                if src_imm is not None:
+                    return ("cmp_mem_imm16", dst_mem, src_imm)
+            if dst_abs_mem is not None:
+                if src_imm is not None:
+                    return ("cmp_abs_imm16", dst_abs_mem, src_imm)
+                if src_reg:
+                    return ("cmp_abs_reg16", dst_abs_mem, src_reg)
+            if dst_abs_mem8 is not None:
+                if src_imm8 is not None:
+                    return ("cmp_abs_imm8", dst_abs_mem8, src_imm8)
+                if src_reg8:
+                    return ("cmp_abs_reg8", dst_abs_mem8, src_reg8)
+            if dst_reg8 and dst_reg8 in self._REG8_NAMES:
+                src_abs_mem8 = self._direct_mem8(src)
+                if src_abs_mem8 is not None:
+                    return ("cmp_reg_abs8", dst_reg8, src_abs_mem8)
+            return None
+
+        return _impl()
+
+    def _lift_simple_cmp_8616(self, kind: str):
+        def _impl():
+            if kind == "cmp_mem_reg16":
+                _, mem_spec, src_reg = self.simple_semantics
+                lhs_val = self._load_mem16(mem_spec)
+                rhs_val = self._get_reg16(src_reg)
+                self._record_cmp_condition_source(lhs_val, rhs_val)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_cmp_flags(lhs_val, rhs_val)
+                return True
+            if kind == "cmp_mem_imm16":
+                _, mem_spec, imm = self.simple_semantics
+                lhs_val = self._load_mem16(mem_spec)
+                rhs_val = self._const16(imm)
+                self._record_cmp_condition_source(lhs_val, rhs_val)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_cmp_flags(lhs_val, rhs_val)
+                return True
+            if kind == "cmp_abs_reg16":
+                _, offset, src_reg = self.simple_semantics
+                lhs_val = self._load_abs16(offset)
+                rhs_val = self._get_reg16(src_reg)
+                self._record_cmp_condition_source(lhs_val, rhs_val)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_cmp_flags(lhs_val, rhs_val)
+                return True
+            if kind == "cmp_abs_imm16":
+                _, offset, imm = self.simple_semantics
+                lhs_val = self._load_abs16(offset)
+                rhs_val = self._const16(imm)
+                self._record_cmp_condition_source(lhs_val, rhs_val)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_cmp_flags(lhs_val, rhs_val)
+                return True
+            if kind == "cmp_reg_abs16":
+                _, lhs_reg, offset = self.simple_semantics
+                lhs_val = self._get_reg16(lhs_reg)
+                rhs_val = self._load_abs16(offset)
+                self._record_cmp_condition_source(lhs_val, rhs_val)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_cmp_flags(lhs_val, rhs_val)
+                return True
+            if kind in {"cmp_reg_abs8", "cmp_abs_reg8", "cmp_abs_imm8"}:
+                if kind == "cmp_reg_abs8":
+                    _, dst_reg, offset = self.simple_semantics
+                    lhs_val = self.get(dst_reg, Type.int_8)
+                    rhs_val = self._load_abs8(offset)
+                elif kind == "cmp_abs_reg8":
+                    _, offset, src_reg = self.simple_semantics
+                    lhs_val = self._load_abs8(offset)
+                    rhs_val = self.get(src_reg, Type.int_8)
+                else:
+                    _, offset, imm = self.simple_semantics
+                    lhs_val = self._load_abs8(offset)
+                    rhs_val = self.constant(imm, Type.int_8)
+                self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_cmp_flags8(lhs_val, rhs_val)
+                return True
+            return False
+
+        return _impl()
+
+    def _lift_simple_jcc_8616(self, kind: str) -> bool:
+        def _impl():
+            if kind not in (self._SIMPLE_JCC_8616 | {"jmp"}):
+                return False
+            _, abs_target = self.simple_semantics
+            target = self._const16(abs_target)
+            if kind == "jmp":
+                self.jump(None, target, JumpKind.Boring)
+                return True
+            cond = self._direct_jcc_condition(kind)
+            if cond is not None:
+                self._emit_simple_jcc(cond, target)
+                return True
+            zf = self._flag_is_set(6)
+            cf = self._flag_is_set(0)
+            sf = self._flag_is_set(7)
+            of = self._flag_is_set(11)
+            nof = self._flag_is_clear(11)
+            nzf = self._flag_is_clear(6)
+            ncf = self._flag_is_clear(0)
+            if kind in JCC_EQ_MNEMONICS_8616:
+                cond = zf
+            elif kind in JCC_NE_MNEMONICS_8616:
+                cond = nzf
+            elif kind in JCC_SLE_MNEMONICS_8616:
+                cond = zf | (sf != of)
+            elif kind in JCC_SGT_MNEMONICS_8616:
+                cond = nzf & (sf == of)
+            elif kind in JCC_SLT_MNEMONICS_8616:
+                cond = sf != of
+            elif kind in JCC_SGE_MNEMONICS_8616:
+                cond = sf == of
+            elif kind in JCC_ULT_MNEMONICS_8616:
+                cond = cf
+            elif kind in JCC_UGE_MNEMONICS_8616:
+                cond = ncf
+            elif kind in JCC_ULE_MNEMONICS_8616:
+                cond = cf | zf
+            elif kind in JCC_UGT_MNEMONICS_8616:
+                cond = ncf & nzf
+            elif kind == "jo":
+                cond = of
+            elif kind == "jno":
+                cond = nof
+            elif kind == "js":
+                cond = sf
+            elif kind == "jns":
+                cond = ~sf
+            elif kind in {"jp", "jpe"}:
+                cond = self._flag_is_set(2)
+            elif kind in {"jnp", "jpo"}:
+                cond = ~self._flag_is_set(2)
+            else:
+                raise NotImplementedError(kind)
+            self._emit_simple_jcc(cond, target)
+            return True
+
+        return _impl()
 
     def _reg8_name(self, operand):
         if operand.type != 1 or getattr(operand, "size", None) != 1:
@@ -555,41 +747,44 @@ class Instruction_ANY(Instruction):
         self.put(result, dst_reg)
 
     def _cmp_operands_from_semantics(self, semantics):
-        kind = semantics[0]
-        if kind == "cmp_reg_reg16":
-            _, lhs_reg, rhs_reg = semantics
-            return self._get_reg16(lhs_reg), self._get_reg16(rhs_reg)
-        if kind == "cmp_reg_imm16":
-            _, lhs_reg, imm = semantics
-            return self._get_reg16(lhs_reg), self._const16(imm)
-        if kind == "cmp_reg_mem16":
-            _, lhs_reg, mem_spec = semantics
-            return self._get_reg16(lhs_reg), self._load_mem16(mem_spec)
-        if kind == "cmp_reg_abs16":
-            _, lhs_reg, offset = semantics
-            return self._get_reg16(lhs_reg), self._load_abs16(offset)
-        if kind == "cmp_mem_reg16":
-            _, mem_spec, rhs_reg = semantics
-            return self._load_mem16(mem_spec), self._get_reg16(rhs_reg)
-        if kind == "cmp_mem_imm16":
-            _, mem_spec, imm = semantics
-            return self._load_mem16(mem_spec), self._const16(imm)
-        if kind == "cmp_abs_reg16":
-            _, offset, rhs_reg = semantics
-            return self._load_abs16(offset), self._get_reg16(rhs_reg)
-        if kind == "cmp_abs_imm16":
-            _, offset, imm = semantics
-            return self._load_abs16(offset), self._const16(imm)
-        if kind == "cmp_reg_abs8":
-            _, lhs_reg, offset = semantics
-            return self.get(lhs_reg, Type.int_8), self._load_abs8(offset)
-        if kind == "cmp_abs_reg8":
-            _, offset, rhs_reg = semantics
-            return self._load_abs8(offset), self.get(rhs_reg, Type.int_8)
-        if kind == "cmp_abs_imm8":
-            _, offset, imm = semantics
-            return self._load_abs8(offset), self.constant(imm, Type.int_8)
-        return None
+        def _impl():
+            kind = semantics[0]
+            if kind == "cmp_reg_reg16":
+                _, lhs_reg, rhs_reg = semantics
+                return self._get_reg16(lhs_reg), self._get_reg16(rhs_reg)
+            if kind == "cmp_reg_imm16":
+                _, lhs_reg, imm = semantics
+                return self._get_reg16(lhs_reg), self._const16(imm)
+            if kind == "cmp_reg_mem16":
+                _, lhs_reg, mem_spec = semantics
+                return self._get_reg16(lhs_reg), self._load_mem16(mem_spec)
+            if kind == "cmp_reg_abs16":
+                _, lhs_reg, offset = semantics
+                return self._get_reg16(lhs_reg), self._load_abs16(offset)
+            if kind == "cmp_mem_reg16":
+                _, mem_spec, rhs_reg = semantics
+                return self._load_mem16(mem_spec), self._get_reg16(rhs_reg)
+            if kind == "cmp_mem_imm16":
+                _, mem_spec, imm = semantics
+                return self._load_mem16(mem_spec), self._const16(imm)
+            if kind == "cmp_abs_reg16":
+                _, offset, rhs_reg = semantics
+                return self._load_abs16(offset), self._get_reg16(rhs_reg)
+            if kind == "cmp_abs_imm16":
+                _, offset, imm = semantics
+                return self._load_abs16(offset), self._const16(imm)
+            if kind == "cmp_reg_abs8":
+                _, lhs_reg, offset = semantics
+                return self.get(lhs_reg, Type.int_8), self._load_abs8(offset)
+            if kind == "cmp_abs_reg8":
+                _, offset, rhs_reg = semantics
+                return self._load_abs8(offset), self.get(rhs_reg, Type.int_8)
+            if kind == "cmp_abs_imm8":
+                _, offset, imm = semantics
+                return self._load_abs8(offset), self.constant(imm, Type.int_8)
+            return None
+
+        return _impl()
 
     def _next_instruction_is_simple_jcc(self):
         if not getattr(self, "_future_instructions", None):
@@ -601,51 +796,54 @@ class Instruction_ANY(Instruction):
         return nxt_semantics[0] in self._SIMPLE_JCC_8616
 
     def _direct_jcc_condition(self, kind):
-        if not getattr(self, "_past_instructions", None):
-            return None
-        prev = self._past_instructions[-1]
-        prev_emu = getattr(prev, "emu", None)
-        last_condition = getattr(prev_emu, "get_last_condition", lambda: None)()
+        def _impl():
+            if not getattr(self, "_past_instructions", None):
+                return None
+            prev = self._past_instructions[-1]
+            prev_emu = getattr(prev, "emu", None)
+            last_condition = getattr(prev_emu, "get_last_condition", lambda: None)()
 
-        def _finish(result):
-            if isinstance(last_condition, IRCondition) and prev_emu is not None:
-                with contextlib.suppress(Exception):
-                    prev_emu.clear_last_condition()
-            return result
+            def _finish(result):
+                if isinstance(last_condition, IRCondition) and prev_emu is not None:
+                    with contextlib.suppress(Exception):
+                        prev_emu.clear_last_condition()
+                return result
 
-        if isinstance(last_condition, IRCondition):
-            branch_cond = _direct_jcc_condition_from_last_condition_8616(self, kind, last_condition)
-            if branch_cond is not None:
-                return _finish(branch_cond)
-        prev_semantics = getattr(prev, "simple_semantics", None)
-        if prev_semantics is None:
-            return None
-        operands = self._cmp_operands_from_semantics(prev_semantics)
-        if operands is None:
-            return None
-        lhs, rhs = operands
+            if isinstance(last_condition, IRCondition):
+                branch_cond = _direct_jcc_condition_from_last_condition_8616(self, kind, last_condition)
+                if branch_cond is not None:
+                    return _finish(branch_cond)
+            prev_semantics = getattr(prev, "simple_semantics", None)
+            if prev_semantics is None:
+                return None
+            operands = self._cmp_operands_from_semantics(prev_semantics)
+            if operands is None:
+                return None
+            lhs, rhs = operands
 
-        if kind in JCC_EQ_MNEMONICS_8616:
-            return _finish(lhs == rhs)
-        if kind in JCC_NE_MNEMONICS_8616:
-            return _finish(lhs != rhs)
-        if kind in JCC_SLE_MNEMONICS_8616:
-            return _finish(lhs.signed <= rhs.signed)
-        if kind in JCC_SGT_MNEMONICS_8616:
-            return _finish(lhs.signed > rhs.signed)
-        if kind in JCC_SLT_MNEMONICS_8616:
-            return _finish(lhs.signed < rhs.signed)
-        if kind in JCC_SGE_MNEMONICS_8616:
-            return _finish(lhs.signed >= rhs.signed)
-        if kind in JCC_ULT_MNEMONICS_8616:
-            return _finish(lhs < rhs)
-        if kind in JCC_UGE_MNEMONICS_8616:
-            return _finish(lhs >= rhs)
-        if kind in JCC_ULE_MNEMONICS_8616:
-            return _finish(lhs <= rhs)
-        if kind in JCC_UGT_MNEMONICS_8616:
-            return _finish(lhs > rhs)
-        return None
+            if kind in JCC_EQ_MNEMONICS_8616:
+                return _finish(lhs == rhs)
+            if kind in JCC_NE_MNEMONICS_8616:
+                return _finish(lhs != rhs)
+            if kind in JCC_SLE_MNEMONICS_8616:
+                return _finish(lhs.signed <= rhs.signed)
+            if kind in JCC_SGT_MNEMONICS_8616:
+                return _finish(lhs.signed > rhs.signed)
+            if kind in JCC_SLT_MNEMONICS_8616:
+                return _finish(lhs.signed < rhs.signed)
+            if kind in JCC_SGE_MNEMONICS_8616:
+                return _finish(lhs.signed >= rhs.signed)
+            if kind in JCC_ULT_MNEMONICS_8616:
+                return _finish(lhs < rhs)
+            if kind in JCC_UGE_MNEMONICS_8616:
+                return _finish(lhs >= rhs)
+            if kind in JCC_ULE_MNEMONICS_8616:
+                return _finish(lhs <= rhs)
+            if kind in JCC_UGT_MNEMONICS_8616:
+                return _finish(lhs > rhs)
+            return None
+
+        return _impl()
 
     def _record_cmp_condition_source(self, lhs, rhs, *, width_bits: int = 16) -> None:
         """Record CMP operands on the emulator for downstream JCC consumption."""
@@ -729,283 +927,175 @@ class Instruction_ANY(Instruction):
         cache[block_addr].append(cond)
 
     def _lift_simple(self):
-        kind = self.simple_semantics[0]
-        if kind == "nop":
-            return
-        if kind == "push_reg16":
-            _, reg_name = self.simple_semantics
-            value = self._get_reg16(reg_name)
-            sp = self._get_reg16("sp") - self._const16(2)
-            self.put(sp, "sp")
-            if reg_name == "sp":
-                value = sp + self._const16(2)
-            self._stack_store16(sp, value)
-            return
-        if kind == "push_imm16":
-            _, imm = self.simple_semantics
-            sp = self._get_reg16("sp") - self._const16(2)
-            self.put(sp, "sp")
-            self._stack_store16(sp, self._const16(imm))
-            return
-        if kind == "push_mem16":
-            _, mem_spec = self.simple_semantics
-            sp = self._get_reg16("sp") - self._const16(2)
-            self.put(sp, "sp")
-            self._stack_store16(sp, self._load_mem16(mem_spec))
-            return
-        if kind == "pop_reg16":
-            _, reg_name = self.simple_semantics
-            sp = self._get_reg16("sp")
-            value = self._stack_load16(sp)
-            next_sp = sp + self._const16(2)
-            if reg_name == "sp":
-                self.put(value, "sp")
-            else:
-                self.put(value, reg_name)
-                self.put(next_sp, "sp")
-            return
-        if kind == "inc_reg16":
-            _, reg_name = self.simple_semantics
-            self.put(self._get_reg16(reg_name) + self._const16(1), reg_name)
-            return
-        if kind == "call":
-            _, target = self.simple_semantics
-            ret_addr = self._const16(self.addr + self.cs.size)
-            sp = self._get_reg16("sp") - self._const16(2)
-            self.put(sp, "sp")
-            self._stack_store16(sp, ret_addr)
-            self.jump(None, self._const16(target), JumpKind.Call)
-            return
-        if kind == "enter":
-            _, frame_size, nesting = self.simple_semantics
-            nesting &= 0x1F
-            old_bp = self._get_reg16("bp")
-            sp = self._get_reg16("sp") - self._const16(2)
-            self.put(sp, "sp")
-            self._stack_store16(sp, old_bp)
-            frame_temp = sp
-            if nesting:
-                bp_cursor = old_bp
-                for _ in range(1, nesting):
-                    bp_cursor = bp_cursor - self._const16(2)
+        def _impl():
+            kind = self.simple_semantics[0]
+            if self._lift_simple_cmp_8616(kind):
+                return
+            if self._lift_simple_jcc_8616(kind):
+                return
+            if kind == "nop":
+                return
+            if kind == "push_reg16":
+                _, reg_name = self.simple_semantics
+                value = self._get_reg16(reg_name)
+                sp = self._get_reg16("sp") - self._const16(2)
+                self.put(sp, "sp")
+                if reg_name == "sp":
+                    value = sp + self._const16(2)
+                self._stack_store16(sp, value)
+                return
+            if kind == "push_imm16":
+                _, imm = self.simple_semantics
+                sp = self._get_reg16("sp") - self._const16(2)
+                self.put(sp, "sp")
+                self._stack_store16(sp, self._const16(imm))
+                return
+            if kind == "push_mem16":
+                _, mem_spec = self.simple_semantics
+                sp = self._get_reg16("sp") - self._const16(2)
+                self.put(sp, "sp")
+                self._stack_store16(sp, self._load_mem16(mem_spec))
+                return
+            if kind == "pop_reg16":
+                _, reg_name = self.simple_semantics
+                sp = self._get_reg16("sp")
+                value = self._stack_load16(sp)
+                next_sp = sp + self._const16(2)
+                if reg_name == "sp":
+                    self.put(value, "sp")
+                else:
+                    self.put(value, reg_name)
+                    self.put(next_sp, "sp")
+                return
+            if kind == "inc_reg16":
+                _, reg_name = self.simple_semantics
+                self.put(self._get_reg16(reg_name) + self._const16(1), reg_name)
+                return
+            if kind == "call":
+                _, target = self.simple_semantics
+                ret_addr = self._const16(self.addr + self.cs.size)
+                sp = self._get_reg16("sp") - self._const16(2)
+                self.put(sp, "sp")
+                self._stack_store16(sp, ret_addr)
+                self.jump(None, self._const16(target), JumpKind.Call)
+                return
+            if kind == "enter":
+                _, frame_size, nesting = self.simple_semantics
+                nesting &= 0x1F
+                old_bp = self._get_reg16("bp")
+                sp = self._get_reg16("sp") - self._const16(2)
+                self.put(sp, "sp")
+                self._stack_store16(sp, old_bp)
+                frame_temp = sp
+                if nesting:
+                    bp_cursor = old_bp
+                    for _ in range(1, nesting):
+                        bp_cursor = bp_cursor - self._const16(2)
+                        sp = sp - self._const16(2)
+                        self._stack_store16(sp, self._stack_load16(bp_cursor))
                     sp = sp - self._const16(2)
-                    self._stack_store16(sp, self._stack_load16(bp_cursor))
-                sp = sp - self._const16(2)
-                self._stack_store16(sp, frame_temp)
-            self.put(frame_temp, "bp")
-            self.put(sp - self._const16(frame_size), "sp")
-            return
-        if kind == "leave":
-            bp = self._get_reg16("bp")
-            self.put(bp, "sp")
-            self.put(self._stack_load16(bp), "bp")
-            self.put(bp + self._const16(2), "sp")
-            return
-        if kind == "mov_reg_imm16":
-            _, reg_name, imm = self.simple_semantics
-            self.put(self._const16(imm), reg_name)
-            return
-        if kind == "mov_reg_reg16":
-            _, dst_reg, src_reg = self.simple_semantics
-            self.put(self._get_reg16(src_reg), dst_reg)
-            return
-        if kind == "mov_reg_mem16":
-            _, dst_reg, mem_spec = self.simple_semantics
-            self.put(self._load_mem16(mem_spec), dst_reg)
-            return
-        if kind == "mov_mem_reg16":
-            _, mem_spec, src_reg = self.simple_semantics
-            self._store_mem16(mem_spec, self._get_reg16(src_reg))
-            return
-        if kind == "mov_mem_imm16":
-            _, mem_spec, imm = self.simple_semantics
-            self._store_mem16(mem_spec, self._const16(imm))
-            return
-        if kind == "lea_reg_bpdisp16":
-            _, dst_reg, mem_spec = self.simple_semantics
-            self.put(self._addr_from_bp_mem(mem_spec), dst_reg)
-            return
-        if kind == "add_reg_imm16":
-            _, reg_name, imm = self.simple_semantics
-            self._binop_reg_imm("add", reg_name, imm)
-            return
-        if kind.endswith("_reg_reg16"):
-            op_name, dst_reg, src_reg = self.simple_semantics
-            self._binop_reg_reg(op_name[:-10], dst_reg, src_reg)
-            return
-        if kind.endswith("_reg_mem16"):
-            op_name, dst_reg, mem_spec = self.simple_semantics
-            self._binop_reg_mem(op_name[:-10], dst_reg, mem_spec)
-            return
-        if kind.endswith("_reg_imm16"):
-            op_name, dst_reg, imm = self.simple_semantics
-            self._binop_reg_imm(op_name[:-10], dst_reg, imm)
-            return
-        if kind == "cmp_mem_reg16":
-            _, mem_spec, src_reg = self.simple_semantics
-            lhs_val = self._load_mem16(mem_spec)
-            rhs_val = self._get_reg16(src_reg)
-            self._record_cmp_condition_source(lhs_val, rhs_val)
-            if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(lhs_val, rhs_val)
-            return
-        if kind == "cmp_mem_imm16":
-            _, mem_spec, imm = self.simple_semantics
-            lhs_val = self._load_mem16(mem_spec)
-            rhs_val = self._const16(imm)
-            self._record_cmp_condition_source(lhs_val, rhs_val)
-            if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(lhs_val, rhs_val)
-            return
-        if kind == "cmp_abs_reg16":
-            _, offset, src_reg = self.simple_semantics
-            lhs_val = self._load_abs16(offset)
-            rhs_val = self._get_reg16(src_reg)
-            self._record_cmp_condition_source(lhs_val, rhs_val)
-            if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(lhs_val, rhs_val)
-            return
-        if kind == "cmp_abs_imm16":
-            _, offset, imm = self.simple_semantics
-            lhs_val = self._load_abs16(offset)
-            rhs_val = self._const16(imm)
-            self._record_cmp_condition_source(lhs_val, rhs_val)
-            if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(lhs_val, rhs_val)
-            return
-        if kind == "cmp_reg_abs8":
-            _, dst_reg, offset = self.simple_semantics
-            lhs_val = self.get(dst_reg, Type.int_8)
-            rhs_val = self._load_abs8(offset)
-            self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
-            if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags8(lhs_val, rhs_val)
-            return
-        if kind == "cmp_abs_reg8":
-            _, offset, src_reg = self.simple_semantics
-            lhs_val = self._load_abs8(offset)
-            rhs_val = self.get(src_reg, Type.int_8)
-            self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
-            if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags8(lhs_val, rhs_val)
-            return
-        if kind == "cmp_abs_imm8":
-            _, offset, imm = self.simple_semantics
-            lhs_val = self._load_abs8(offset)
-            rhs_val = self.constant(imm, Type.int_8)
-            self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
-            if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags8(lhs_val, rhs_val)
-            return
-        if kind == "cmp_reg_abs16":
-            _, lhs_reg, offset = self.simple_semantics
-            lhs_val = self._get_reg16(lhs_reg)
-            rhs_val = self._load_abs16(offset)
-            self._record_cmp_condition_source(lhs_val, rhs_val)
-            if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(lhs_val, rhs_val)
-            return
-        if kind in (self._SIMPLE_JCC_8616 | {"jmp"}):
-            _, abs_target = self.simple_semantics
-            target = self._const16(abs_target)
-            if kind == "jmp":
-                self.jump(None, target, JumpKind.Boring)
+                    self._stack_store16(sp, frame_temp)
+                self.put(frame_temp, "bp")
+                self.put(sp - self._const16(frame_size), "sp")
                 return
-            cond = self._direct_jcc_condition(kind)
-            if cond is None:
-                zf = self._flag_is_set(6)
-                cf = self._flag_is_set(0)
-                sf = self._flag_is_set(7)
-                of = self._flag_is_set(11)
-                nof = self._flag_is_clear(11)
-                nzf = self._flag_is_clear(6)
-                ncf = self._flag_is_clear(0)
-            else:
-                self._emit_simple_jcc(cond, target)
+            if kind == "leave":
+                bp = self._get_reg16("bp")
+                self.put(bp, "sp")
+                self.put(self._stack_load16(bp), "bp")
+                self.put(bp + self._const16(2), "sp")
                 return
-            if kind in JCC_EQ_MNEMONICS_8616:
-                cond = zf
-            elif kind in JCC_NE_MNEMONICS_8616:
-                cond = nzf
-            elif kind in JCC_SLE_MNEMONICS_8616:
-                cond = zf | (sf != of)
-            elif kind in JCC_SGT_MNEMONICS_8616:
-                cond = nzf & (sf == of)
-            elif kind in JCC_SLT_MNEMONICS_8616:
-                cond = sf != of
-            elif kind in JCC_SGE_MNEMONICS_8616:
-                cond = sf == of
-            elif kind in JCC_ULT_MNEMONICS_8616:
-                cond = cf
-            elif kind in JCC_UGE_MNEMONICS_8616:
-                cond = ncf
-            elif kind in JCC_ULE_MNEMONICS_8616:
-                cond = cf | zf
-            elif kind in JCC_UGT_MNEMONICS_8616:
-                cond = ncf & nzf
-            elif kind == "jo":
-                cond = of
-            elif kind == "jno":
-                cond = nof
-            elif kind == "js":
-                cond = sf
-            elif kind == "jns":
-                cond = ~sf
-            elif kind in {"jp", "jpe"}:
-                cond = self._flag_is_set(2)
-            elif kind in {"jnp", "jpo"}:
-                cond = ~self._flag_is_set(2)
-            else:
-                raise NotImplementedError(kind)
-            self._emit_simple_jcc(cond, target)
-            return
-        if kind == "ret":
-            sp = self._get_reg16("sp")
-            ret_addr = self._stack_load16(sp)
-            self.put(sp + self._const16(2), "sp")
-            self.jump(None, ret_addr, JumpKind.Ret)
-            return
-        if kind == "ret_imm16":
-            _, imm = self.simple_semantics
-            sp = self._get_reg16("sp")
-            ret_addr = self._stack_load16(sp)
-            self.put(sp + self._const16(2 + imm), "sp")
-            self.jump(None, ret_addr, JumpKind.Ret)
-            return
-        raise NotImplementedError(f"unknown simple semantics: {kind}")
+            if kind == "mov_reg_imm16":
+                _, reg_name, imm = self.simple_semantics
+                self.put(self._const16(imm), reg_name)
+                return
+            if kind == "mov_reg_reg16":
+                _, dst_reg, src_reg = self.simple_semantics
+                self.put(self._get_reg16(src_reg), dst_reg)
+                return
+            if kind == "mov_reg_mem16":
+                _, dst_reg, mem_spec = self.simple_semantics
+                self.put(self._load_mem16(mem_spec), dst_reg)
+                return
+            if kind == "mov_mem_reg16":
+                _, mem_spec, src_reg = self.simple_semantics
+                self._store_mem16(mem_spec, self._get_reg16(src_reg))
+                return
+            if kind == "mov_mem_imm16":
+                _, mem_spec, imm = self.simple_semantics
+                self._store_mem16(mem_spec, self._const16(imm))
+                return
+            if kind == "lea_reg_bpdisp16":
+                _, dst_reg, mem_spec = self.simple_semantics
+                self.put(self._addr_from_bp_mem(mem_spec), dst_reg)
+                return
+            if kind == "add_reg_imm16":
+                _, reg_name, imm = self.simple_semantics
+                self._binop_reg_imm("add", reg_name, imm)
+                return
+            if kind.endswith("_reg_reg16"):
+                op_name, dst_reg, src_reg = self.simple_semantics
+                self._binop_reg_reg(op_name[:-10], dst_reg, src_reg)
+                return
+            if kind.endswith("_reg_mem16"):
+                op_name, dst_reg, mem_spec = self.simple_semantics
+                self._binop_reg_mem(op_name[:-10], dst_reg, mem_spec)
+                return
+            if kind.endswith("_reg_imm16"):
+                op_name, dst_reg, imm = self.simple_semantics
+                self._binop_reg_imm(op_name[:-10], dst_reg, imm)
+                return
+            if kind == "ret":
+                sp = self._get_reg16("sp")
+                ret_addr = self._stack_load16(sp)
+                self.put(sp + self._const16(2), "sp")
+                self.jump(None, ret_addr, JumpKind.Ret)
+                return
+            if kind == "ret_imm16":
+                _, imm = self.simple_semantics
+                sp = self._get_reg16("sp")
+                ret_addr = self._stack_load16(sp)
+                self.put(sp + self._const16(2 + imm), "sp")
+                self.jump(None, ret_addr, JumpKind.Ret)
+                return
+            raise NotImplementedError(f"unknown simple semantics: {kind}")
+
+        return _impl()
 
     def compute_result(self):
-        try:
-            debug_enabled = logger.isEnabledFor(logging.DEBUG)
-            if debug_enabled:
-                logger.debug("Lifting instruction at %04x: %s %s", self.addr, self.cs.mnemonic, self.cs.op_str)
-            instr32 = self.instr32
-            if self.is_mode32 ^ bool(self.chsz_op):
-                instr32.exec()
-            else:
-                self.instr16.exec()
+        def _impl():
+            try:
+                debug_enabled = logger.isEnabledFor(logging.DEBUG)
+                if debug_enabled:
+                    logger.debug("Lifting instruction at %04x: %s %s", self.addr, self.cs.mnemonic, self.cs.op_str)
+                instr32 = self.instr32
+                if self.is_mode32 ^ bool(self.chsz_op):
+                    instr32.exec()
+                else:
+                    self.instr16.exec()
 
-            if debug_enabled:
-                if hasattr(self.emu, "irsb") and self.emu.irsb:
-                    logger.debug("IRSB at %04x: %s", self.addr, self.emu.irsb)
-                    irsb_obj = self.emu.irsb.irsb if hasattr(self.emu.irsb, "irsb") else self.emu.irsb
-                    if hasattr(irsb_obj, "statements"):
-                        for stmt in irsb_obj.statements:
-                            logger.debug("Statement: %s (type: %s)", type(stmt).__name__, type(stmt))
+                if debug_enabled:
+                    if hasattr(self.emu, "irsb") and self.emu.irsb:
+                        logger.debug("IRSB at %04x: %s", self.addr, self.emu.irsb)
+                        irsb_obj = self.emu.irsb.irsb if hasattr(self.emu.irsb, "irsb") else self.emu.irsb
+                        if hasattr(irsb_obj, "statements"):
+                            for stmt in irsb_obj.statements:
+                                logger.debug("Statement: %s (type: %s)", type(stmt).__name__, type(stmt))
 
-                logger.debug("IRSB generated successfully for %04x", self.addr)
+                    logger.debug("IRSB generated successfully for %04x", self.addr)
 
-        except Exception as ex:
-            if ex.__class__.__name__ == "ScanTimeout":
-                logger.warning(
-                    "Lifting timed out at %04x (bytes: %s)",
-                    self.addr,
-                    self.cs.bytes.hex(),
-                )
+            except Exception as ex:
+                if ex.__class__.__name__ == "ScanTimeout":
+                    logger.warning(
+                        "Lifting timed out at %04x (bytes: %s)",
+                        self.addr,
+                        self.cs.bytes.hex(),
+                    )
+                    raise
+                logger.error(f"Lifting failed at {self.addr:04x} (bytes: {self.cs.bytes.hex()}): {ex}")
+                logger.exception("Exception during instruction execution")
                 raise
-            logger.error(f"Lifting failed at {self.addr:04x} (bytes: {self.cs.bytes.hex()}): {ex}")
-            logger.exception("Exception during instruction execution")
-            raise
+
+        return _impl()
 
     def disassemble(self):
         return self.start, self.cs.insn_name(), [str(i) for i in self.cs.operands]

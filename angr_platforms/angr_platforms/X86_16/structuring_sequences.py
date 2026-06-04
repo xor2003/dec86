@@ -48,32 +48,35 @@ def sequence_merge_is_safe(
     region: Region,
     succ: Region,
 ) -> bool:
-    """
-    Return True when `region -> succ` is safe to collapse as a sequence.
+    def _impl():
+        """
+        Return True when `region -> succ` is safe to collapse as a sequence.
 
-    The key guard is loop preservation: do not consume a successor that feeds a
-    back-edge to the region, because that hides a natural loop before cyclic
-    analysis can see it.
-    """
+        The key guard is loop preservation: do not consume a successor that feeds a
+        back-edge to the region, because that hides a natural loop before cyclic
+        analysis can see it.
+        """
 
-    if succ.region_type in (RegionType.Loop, RegionType.IncSwitch):
-        return False
-    if region.region_type == RegionType.Condition:
-        return False
-    if succ == region:
-        return False
-    if region.condition_expr is not None:
-        return False
-    if bool(getattr(region, "metadata", {}).get("typed_ir_has_condition", False)):
-        return False
-    if bool(getattr(succ, "metadata", {}).get("typed_ir_has_condition", False)):
-        return False
-    if bool(getattr(succ, "metadata", {}).get("typed_ir_has_phi", False)):
-        return False
-    if len(graph.predecessors(succ)) != 1:
-        return False
-    if succ not in region.successors:
-        return False
-    if merge_would_hide_cycle(graph, dominators, region, succ):
-        return False
-    return True
+        if succ.region_type in (RegionType.Loop, RegionType.IncSwitch):
+            return False
+        if region.region_type == RegionType.Condition:
+            return False
+        if succ == region:
+            return False
+        if region.condition_expr is not None:
+            return False
+        if bool(getattr(region, "metadata", {}).get("typed_ir_has_condition", False)):
+            return False
+        if bool(getattr(succ, "metadata", {}).get("typed_ir_has_condition", False)):
+            return False
+        if bool(getattr(succ, "metadata", {}).get("typed_ir_has_phi", False)):
+            return False
+        if len(graph.predecessors(succ)) != 1:
+            return False
+        if succ not in region.successors:
+            return False
+        if merge_would_hide_cycle(graph, dominators, region, succ):
+            return False
+        return True
+
+    return _impl()

@@ -56,37 +56,40 @@ def _recovery_mode_from_output(output: str) -> str:
 
 
 def _validation_verdict_from_output(output: str) -> str:
-    lowered = output.lower()
-    metadata_match = _TAIL_VALIDATION_METADATA_RE.search(output)
-    if metadata_match is not None:
-        with_context = metadata_match.group(1)
-        try:
-            payload = json.loads(with_context)
-        except Exception:
-            payload = None
-        if isinstance(payload, dict):
-            surface = payload.get("surface", {})
-            severity = surface.get("severity")
-            if isinstance(severity, str) and severity:
-                if severity == "changed":
+    def _impl():
+        lowered = output.lower()
+        metadata_match = _TAIL_VALIDATION_METADATA_RE.search(output)
+        if metadata_match is not None:
+            with_context = metadata_match.group(1)
+            try:
+                payload = json.loads(with_context)
+            except Exception:
+                payload = None
+            if isinstance(payload, dict):
+                surface = payload.get("surface", {})
+                severity = surface.get("severity")
+                if isinstance(severity, str) and severity:
+                    if severity == "changed":
+                        return "failed"
+                    return severity
+        for verdict in ("failed", "unknown", "uncollected", "stable", "changed"):
+            if f"tail-validation:{verdict}" in lowered or f"validation={verdict}" in lowered:
+                if verdict == "changed":
                     return "failed"
-                return severity
-    for verdict in ("failed", "unknown", "uncollected", "stable", "changed"):
-        if f"tail-validation:{verdict}" in lowered or f"validation={verdict}" in lowered:
-            if verdict == "changed":
-                return "failed"
-            return verdict
-    if "[tail-validation] whole-tail validation changed" in lowered:
-        return "failed"
-    if "[tail-validation] whole-tail validation failed" in lowered:
-        return "failed"
-    if "[tail-validation] whole-tail validation clean" in lowered:
-        return "stable"
-    if "[tail-validation] whole-tail validation unknown" in lowered:
-        return "unknown"
-    if "[tail-validation] whole-tail validation uncollected" in lowered:
+                return verdict
+        if "[tail-validation] whole-tail validation changed" in lowered:
+            return "failed"
+        if "[tail-validation] whole-tail validation failed" in lowered:
+            return "failed"
+        if "[tail-validation] whole-tail validation clean" in lowered:
+            return "stable"
+        if "[tail-validation] whole-tail validation unknown" in lowered:
+            return "unknown"
+        if "[tail-validation] whole-tail validation uncollected" in lowered:
+            return "uncollected"
         return "uncollected"
-    return "uncollected"
+
+    return _impl()
 
 
 def build_acceptance_scorecard(

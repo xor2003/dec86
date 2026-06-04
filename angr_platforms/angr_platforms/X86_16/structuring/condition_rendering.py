@@ -12,46 +12,49 @@ from ..ir.condition_ir import ConditionIR
 
 
 def render_condition_ir_8616(cond: ConditionIR) -> str | None:
-    """Render a ConditionIR to a C-like condition string.
+    def _impl():
+        """Render a ConditionIR to a C-like condition string.
 
-    Returns None if the condition cannot be rendered (unhandled op).
-    """
-    lhs_str = _format_operand(cond.lhs)
-    rhs_str = _format_operand(cond.rhs) if cond.rhs is not None else None
+        Returns None if the condition cannot be rendered (unhandled op).
+        """
+        lhs_str = _format_operand(cond.lhs)
+        rhs_str = _format_operand(cond.rhs) if cond.rhs is not None else None
 
-    op = cond.op
+        op = cond.op
 
-    if op == "zero":
-        return f"{lhs_str} == 0"
-    if op == "nonzero":
-        return f"{lhs_str} != 0"
+        if op == "zero":
+            return f"{lhs_str} == 0"
+        if op == "nonzero":
+            return f"{lhs_str} != 0"
 
-    if op == "eq":
-        return f"{lhs_str} == {rhs_str}"
-    if op == "ne":
-        return f"{lhs_str} != {rhs_str}"
+        if op == "eq":
+            return f"{lhs_str} == {rhs_str}"
+        if op == "ne":
+            return f"{lhs_str} != {rhs_str}"
 
-    # Signed comparisons — emit explicit helper if signedness not type-proven
-    if op == "slt":
-        return f"s16_lt({lhs_str}, {rhs_str})"
-    if op == "sle":
-        return f"s16_le({lhs_str}, {rhs_str})"
-    if op == "sgt":
-        return f"s16_gt({lhs_str}, {rhs_str})"
-    if op == "sge":
-        return f"s16_ge({lhs_str}, {rhs_str})"
+        # Signed comparisons — emit explicit helper if signedness not type-proven
+        if op == "slt":
+            return f"s16_lt({lhs_str}, {rhs_str})"
+        if op == "sle":
+            return f"s16_le({lhs_str}, {rhs_str})"
+        if op == "sgt":
+            return f"s16_gt({lhs_str}, {rhs_str})"
+        if op == "sge":
+            return f"s16_ge({lhs_str}, {rhs_str})"
 
-    # Unsigned comparisons
-    if op == "ult":
-        return f"u16_lt({lhs_str}, {rhs_str})"
-    if op == "ule":
-        return f"u16_le({lhs_str}, {rhs_str})"
-    if op == "ugt":
-        return f"u16_gt({lhs_str}, {rhs_str})"
-    if op == "uge":
-        return f"u16_ge({lhs_str}, {rhs_str})"
+        # Unsigned comparisons
+        if op == "ult":
+            return f"u16_lt({lhs_str}, {rhs_str})"
+        if op == "ule":
+            return f"u16_le({lhs_str}, {rhs_str})"
+        if op == "ugt":
+            return f"u16_gt({lhs_str}, {rhs_str})"
+        if op == "uge":
+            return f"u16_ge({lhs_str}, {rhs_str})"
 
-    return None
+        return None
+
+    return _impl()
 
 
 def render_condition_ir_native_8616(cond: ConditionIR) -> str | None:

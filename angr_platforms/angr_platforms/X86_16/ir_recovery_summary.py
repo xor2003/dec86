@@ -45,25 +45,28 @@ class IRRecoverySummary:
 
 
 def summarize_x86_16_ir_recovery(source: Any) -> IRRecoverySummary:
-    summary = (
-        _value(source, "x86_16_vex_ir_summary")
-        or _value(source, "_inertia_vex_ir_summary")
-        or _value(source, "vex_ir_summary")
-        or {}
-    )
-    if not isinstance(summary, dict):
-        summary = {}
-    return IRRecoverySummary(
-        block_count=int(summary.get("block_count", 0) or 0),
-        instruction_count=int(summary.get("instruction_count", 0) or 0),
-        refusal_count=int(summary.get("refusal_count", 0) or 0),
-        aliasable_value_count=int(summary.get("aliasable_value_count", 0) or 0),
-        ssa_binding_count=int(summary.get("ssa_binding_count", 0) or 0),
-        phi_node_count=int(summary.get("phi_node_count", 0) or 0),
-        frame_slot_count=int(summary.get("frame_slot_count", 0) or 0),
-        frame_refusal_count=int(summary.get("frame_refusal_count", 0) or 0),
-        space_counts=dict(summary.get("space_counts", {}) or {}),
-        address_status_counts=dict(summary.get("address_status_counts", {}) or {}),
-        segment_origin_counts=dict(summary.get("segment_origin_counts", {}) or {}),
-        condition_counts=dict(summary.get("condition_counts", {}) or {}),
-    )
+    def _impl():
+        summary = (
+            _value(source, "x86_16_vex_ir_summary")
+            or _value(source, "_inertia_vex_ir_summary")
+            or _value(source, "vex_ir_summary")
+            or {}
+        )
+        if not isinstance(summary, dict):
+            summary = {}
+        return IRRecoverySummary(
+            block_count=int(summary.get("block_count", 0) or 0),
+            instruction_count=int(summary.get("instruction_count", 0) or 0),
+            refusal_count=int(summary.get("refusal_count", 0) or 0),
+            aliasable_value_count=int(summary.get("aliasable_value_count", 0) or 0),
+            ssa_binding_count=int(summary.get("ssa_binding_count", 0) or 0),
+            phi_node_count=int(summary.get("phi_node_count", 0) or 0),
+            frame_slot_count=int(summary.get("frame_slot_count", 0) or 0),
+            frame_refusal_count=int(summary.get("frame_refusal_count", 0) or 0),
+            space_counts=dict(summary.get("space_counts", {}) or {}),
+            address_status_counts=dict(summary.get("address_status_counts", {}) or {}),
+            segment_origin_counts=dict(summary.get("segment_origin_counts", {}) or {}),
+            condition_counts=dict(summary.get("condition_counts", {}) or {}),
+        )
+
+    return _impl()

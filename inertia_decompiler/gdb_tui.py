@@ -290,64 +290,67 @@ class GDBTUIApp(App):
     # -- command input -----------------------------------------------------
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        cmd = event.value.strip()
-        event.input.clear()
-        if not cmd:
-            return
+        async def _impl():
+            cmd = event.value.strip()
+            event.input.clear()
+            if not cmd:
+                return
 
-        parts = cmd.split()
-        action = parts[0].lower()
+            parts = cmd.split()
+            action = parts[0].lower()
 
-        if action in ("s", "step", "si"):
-            self._action("step", count=self._parse_count(parts))
-        elif action in ("n", "next", "ni"):
-            self._action("step_over", count=self._parse_count(parts))
-        elif action in ("c", "continue", "cont"):
-            self._action("continue", count=1)
-        elif action in ("i", "interrupt", "int"):
-            self._action("interrupt", count=1)
-        elif action in ("b", "break", "breakpoint"):
-            addr = int(parts[1], 0) if len(parts) >= 2 else self._current_ip
-            if addr:
-                self._toggle_breakpoint(addr)
-        elif action in ("d", "delete"):
-            if len(parts) >= 2:
-                try:
-                    await self._remove_breakpoint(int(parts[1], 0))
-                except ValueError:
-                    pass
-        elif action in ("g", "go"):
-            if len(parts) >= 2:
-                try:
-                    self._mem_addr = int(parts[1], 0)
-                    await self._dump_memory(self._mem_addr, 64)
-                except ValueError:
-                    pass
-        elif action in ("m", "mem", "x", "examine"):
-            addr = int(parts[1], 0) if len(parts) >= 2 else self._current_ip
-            length = int(parts[2], 0) if len(parts) >= 3 else 64
-            await self._dump_memory(addr, length)
-        elif action in ("r", "reg"):
-            if len(parts) >= 2:
-                val = self._regs.get(parts[1], 0)
-                self._append_console(f"{parts[1]} = 0x{val:x}")
-        elif action in ("p", "print", "?"):
-            if len(parts) >= 2:
-                expr = " ".join(parts[1:])
-                try:
-                    val = await self._client.read_register(int(expr, 0))
-                    self._append_console(f"= 0x{val:x}")
-                except (ValueError, GDBClientError):
-                    self._append_console(f"Cannot evaluate: {expr}")
-        elif action in ("q", "quit", "exit"):
-            self.exit()
-        elif action in ("h", "help"):
-            self._append_console(
-                "F7=step  F8=over  F2=BP  F4=gotoIP  F6=skip  "
-                "Ctrl+F9=run  Ctrl+G=addr  b <addr>  m <addr> [len]  g <addr>  q=quit"
-            )
-        else:
-            self._append_console(f"Unknown: {action}")
+            if action in ("s", "step", "si"):
+                self._action("step", count=self._parse_count(parts))
+            elif action in ("n", "next", "ni"):
+                self._action("step_over", count=self._parse_count(parts))
+            elif action in ("c", "continue", "cont"):
+                self._action("continue", count=1)
+            elif action in ("i", "interrupt", "int"):
+                self._action("interrupt", count=1)
+            elif action in ("b", "break", "breakpoint"):
+                addr = int(parts[1], 0) if len(parts) >= 2 else self._current_ip
+                if addr:
+                    self._toggle_breakpoint(addr)
+            elif action in ("d", "delete"):
+                if len(parts) >= 2:
+                    try:
+                        await self._remove_breakpoint(int(parts[1], 0))
+                    except ValueError:
+                        pass
+            elif action in ("g", "go"):
+                if len(parts) >= 2:
+                    try:
+                        self._mem_addr = int(parts[1], 0)
+                        await self._dump_memory(self._mem_addr, 64)
+                    except ValueError:
+                        pass
+            elif action in ("m", "mem", "x", "examine"):
+                addr = int(parts[1], 0) if len(parts) >= 2 else self._current_ip
+                length = int(parts[2], 0) if len(parts) >= 3 else 64
+                await self._dump_memory(addr, length)
+            elif action in ("r", "reg"):
+                if len(parts) >= 2:
+                    val = self._regs.get(parts[1], 0)
+                    self._append_console(f"{parts[1]} = 0x{val:x}")
+            elif action in ("p", "print", "?"):
+                if len(parts) >= 2:
+                    expr = " ".join(parts[1:])
+                    try:
+                        val = await self._client.read_register(int(expr, 0))
+                        self._append_console(f"= 0x{val:x}")
+                    except (ValueError, GDBClientError):
+                        self._append_console(f"Cannot evaluate: {expr}")
+            elif action in ("q", "quit", "exit"):
+                self.exit()
+            elif action in ("h", "help"):
+                self._append_console(
+                    "F7=step  F8=over  F2=BP  F4=gotoIP  F6=skip  "
+                    "Ctrl+F9=run  Ctrl+G=addr  b <addr>  m <addr> [len]  g <addr>  q=quit"
+                )
+            else:
+                self._append_console(f"Unknown: {action}")
+
+        return await _impl()
 
     # -- GDB actions -------------------------------------------------------
 
@@ -355,42 +358,45 @@ class GDBTUIApp(App):
         asyncio.create_task(self._do_action(name, count=max(1, count)))
 
     async def _do_action(self, name: str, count: int = 1) -> None:
-        if not self._client:
-            return
-        try:
-            if name == "step":
-                info = await self._client.step_n(count)
-                self._append_console(f"stopped: {info.reason.name}")
-            elif name == "step_over":
-                info = await self._step_over_n(count)
-                self._append_console(f"stopped: {info.reason.name}")
-            elif name == "continue":
-                self._update_status("running...")
-                info = await self._client.continue_()
-                self._append_console(f"stopped: {info.reason.name}")
-            elif name == "interrupt":
-                info = await self._client.interrupt()
-                self._append_console(f"interrupted: {info.reason.name}")
-            elif name == "skip":
-                # Skip: advance IP by one instruction
-                await self._skip_instruction()
-            elif name == "restart":
-                self._append_console("Restart: reconnect")
-                await self._client.disconnect()
-                await self._client.connect(self._host, self._port)
-            elif name == "reset":
-                self._append_console("Reset: kill inferior")
-                try:
-                    await self._client.kill()
-                except Exception:
-                    pass
+        async def _impl():
+            if not self._client:
+                return
+            try:
+                if name == "step":
+                    info = await self._client.step_n(count)
+                    self._append_console(f"stopped: {info.reason.name}")
+                elif name == "step_over":
+                    info = await self._step_over_n(count)
+                    self._append_console(f"stopped: {info.reason.name}")
+                elif name == "continue":
+                    self._update_status("running...")
+                    info = await self._client.continue_()
+                    self._append_console(f"stopped: {info.reason.name}")
+                elif name == "interrupt":
+                    info = await self._client.interrupt()
+                    self._append_console(f"interrupted: {info.reason.name}")
+                elif name == "skip":
+                    # Skip: advance IP by one instruction
+                    await self._skip_instruction()
+                elif name == "restart":
+                    self._append_console("Restart: reconnect")
+                    await self._client.disconnect()
+                    await self._client.connect(self._host, self._port)
+                elif name == "reset":
+                    self._append_console("Reset: kill inferior")
+                    try:
+                        await self._client.kill()
+                    except Exception:
+                        pass
 
-            await self._refresh_all()
-        except GDBClientError as e:
-            self._append_console(f"error: {e}")
-            self._update_status("error")
-        except Exception as e:
-            self._append_console(f"exception: {e}")
+                await self._refresh_all()
+            except GDBClientError as e:
+                self._append_console(f"error: {e}")
+                self._update_status("error")
+            except Exception as e:
+                self._append_console(f"exception: {e}")
+
+        return await _impl()
 
     async def _skip_instruction(self) -> None:
         """Skip current instruction by advancing IP."""
@@ -460,48 +466,51 @@ class GDBTUIApp(App):
 
     @staticmethod
     def _instruction_fallthrough(addr: int, raw: bytes, mnemonic: str, arch: str) -> int | None:
-        if not raw:
-            return None
-        op = mnemonic.lower()
-        first = raw[0]
-        if op.startswith(("call", "jmp", "ret", "iret")):
-            if op.startswith("call"):
-                pass
-            else:
+        def _impl():
+            if not raw:
                 return None
-
-        if first == 0xE8:
-            size = 3 if arch == "x86_16" else 5
-            if len(raw) >= size:
-                return addr + size
-            return None
-        if first == 0x9A and len(raw) >= 5:
-            return addr + 5
-        if first == 0xFF and len(raw) >= 2:
-            modrm = raw[1]
-            reg = (modrm >> 3) & 0x7
-            if reg not in (2, 3):
-                return None
-            length = 2
-            mod = (modrm >> 6) & 0x3
-            rm = modrm & 0x7
-            if mod != 3 and rm == 4:
-                if len(raw) < 3:
+            op = mnemonic.lower()
+            first = raw[0]
+            if op.startswith(("call", "jmp", "ret", "iret")):
+                if op.startswith("call"):
+                    pass
+                else:
                     return None
-                sib = raw[2]
-                length += 1
-                base = sib & 0x7
-                if mod == 0 and base == 5:
-                    length += 4
-            if mod == 0 and rm == 6 and len(raw) >= length + 2:
-                length += 2
-            elif mod == 1 and len(raw) >= length + 1:
-                length += 1
-            elif mod == 2 and len(raw) >= length + 4:
-                length += 4
-            return addr + length
 
-        return None
+            if first == 0xE8:
+                size = 3 if arch == "x86_16" else 5
+                if len(raw) >= size:
+                    return addr + size
+                return None
+            if first == 0x9A and len(raw) >= 5:
+                return addr + 5
+            if first == 0xFF and len(raw) >= 2:
+                modrm = raw[1]
+                reg = (modrm >> 3) & 0x7
+                if reg not in (2, 3):
+                    return None
+                length = 2
+                mod = (modrm >> 6) & 0x3
+                rm = modrm & 0x7
+                if mod != 3 and rm == 4:
+                    if len(raw) < 3:
+                        return None
+                    sib = raw[2]
+                    length += 1
+                    base = sib & 0x7
+                    if mod == 0 and base == 5:
+                        length += 4
+                if mod == 0 and rm == 6 and len(raw) >= length + 2:
+                    length += 2
+                elif mod == 1 and len(raw) >= length + 1:
+                    length += 1
+                elif mod == 2 and len(raw) >= length + 4:
+                    length += 4
+                return addr + length
+
+            return None
+
+        return _impl()
 
     # -- breakpoints -------------------------------------------------------
 

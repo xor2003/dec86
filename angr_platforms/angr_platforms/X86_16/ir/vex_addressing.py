@@ -76,18 +76,20 @@ def expr_to_address(
     size: int = 0,
     segment_hints: dict[tuple[str, ...], tuple[MemSpace, AddressStatus, SegmentOrigin]] | None = None,
 ) -> IRAddress:
-    tag = getattr(expr, "tag", "")
-    if tag == "Iex_RdTmp":
+    def _unknown(expr_tag: tuple[str, ...]) -> IRAddress:
+        return IRAddress(
+            MemSpace.UNKNOWN,
+            size=size,
+            status=AddressStatus.UNKNOWN,
+            segment_origin=SegmentOrigin.UNKNOWN,
+            expr=expr_tag,
+        )
+
+    def _from_rdtmp() -> IRAddress:
         tmp_id = int(getattr(expr, "tmp"))
         tmp_value = tmps.get(tmp_id)
         if tmp_value is None:
-            return IRAddress(
-                MemSpace.UNKNOWN,
-                size=size,
-                status=AddressStatus.UNKNOWN,
-                segment_origin=SegmentOrigin.UNKNOWN,
-                expr=("rdtmp", f"t{tmp_id}"),
-            )
+            return _unknown(("rdtmp", f"t{tmp_id}"))
         if tmp_value.space == MemSpace.REG and tmp_value.name is not None:
             return _address_from_parts(
                 (tmp_value.name,),
@@ -97,20 +99,27 @@ def expr_to_address(
                 segment_hints=segment_hints,
             )
         if tmp_value.expr and tmp_value.expr[:1] == ("Iop_Add16",) and len(tmp_value.expr) == 3:
-            return _address_from_parts(
-                (tmp_value.expr[1], tmp_value.expr[2]),
-                0,
-                size=size,
-                expr=tmp_value.expr,
-                segment_hints=segment_hints,
-            )
-        return IRAddress(
-            MemSpace.UNKNOWN,
-            size=size,
-            status=AddressStatus.UNKNOWN,
-            segment_origin=SegmentOrigin.UNKNOWN,
-            expr=("tmp_expr", tmp_value.name or "tmp"),
-        )
+            return _address_from_parts((tmp_value.expr[1], tmp_value.expr[2]), 0, size=size, expr=tmp_value.expr, segment_hints=segment_hints)
+        return _unknown(("tmp_expr", tmp_value.name or "tmp"))
+
+    def _from_binop() -> IRAddress:
+        op = str(getattr(expr, "op", ""))
+        args = tuple(getattr(expr, "args", ()) or ())
+        if len(args) != 2:
+            return _unknown((op,))
+        left = expr_to_value(args[0], tmps, conditions)
+        right = expr_to_value(args[1], tmps, conditions)
+        if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None and left.name:
+            return _address_from_parts((left.name,), left.offset + int(right.const), size=size, expr=(op, left.name), segment_hints=segment_hints)
+        if "Sub" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None and left.name:
+            return _address_from_parts((left.name,), left.offset - int(right.const), size=size, expr=(op, left.name), segment_hints=segment_hints)
+        if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.REG and left.name and right.name:
+            return _address_from_parts(tuple(sorted((left.name, right.name))), 0, size=size, expr=(op, left.name, right.name), segment_hints=segment_hints)
+        return _unknown((op,))
+
+    tag = getattr(expr, "tag", "")
+    if tag == "Iex_RdTmp":
+        return _from_rdtmp()
     if tag == "Iex_Get":
         value = expr_to_value(expr, tmps, conditions)
         return _address_from_parts(
@@ -130,65 +139,5 @@ def expr_to_address(
             expr=("absolute_const",),
         )
     if tag == "Iex_Binop":
-        op = str(getattr(expr, "op", ""))
-        args = tuple(getattr(expr, "args", ()) or ())
-        if len(args) != 2:
-            return IRAddress(
-                MemSpace.UNKNOWN,
-                size=size,
-                status=AddressStatus.UNKNOWN,
-                segment_origin=SegmentOrigin.UNKNOWN,
-                expr=(op,),
-            )
-        left = expr_to_value(args[0], tmps, conditions)
-        right = expr_to_value(args[1], tmps, conditions)
-        if (
-            "Add" in op
-            and left.space == MemSpace.REG
-            and right.space == MemSpace.CONST
-            and right.const is not None
-            and left.name
-        ):
-            return _address_from_parts(
-                (left.name,),
-                left.offset + int(right.const),
-                size=size,
-                expr=(op, left.name),
-                segment_hints=segment_hints,
-            )
-        if (
-            "Sub" in op
-            and left.space == MemSpace.REG
-            and right.space == MemSpace.CONST
-            and right.const is not None
-            and left.name
-        ):
-            return _address_from_parts(
-                (left.name,),
-                left.offset - int(right.const),
-                size=size,
-                expr=(op, left.name),
-                segment_hints=segment_hints,
-            )
-        if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.REG and left.name and right.name:
-            return _address_from_parts(
-                tuple(sorted((left.name, right.name))),
-                0,
-                size=size,
-                expr=(op, left.name, right.name),
-                segment_hints=segment_hints,
-            )
-        return IRAddress(
-            MemSpace.UNKNOWN,
-            size=size,
-            status=AddressStatus.UNKNOWN,
-            segment_origin=SegmentOrigin.UNKNOWN,
-            expr=(op,),
-        )
-    return IRAddress(
-        MemSpace.UNKNOWN,
-        size=size,
-        status=AddressStatus.UNKNOWN,
-        segment_origin=SegmentOrigin.UNKNOWN,
-        expr=(tag or "addr_expr",),
-    )
+        return _from_binop()
+    return _unknown((tag or "addr_expr",))

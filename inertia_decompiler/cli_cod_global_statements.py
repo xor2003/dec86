@@ -7,33 +7,36 @@ from angr.sim_type import SimTypeShort
 
 
 def _same_expr(left: Any, right: Any) -> bool:
-    if left is right:
-        return True
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, structured_c.CConstant):
-        return getattr(left, "value", None) == getattr(right, "value", None)
-    if isinstance(left, structured_c.CVariable):
-        left_var = getattr(left, "variable", None)
-        right_var = getattr(right, "variable", None)
-        if left_var is right_var:
+    def _impl():
+        if left is right:
             return True
-        return (
-            getattr(left, "name", None) == getattr(right, "name", None)
-            and getattr(left_var, "name", None) == getattr(right_var, "name", None)
-        )
-    if isinstance(left, structured_c.CBinaryOp):
-        return (
-            getattr(left, "op", None) == getattr(right, "op", None)
-            and _same_expr(getattr(left, "lhs", None), getattr(right, "lhs", None))
-            and _same_expr(getattr(left, "rhs", None), getattr(right, "rhs", None))
-        )
-    if isinstance(left, structured_c.CUnaryOp):
-        return getattr(left, "op", None) == getattr(right, "op", None) and _same_expr(
-            getattr(left, "operand", None),
-            getattr(right, "operand", None),
-        )
-    return False
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, structured_c.CConstant):
+            return getattr(left, "value", None) == getattr(right, "value", None)
+        if isinstance(left, structured_c.CVariable):
+            left_var = getattr(left, "variable", None)
+            right_var = getattr(right, "variable", None)
+            if left_var is right_var:
+                return True
+            return (
+                getattr(left, "name", None) == getattr(right, "name", None)
+                and getattr(left_var, "name", None) == getattr(right_var, "name", None)
+            )
+        if isinstance(left, structured_c.CBinaryOp):
+            return (
+                getattr(left, "op", None) == getattr(right, "op", None)
+                and _same_expr(getattr(left, "lhs", None), getattr(right, "lhs", None))
+                and _same_expr(getattr(left, "rhs", None), getattr(right, "rhs", None))
+            )
+        if isinstance(left, structured_c.CUnaryOp):
+            return getattr(left, "op", None) == getattr(right, "op", None) and _same_expr(
+                getattr(left, "operand", None),
+                getattr(right, "operand", None),
+            )
+        return False
+
+    return _impl()
 
 
 def _is_high_byte_projection(high_expr: Any, low_expr: Any) -> bool:

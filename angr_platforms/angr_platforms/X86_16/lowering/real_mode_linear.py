@@ -18,6 +18,10 @@ from angr.sim_type import SimTypeChar, SimTypeInt, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
 
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
+from .stack_lowering_from_facts import _canonical_stack_offset_8616
+from .stack_lowering_from_facts import _stack_object_name
+
+_SEGMENT_REGISTER_NAMES_8616 = {"cs", "ds", "es", "ss"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,11 +80,44 @@ def _is_stack_base_placeholder_8616(node) -> bool:
 
 
 def _segment_base_name_8616(node, project) -> str | None:
-    """Return the segment register name for ``seg << 4`` or ``seg * 16``."""
+    """Return the segment register name for ``seg << 4`` or ``seg * 16``.
 
+    If the segment term is a temporary name (for example ``vvar_*``), resolve
+    its defining expression and retry. This keeps SS/DS/ES lowering sound while
+    still avoiding speculative text-driven matching.
+    """
+
+    return _segment_base_name_8616_impl(node, project, None, set())
+
+
+def _segment_base_name_8616_impl(
+    node,
+    project,
+    codegen,
+    seen: set[int],
+) -> str | None:
     node = _strip_casts_8616(node)
-    if not isinstance(node, structured_c.CBinaryOp):
+    node_id = id(node)
+    if node_id in seen:
         return None
+    seen.add(node_id)
+
+    if not isinstance(node, structured_c.CBinaryOp):
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            if isinstance(variable, SimRegisterVariable):
+                reg_name = getattr(project.arch, "register_names", {}).get(variable.reg)
+                if isinstance(reg_name, str) and reg_name in _SEGMENT_REGISTER_NAMES_8616:
+                    return reg_name
+                return None
+
+            variable_name = getattr(node, "name", None) or getattr(variable, "name", None)
+            if isinstance(variable_name, str) and variable_name.startswith(("vvar_", "tmp_", "ir_")) and codegen is not None:
+                rhs = _single_assignment_rhs_8616(codegen, node)
+                if rhs is not None:
+                    return _segment_base_name_8616_impl(rhs, project, codegen, seen)
+        return None
+
     expected_scale = 4 if node.op == "Shl" else 16 if node.op == "Mul" else None
     if expected_scale is None:
         return None
@@ -88,12 +125,9 @@ def _segment_base_name_8616(node, project) -> str | None:
         if _constant_value_8616(maybe_scale) != expected_scale:
             continue
         maybe_seg = _strip_casts_8616(maybe_seg)
-        if not isinstance(maybe_seg, structured_c.CVariable):
-            continue
-        variable = getattr(maybe_seg, "variable", None)
-        if not isinstance(variable, SimRegisterVariable):
-            continue
-        return getattr(project.arch, "register_names", {}).get(variable.reg)
+        segment_name = _segment_base_name_8616_impl(maybe_seg, project, codegen, seen)
+        if segment_name is not None:
+            return segment_name
     return None
 
 
@@ -101,46 +135,49 @@ def _flatten_signed_terms_8616(
     node,
     sign: int = 1,
 ) -> tuple[tuple[int, object], ...] | None:
-    terms: list[tuple[int, object]] = []
-    # We use an explicit stack to avoid recursion depth crashes on very deep trees.
-    # active path markers prevent infinite loops from cyclic expressions.
-    pending: list[tuple[object, int, bool]] = [(node, sign, False)]
-    active: set[int] = set()
+    def _impl():
+        terms: list[tuple[int, object]] = []
+        # We use an explicit stack to avoid recursion depth crashes on very deep trees.
+        # active path markers prevent infinite loops from cyclic expressions.
+        pending: list[tuple[object, int, bool]] = [(node, sign, False)]
+        active: set[int] = set()
 
-    while pending:
-        current, current_sign, exiting = pending.pop()
-        current = _strip_casts_8616(current)
-        if current is None:
-            return None
-        if exiting:
-            if isinstance(current, int):
-                active.discard(current)
-            continue
+        while pending:
+            current, current_sign, exiting = pending.pop()
+            current = _strip_casts_8616(current)
+            if current is None:
+                return None
+            if exiting:
+                if isinstance(current, int):
+                    active.discard(current)
+                continue
 
-        node_id = id(current)
-        if node_id in active:
-            return None
-        if len(active) > 1024:
-            return None
+            node_id = id(current)
+            if node_id in active:
+                return None
+            if len(active) > 1024:
+                return None
 
-        if isinstance(current, structured_c.CBinaryOp) and current.op == "Add":
-            active.add(node_id)
-            pending.append((node_id, 0, True))
-            pending.append((current.rhs, current_sign, False))
-            pending.append((current.lhs, current_sign, False))
-            continue
-        if isinstance(current, structured_c.CBinaryOp) and current.op == "Sub":
-            active.add(node_id)
-            pending.append((node_id, 0, True))
-            pending.append((current.rhs, -current_sign, False))
-            pending.append((current.lhs, current_sign, False))
-            continue
+            if isinstance(current, structured_c.CBinaryOp) and current.op == "Add":
+                active.add(node_id)
+                pending.append((node_id, 0, True))
+                pending.append((current.rhs, current_sign, False))
+                pending.append((current.lhs, current_sign, False))
+                continue
+            if isinstance(current, structured_c.CBinaryOp) and current.op == "Sub":
+                active.add(node_id)
+                pending.append((node_id, 0, True))
+                pending.append((current.rhs, -current_sign, False))
+                pending.append((current.lhs, current_sign, False))
+                continue
 
-        terms.append((current_sign, current))
-        if len(terms) > 4096:
-            return None
+            terms.append((current_sign, current))
+            if len(terms) > 4096:
+                return None
 
-    return tuple(terms)
+        return tuple(terms)
+
+    return _impl()
 
 
 def _decompose_linear_global_terms_8616(node, project) -> tuple[str | None, int, tuple[tuple[int, object], ...]] | None:
@@ -184,27 +221,30 @@ def _global_displacement_known_8616(codegen, displacement: int) -> bool:
 
 
 def _global_size_from_displacement_8616(codegen, displacement: int) -> int | None:
-    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
-    if not isinstance(variables_in_use, dict):
-        return None
-    addr = displacement & 0xFFFF
-    global_name = f"g_{addr:04X}"
-    for variable in variables_in_use:
-        if isinstance(variable, SimMemoryVariable) and getattr(variable, "addr", None) == addr:
-            size = getattr(variable, "size", None)
-            if isinstance(size, int) and size > 0:
-                return size
-        if isinstance(variable, SimVariable) and getattr(variable, "name", None) == global_name:
-            cvar = variables_in_use[variable]
-            declared = getattr(cvar, "variable", None)
-            if isinstance(declared, SimMemoryVariable):
-                size = getattr(declared, "size", None)
+    def _impl():
+        variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
+        if not isinstance(variables_in_use, dict):
+            return None
+        addr = displacement & 0xFFFF
+        global_name = f"g_{addr:04X}"
+        for variable in variables_in_use:
+            if isinstance(variable, SimMemoryVariable) and getattr(variable, "addr", None) == addr:
+                size = getattr(variable, "size", None)
                 if isinstance(size, int) and size > 0:
                     return size
-            size = getattr(declared, "size", None) if declared is not None else None
-            if isinstance(size, int) and size > 0:
-                return size
-    return None
+            if isinstance(variable, SimVariable) and getattr(variable, "name", None) == global_name:
+                cvar = variables_in_use[variable]
+                declared = getattr(cvar, "variable", None)
+                if isinstance(declared, SimMemoryVariable):
+                    size = getattr(declared, "size", None)
+                    if isinstance(size, int) and size > 0:
+                        return size
+                size = getattr(declared, "size", None) if declared is not None else None
+                if isinstance(size, int) and size > 0:
+                    return size
+        return None
+
+    return _impl()
 
 
 def _cvar_has_array_type_8616(cvar) -> bool:
@@ -239,106 +279,112 @@ def _iter_statement_nodes_8616(root):
 
 
 def _same_variable_storage_8616(lhs, rhs) -> bool:
-    if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
-        return False
-    lhs_var = getattr(lhs, "variable", None)
-    rhs_var = getattr(rhs, "variable", None)
-    if lhs_var is rhs_var:
-        return True
-    lhs_name = getattr(lhs, "name", None) or getattr(lhs_var, "name", None)
-    rhs_name = getattr(rhs, "name", None) or getattr(rhs_var, "name", None)
-    if isinstance(lhs_name, str) and lhs_name and lhs_name == rhs_name:
-        return True
-    return (
-        isinstance(lhs_var, SimRegisterVariable)
-        and isinstance(rhs_var, SimRegisterVariable)
-        and getattr(lhs_var, "reg", None) == getattr(rhs_var, "reg", None)
-        and getattr(lhs_var, "size", None) == getattr(rhs_var, "size", None)
-    )
+    def _impl():
+        if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
+            return False
+        lhs_var = getattr(lhs, "variable", None)
+        rhs_var = getattr(rhs, "variable", None)
+        if lhs_var is rhs_var:
+            return True
+        lhs_name = getattr(lhs, "name", None) or getattr(lhs_var, "name", None)
+        rhs_name = getattr(rhs, "name", None) or getattr(rhs_var, "name", None)
+        if isinstance(lhs_name, str) and lhs_name and lhs_name == rhs_name:
+            return True
+        return (
+            isinstance(lhs_var, SimRegisterVariable)
+            and isinstance(rhs_var, SimRegisterVariable)
+            and getattr(lhs_var, "reg", None) == getattr(rhs_var, "reg", None)
+            and getattr(lhs_var, "size", None) == getattr(rhs_var, "size", None)
+        )
+
+    return _impl()
 
 
 # ── Precomputed maps (built once per lowering pass) ──
 
 
 def _build_assignment_maps_8616(codegen):
-    """Precompute assignment maps used by lowering and validation fingerprinting."""
-    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
-    if root is None:
-        return ({}, {}, {}, set(), set(), set(), {}, {})
+    def _impl():
+        """Precompute assignment maps used by lowering and validation fingerprinting."""
+        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+        if root is None:
+            return ({}, {}, {}, set(), set(), set(), {}, {})
 
-    var_id_map: dict[int, object] = {}
-    name_map: dict[str, object] = {}
-    reg_map: dict[tuple, object] = {}
-    multi_var: set[int] = set()
-    multi_name: set[str] = set()
-    multi_reg: set[tuple] = set()
-    first_name_map: dict[str, object] = {}
-    first_reg_map: dict[tuple, object] = {}
+        var_id_map: dict[int, object] = {}
+        name_map: dict[str, object] = {}
+        reg_map: dict[tuple, object] = {}
+        multi_var: set[int] = set()
+        multi_name: set[str] = set()
+        multi_reg: set[tuple] = set()
+        first_name_map: dict[str, object] = {}
+        first_reg_map: dict[tuple, object] = {}
 
-    for stmt in _iter_statement_nodes_8616(root):
-        if not isinstance(stmt, structured_c.CAssignment):
-            continue
-        lhs = getattr(stmt, "lhs", None)
-        rhs = getattr(stmt, "rhs", None)
+        for stmt in _iter_statement_nodes_8616(root):
+            if not isinstance(stmt, structured_c.CAssignment):
+                continue
+            lhs = getattr(stmt, "lhs", None)
+            rhs = getattr(stmt, "rhs", None)
 
-        if not isinstance(lhs, structured_c.CVariable):
-            # CDirtyExpression lhs — record via dirty.name / dirty.varid
-            dirty_lhs = getattr(lhs, "dirty", None) if lhs is not None else None
-            dirty_name = getattr(dirty_lhs, "name", None)
-            dirty_varid = getattr(dirty_lhs, "varid", None)
-            if isinstance(dirty_name, str):
-                if dirty_name not in first_name_map:
-                    first_name_map[dirty_name] = rhs
-                if dirty_name in name_map:
-                    multi_name.add(dirty_name)
-                    name_map[dirty_name] = None
-                elif dirty_name not in multi_name:
-                    name_map[dirty_name] = rhs
-            if isinstance(dirty_varid, int):
-                vvar_name = f"vvar_{dirty_varid}"
-                if vvar_name not in first_name_map:
-                    first_name_map[vvar_name] = rhs
-                if vvar_name in name_map:
-                    multi_name.add(vvar_name)
-                    name_map[vvar_name] = None
-                elif vvar_name not in multi_name:
-                    name_map[vvar_name] = rhs
-            continue
+            if not isinstance(lhs, structured_c.CVariable):
+                # CDirtyExpression lhs — record via dirty.name / dirty.varid
+                dirty_lhs = getattr(lhs, "dirty", None) if lhs is not None else None
+                dirty_name = getattr(dirty_lhs, "name", None)
+                dirty_varid = getattr(dirty_lhs, "varid", None)
+                if isinstance(dirty_name, str):
+                    if dirty_name not in first_name_map:
+                        first_name_map[dirty_name] = rhs
+                    if dirty_name in name_map:
+                        multi_name.add(dirty_name)
+                        name_map[dirty_name] = None
+                    elif dirty_name not in multi_name:
+                        name_map[dirty_name] = rhs
+                if isinstance(dirty_varid, int):
+                    vvar_name = f"vvar_{dirty_varid}"
+                    if vvar_name not in first_name_map:
+                        first_name_map[vvar_name] = rhs
+                    if vvar_name in name_map:
+                        multi_name.add(vvar_name)
+                        name_map[vvar_name] = None
+                    elif vvar_name not in multi_name:
+                        name_map[vvar_name] = rhs
+                continue
 
-        var = getattr(lhs, "variable", None)
+            var = getattr(lhs, "variable", None)
 
-        var_id = id(var) if var is not None else None
-        if var_id is not None:
-            if var_id in var_id_map:
-                multi_var.add(var_id)
-                var_id_map[var_id] = None
-            elif var_id not in multi_var:
-                var_id_map[var_id] = rhs
+            var_id = id(var) if var is not None else None
+            if var_id is not None:
+                if var_id in var_id_map:
+                    multi_var.add(var_id)
+                    var_id_map[var_id] = None
+                elif var_id not in multi_var:
+                    var_id_map[var_id] = rhs
 
-        name = getattr(lhs, "name", None) or getattr(var, "name", None)
-        if isinstance(name, str) and name:
-            if name not in first_name_map:
-                first_name_map[name] = rhs
-            if name in name_map:
-                multi_name.add(name)
-                name_map[name] = None
-            elif name not in multi_name:
-                name_map[name] = rhs
+            name = getattr(lhs, "name", None) or getattr(var, "name", None)
+            if isinstance(name, str) and name:
+                if name not in first_name_map:
+                    first_name_map[name] = rhs
+                if name in name_map:
+                    multi_name.add(name)
+                    name_map[name] = None
+                elif name not in multi_name:
+                    name_map[name] = rhs
 
-        if isinstance(var, SimRegisterVariable):
-            reg = getattr(var, "reg", None)
-            size = getattr(var, "size", None)
-            if isinstance(reg, int) and isinstance(size, int):
-                reg_key = (reg, size)
-                if reg_key not in first_reg_map:
-                    first_reg_map[reg_key] = rhs
-                if reg_key in reg_map:
-                    multi_reg.add(reg_key)
-                    reg_map[reg_key] = None
-                elif reg_key not in multi_reg:
-                    reg_map[reg_key] = rhs
+            if isinstance(var, SimRegisterVariable):
+                reg = getattr(var, "reg", None)
+                size = getattr(var, "size", None)
+                if isinstance(reg, int) and isinstance(size, int):
+                    reg_key = (reg, size)
+                    if reg_key not in first_reg_map:
+                        first_reg_map[reg_key] = rhs
+                    if reg_key in reg_map:
+                        multi_reg.add(reg_key)
+                        reg_map[reg_key] = None
+                    elif reg_key not in multi_reg:
+                        reg_map[reg_key] = rhs
 
-    return (var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, first_name_map, first_reg_map)
+        return (var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, first_name_map, first_reg_map)
+
+    return _impl()
 
 
 def _ensure_assignment_maps_8616(codegen) -> tuple:
@@ -352,96 +398,99 @@ def _ensure_assignment_maps_8616(codegen) -> tuple:
 
 
 def _build_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
-    """Precompute vvar_id → carrier_delta in a single pass, caching on codegen."""
-    project = getattr(codegen, "project", None)
-    sp_reg, _sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
-    facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}
-    has_ss_facts = any(getattr(fact, "segment_space", None) == "ss" for fact in facts.values())
-    deltas: dict[int, int] = {}
-    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
-    if root is None:
-        return deltas
+    def _impl():
+        """Precompute vvar_id → carrier_delta in a single pass, caching on codegen."""
+        project = getattr(codegen, "project", None)
+        sp_reg, _sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
+        facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}
+        has_ss_facts = any(getattr(fact, "segment_space", None) == "ss" for fact in facts.values())
+        deltas: dict[int, int] = {}
+        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+        if root is None:
+            return deltas
 
-    def _seed_from_init(expr, lhs_id):
-        if expr is None:
+        def _seed_from_init(expr, lhs_id):
+            if expr is None:
+                return None
+            rhs_stripped = _strip_casts_8616(expr)
+            ref_node: object = None
+            const_delta: int = 0
+            if isinstance(rhs_stripped, structured_c.CUnaryOp) and rhs_stripped.op == "Reference":
+                ref_node = rhs_stripped.operand
+            elif isinstance(rhs_stripped, structured_c.CBinaryOp) and rhs_stripped.op in {"Add", "Sub"}:
+                if isinstance(_strip_casts_8616(rhs_stripped.lhs), structured_c.CUnaryOp):
+                    lhs_u = _strip_casts_8616(rhs_stripped.lhs)
+                    if lhs_u.op == "Reference":
+                        ref_node = lhs_u.operand
+                        rhs_const = _constant_value_8616(rhs_stripped.rhs)
+                        if rhs_const is not None:
+                            const_delta = rhs_const if rhs_stripped.op == "Add" else -rhs_const
+                if ref_node is None and isinstance(_strip_casts_8616(rhs_stripped.rhs), structured_c.CUnaryOp):
+                    rhs_u = _strip_casts_8616(rhs_stripped.rhs)
+                    if rhs_u.op == "Reference" and rhs_stripped.op == "Add":
+                        ref_node = rhs_u.operand
+                        lhs_const = _constant_value_8616(rhs_stripped.lhs)
+                        if lhs_const is not None:
+                            const_delta = lhs_const
+            if ref_node is not None:
+                operand = _strip_casts_8616(ref_node)
+                if isinstance(operand, structured_c.CVariable):
+                    var = getattr(operand, "variable", None)
+                    if isinstance(var, SimStackVariable):
+                        offset = getattr(var, "offset", None)
+                        if isinstance(offset, int):
+                            deltas[lhs_id] = offset + const_delta
+                            return True
+            if isinstance(rhs_stripped, structured_c.CVariable):
+                var = getattr(rhs_stripped, "variable", None)
+                if isinstance(var, SimRegisterVariable) and getattr(var, "reg", None) == sp_reg and has_ss_facts:
+                    deltas[lhs_id] = 0
+                    return True
             return None
-        rhs_stripped = _strip_casts_8616(expr)
-        ref_node: object = None
-        const_delta: int = 0
-        if isinstance(rhs_stripped, structured_c.CUnaryOp) and rhs_stripped.op == "Reference":
-            ref_node = rhs_stripped.operand
-        elif isinstance(rhs_stripped, structured_c.CBinaryOp) and rhs_stripped.op in {"Add", "Sub"}:
-            if isinstance(_strip_casts_8616(rhs_stripped.lhs), structured_c.CUnaryOp):
-                lhs_u = _strip_casts_8616(rhs_stripped.lhs)
-                if lhs_u.op == "Reference":
-                    ref_node = lhs_u.operand
-                    rhs_const = _constant_value_8616(rhs_stripped.rhs)
-                    if rhs_const is not None:
-                        const_delta = rhs_const if rhs_stripped.op == "Add" else -rhs_const
-            if ref_node is None and isinstance(_strip_casts_8616(rhs_stripped.rhs), structured_c.CUnaryOp):
-                rhs_u = _strip_casts_8616(rhs_stripped.rhs)
-                if rhs_u.op == "Reference" and rhs_stripped.op == "Add":
-                    ref_node = rhs_u.operand
-                    lhs_const = _constant_value_8616(rhs_stripped.lhs)
-                    if lhs_const is not None:
-                        const_delta = lhs_const
-        if ref_node is not None:
-            operand = _strip_casts_8616(ref_node)
-            if isinstance(operand, structured_c.CVariable):
-                var = getattr(operand, "variable", None)
-                if isinstance(var, SimStackVariable):
-                    offset = getattr(var, "offset", None)
-                    if isinstance(offset, int):
-                        deltas[lhs_id] = offset + const_delta
-                        return True
-        if isinstance(rhs_stripped, structured_c.CVariable):
-            var = getattr(rhs_stripped, "variable", None)
-            if isinstance(var, SimRegisterVariable) and getattr(var, "reg", None) == sp_reg and has_ss_facts:
-                deltas[lhs_id] = 0
-                return True
-        return None
 
-    for stmt in _iter_statement_nodes_8616(root):
-        if not isinstance(stmt, structured_c.CAssignment):
-            continue
-        lhs_id = _extract_vvar_id_8616(getattr(stmt, "lhs", None))
-        if not isinstance(lhs_id, int):
-            continue
-        _seed_from_init(getattr(stmt, "rhs", None), lhs_id)
-
-    changed = True
-    while changed:
-        changed = False
         for stmt in _iter_statement_nodes_8616(root):
             if not isinstance(stmt, structured_c.CAssignment):
                 continue
             lhs_id = _extract_vvar_id_8616(getattr(stmt, "lhs", None))
-            if not isinstance(lhs_id, int) or lhs_id in deltas:
+            if not isinstance(lhs_id, int):
                 continue
-            base_ids: list[tuple[int, int]] = []
-            const_total = 0
-            unknown = False
-            terms = _flatten_signed_terms_8616(getattr(stmt, "rhs", None))
-            if terms is None:
-                continue
-            for sign, term in terms:
-                base_id = _extract_vvar_id_8616(term)
-                if isinstance(base_id, int):
-                    base_ids.append((sign, base_id))
+            _seed_from_init(getattr(stmt, "rhs", None), lhs_id)
+
+        changed = True
+        while changed:
+            changed = False
+            for stmt in _iter_statement_nodes_8616(root):
+                if not isinstance(stmt, structured_c.CAssignment):
                     continue
-                const = _constant_value_8616(term)
-                if const is not None:
-                    const_total += sign * const
+                lhs_id = _extract_vvar_id_8616(getattr(stmt, "lhs", None))
+                if not isinstance(lhs_id, int) or lhs_id in deltas:
                     continue
-                unknown = True
-            if unknown or len(base_ids) != 1:
-                continue
-            sign, base_id = base_ids[0]
-            if sign != 1 or base_id not in deltas:
-                continue
-            deltas[lhs_id] = deltas[base_id] + const_total
-            changed = True
-    return deltas
+                base_ids: list[tuple[int, int]] = []
+                const_total = 0
+                unknown = False
+                terms = _flatten_signed_terms_8616(getattr(stmt, "rhs", None))
+                if terms is None:
+                    continue
+                for sign, term in terms:
+                    base_id = _extract_vvar_id_8616(term)
+                    if isinstance(base_id, int):
+                        base_ids.append((sign, base_id))
+                        continue
+                    const = _constant_value_8616(term)
+                    if const is not None:
+                        const_total += sign * const
+                        continue
+                    unknown = True
+                if unknown or len(base_ids) != 1:
+                    continue
+                sign, base_id = base_ids[0]
+                if sign != 1 or base_id not in deltas:
+                    continue
+                deltas[lhs_id] = deltas[base_id] + const_total
+                changed = True
+        return deltas
+
+    return _impl()
 
 
 def _ensure_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
@@ -458,26 +507,29 @@ def _ensure_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
 
 
 def _single_assignment_rhs_8616(codegen, target):
-    if not isinstance(target, structured_c.CVariable):
+    def _impl():
+        if not isinstance(target, structured_c.CVariable):
+            return None
+        var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, _first_name_map, _first_reg_map = (
+            _ensure_assignment_maps_8616(codegen)
+        )
+        var = getattr(target, "variable", None)
+        var_id = id(var) if var is not None else None
+        if var_id is not None and var_id in var_id_map and var_id not in multi_var:
+            return var_id_map[var_id]
+        name = getattr(target, "name", None) or getattr(var, "name", None)
+        if isinstance(name, str) and name in name_map and name not in multi_name:
+            return name_map[name]
+        if isinstance(var, SimRegisterVariable):
+            reg = getattr(var, "reg", None)
+            size = getattr(var, "size", None)
+            if isinstance(reg, int) and isinstance(size, int):
+                reg_key = (reg, size)
+                if reg_key in reg_map and reg_key not in multi_reg:
+                    return reg_map[reg_key]
         return None
-    var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, _first_name_map, _first_reg_map = (
-        _ensure_assignment_maps_8616(codegen)
-    )
-    var = getattr(target, "variable", None)
-    var_id = id(var) if var is not None else None
-    if var_id is not None and var_id in var_id_map and var_id not in multi_var:
-        return var_id_map[var_id]
-    name = getattr(target, "name", None) or getattr(var, "name", None)
-    if isinstance(name, str) and name in name_map and name not in multi_name:
-        return name_map[name]
-    if isinstance(var, SimRegisterVariable):
-        reg = getattr(var, "reg", None)
-        size = getattr(var, "size", None)
-        if isinstance(reg, int) and isinstance(size, int):
-            reg_key = (reg, size)
-            if reg_key in reg_map and reg_key not in multi_reg:
-                return reg_map[reg_key]
-    return None
+
+    return _impl()
 
 
 def _stack_pointer_carrier_offset_8616(
@@ -486,46 +538,50 @@ def _stack_pointer_carrier_offset_8616(
     codegen,
     seen: set[int] | None = None,
 ) -> int | None:
-    """Recover a stack-pointer carrier from existing stack-probe facts."""
+    def _impl():
+        nonlocal seen
+        """Recover a stack-pointer carrier from existing stack-probe facts."""
 
-    if seen is None:
-        seen = set()
+        if seen is None:
+            seen = set()
 
-    variable = getattr(node, "variable", None) if isinstance(node, structured_c.CVariable) else None
-    dirty = getattr(node, "dirty", None)
-    if isinstance(variable, SimRegisterVariable):
-        reg = getattr(variable, "reg", None)
-        size = getattr(variable, "size", None)
-    else:
-        reg = getattr(dirty, "reg", None)
-        bits = getattr(dirty, "bits", None)
-        size = (bits // 8) if isinstance(bits, int) else None
-        varid = getattr(dirty, "varid", None)
-        if not isinstance(reg, int) and isinstance(varid, int):
-            target_name = f"vvar_{varid}"
-            resolved = _single_assignment_rhs_for_virtual_name_8616(codegen, target_name)
-            if resolved is not None:
-                return _stack_offset_from_expr_8616(resolved, project, codegen, seen)
-            delta = _stack_probe_carrier_delta_8616(node, codegen)
-            if delta is not None:
-                return delta
-    bp_reg, bp_size = getattr(getattr(project, "arch", None), "registers", {}).get("bp", (None, None))
-    if isinstance(bp_reg, int) and reg == bp_reg and (size is None or size == bp_size):
-        return 0
-
-    sp_reg, sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
-    if not (isinstance(sp_reg, int) and reg == sp_reg and (size is None or size == sp_size)):
-        return None
-    facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}
-    if not facts:
-        return None
-    for fact in facts.values():
-        if getattr(fact, "segment_space", None) != "ss":
-            continue
-        width = getattr(fact, "width", None)
-        if isinstance(width, int) and width > 0:
+        variable = getattr(node, "variable", None) if isinstance(node, structured_c.CVariable) else None
+        dirty = getattr(node, "dirty", None)
+        if isinstance(variable, SimRegisterVariable):
+            reg = getattr(variable, "reg", None)
+            size = getattr(variable, "size", None)
+        else:
+            reg = getattr(dirty, "reg", None)
+            bits = getattr(dirty, "bits", None)
+            size = (bits // 8) if isinstance(bits, int) else None
+            varid = getattr(dirty, "varid", None)
+            if not isinstance(reg, int) and isinstance(varid, int):
+                target_name = f"vvar_{varid}"
+                resolved = _single_assignment_rhs_for_virtual_name_8616(codegen, target_name)
+                if resolved is not None:
+                    return _stack_offset_from_expr_8616(resolved, project, codegen, seen)
+                delta = _stack_probe_carrier_delta_8616(node, codegen)
+                if delta is not None:
+                    return delta
+        bp_reg, bp_size = getattr(getattr(project, "arch", None), "registers", {}).get("bp", (None, None))
+        if isinstance(bp_reg, int) and reg == bp_reg and (size is None or size == bp_size):
             return 0
-    return None
+
+        sp_reg, sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
+        if not (isinstance(sp_reg, int) and reg == sp_reg and (size is None or size == sp_size)):
+            return None
+        facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}
+        if not facts:
+            return None
+        for fact in facts.values():
+            if getattr(fact, "segment_space", None) != "ss":
+                continue
+            width = getattr(fact, "width", None)
+            if isinstance(width, int) and width > 0:
+                return 0
+        return None
+
+    return _impl()
 
 
 def _lhs_name_8616(lhs) -> str | None:
@@ -586,192 +642,218 @@ def _stack_probe_carrier_delta_8616(node, codegen) -> int | None:
     return deltas.get(varid)
 
 
-def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None = None) -> int | None:
-    if seen is None:
-        seen = set()
-    node = _strip_casts_8616(node)
-    node_id = id(node)
-    offset_cache = getattr(codegen, "_inertia_stack_offset_cache", None)
-    if not isinstance(offset_cache, dict):
-        offset_cache = {}
-        setattr(codegen, "_inertia_stack_offset_cache", offset_cache)
-
-    if node_id in offset_cache:
-        cached = offset_cache.get(node_id)
-        if cached is _UNRESOLVED_STACK_OFFSET_8616:
-            return None
-        return cached
-
-    if node_id in seen:
-        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
+def _resolve_virtual_name_offset_8616(node_name: str, project, codegen, seen: set[int]) -> int | None:
+    if not (
+        node_name.startswith("vvar_")
+        or node_name.startswith("tmp_")
+        or node_name.startswith("ir_")
+    ):
         return None
-    if len(seen) > 8192:
-        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
+    rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, node_name)
+    if rhs is None:
         return None
-    seen.add(node_id)
+    return _stack_offset_from_expr_8616(rhs, project, codegen, seen)
 
-    const = _constant_value_8616(node)
-    if const is not None:
-        offset_cache[node_id] = const
-        return const
 
-    stack_base_bias = _stack_base_bp_bias_8616(node)
-    if stack_base_bias is not None:
-        offset_cache[node_id] = stack_base_bias
-        return stack_base_bias
-
-    if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
-        operand = _strip_casts_8616(node.operand)
-        variable = getattr(operand, "variable", None) if isinstance(operand, structured_c.CVariable) else None
-        if isinstance(variable, SimStackVariable) and isinstance(getattr(variable, "offset", None), int):
-            offset_cache[node_id] = variable.offset
-            return variable.offset
-        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
-        return None
-
-    if isinstance(node, structured_c.CVariable):
-        variable = getattr(node, "variable", None)
-        if isinstance(variable, SimRegisterVariable):
-            carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
-            if carrier_offset is not None:
-                offset_cache[node_id] = carrier_offset
-                return carrier_offset
-        rhs = _single_assignment_rhs_8616(codegen, node)
-        if rhs is not None:
-            resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
-            offset_cache[node_id] = resolved
-            return resolved
-        # Fallback: try name-based lookup for virtual variables (vvar_*, tmp_*, ir_*)
-        node_name = getattr(node, "name", None) or getattr(variable, "name", None)
-        if isinstance(node_name, str) and (
-            node_name.startswith("vvar_") or node_name.startswith("tmp_") or node_name.startswith("ir_")
-        ):
-            rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, node_name)
-            if rhs is not None:
-                resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
-                offset_cache[node_id] = resolved
-                return resolved
-        # Fallback: try vvar carrier-delta resolution for ss << 4 + vvar patterns
-        if isinstance(node_name, str) and node_name.startswith("vvar_"):
-            delta = _stack_probe_carrier_delta_8616(node, codegen)
-            if delta is not None:
-                offset_cache[node_id] = delta
-                return delta
-        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
-        return None
-
-    # CDirtyExpression: extract varid/name and try vvar resolution
-    dirty = getattr(node, "dirty", None)
-    if dirty is not None:
-        varid = getattr(dirty, "varid", None)
-        dirty_name = getattr(dirty, "name", None)
-        _diag = {}
-        if isinstance(varid, int):
-            _diag["varid"] = varid
-            target_name = f"vvar_{varid}"
-            rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, target_name, allow_multi=True)
-            if rhs is not None:
-                resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
-                if resolved is not None:
-                    offset_cache[node_id] = resolved
-                    return resolved
-                _diag["rhs_found_but_unresolvable"] = True
-            else:
-                _diag["rhs_not_found"] = True
-            delta = _stack_probe_carrier_delta_8616(node, codegen)
-            if delta is not None:
-                offset_cache[node_id] = delta
-                return delta
-            _diag["carrier_delta_none"] = True
-        elif isinstance(dirty_name, str):
-            _diag["dirty_name"] = dirty_name
-            if dirty_name.startswith("vvar_") or dirty_name.startswith("tmp_") or dirty_name.startswith("ir_"):
-                rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, dirty_name)
-                if rhs is not None:
-                    resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
-                    if resolved is not None:
-                        offset_cache[node_id] = resolved
-                        return resolved
-                    _diag["rhs_found_but_unresolvable"] = True
-                else:
-                    _diag["rhs_not_found"] = True
-        else:
-            _diag["no_varid_or_name"] = True
-        # Try SP carrier
+def _resolve_stack_offset_from_variable_8616(node, project, codegen, seen: set[int]) -> int | None:
+    variable = getattr(node, "variable", None)
+    if isinstance(variable, SimRegisterVariable):
         carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
         if carrier_offset is not None:
-            offset_cache[node_id] = carrier_offset
             return carrier_offset
-        # Try BP base frame — BP is the canonical frame pointer (offset 0).
-        dirty_reg = getattr(dirty, "reg", None)
-        bp_reg, _bp_size = getattr(getattr(project, "arch", None), "registers", {}).get("bp", (None, None))
-        if isinstance(dirty_reg, int) and isinstance(bp_reg, int) and dirty_reg == bp_reg:
-            offset_cache[node_id] = 0
-            return 0
-        _diag["carrier_none"] = True
-        _log_refusal_8616(codegen, "cdirty_diag", **_diag)
+    rhs = _single_assignment_rhs_8616(codegen, node)
+    if rhs is not None:
+        return _stack_offset_from_expr_8616(rhs, project, codegen, seen)
+    node_name = getattr(node, "name", None) or getattr(variable, "name", None)
+    if isinstance(node_name, str):
+        resolved = _resolve_virtual_name_offset_8616(node_name, project, codegen, seen)
+        if resolved is not None:
+            return resolved
+        if node_name.startswith("vvar_"):
+            return _stack_probe_carrier_delta_8616(node, codegen)
+    return None
+
+
+def _dirty_varid_offset_8616(varid: int, node, project, codegen, seen: set[int], diag: dict[str, object]) -> int | None:
+    diag["varid"] = varid
+    target_name = f"vvar_{varid}"
+    rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, target_name, allow_multi=True)
+    if rhs is not None:
+        resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
+        if resolved is not None:
+            return resolved
+        diag["rhs_found_but_unresolvable"] = True
+    else:
+        diag["rhs_not_found"] = True
+    delta = _stack_probe_carrier_delta_8616(node, codegen)
+    if delta is not None:
+        return delta
+    diag["carrier_delta_none"] = True
+    return None
+
+
+def _dirty_name_offset_8616(dirty_name: str, project, codegen, seen: set[int], diag: dict[str, object]) -> int | None:
+    diag["dirty_name"] = dirty_name
+    resolved = _resolve_virtual_name_offset_8616(dirty_name, project, codegen, seen)
+    if resolved is not None:
+        return resolved
+    if dirty_name.startswith("vvar_") or dirty_name.startswith("tmp_") or dirty_name.startswith("ir_"):
+        rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, dirty_name)
+        if rhs is None:
+            diag["rhs_not_found"] = True
+        else:
+            diag["rhs_found_but_unresolvable"] = True
+    return None
+
+
+def _resolve_stack_offset_from_dirty_8616(node, project, codegen, seen: set[int]) -> int | None:
+    dirty = getattr(node, "dirty", None)
+    if dirty is None:
+        return None
+    varid = getattr(dirty, "varid", None)
+    dirty_name = getattr(dirty, "name", None)
+    diag: dict[str, object] = {}
+    if isinstance(varid, int):
+        resolved = _dirty_varid_offset_8616(varid, node, project, codegen, seen, diag)
+        if resolved is not None:
+            return resolved
+    elif isinstance(dirty_name, str):
+        resolved = _dirty_name_offset_8616(dirty_name, project, codegen, seen, diag)
+        if resolved is not None:
+            return resolved
+    else:
+        diag["no_varid_or_name"] = True
+    carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
+    if carrier_offset is not None:
+        return carrier_offset
+    dirty_reg = getattr(dirty, "reg", None)
+    bp_reg, _bp_size = getattr(getattr(project, "arch", None), "registers", {}).get("bp", (None, None))
+    if isinstance(dirty_reg, int) and isinstance(bp_reg, int) and dirty_reg == bp_reg:
+        return 0
+    diag["carrier_none"] = True
+    _log_refusal_8616(codegen, "cdirty_diag", **diag)
+    return None
+
+
+def _resolve_binary_stack_base_shortcuts_8616(node, codegen) -> int | None:
+    if _is_stack_base_placeholder_8616(node.lhs):
+        rhs_const = _constant_value_8616(node.rhs)
+        if rhs_const is not None:
+            base = _stack_base_bp_bias_8616(node.lhs) or 0
+            scaled = int(rhs_const) * 2
+            return base + (scaled if node.op == "Add" else -scaled)
+    if node.op == "Add" and _is_stack_base_placeholder_8616(node.rhs):
+        lhs_const = _constant_value_8616(node.lhs)
+        if lhs_const is not None:
+            base = _stack_base_bp_bias_8616(node.rhs) or 0
+            return base + int(lhs_const) * 2
+    return None
+
+
+def _resolve_binary_stack_probe_fallback_8616(node, lhs, rhs, codegen) -> int | None:
+    if lhs is None:
+        rhs_const = _constant_value_8616(node.rhs)
+        lhs_delta = _stack_probe_carrier_delta_8616(_strip_casts_8616(node.lhs), codegen)
+        if isinstance(rhs_const, int) and isinstance(lhs_delta, int):
+            return lhs_delta + (rhs_const if node.op == "Add" else -rhs_const)
+    if rhs is None and node.op == "Add":
+        lhs_const = _constant_value_8616(node.lhs)
+        rhs_delta = _stack_probe_carrier_delta_8616(_strip_casts_8616(node.rhs), codegen)
+        if isinstance(lhs_const, int) and isinstance(rhs_delta, int):
+            return lhs_const + rhs_delta
+    return None
+
+
+def _resolve_stack_offset_from_binary_8616(node, project, codegen, seen: set[int]) -> int | None:
+    def _impl():
+        shortcut = _resolve_binary_stack_base_shortcuts_8616(node, codegen)
+        if shortcut is not None:
+            return shortcut
+        lhs = _stack_offset_from_expr_8616(node.lhs, project, codegen, seen)
+        rhs = _stack_offset_from_expr_8616(node.rhs, project, codegen, seen)
+        fallback = _resolve_binary_stack_probe_fallback_8616(node, lhs, rhs, codegen)
+        if fallback is not None:
+            return fallback
+        if lhs is None and _constant_value_8616(node.rhs) is not None:
+            return None
+        if rhs is None and _constant_value_8616(node.lhs) is not None and node.op == "Add":
+            return None
+        if lhs is None or rhs is None:
+            return None
+        return lhs + rhs if node.op == "Add" else lhs - rhs
+
+    return _impl()
+
+
+def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None = None) -> int | None:
+    def _impl():
+        nonlocal node, seen
+        if seen is None:
+            seen = set()
+        node = _strip_casts_8616(node)
+        node_id = id(node)
+        offset_cache = getattr(codegen, "_inertia_stack_offset_cache", None)
+        if not isinstance(offset_cache, dict):
+            offset_cache = {}
+            setattr(codegen, "_inertia_stack_offset_cache", offset_cache)
+
+        if node_id in offset_cache:
+            cached = offset_cache.get(node_id)
+            if cached is _UNRESOLVED_STACK_OFFSET_8616:
+                return None
+            return cached
+
+        if node_id in seen:
+            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
+            return None
+        if len(seen) > 8192:
+            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
+            return None
+        seen.add(node_id)
+
+        const = _constant_value_8616(node)
+        if const is not None:
+            offset_cache[node_id] = const
+            return const
+
+        stack_base_bias = _stack_base_bp_bias_8616(node)
+        if stack_base_bias is not None:
+            offset_cache[node_id] = stack_base_bias
+            return stack_base_bias
+
+        if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
+            operand = _strip_casts_8616(node.operand)
+            variable = getattr(operand, "variable", None) if isinstance(operand, structured_c.CVariable) else None
+            if isinstance(variable, SimStackVariable) and isinstance(getattr(variable, "offset", None), int):
+                offset_cache[node_id] = variable.offset
+                return variable.offset
+            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
+            return None
+
+        if isinstance(node, structured_c.CVariable):
+            resolved = _resolve_stack_offset_from_variable_8616(node, project, codegen, seen)
+            offset_cache[node_id] = resolved if resolved is not None else _UNRESOLVED_STACK_OFFSET_8616
+            return resolved
+
+        dirty_resolved = _resolve_stack_offset_from_dirty_8616(node, project, codegen, seen)
+        if dirty_resolved is not None:
+            offset_cache[node_id] = dirty_resolved
+            return dirty_resolved
+
+        dirty_carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
+        if dirty_carrier_offset is not None:
+            offset_cache[node_id] = dirty_carrier_offset
+            return dirty_carrier_offset
+
+        if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
+            resolved = _resolve_stack_offset_from_binary_8616(node, project, codegen, seen)
+            offset_cache[node_id] = resolved if resolved is not None else _UNRESOLVED_STACK_OFFSET_8616
+            return resolved
+
         offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
         return None
 
-    dirty_carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
-    if dirty_carrier_offset is not None:
-        offset_cache[node_id] = dirty_carrier_offset
-        return dirty_carrier_offset
-
-    if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
-        # In 16-bit AIL, direct stack_base arithmetic frequently carries
-        # word-oriented displacements. Normalize them to byte offsets before
-        # stack-slot matching so SS:BP materialization can occur early.
-        if _is_stack_base_placeholder_8616(node.lhs):
-            rhs_const = _constant_value_8616(node.rhs)
-            if rhs_const is not None:
-                base = _stack_base_bp_bias_8616(node.lhs) or 0
-                scaled = int(rhs_const) * 2
-                resolved_direct = base + (scaled if node.op == "Add" else -scaled)
-                offset_cache[node_id] = resolved_direct
-                return resolved_direct
-        if node.op == "Add" and _is_stack_base_placeholder_8616(node.rhs):
-            lhs_const = _constant_value_8616(node.lhs)
-            if lhs_const is not None:
-                base = _stack_base_bp_bias_8616(node.rhs) or 0
-                resolved_direct = base + int(lhs_const) * 2
-                offset_cache[node_id] = resolved_direct
-                return resolved_direct
-        lhs = _stack_offset_from_expr_8616(node.lhs, project, codegen, seen)
-        rhs = _stack_offset_from_expr_8616(node.rhs, project, codegen, seen)
-        # Evidence-backed fallback: when one side is unresolved but the other
-        # side is a constant, try to recover a stack-probe carrier delta from
-        # the unresolved sub-expression itself (works for CDirty/CVariable
-        # carrier shapes that do not normalize to plain CVariable nodes).
-        if lhs is None and isinstance(node, structured_c.CBinaryOp):
-            rhs_const = _constant_value_8616(node.rhs)
-            lhs_delta = _stack_probe_carrier_delta_8616(_strip_casts_8616(node.lhs), codegen)
-            if isinstance(rhs_const, int) and isinstance(lhs_delta, int):
-                resolved = lhs_delta + (rhs_const if node.op == "Add" else -rhs_const)
-                offset_cache[node_id] = resolved
-                return resolved
-        if rhs is None and node.op == "Add" and isinstance(node, structured_c.CBinaryOp):
-            lhs_const = _constant_value_8616(node.lhs)
-            rhs_delta = _stack_probe_carrier_delta_8616(_strip_casts_8616(node.rhs), codegen)
-            if isinstance(lhs_const, int) and isinstance(rhs_delta, int):
-                resolved = lhs_const + rhs_delta
-                offset_cache[node_id] = resolved
-                return resolved
-        if lhs is None and _constant_value_8616(node.rhs) is not None:
-            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
-            return None
-        if rhs is None and _constant_value_8616(node.lhs) is not None and node.op == "Add":
-            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
-            return None
-        if lhs is None or rhs is None:
-            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
-            return None
-        resolved = lhs + rhs if node.op == "Add" else lhs - rhs
-        offset_cache[node_id] = resolved
-        return resolved
-
-    offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
-    return None
+    return _impl()
 
 
 def _log_refusal_8616(codegen, kind: str, /, **details: object) -> None:
@@ -781,79 +863,104 @@ def _log_refusal_8616(codegen, kind: str, /, **details: object) -> None:
 
 
 def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealModeLinearStackAccess8616 | None:
-    """Match a dereference of ``(ss << 4) + stack_offset`` with stack proof."""
+    def _impl():
+        nonlocal node
+        """Match a dereference of ``(ss << 4) + stack_offset`` with stack proof."""
 
-    node = _strip_casts_8616(node)
-    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
-        return None
+        node = _strip_casts_8616(node)
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            return None
 
-    segment_name: str | None = None
-    offset_total = 0
-    offset_terms: list[object] = []
-    terms = _flatten_signed_terms_8616(node.operand)
-    if terms is None:
-        return None
-    for sign, term in terms:
-        seg = _segment_base_name_8616(term, project)
-        if seg is not None:
-            if sign != 1 or segment_name is not None:
-                return None
-            segment_name = seg
-            continue
-        const = _constant_value_8616(term)
-        if const is not None:
-            offset_total += sign * const
-            continue
-        offset_terms.append(
-            term
-            if sign == 1
-            else structured_c.CBinaryOp(
-                "Sub", structured_c.CConstant(0, SimTypeInt(16, signed=False), codegen=codegen), term, codegen=codegen
+        segment_name: str | None = None
+        offset_total = 0
+        offset_terms: list[object] = []
+        terms = _flatten_signed_terms_8616(node.operand)
+        if terms is None:
+            return None
+        for sign, term in terms:
+            seg = _segment_base_name_8616(term, project)
+            if seg is not None:
+                if sign != 1 or segment_name is not None:
+                    return None
+                segment_name = seg
+                continue
+            const = _constant_value_8616(term)
+            if const is not None:
+                offset_total += sign * const
+                continue
+            offset_terms.append(
+                term
+                if sign == 1
+                else structured_c.CBinaryOp(
+                    "Sub",
+                    structured_c.CConstant(0, SimTypeInt(signed=False), codegen=codegen),
+                    term,
+                    codegen=codegen,
+                )
             )
-        )
 
-    if segment_name != "ss" or len(offset_terms) > 1:
-        _log_refusal_8616(codegen, "segment_or_terms", segment=segment_name, terms=len(offset_terms))
-        return None
+        if segment_name != "ss" or len(offset_terms) > 1:
+            _log_refusal_8616(codegen, "segment_or_terms", segment=segment_name, terms=len(offset_terms))
+            return None
 
-    if len(offset_terms) == 0:
-        base_offset = 0
-    else:
-        base_offset = _stack_offset_from_expr_8616(offset_terms[0], project, codegen)
+        if len(offset_terms) == 0:
+            base_offset = 0
+        else:
+            base_offset = _stack_offset_from_expr_8616(offset_terms[0], project, codegen)
 
-    if base_offset is None:
-        _log_refusal_8616(
-            codegen,
-            "offset_unresolved",
-            segment=segment_name,
-            offset_expr_type=type(offset_terms[0]).__name__ if offset_terms else "None",
-            const_offset=offset_total,
-        )
-        return None
-    displacement = base_offset + offset_total
-    width_bits = getattr(getattr(node, "type", None), "size", None)
-    width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
-    region = getattr(getattr(codegen, "cfunc", None), "addr", None)
-    facts = _stack_storage_facts_for_segmented_address_8616("ss", displacement, width, region=region)
-    if facts is None or facts.identity is None:
-        _log_refusal_8616(codegen, "no_stack_facts", displacement=displacement, width=width, region=region)
-        return None
-    return RealModeLinearStackAccess8616(displacement=displacement, width=width)
+        if base_offset is None:
+            _log_refusal_8616(
+                codegen,
+                "offset_unresolved",
+                segment=segment_name,
+                offset_expr_type=type(offset_terms[0]).__name__ if offset_terms else "None",
+                const_offset=offset_total,
+            )
+            return None
+        displacement = base_offset + offset_total
+        width_bits = getattr(getattr(node, "type", None), "size", None)
+        width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
+        region = getattr(getattr(codegen, "cfunc", None), "addr", None)
+        facts = _stack_storage_facts_for_segmented_address_8616("ss", displacement, width, region=region)
+        if facts is None or facts.identity is None:
+            _log_refusal_8616(codegen, "no_stack_facts", displacement=displacement, width=width, region=region)
+            return None
+        return RealModeLinearStackAccess8616(displacement=displacement, width=width)
+
+    return _impl()
 
 
 def match_stable_ds_es_linear_global_access_8616(node, project, codegen) -> RealModeLinearGlobalAddress8616 | None:
-    """Match a dereference of ``(ds << 4) + addr`` or ``(es << 4) + addr``."""
+    def _impl():
+        nonlocal node
+        """Match a dereference of ``(ds << 4) + addr`` or ``(es << 4) + addr``."""
 
-    node = _strip_casts_8616(node)
-    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
-        return None
+        node = _strip_casts_8616(node)
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            return None
 
-    decomposed = _decompose_linear_global_terms_8616(node.operand, project)
-    if decomposed is None:
-        return None
-    segment_name, displacement, residual_terms = decomposed
+        decomposed = _decompose_linear_global_terms_8616(node.operand, project)
+        if decomposed is None:
+            return None
+        segment_name, displacement, residual_terms = decomposed
 
-    if segment_name in {"ds", "es"}:
+        if segment_name in {"ds", "es"}:
+            width_bits = getattr(getattr(node, "type", None), "size", None)
+            width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
+            if width is None:
+                inferred_width = _global_size_from_displacement_8616(codegen, displacement)
+                if isinstance(inferred_width, int) and inferred_width > 0:
+                    width = inferred_width
+            return RealModeLinearGlobalAddress8616(
+                segment_name=segment_name,
+                displacement=displacement,
+                residual_terms=tuple(residual_terms),
+                width=width,
+            )
+
+        if segment_name is not None or not _global_displacement_known_8616(codegen, displacement):
+            return None
+
         width_bits = getattr(getattr(node, "type", None), "size", None)
         width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
         if width is None:
@@ -861,27 +968,13 @@ def match_stable_ds_es_linear_global_access_8616(node, project, codegen) -> Real
             if isinstance(inferred_width, int) and inferred_width > 0:
                 width = inferred_width
         return RealModeLinearGlobalAddress8616(
-            segment_name=segment_name,
+            segment_name="segless",
             displacement=displacement,
             residual_terms=tuple(residual_terms),
             width=width,
         )
 
-    if segment_name is not None or not _global_displacement_known_8616(codegen, displacement):
-        return None
-
-    width_bits = getattr(getattr(node, "type", None), "size", None)
-    width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
-    if width is None:
-        inferred_width = _global_size_from_displacement_8616(codegen, displacement)
-        if isinstance(inferred_width, int) and inferred_width > 0:
-            width = inferred_width
-    return RealModeLinearGlobalAddress8616(
-        segment_name="segless",
-        displacement=displacement,
-        residual_terms=tuple(residual_terms),
-        width=width,
-    )
+    return _impl()
 
 
 def _address_projection_term_is_safe_8616(node) -> bool:
@@ -1032,8 +1125,6 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
         nonlocal changed
         access = match_stable_ds_es_linear_global_access_8616(node, project, codegen)
         if access is not None:
-            if access.residual_terms:
-                return node
             changed = True
             return global_expr(access)
         return node
@@ -1175,8 +1266,6 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
         access = match_stable_ds_es_linear_global_address_8616(node, project, codegen)
         if access is None:
             return node
-        if access.residual_terms:
-            return node
         base_expr = _reference_expr(access.displacement)
         rebuilt = base_expr
         for sign, term in access.residual_terms:
@@ -1287,13 +1376,6 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
     setattr(codegen, "_inertia_vvar_carrier_deltas", None)
     setattr(codegen, "_inertia_stack_offset_cache", None)
 
-    def _canonical_stack_offset_8616(offset):
-        if not isinstance(offset, int):
-            return offset
-        if 0x8000 <= offset <= 0xFFFF:
-            return offset - 0x10000
-        return offset
-
     def stack_cvar(access: RealModeLinearStackAccess8616):
         displacement = _canonical_stack_offset_8616(access.displacement)
         target_type = _type_for_access_width_8616(access.width)
@@ -1315,7 +1397,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
             displacement,
             access.width or 1,
             base="bp",
-            name=f"s_{displacement & 0xFFFF:x}",
+            name=_stack_object_name(displacement, codegen=codegen),
             region=getattr(codegen.cfunc, "addr", None),
         )
         cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)

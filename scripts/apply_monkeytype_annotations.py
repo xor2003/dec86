@@ -6,117 +6,117 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler.monkeytype_tools import (
+from inertia_decompiler.monkeytype_tools import (  # noqa: E402
     DEFAULT_STUB_MODULE_PREFIXES,
     MONKEYTYPE_CACHE_DIR,
-    ensure_monkeytype_dirs,
+    MONKEYTYPE_DB_PATH,
     parse_list_modules_output,
-    source_line_count,
-    source_path_for_module,
 )
-
-PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
-MAX_SOURCE_LINES = 400
 
 
 def _python() -> str:
-    return str(PYTHON if PYTHON.exists() else Path(sys.executable))
+    venv_py = REPO_ROOT / ".venv" / "bin" / "python"
+    if venv_py.exists():
+        return str(venv_py)
+    return sys.executable
 
 
-def _run_monkeytype(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [_python(), "-m", "monkeytype", "-c", "monkeytype_config:CONFIG", *args],
-        cwd=REPO_ROOT,
-        check=False,
-        text=True,
-        capture_output=True,
-    )
+def _run_monkeytype(args: list[str]) -> subprocess.CompletedProcess[str]:
+    cmd = [_python(), "-m", "monkeytype", "-c", "monkeytype_config:CONFIG", *args]
+    return subprocess.run(cmd, cwd=REPO_ROOT, check=False, text=True, capture_output=True)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Apply MonkeyType annotations automatically to traced repo modules with source files <= 400 lines."
-    )
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Apply MonkeyType inferred annotations to traced project modules.")
     parser.add_argument(
         "--module-prefix",
         action="append",
         default=[],
-        help="Module prefix to include. Can be repeated. Defaults to traced repo prefixes.",
+        help="Module prefix to include. Defaults to project prefixes.",
     )
     parser.add_argument(
-        "--max-lines",
-        type=int,
-        default=MAX_SOURCE_LINES,
-        help="Maximum source file length eligible for automatic apply.",
+        "--ignore-existing-annotations",
+        action="store_true",
+        help="Pass --ignore-existing-annotations to monkeytype apply.",
     )
     parser.add_argument(
         "--per-module-timeout",
         type=int,
-        default=20,
-        help="Timeout in seconds for one monkeytype apply invocation.",
+        default=120,
+        help="Timeout in seconds for each monkeytype apply call.",
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
 
-    ensure_monkeytype_dirs()
-    prefixes = tuple(args.module_prefix) if args.module_prefix else DEFAULT_STUB_MODULE_PREFIXES
-    listed = _run_monkeytype("list-modules")
-    if listed.returncode:
+
+def _resolve_modules(prefixes: tuple[str, ...]) -> tuple[str, ...]:
+    listed = _run_monkeytype(["list-modules"])
+    if listed.returncode != 0:
         raise SystemExit(listed.stderr.strip() or listed.stdout.strip() or "monkeytype list-modules failed")
-    modules = parse_list_modules_output(listed.stdout, prefixes=prefixes)
+    return parse_list_modules_output(listed.stdout, prefixes=prefixes)
 
-    applied: list[str] = []
-    skipped: list[str] = []
-    failures: list[str] = []
 
-    for module_name in modules:
-        source_path = source_path_for_module(module_name)
-        if source_path is None or not source_path.exists():
-            skipped.append(f"{module_name}: no source path")
-            continue
-        line_count = source_line_count(source_path)
-        if line_count > args.max_lines:
-            skipped.append(f"{module_name}: {line_count} lines > {args.max_lines}")
-            continue
-        try:
-            applied_source = subprocess.run(
-                [_python(), "-m", "monkeytype", "-c", "monkeytype_config:CONFIG", "apply", module_name],
-                cwd=REPO_ROOT,
-                check=False,
-                text=True,
-                capture_output=True,
-                timeout=args.per_module_timeout,
-            )
-        except subprocess.TimeoutExpired:
-            failures.append(f"{module_name}: timed out after {args.per_module_timeout}s")
-            continue
-        if applied_source.returncode:
-            failures.append(f"{module_name}: {applied_source.stderr.strip() or applied_source.stdout.strip()}")
-            continue
-        rendered = applied_source.stdout
-        if not rendered.strip():
-            skipped.append(f"{module_name}: empty apply output")
-            continue
-        source_path.write_text(rendered, encoding="utf-8")
-        applied.append(module_name)
-        print(module_name)
+def _apply_module_annotations(
+    module_name: str, *, ignore_existing_annotations: bool, per_module_timeout: int
+) -> str | None:
+    apply_args = ["apply", module_name]
+    if ignore_existing_annotations:
+        apply_args.append("--ignore-existing-annotations")
+    try:
+        done = subprocess.run(
+            [_python(), "-m", "monkeytype", "-c", "monkeytype_config:CONFIG", *apply_args],
+            cwd=REPO_ROOT,
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=max(5, per_module_timeout),
+        )
+    except subprocess.TimeoutExpired:
+        return f"{module_name}: timed out after {per_module_timeout}s"
+    if done.returncode != 0:
+        return f"{module_name}: {done.stderr.strip() or done.stdout.strip()}"
+    print("  applied", flush=True)
+    return None
 
+
+def _write_failures(failed: list[str]) -> None:
     failures_path = MONKEYTYPE_CACHE_DIR / "apply_failures.txt"
-    skipped_path = MONKEYTYPE_CACHE_DIR / "apply_skips.txt"
-    if failures:
-        failures_path.write_text("\n\n".join(failures) + "\n", encoding="utf-8")
-        print(failures_path.relative_to(REPO_ROOT))
-    elif failures_path.exists():
-        failures_path.unlink()
-    if skipped:
-        skipped_path.write_text("\n".join(skipped) + "\n", encoding="utf-8")
-        print(skipped_path.relative_to(REPO_ROOT))
-    elif skipped_path.exists():
-        skipped_path.unlink()
+    failures_path.parent.mkdir(parents=True, exist_ok=True)
+    failures_path.write_text("\n".join(failed) + "\n", encoding="utf-8")
+    print(f"wrote {failures_path}")
+    print("failed modules:")
+    for line in failed:
+        print(f"  {line}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+
+    if not MONKEYTYPE_DB_PATH.exists():
+        raise SystemExit(f"MonkeyType DB not found: {MONKEYTYPE_DB_PATH}")
+
+    prefixes = tuple(args.module_prefix) if args.module_prefix else DEFAULT_STUB_MODULE_PREFIXES
+    modules = _resolve_modules(prefixes)
+    if not modules:
+        print("No modules matched prefixes.")
+        return 0
+
+    failed: list[str] = []
+    for idx, module_name in enumerate(modules, 1):
+        print(f"[{idx}/{len(modules)}] {module_name}", flush=True)
+        failure = _apply_module_annotations(
+            module_name,
+            ignore_existing_annotations=args.ignore_existing_annotations,
+            per_module_timeout=args.per_module_timeout,
+        )
+        if failure is not None:
+            failed.append(failure)
+    if failed:
+        _write_failures(failed)
+        return 0
     return 0
 
 

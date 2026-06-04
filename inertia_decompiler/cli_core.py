@@ -177,6 +177,7 @@ from .cli_c_text_postprocess import (
     _prune_void_function_return_values_text,
     _contains_void_function_definition_text,
     _normalize_function_signature_arg_names,
+    _hoist_c89_local_declarations_text,
     _materialize_missing_generic_local_declarations_text,
     _materialize_stack_base_placeholder_declaration_text,
     _materialize_annotated_cod_declarations_text,
@@ -1461,6 +1462,7 @@ def _normalize_accepted_payload_8616(payload: str) -> str:
     accepted_payload = re.sub(r"(?<![A-Za-z0-9_])false(?![A-Za-z0-9_])", "0", accepted_payload)
     accepted_payload = _materialize_stack_base_placeholder_declaration_text(accepted_payload)
     accepted_payload = _materialize_missing_generic_local_declarations_text(accepted_payload)
+    accepted_payload = _hoist_c89_local_declarations_text(accepted_payload)
     accepted_payload = _materialize_missing_segment_macro_locals_text(accepted_payload)
     accepted_payload = _dedupe_duplicate_local_declarations_text(accepted_payload)
     accepted_payload = _prune_parameter_shadow_declarations_text(accepted_payload)
@@ -1475,7 +1477,8 @@ def _normalize_accepted_payload_8616(payload: str) -> str:
     )
     accepted_payload = _materialize_missing_direct_call_prototypes_text(accepted_payload)
     accepted_payload = _materialize_opaque_pointer_typedefs_text(accepted_payload)
-    return _normalize_function_signature_arg_names(accepted_payload)
+    accepted_payload = _normalize_function_signature_arg_names(accepted_payload)
+    return _hoist_c89_local_declarations_text(accepted_payload)
 
 
 def _tail_validation_stage_detail_8616(
@@ -1612,6 +1615,9 @@ def _validated_generated_c_acceptance_8616(
             detail = _tail_validation_stage_detail_8616(tail_validation_snapshot, expected_validation_stages)
             return _validation_fail(f"Tail validation {display_status} ({detail}).")
 
+        missing_returns = _missing_expected_return_values_from_embedded_evidence_8616(accepted_payload)
+        if missing_returns:
+            return _validation_fail("Missing source-evidenced return values in emitted C: " + ", ".join(missing_returns[:8]))
         checked_payloads, recomp_failure = _collect_recompilation_payloads_8616(accepted_payload)
         if recomp_failure is not None:
             return _validation_fail(recomp_failure)
@@ -1671,6 +1677,22 @@ def _validated_generated_c_acceptance_8616(
         )
 
     return _impl()
+
+
+def _with_source_evidence_comments_8616(
+    binary_path: Path | None,
+    function_name: str | None,
+    payload: str,
+    *,
+    enabled: bool,
+) -> str:
+    if not enabled or not isinstance(payload, str) or not payload.strip():
+        return payload
+    source_text = render_local_source_sidecar_function(binary_path, function_name)
+    if not isinstance(source_text, str) or not source_text.strip():
+        return payload
+    source_lines = "\n".join(f"/// {line}" for line in source_text.splitlines())
+    return f"{source_lines}\n{payload}"
 
 
 def _mark_tail_validation_failed_with_blocker_8616(
@@ -1812,7 +1834,15 @@ def _missing_expected_calls_from_embedded_evidence_8616(emitted_c: str) -> list[
 def _extract_original_c_comment_block_8616(emitted_c: str) -> str:
     start = _ORIGINAL_C_START_RE.search(emitted_c)
     if start is None:
-        return ""
+        lines: list[str] = []
+        for raw in emitted_c.splitlines():
+            stripped = raw.strip()
+            if not stripped.startswith("///"):
+                continue
+            line = stripped[3:].strip()
+            if line:
+                lines.append(line)
+        return "\n".join(lines)
     end = _ORIGINAL_C_END_RE.search(emitted_c, start.end())
     segment = emitted_c[start.end() : end.start() if end is not None else len(emitted_c)]
     lines: list[str] = []
@@ -1821,6 +1851,45 @@ def _extract_original_c_comment_block_8616(emitted_c: str) -> str:
         if stripped.startswith("///"):
             lines.append(stripped[3:].strip())
     return "\n".join(lines)
+
+
+def _return_values_from_c_text_8616(text: str) -> Counter[str]:
+    values: Counter[str] = Counter()
+    if not isinstance(text, str) or not text:
+        return values
+    for match in re.finditer(r"\breturn\s+([^;]+)\s*;", text):
+        expr = match.group(1).strip()
+        int_match = re.fullmatch(r"[-+]?(?:0[xX][0-9A-Fa-f]+|\d+)[uUlL]*", expr)
+        if int_match is None:
+            continue
+        normalized = re.sub(r"[uUlL]+$", "", expr)
+        try:
+            value = int(normalized, 0)
+        except ValueError:
+            continue
+        values[str(value)] += 1
+    return values
+
+
+def _missing_expected_return_values_from_embedded_evidence_8616(emitted_c: str) -> list[str]:
+    original_c = _extract_original_c_comment_block_8616(emitted_c)
+    if not original_c:
+        return []
+    function_name = _extract_emitted_function_name_8616(emitted_c)
+    original_body = _extract_original_function_body_from_comment_8616(original_c, function_name)
+    expected = _return_values_from_c_text_8616(original_body)
+    # Single-return functions often lower to equivalent variable returns. This
+    # gate targets partial-body acceptance where many concrete source returns
+    # disappear.
+    if sum(expected.values()) < 2:
+        return []
+    actual = _return_values_from_c_text_8616(_extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c)))
+    missing: list[str] = []
+    for value, needed in sorted(expected.items(), key=lambda item: int(item[0])):
+        have = int(actual.get(value, 0))
+        if have < needed:
+            missing.append(f"return {value}({have}/{needed})")
+    return missing
 
 
 def _call_counts_from_text_8616(text: str) -> Counter[str]:
@@ -3814,7 +3883,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             direct_acceptance = _validated_generated_c_acceptance_8616(
                 status=direct_result.status,
-                payload=direct_result.payload,
+                payload=_with_source_evidence_comments_8616(
+                    args.binary,
+                    func.name,
+                    direct_result.payload,
+                    enabled=bool(args.alternate_source_c),
+                ),
                 tail_validation_snapshot=direct_result.tail_validation,
                 tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                 expected_validation_stages=["structuring", "postprocess"],
@@ -3984,8 +4058,9 @@ def main(argv: list[str] | None = None) -> int:
                     if not payload_text and not partial_text:
                         return ""
 
-                    def _text_semantic_rank(text: str) -> tuple[int, int, int, int, int, int]:
+                    def _text_semantic_rank(text: str) -> tuple[int, int, int, int, int, int, int]:
                         missing = len(_missing_expected_calls_from_embedded_evidence_8616(text))
+                        missing_returns = len(_missing_expected_return_values_from_embedded_evidence_8616(text))
                         arg_class_violations = len(_arg_class_violations_8616(text))
                         call_order_violations = len(_call_order_gate_violations_8616(text))
                         side_effect_floor_violation = 1 if _side_effect_floor_violation_8616(text) else 0
@@ -3998,6 +4073,7 @@ def main(argv: list[str] | None = None) -> int:
                         )
                         return (
                             -missing,
+                            -missing_returns,
                             -arg_class_violations,
                             -call_order_violations,
                             -side_effect_floor_violation,
@@ -4012,9 +4088,10 @@ def main(argv: list[str] | None = None) -> int:
                         return 10**9
                     return len(_missing_expected_calls_from_embedded_evidence_8616(payload_text))
 
-                def _candidate_rank(result: FunctionWorkResult) -> tuple[int, int, int, int, int, int]:
+                def _candidate_rank(result: FunctionWorkResult) -> tuple[int, int, int, int, int, int, int]:
                     text = _candidate_text_for_missing_call_score(result)
                     missing = _missing_call_count(text)
+                    missing_returns = len(_missing_expected_return_values_from_embedded_evidence_8616(text))
                     arg_class_violations = len(_arg_class_violations_8616(text))
                     call_order_violations = len(_call_order_gate_violations_8616(text))
                     side_effect_floor_violation = 1 if _side_effect_floor_violation_8616(text) else 0
@@ -4027,6 +4104,7 @@ def main(argv: list[str] | None = None) -> int:
                     loop_violation = 1 if _loop_presence_violation_8616(text) else 0
                     return (
                         -missing,
+                        -missing_returns,
                         -arg_class_violations,
                         -call_order_violations,
                         -side_effect_floor_violation,
@@ -4065,7 +4143,12 @@ def main(argv: list[str] | None = None) -> int:
                             )
                             retry_acceptance = _validated_generated_c_acceptance_8616(
                                 status=retry_result.status,
-                                payload=retry_result.payload,
+                                payload=_with_source_evidence_comments_8616(
+                                    args.binary,
+                                    func.name,
+                                    retry_result.payload,
+                                    enabled=bool(args.alternate_source_c),
+                                ),
                                 tail_validation_snapshot=retry_result.tail_validation,
                                 tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                                 expected_validation_stages=["structuring", "postprocess"],
@@ -4685,6 +4768,30 @@ def main(argv: list[str] | None = None) -> int:
                             "}\n"
                         ),
                     )
+            source_checked_payload = _with_source_evidence_comments_8616(
+                args.binary,
+                func.name,
+                direct_result.payload,
+                enabled=bool(args.alternate_source_c),
+            )
+            missing_returns = _missing_expected_return_values_from_embedded_evidence_8616(source_checked_payload)
+            if missing_returns:
+                print("[tail-validation] whole-tail validation failed across 1 functions", file=sys.stderr)
+                print(
+                    "[tail-validation] acceptance-gate detail: Missing source-evidenced return values in emitted C: "
+                    + ", ".join(missing_returns[:8]),
+                    file=sys.stderr,
+                )
+                try:
+                    root = Path("angr_platforms/.cache/validation_failed_payloads")
+                    root.mkdir(parents=True, exist_ok=True)
+                    digest = hashlib.sha1(source_checked_payload.encode("utf-8", errors="ignore")).hexdigest()[:12]
+                    out = root / f"payload_{int(time.time())}_{digest}.c"
+                    out.write_text(source_checked_payload, encoding="utf-8")
+                    print(f"[tail-validation] failed payload artifact: {out}", file=sys.stderr)
+                except Exception:
+                    pass
+                return 4
             _emit_optional_source_sidecar_c_block(
                 args.binary,
                 func.name,

@@ -25,6 +25,7 @@ from .variable_recovery_sub_guard import (
     build_guarded_handle_binop_mul_8616,
     build_guarded_handle_binop_sub_8616,
 )
+import typing
 
 
 DEFAULT_FREE_RAM_BUDGET_FRACTION = 0.45
@@ -719,7 +720,7 @@ class ThreadBoundTextIO(io.TextIOBase):
             else:
                 self._local.stream = previous
 
-    def _stream(self):
+    def _stream(self) -> EncodedFile:
         return getattr(self._local, "stream", self._fallback)
 
     def write(self, data):
@@ -731,7 +732,7 @@ class ThreadBoundTextIO(io.TextIOBase):
         except ValueError:
             return None
 
-    def isatty(self):
+    def isatty(self) -> bool:
         target = self._stream()
         return bool(getattr(target, "isatty", lambda: False)())
 
@@ -743,7 +744,7 @@ class ThreadBoundTextIO(io.TextIOBase):
     def errors(self):
         return getattr(self._stream(), "errors", getattr(self._fallback, "errors", "strict"))
 
-    def __getattr__(self, item):
+    def __getattr__(self, item: str) -> typing.Callable:
         return getattr(self._stream(), item)
 
 
@@ -836,7 +837,7 @@ def raise_timeout(_signum, _frame):
 
 
 @contextlib.contextmanager
-def analysis_timeout(timeout: int):
+def analysis_timeout(timeout: int) -> typing.Iterator[None]:
     if timeout <= 0:
         yield
         return
@@ -860,7 +861,10 @@ def run_with_timeout_in_daemon_thread(
     timeout: int,
     thread_name_prefix: str,
 ):
-    executor = DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix=thread_name_prefix)
+    try:
+        executor = DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix=thread_name_prefix)
+    except Exception:
+        return func()
     future = executor.submit(func)
     try:
         return future.result(timeout=max(1, timeout))
@@ -874,88 +878,91 @@ def run_with_timeout_in_fork(
     *,
     timeout: int,
 ) -> object:
-    if os.name != "posix" or not hasattr(os, "fork"):
-        raise RuntimeError("fork unavailable")
-    if threading.current_thread() is not threading.main_thread():
-        raise RuntimeError("fork-only supported from main thread")
-    if threading.active_count() != 1:
-        raise RuntimeError("fork-only supported without extra live threads")
+    def _impl():
+        if os.name != "posix" or not hasattr(os, "fork"):
+            raise RuntimeError("fork unavailable")
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError("fork-only supported from main thread")
+        if threading.active_count() != 1:
+            raise RuntimeError("fork-only supported without extra live threads")
 
-    read_fd, write_fd = os.pipe()
-    pid = os.fork()
-    if pid == 0:
-        _FORK_CHILD_PID = os.getpid()
+        read_fd, write_fd = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            _FORK_CHILD_PID = os.getpid()
+            try:
+                os.close(read_fd)
+                try:
+                    payload = ("ok", func())
+                except BaseException as ex:  # noqa: BLE001
+                    payload = ("err", type(ex).__name__, str(ex) + "\n" + traceback.format_exc())
+                try:
+                    data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
+                except BaseException as ex:  # noqa: BLE001
+                    payload = ("err", type(ex).__name__, f"fork result is not pickleable: {ex}")
+                    data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
+                os.write(write_fd, len(data).to_bytes(8, "little"))
+                os.write(write_fd, data)
+            finally:
+                with contextlib.suppress(OSError):
+                    os.close(write_fd)
+                os._exit(0)
+
+        def _child_exit_detail(p: int, status: int) -> str:
+            if os.WIFEXITED(status):
+                return f"exitcode={os.WEXITSTATUS(status)}"
+            if os.WIFSIGNALED(status):
+                sig = os.WTERMSIG(status)
+                sig_name = getattr(signal, "Signals", lambda x: f"SIG={x}")(sig) if hasattr(signal, "strsignal") else f"SIG={sig}"
+                try:
+                    sig_name = signal.strsignal(sig)  # type: ignore[attr-defined]
+                except Exception:
+                    sig_name = f"signal={sig}"
+                return f"killed_by={sig_name}"
+            return f"exit_status_raw={int(status)}"
+
+        os.close(write_fd)
         try:
-            os.close(read_fd)
-            try:
-                payload = ("ok", func())
-            except BaseException as ex:  # noqa: BLE001
-                payload = ("err", type(ex).__name__, str(ex) + "\n" + traceback.format_exc())
-            try:
-                data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
-            except BaseException as ex:  # noqa: BLE001
-                payload = ("err", type(ex).__name__, f"fork result is not pickleable: {ex}")
-                data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
-            os.write(write_fd, len(data).to_bytes(8, "little"))
-            os.write(write_fd, data)
+            ready, _, _ = select.select([read_fd], [], [], max(1, timeout))
+            if not ready:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+                _pid, _status = os.waitpid(pid, 0)
+                raise TimeoutError(f"Timed out after {timeout}s (child {_child_exit_detail(pid, _status)}).")
+            header = b""
+            while len(header) < 8:
+                chunk = os.read(read_fd, 8 - len(header))
+                if not chunk:
+                    break
+                header += chunk
+            if len(header) != 8:
+                _pid, _status = os.waitpid(pid, 0)
+                raise RuntimeError(f"fork child exited without result ({_child_exit_detail(pid, _status)})")
+            expected = int.from_bytes(header, "little")
+            data = bytearray()
+            while len(data) < expected:
+                chunk = os.read(read_fd, min(65536, expected - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+            _pid, _status = os.waitpid(pid, 0)
+            if len(data) != expected:
+                raise RuntimeError(f"fork child returned incomplete result (expected={expected}B got={len(data)}B {_child_exit_detail(pid, _status)})")
+            payload = pickle.loads(bytes(data))
+            if not isinstance(payload, tuple) or not payload:
+                raise RuntimeError(f"fork child returned invalid payload ({_child_exit_detail(pid, _status)})")
+            if payload[0] == "ok":
+                return payload[1]
+            if payload[0] == "err":
+                if payload[1] in {"TimeoutError", "AnalysisTimeout"}:
+                    raise TimeoutError(payload[2] or f"Timed out after {timeout}s.")
+                raise RuntimeError(f"{payload[1]}: {payload[2]} ({_child_exit_detail(pid, _status)})")
+            raise RuntimeError(f"fork child returned unknown status ({_child_exit_detail(pid, _status)})")
         finally:
             with contextlib.suppress(OSError):
-                os.close(write_fd)
-            os._exit(0)
+                os.close(read_fd)
 
-    def _child_exit_detail(p: int, status: int) -> str:
-        if os.WIFEXITED(status):
-            return f"exitcode={os.WEXITSTATUS(status)}"
-        if os.WIFSIGNALED(status):
-            sig = os.WTERMSIG(status)
-            sig_name = getattr(signal, "Signals", lambda x: f"SIG={x}")(sig) if hasattr(signal, "strsignal") else f"SIG={sig}"
-            try:
-                sig_name = signal.strsignal(sig)  # type: ignore[attr-defined]
-            except Exception:
-                sig_name = f"signal={sig}"
-            return f"killed_by={sig_name}"
-        return f"exit_status_raw={int(status)}"
-
-    os.close(write_fd)
-    try:
-        ready, _, _ = select.select([read_fd], [], [], max(1, timeout))
-        if not ready:
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGKILL)
-            _pid, _status = os.waitpid(pid, 0)
-            raise TimeoutError(f"Timed out after {timeout}s (child {_child_exit_detail(pid, _status)}).")
-        header = b""
-        while len(header) < 8:
-            chunk = os.read(read_fd, 8 - len(header))
-            if not chunk:
-                break
-            header += chunk
-        if len(header) != 8:
-            _pid, _status = os.waitpid(pid, 0)
-            raise RuntimeError(f"fork child exited without result ({_child_exit_detail(pid, _status)})")
-        expected = int.from_bytes(header, "little")
-        data = bytearray()
-        while len(data) < expected:
-            chunk = os.read(read_fd, min(65536, expected - len(data)))
-            if not chunk:
-                break
-            data.extend(chunk)
-        _pid, _status = os.waitpid(pid, 0)
-        if len(data) != expected:
-            raise RuntimeError(f"fork child returned incomplete result (expected={expected}B got={len(data)}B {_child_exit_detail(pid, _status)})")
-        payload = pickle.loads(bytes(data))
-        if not isinstance(payload, tuple) or not payload:
-            raise RuntimeError(f"fork child returned invalid payload ({_child_exit_detail(pid, _status)})")
-        if payload[0] == "ok":
-            return payload[1]
-        if payload[0] == "err":
-            if payload[1] in {"TimeoutError", "AnalysisTimeout"}:
-                raise TimeoutError(payload[2] or f"Timed out after {timeout}s.")
-            raise RuntimeError(f"{payload[1]}: {payload[2]} ({_child_exit_detail(pid, _status)})")
-        raise RuntimeError(f"fork child returned unknown status ({_child_exit_detail(pid, _status)})")
-    finally:
-        with contextlib.suppress(OSError):
-            os.close(read_fd)
+    return _impl()
 
 
 def _read_framed_pickle(fd: int):
@@ -983,95 +990,101 @@ def _write_framed_pickle(fd: int, payload) -> None:
 
 class PreforkJobPool:
     def __init__(self, *, max_workers: int, worker_func: Callable[[object], object], name_prefix: str = "prefork"):
-        if os.name != "posix" or not hasattr(os, "fork"):
-            raise RuntimeError("prefork unavailable")
-        if threading.current_thread() is not threading.main_thread():
-            raise RuntimeError("prefork must start on main thread")
-        if threading.active_count() != 1:
-            raise RuntimeError("prefork requires a single-threaded parent")
-        self._worker_func = worker_func
-        self._workers: list[dict[str, object]] = []
-        self._closed = False
-        worker_count = max(1, int(max_workers))
-        for index in range(worker_count):
-            job_read, job_write = os.pipe()
-            result_read, result_write = os.pipe()
-            pid = os.fork()
-            if pid == 0:
-                try:
-                    os.close(job_write)
-                    os.close(result_read)
-                    while True:
-                        job = _read_framed_pickle(job_read)
-                        if job is None or job == ("shutdown",):
-                            break
-                        job_id, payload = job
-                        try:
-                            result = self._worker_func(payload)
-                            _write_framed_pickle(result_write, (job_id, "ok", result))
-                        except BaseException as ex:  # noqa: BLE001
-                            _write_framed_pickle(result_write, (job_id, "err", type(ex).__name__, str(ex)))
-                finally:
-                    with contextlib.suppress(OSError):
-                        os.close(job_read)
-                    with contextlib.suppress(OSError):
-                        os.close(result_write)
-                    os._exit(0)
-            os.close(job_read)
-            os.close(result_write)
-            self._workers.append(
-                {
-                    "pid": pid,
-                    "job_write": job_write,
-                    "result_read": result_read,
-                    "busy": False,
-                    "job_id": None,
-                    "name": f"{name_prefix}_{index}",
-                }
-            )
+        def _impl():
+            if os.name != "posix" or not hasattr(os, "fork"):
+                raise RuntimeError("prefork unavailable")
+            if threading.current_thread() is not threading.main_thread():
+                raise RuntimeError("prefork must start on main thread")
+            if threading.active_count() != 1:
+                raise RuntimeError("prefork requires a single-threaded parent")
+            self._worker_func = worker_func
+            self._workers: list[dict[str, object]] = []
+            self._closed = False
+            worker_count = max(1, int(max_workers))
+            for index in range(worker_count):
+                job_read, job_write = os.pipe()
+                result_read, result_write = os.pipe()
+                pid = os.fork()
+                if pid == 0:
+                    try:
+                        os.close(job_write)
+                        os.close(result_read)
+                        while True:
+                            job = _read_framed_pickle(job_read)
+                            if job is None or job == ("shutdown",):
+                                break
+                            job_id, payload = job
+                            try:
+                                result = self._worker_func(payload)
+                                _write_framed_pickle(result_write, (job_id, "ok", result))
+                            except BaseException as ex:  # noqa: BLE001
+                                _write_framed_pickle(result_write, (job_id, "err", type(ex).__name__, str(ex)))
+                    finally:
+                        with contextlib.suppress(OSError):
+                            os.close(job_read)
+                        with contextlib.suppress(OSError):
+                            os.close(result_write)
+                        os._exit(0)
+                os.close(job_read)
+                os.close(result_write)
+                self._workers.append(
+                    {
+                        "pid": pid,
+                        "job_write": job_write,
+                        "result_read": result_read,
+                        "busy": False,
+                        "job_id": None,
+                        "name": f"{name_prefix}_{index}",
+                    }
+                )
+
+        return _impl()
 
     def run_unordered(self, jobs: list[tuple[object, object]], *, poll_timeout: float = 0.25):
-        pending = deque(jobs)
-        remaining = len(jobs)
+        def _impl():
+            pending = deque(jobs)
+            remaining = len(jobs)
 
-        def _dispatch_available() -> None:
-            for worker in self._workers:
-                if not pending:
+            def _dispatch_available() -> None:
+                for worker in self._workers:
+                    if not pending:
+                        break
+                    if worker["busy"]:
+                        continue
+                    job_id, payload = pending.popleft()
+                    _write_framed_pickle(worker["job_write"], (job_id, payload))
+                    worker["busy"] = True
+                    worker["job_id"] = job_id
+
+            _dispatch_available()
+            while remaining > 0:
+                ready_fds = [
+                    int(worker["result_read"])
+                    for worker in self._workers
+                    if worker["busy"]
+                ]
+                if not ready_fds:
                     break
-                if worker["busy"]:
+                ready, _, _ = select.select(ready_fds, [], [], poll_timeout)
+                if not ready:
                     continue
-                job_id, payload = pending.popleft()
-                _write_framed_pickle(worker["job_write"], (job_id, payload))
-                worker["busy"] = True
-                worker["job_id"] = job_id
+                for fd in ready:
+                    worker = next(
+                        worker for worker in self._workers if int(worker["result_read"]) == fd
+                    )
+                    payload = _read_framed_pickle(fd)
+                    worker["busy"] = False
+                    worker["job_id"] = None
+                    remaining -= 1
+                    if payload is None:
+                        yield None, RuntimeError(f"{worker['name']} exited without result")
+                    elif payload[1] == "ok":
+                        yield payload[0], payload[2]
+                    else:
+                        yield payload[0], RuntimeError(f"{payload[2]}: {payload[3]}")
+                    _dispatch_available()
 
-        _dispatch_available()
-        while remaining > 0:
-            ready_fds = [
-                int(worker["result_read"])
-                for worker in self._workers
-                if worker["busy"]
-            ]
-            if not ready_fds:
-                break
-            ready, _, _ = select.select(ready_fds, [], [], poll_timeout)
-            if not ready:
-                continue
-            for fd in ready:
-                worker = next(
-                    worker for worker in self._workers if int(worker["result_read"]) == fd
-                )
-                payload = _read_framed_pickle(fd)
-                worker["busy"] = False
-                worker["job_id"] = None
-                remaining -= 1
-                if payload is None:
-                    yield None, RuntimeError(f"{worker['name']} exited without result")
-                elif payload[1] == "ok":
-                    yield payload[0], payload[2]
-                else:
-                    yield payload[0], RuntimeError(f"{payload[2]}: {payload[3]}")
-                _dispatch_available()
+        return _impl()
 
     def shutdown(self) -> None:
         if self._closed:

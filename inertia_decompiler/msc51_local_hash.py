@@ -96,64 +96,67 @@ def _collect_named_stack_locals(codegen) -> list[tuple[str, int, object]]:
 def _check_declaration_order_feasible(
     names: list[str], bucket_assignments: dict[str, int]
 ) -> bool:
-    """Check whether any declaration order could produce the observed bucket assignments.
+    def _impl():
+        """Check whether any declaration order could produce the observed bucket assignments.
 
-    For a variable to end up at bucket b:
-      1. All buckets between its hash h and b (exclusive of b, backward direction)
-         must be filled by other variables. If any is unoccupied, backward probing
-         would have stopped there — the assignment is impossible regardless of order.
-      2. Those blocking variables must be declared BEFORE this variable.
+        For a variable to end up at bucket b:
+          1. All buckets between its hash h and b (exclusive of b, backward direction)
+             must be filled by other variables. If any is unoccupied, backward probing
+             would have stopped there — the assignment is impossible regardless of order.
+          2. Those blocking variables must be declared BEFORE this variable.
 
-    Returns True if both checks pass.
-    """
-    if len(names) <= 1:
-        return True
+        Returns True if both checks pass.
+        """
+        if len(names) <= 1:
+            return True
 
-    bucket_to_name = {b: n for n, b in bucket_assignments.items()}
+        bucket_to_name = {b: n for n, b in bucket_assignments.items()}
 
-    # Check 1: no empty gaps in the backward probe path for any variable
-    for name, assigned_bucket in bucket_assignments.items():
-        h = msc51_hash(name)
-        if h == assigned_bucket:
-            continue
-        idx = h
-        while idx != assigned_bucket:
-            if idx not in bucket_to_name:
-                return False  # gap in probe path
-            idx = (idx - 1) % 16
+        # Check 1: no empty gaps in the backward probe path for any variable
+        for name, assigned_bucket in bucket_assignments.items():
+            h = msc51_hash(name)
+            if h == assigned_bucket:
+                continue
+            idx = h
+            while idx != assigned_bucket:
+                if idx not in bucket_to_name:
+                    return False  # gap in probe path
+                idx = (idx - 1) % 16
 
-    # Check 2: ordering constraints are acyclic
-    must_precede: dict[str, set[str]] = {name: set() for name in names}
-    for name, assigned_bucket in bucket_assignments.items():
-        h = msc51_hash(name)
-        if h == assigned_bucket:
-            continue
-        idx = h
-        while idx != assigned_bucket:
-            blocker = bucket_to_name.get(idx)
-            if blocker is not None and blocker != name:
-                must_precede[name].add(blocker)
-            idx = (idx - 1) % 16
+        # Check 2: ordering constraints are acyclic
+        must_precede: dict[str, set[str]] = {name: set() for name in names}
+        for name, assigned_bucket in bucket_assignments.items():
+            h = msc51_hash(name)
+            if h == assigned_bucket:
+                continue
+            idx = h
+            while idx != assigned_bucket:
+                blocker = bucket_to_name.get(idx)
+                if blocker is not None and blocker != name:
+                    must_precede[name].add(blocker)
+                idx = (idx - 1) % 16
 
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color: dict[str, int] = {name: WHITE for name in names}
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color: dict[str, int] = {name: WHITE for name in names}
 
-    def _dfs_visit(node: str) -> bool:
-        color[node] = GRAY
-        for pred in must_precede.get(node, set()):
-            if color.get(pred) == GRAY:
-                return False
-            if color.get(pred) == WHITE:
-                if not _dfs_visit(pred):
+        def _dfs_visit(node: str) -> bool:
+            color[node] = GRAY
+            for pred in must_precede.get(node, set()):
+                if color.get(pred) == GRAY:
                     return False
-        color[node] = BLACK
+                if color.get(pred) == WHITE:
+                    if not _dfs_visit(pred):
+                        return False
+            color[node] = BLACK
+            return True
+
+        for name in names:
+            if color[name] == WHITE:
+                if not _dfs_visit(name):
+                    return False
         return True
 
-    for name in names:
-        if color[name] == WHITE:
-            if not _dfs_visit(name):
-                return False
-    return True
+    return _impl()
 
 
 def diagnose_msc51_locals(codegen) -> list[str]:

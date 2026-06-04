@@ -26,55 +26,58 @@ def _get_const_val(expr: object) -> int | None:
 
 
 def _canonicalize_cmp_sub_8616(cond: object) -> object | None:
-    """Canonicalize CMP-SUB patterns to direct comparisons.
+    def _impl():
+        """Canonicalize CMP-SUB patterns to direct comparisons.
 
-    CmpLT(Sub(x, N), 0)  → CmpLT(x, N)
-    CmpGE(Sub(x, N), 0)  → CmpGE(x, N)
-    CmpGT(Sub(x, N), 0)  → CmpGT(x, N)
-    CmpLE(Sub(x, N), 0)  → CmpLE(x, N)
-    CmpLT(Sub(x, y), 0)  → CmpLT(x, y)   [reg-to-reg, no constant needed]
-    CmpGE(Sub(x, y), 0)  → CmpGE(x, y)
+        CmpLT(Sub(x, N), 0)  → CmpLT(x, N)
+        CmpGE(Sub(x, N), 0)  → CmpGE(x, N)
+        CmpGT(Sub(x, N), 0)  → CmpGT(x, N)
+        CmpLE(Sub(x, N), 0)  → CmpLE(x, N)
+        CmpLT(Sub(x, y), 0)  → CmpLT(x, y)   [reg-to-reg, no constant needed]
+        CmpGE(Sub(x, y), 0)  → CmpGE(x, y)
 
-    Returns the strengthened condition node or None.
-    """
-    if cond is None:
-        return None
+        Returns the strengthened condition node or None.
+        """
+        if cond is None:
+            return None
 
-    op = getattr(cond, "op", None)
-    # Get operands via either attribute naming convention
-    left = getattr(cond, "left", None) or getattr(cond, "lhs", None)
-    right = getattr(cond, "right", None) or getattr(cond, "rhs", None)
-    if op is None or left is None or right is None:
-        return None
+        op = getattr(cond, "op", None)
+        # Get operands via either attribute naming convention
+        left = getattr(cond, "left", None) or getattr(cond, "lhs", None)
+        right = getattr(cond, "right", None) or getattr(cond, "rhs", None)
+        if op is None or left is None or right is None:
+            return None
 
-    # Only fire when comparing against zero
-    right_val = _get_const_val(right)
-    if right_val != 0:
-        return None
+        # Only fire when comparing against zero
+        right_val = _get_const_val(right)
+        if right_val != 0:
+            return None
 
-    op_str = str(op).upper()
-    # Only for comparison operators
-    if op_str not in ("LT", "LE", "GT", "GE", "EQ", "NE"):
-        return None
+        op_str = str(op).upper()
+        # Only for comparison operators
+        if op_str not in ("LT", "LE", "GT", "GE", "EQ", "NE"):
+            return None
 
-    # Check if left is Sub(x, N) or Sub(x, y)
-    left_op = getattr(left, "op", None)
-    if str(left_op) != "Sub":
-        return None
+        # Check if left is Sub(x, N) or Sub(x, y)
+        left_op = getattr(left, "op", None)
+        if str(left_op) != "Sub":
+            return None
 
-    sub_left = getattr(left, "left", None) or getattr(left, "lhs", None)
-    sub_right = getattr(left, "right", None) or getattr(left, "rhs", None)
-    if sub_left is None or sub_right is None:
-        return None
+        sub_left = getattr(left, "left", None) or getattr(left, "lhs", None)
+        sub_right = getattr(left, "right", None) or getattr(left, "rhs", None)
+        if sub_left is None or sub_right is None:
+            return None
 
-    # Build strengthened comparison: CmpOP(x, N) or CmpOP(x, y)
-    cn = type(left) if hasattr(type(left), "left") else type(cond)
+        # Build strengthened comparison: CmpOP(x, N) or CmpOP(x, y)
+        cn = type(left) if hasattr(type(left), "left") else type(cond)
 
-    return type(cond)(
-        left=sub_left,
-        right=sub_right,
-        op=op_str,
-    )
+        return type(cond)(
+            left=sub_left,
+            right=sub_right,
+            op=op_str,
+        )
+
+    return _impl()
 
 
 def _strengthen_condition_8616(cond: object) -> object | None:

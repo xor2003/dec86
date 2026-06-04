@@ -103,89 +103,58 @@ def _scan_region(data: bytes, start: int, end: int,
 
 
 def detect_packer(binary_path: Path) -> Optional[PackerDetection]:
-    """Detect if DOS EXE is packed and by which packer.
+    def _impl():
+        """Detect if DOS EXE is packed and by which packer.
     
-    Uses efficient scanning strategy:
-    1. Entry region ± 2KB (primary, 95% accuracy)
-    2. First 16KB of file (secondary)
-    3. Full file (fallback only)
+        Uses efficient scanning strategy:
+        1. Entry region ± 2KB (primary, 95% accuracy)
+        2. First 16KB of file (secondary)
+        3. Full file (fallback only)
     
-    Args:
-        binary_path: Path to DOS EXE file
+        Args:
+            binary_path: Path to DOS EXE file
     
-    Returns:
-        PackerDetection if packed, else None
-    """
-    try:
-        data = binary_path.read_bytes()
-    except (OSError, IOError):
-        return None
+        Returns:
+            PackerDetection if packed, else None
+        """
+        try:
+            data = binary_path.read_bytes()
+        except (OSError, IOError):
+            return None
     
-    if len(data) < 64:  # Too small for DOS header
-        return None
+        if len(data) < 64:  # Too small for DOS header
+            return None
     
-    # Parse DOS header to find entry point
-    header = _parse_dos_header(data)
-    if not header:
-        return None
+        # Parse DOS header to find entry point
+        header = _parse_dos_header(data)
+        if not header:
+            return None
     
-    entry_offset = header.get('entry_offset_approx', 64)
+        entry_offset = header.get('entry_offset_approx', 64)
     
-    # Define signatures per packer
-    # Format: {signature: (packer_type, confidence)}
-    pklite_sigs = {
-        'PKLITE': PackerType.PKLITE,
-    }
-    lzexe_sigs = {
-        'LZ91': PackerType.LZEXE,
-        'LZ90': PackerType.LZEXE,
-        'LZ9': PackerType.LZEXE,  # Catch earlier variants
-    }
-    upx_sigs = {
-        'UPX!': PackerType.UPX,
-        'UPX0': PackerType.UPX,
-        'UPX1': PackerType.UPX,
-    }
+        # Define signatures per packer
+        # Format: {signature: (packer_type, confidence)}
+        pklite_sigs = {
+            'PKLITE': PackerType.PKLITE,
+        }
+        lzexe_sigs = {
+            'LZ91': PackerType.LZEXE,
+            'LZ90': PackerType.LZEXE,
+            'LZ9': PackerType.LZEXE,  # Catch earlier variants
+        }
+        upx_sigs = {
+            'UPX!': PackerType.UPX,
+            'UPX0': PackerType.UPX,
+            'UPX1': PackerType.UPX,
+        }
     
-    all_sigs = {**pklite_sigs, **lzexe_sigs, **upx_sigs}
+        all_sigs = {**pklite_sigs, **lzexe_sigs, **upx_sigs}
     
-    # ======== PRIMARY: Entry region scan (95% detection) ========
-    scan_start = max(0, entry_offset - 2048)
-    scan_end = min(len(data), entry_offset + 2048)
+        # ======== PRIMARY: Entry region scan (95% detection) ========
+        scan_start = max(0, entry_offset - 2048)
+        scan_end = min(len(data), entry_offset + 2048)
     
-    result = _scan_region(data, scan_start, scan_end, 
-                         {sig: name.value for sig, name in all_sigs.items()})
-    if result:
-        sig, offset = result
-        packer = all_sigs[sig]
-        return PackerDetection(
-            packer_type=packer,
-            signature=sig,
-            offset=offset,
-            scan_region='entry',
-            confidence=0.95,  # Very high confidence for entry region
-        )
-    
-    # ======== SECONDARY: First 16KB scan ========
-    scan_end = min(len(data), 16 * 1024)
-    
-    result = _scan_region(data, 0, scan_end,
-                         {sig: name.value for sig, name in all_sigs.items()})
-    if result:
-        sig, offset = result
-        packer = all_sigs[sig]
-        return PackerDetection(
-            packer_type=packer,
-            signature=sig,
-            offset=offset,
-            scan_region='start',
-            confidence=0.80,  # Good confidence for early file region
-        )
-    
-    # ======== FALLBACK: Full file scan (optional, for edge cases) ========
-    # Only do this if file is reasonably sized (avoid gigantic memory reads)
-    if len(data) < 10 * 1024 * 1024:  # Max 10MB for full scan
-        result = _scan_region(data, 0, len(data),
+        result = _scan_region(data, scan_start, scan_end, 
                              {sig: name.value for sig, name in all_sigs.items()})
         if result:
             sig, offset = result
@@ -194,11 +163,45 @@ def detect_packer(binary_path: Path) -> Optional[PackerDetection]:
                 packer_type=packer,
                 signature=sig,
                 offset=offset,
-                scan_region='full',
-                confidence=0.60,  # Lower confidence (could be false positive)
+                scan_region='entry',
+                confidence=0.95,  # Very high confidence for entry region
             )
     
-    return None
+        # ======== SECONDARY: First 16KB scan ========
+        scan_end = min(len(data), 16 * 1024)
+    
+        result = _scan_region(data, 0, scan_end,
+                             {sig: name.value for sig, name in all_sigs.items()})
+        if result:
+            sig, offset = result
+            packer = all_sigs[sig]
+            return PackerDetection(
+                packer_type=packer,
+                signature=sig,
+                offset=offset,
+                scan_region='start',
+                confidence=0.80,  # Good confidence for early file region
+            )
+    
+        # ======== FALLBACK: Full file scan (optional, for edge cases) ========
+        # Only do this if file is reasonably sized (avoid gigantic memory reads)
+        if len(data) < 10 * 1024 * 1024:  # Max 10MB for full scan
+            result = _scan_region(data, 0, len(data),
+                                 {sig: name.value for sig, name in all_sigs.items()})
+            if result:
+                sig, offset = result
+                packer = all_sigs[sig]
+                return PackerDetection(
+                    packer_type=packer,
+                    signature=sig,
+                    offset=offset,
+                    scan_region='full',
+                    confidence=0.60,  # Lower confidence (could be false positive)
+                )
+    
+        return None
+
+    return _impl()
 
 
 def is_packed(binary_path: Path) -> bool:

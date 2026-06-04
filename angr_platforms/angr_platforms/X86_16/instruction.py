@@ -7,6 +7,7 @@ from .addressing_helpers import (
 )
 from .emulator import Emulator
 from .regs import sgreg_t
+from angr_platforms.X86_16.emulator import Emulator
 
 # Constants for repeat prefixes
 NONE = 0
@@ -28,7 +29,7 @@ MAX_OPCODE = 0x200
 class ModRM:
     __slots__ = ("rm", "reg", "mod")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.rm = 0  # Register/memory operand
         self.reg = 0  # Register operand or opcode extension
         self.mod = 0  # Addressing mode
@@ -38,7 +39,7 @@ class ModRM:
 class SIB:
     __slots__ = ("base", "index", "scale")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.base = 0  # Base register
         self.index = 0  # Index register
         self.scale = 0  # Scaling factor
@@ -72,7 +73,7 @@ class InstrData:
         "width_case",
     )
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.prefix = 0  # X86Instruction prefix
         self.pre_segment = None  # Segment override prefix
         self.pre_repeat = NONE  # Repeat prefix
@@ -129,7 +130,7 @@ def describe_x86_16_instruction_metadata_surface() -> dict[str, object]:
 class X86Instruction:
     __slots__ = ("emu", "instr", "mode32", "chsz_ad")
 
-    def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):
+    def __init__(self, emu: Emulator, instr: InstrData, mode32: bool) -> None:
         self.emu = emu
         self.instr = instr
         self.mode32 = mode32
@@ -172,7 +173,7 @@ class X86Instruction:
 class InstrFlags:
     __slots__ = ("modrm", "imm32", "imm16", "imm8", "ptr16", "moffs", "moffs8")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.modrm = False
         self.imm32 = False
         self.imm16 = False

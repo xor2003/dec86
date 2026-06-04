@@ -26,19 +26,12 @@ from .lowering.real_mode_linear import (
     lower_stable_ds_es_linear_global_dereferences_8616,
 )
 from .lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
+from .lowering.stack_lowering_from_facts import _canonical_stack_offset_8616, _stack_object_name
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-
-def _canonical_stack_offset_8616(offset):
-    if not isinstance(offset, int):
-        return offset
-    if 0x8000 <= offset <= 0xFFFF:
-        return offset - 0x10000
-    return offset
 
 
 def _typed_ir_address_spaces_8616(codegen) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -165,6 +158,27 @@ class SegmentedAddressClassifier:
     - over_associated: Multiple different segments (ambiguous)
     """
 
+    @staticmethod
+    def _segment_set(segment_accesses: list[SegmentAssignment]) -> set[SegmentRegister]:
+        return {s.segment_reg for s in segment_accesses}
+
+    @staticmethod
+    def _value_set(segment_accesses: list[SegmentAssignment]) -> set[int]:
+        return {s.value for s in segment_accesses if s.value is not None}
+
+    def _is_over_associated(self, segment_accesses: list[SegmentAssignment]) -> bool:
+        segments = self._segment_set(segment_accesses)
+        values = self._value_set(segment_accesses)
+        return len(segments) > 1 or len(values) > 1
+
+    def _is_const(self, segment_accesses: list[SegmentAssignment]) -> bool:
+        values = self._value_set(segment_accesses)
+        return len(values) == 1
+
+    def _is_single(self, segment_accesses: list[SegmentAssignment]) -> bool:
+        segments = self._segment_set(segment_accesses)
+        return len(segments) == 1
+
     def classify(self, segment_accesses: list[SegmentAssignment]) -> str:
         """
         Classify segmented address pattern.
@@ -178,19 +192,13 @@ class SegmentedAddressClassifier:
         if not segment_accesses:
             return "unknown"
 
-        segments = {s.segment_reg for s in segment_accesses}
-        values = {s.value for s in segment_accesses if s.value is not None}
-
-        if len(segments) > 1:
+        if self._is_over_associated(segment_accesses):
             return "over_associated"
-        elif len(values) > 1:
-            return "over_associated"
-        elif len(values) == 1 and list(values)[0] is not None:
+        if self._is_const(segment_accesses):
             return "const"
-        elif len(segments) == 1:
+        if self._is_single(segment_accesses):
             return "single"
-        else:
-            return "unknown"
+        return "unknown"
 
 
 class SegmentAssociationAnalyzer:
@@ -396,22 +404,25 @@ class SegmentAssociationAnalyzer:
 
 
 def _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer: SegmentAssociationAnalyzer | None) -> bool:
-    assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
-    if not assignments or analyzer is None:
+    def _impl():
+        assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
+        if not assignments or analyzer is None:
+            typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
+            if stable_spaces and "ss" not in stable_spaces and "ss" not in typed_spaces:
+                return False
+            codegen._inertia_typed_ir_address_spaces = typed_spaces
+            codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
+            return True
+
+        decision = analyzer.lowering_decision(SegmentRegister.SS)
         typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
-        if stable_spaces and "ss" not in stable_spaces and "ss" not in typed_spaces:
-            return False
         codegen._inertia_typed_ir_address_spaces = typed_spaces
         codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
-        return True
+        if stable_spaces and "ss" not in stable_spaces and "ss" not in typed_spaces:
+            return False
+        return decision.associated_space == "stack" and decision.classification in {"single", "const"}
 
-    decision = analyzer.lowering_decision(SegmentRegister.SS)
-    typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
-    codegen._inertia_typed_ir_address_spaces = typed_spaces
-    codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
-    if stable_spaces and "ss" not in stable_spaces and "ss" not in typed_spaces:
-        return False
-    return decision.associated_space == "stack" and decision.classification in {"single", "const"}
+    return _impl()
 
 
 def _existing_stack_cvar_for_offset_8616(codegen, offset: int):
@@ -433,140 +444,146 @@ def _existing_stack_cvar_for_offset_8616(codegen, offset: int):
 
 
 def _recover_stack_slot_from_segmented_operand_8616(node, codegen):
-    project = getattr(getattr(codegen, "project", None), "arch", None)
-    if project is None:
-        return None
+    def _impl():
+        project = getattr(getattr(codegen, "project", None), "arch", None)
+        if project is None:
+            return None
 
-    displacement = _match_bp_stack_dereference_8616(node, codegen.project, codegen)
-    if displacement is None:
-        return None
+        displacement = _match_bp_stack_dereference_8616(node, codegen.project, codegen)
+        if displacement is None:
+            return None
 
-    width_bits = getattr(getattr(node, "type", None), "size", None)
-    width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
-    region = getattr(getattr(codegen, "cfunc", None), "addr", None)
-    facts = _stack_storage_facts_for_segmented_address_8616("ss", displacement, width, region=region)
-    if facts is None or facts.identity is None:
-        return None
+        width_bits = getattr(getattr(node, "type", None), "size", None)
+        width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
+        region = getattr(getattr(codegen, "cfunc", None), "addr", None)
+        facts = _stack_storage_facts_for_segmented_address_8616("ss", displacement, width, region=region)
+        if facts is None or facts.identity is None:
+            return None
 
-    existing = _existing_stack_cvar_for_offset_8616(codegen, displacement)
-    if existing is not None:
-        requested_size = int(width or 1)
-        existing_var = getattr(existing, "variable", None)
-        if isinstance(existing_var, SimStackVariable):
-            existing_size = getattr(existing_var, "size", None)
-            if not isinstance(existing_size, int) or existing_size < requested_size:
-                existing_var.size = requested_size
-        return existing
+        existing = _existing_stack_cvar_for_offset_8616(codegen, displacement)
+        if existing is not None:
+            requested_size = int(width or 1)
+            existing_var = getattr(existing, "variable", None)
+            if isinstance(existing_var, SimStackVariable):
+                existing_size = getattr(existing_var, "size", None)
+                if not isinstance(existing_size, int) or existing_size < requested_size:
+                    existing_var.size = requested_size
+            return existing
 
-    name = f"s_{displacement & 0xFFFF:x}"
-    stack_var = SimStackVariable(displacement, width or 1, base="bp", name=name, region=region)
-    cvar = structured_c.CVariable(stack_var, variable_type=getattr(node, "type", None), codegen=codegen)
+        name = _stack_object_name(displacement, codegen=codegen)
+        stack_var = SimStackVariable(displacement, width or 1, base="bp", name=name, region=region)
+        cvar = structured_c.CVariable(stack_var, variable_type=getattr(node, "type", None), codegen=codegen)
 
-    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
-    if isinstance(variables_in_use, dict):
-        variables_in_use[stack_var] = cvar
+        variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
+        if isinstance(variables_in_use, dict):
+            variables_in_use[stack_var] = cvar
 
-    unified_locals = getattr(getattr(codegen, "cfunc", None), "unified_local_vars", None)
-    if isinstance(unified_locals, dict):
-        unified_locals[stack_var] = {(cvar, getattr(cvar, "variable_type", None) or getattr(node, "type", None))}
+        unified_locals = getattr(getattr(codegen, "cfunc", None), "unified_local_vars", None)
+        if isinstance(unified_locals, dict):
+            unified_locals[stack_var] = {(cvar, getattr(cvar, "variable_type", None) or getattr(node, "type", None))}
 
-    return cvar
+        return cvar
+
+    return _impl()
 
 
 def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
-    """
-    Apply segmented memory association reasoning pass to codegen.
+    def _impl():
+        """
+        Apply segmented memory association reasoning pass to codegen.
 
-    This is the entry point for Phase 3 decompiler framework integration.
+        This is the entry point for Phase 3 decompiler framework integration.
 
-    Args:
-        codegen: The decompiler codegen object
+        Args:
+            codegen: The decompiler codegen object
 
-    Returns:
-        True if significant segmented memory reasoning occurred, False otherwise
+        Returns:
+            True if significant segmented memory reasoning occurred, False otherwise
 
-    Note:
-        Phase 3 establishes conservative association reasoning before
-        later phases attempt pointer lowering or object recovery.
-    """
-    if getattr(codegen, "cfunc", None) is None:
-        return False
+        Note:
+            Phase 3 establishes conservative association reasoning before
+            later phases attempt pointer lowering or object recovery.
+        """
+        if getattr(codegen, "cfunc", None) is None:
+            return False
 
-    try:
-        # Track that segmented memory pass ran
-        codegen._inertia_segmented_memory_applied = True
-        codegen._inertia_segmented_memory_stats = {
-            "segment_assignments": 0,
-            "associations_built": 0,
-            "far_pointers_detected": 0,
-        }
-
-        assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
-        analyzer = SegmentAssociationAnalyzer()
-        if assignments:
-            analyzer.analyze(assignments)
-            summary = analyzer.summarize()
-            lowering = analyzer.lowering_summary()
-            codegen._inertia_segmented_memory_summary = summary
-            codegen._inertia_segmented_memory_lowering = lowering
+        try:
+            # Track that segmented memory pass ran
+            codegen._inertia_segmented_memory_applied = True
             codegen._inertia_segmented_memory_stats = {
-                "segment_assignments": len(assignments),
-                "associations_built": sum(len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")),
+                "segment_assignments": 0,
+                "associations_built": 0,
                 "far_pointers_detected": 0,
             }
-        else:
-            codegen._inertia_segmented_memory_summary = {
-                "stable": {},
-                "over_associated": {},
-                "unknown": {},
-            }
-            codegen._inertia_segmented_memory_lowering = {}
 
-        changed = False
-        target = str(
-            getattr(getattr(codegen, "project", None), "_inertia_c_target", "portable-flat") or "portable-flat"
-        )
-        project = getattr(codegen, "project", None)
-        current_stage = str(getattr(project, "_inertia_decompiler_stage", "") or "")
-        if current_stage.startswith("structuring:"):
-            # Structuring must remain validation-stable. Defer all segmented-memory
-            # AST rewrites to post-structuring layers.
-            return False
-        if lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
-            changed = True
-        # Keep structuring-time tail validation stable: defer runtime segment
-        # helper call materialization outside structuring pass execution.
-        if not current_stage.startswith("structuring:"):
-            if apply_runtime_segment_lowering_8616(codegen, target=target):
+            assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
+            analyzer = SegmentAssociationAnalyzer()
+            if assignments:
+                analyzer.analyze(assignments)
+                summary = analyzer.summarize()
+                lowering = analyzer.lowering_summary()
+                codegen._inertia_segmented_memory_summary = summary
+                codegen._inertia_segmented_memory_lowering = lowering
+                codegen._inertia_segmented_memory_stats = {
+                    "segment_assignments": len(assignments),
+                    "associations_built": sum(len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")),
+                    "far_pointers_detected": 0,
+                }
+            else:
+                codegen._inertia_segmented_memory_summary = {
+                    "stable": {},
+                    "over_associated": {},
+                    "unknown": {},
+                }
+                codegen._inertia_segmented_memory_lowering = {}
+
+            changed = False
+            target = str(
+                getattr(getattr(codegen, "project", None), "_inertia_c_target", "portable-flat") or "portable-flat"
+            )
+            project = getattr(codegen, "project", None)
+            current_stage = str(getattr(project, "_inertia_decompiler_stage", "") or "")
+            if current_stage.startswith("structuring:"):
+                # Structuring must remain validation-stable. Defer all segmented-memory
+                # AST rewrites to post-structuring layers.
+                return False
+            if lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
                 changed = True
-        if _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer):
+            # Keep structuring-time tail validation stable: defer runtime segment
+            # helper call materialization outside structuring pass execution.
+            if not current_stage.startswith("structuring:"):
+                if apply_runtime_segment_lowering_8616(codegen, target=target):
+                    changed = True
+            if _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer):
 
-            def transform(node):
-                nonlocal changed
-                if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+                def transform(node):
+                    nonlocal changed
+                    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+                        return node
+                    replacement = _recover_stack_slot_from_segmented_operand_8616(node, codegen)
+                    if replacement is not None:
+                        changed = True
+                        return replacement
                     return node
-                replacement = _recover_stack_slot_from_segmented_operand_8616(node, codegen)
-                if replacement is not None:
-                    changed = True
-                    return replacement
-                return node
 
-            root = getattr(codegen.cfunc, "statements", None)
-            if root is not None:
-                new_root = transform(root)
-                if new_root is not root:
-                    codegen.cfunc.statements = new_root
-                    if hasattr(codegen.cfunc, "body"):
-                        codegen.cfunc.body = new_root
-                if _replace_c_children_8616(codegen.cfunc.statements, transform):
-                    changed = True
+                root = getattr(codegen.cfunc, "statements", None)
+                if root is not None:
+                    new_root = transform(root)
+                    if new_root is not root:
+                        codegen.cfunc.statements = new_root
+                        if hasattr(codegen.cfunc, "body"):
+                            codegen.cfunc.body = new_root
+                    if _replace_c_children_8616(codegen.cfunc.statements, transform):
+                        changed = True
 
-        logger.debug("Segmented memory association reasoning pass completed")
-        return changed
-    except Exception as ex:
-        logger.warning("Segmented memory reasoning pass failed: %s", ex)
-        codegen._inertia_segmented_memory_error = str(ex)
-        return False
+            logger.debug("Segmented memory association reasoning pass completed")
+            return changed
+        except Exception as ex:
+            logger.warning("Segmented memory reasoning pass failed: %s", ex)
+            codegen._inertia_segmented_memory_error = str(ex)
+            return False
+
+    return _impl()
 
 
 def _lower_stable_ss_stack_accesses_8616(codegen) -> bool:

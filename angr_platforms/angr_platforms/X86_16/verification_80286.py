@@ -330,112 +330,115 @@ def _mem_operand_linear(case: dict[str, Any], insn_bytes: bytes) -> int | None:
 
 
 def _simulate_manual_control_flow(case: dict[str, Any], state, insn_bytes: bytes) -> bool:
-    idx = 0
-    while idx < len(insn_bytes) and insn_bytes[idx] in PREFIX_BYTES:
-        idx += 1
-    if idx >= len(insn_bytes):
-        return False
-    opcode = insn_bytes[idx]
-    initial = case["initial"]["regs"]
-
-    if opcode == 0xF4:
-        state.regs.ip = (initial["ip"] + len(insn_bytes)) & 0xFFFF
-        return True
-
-    if opcode in {0xE0, 0xE1, 0xE2, 0xE3}:
-        disp = insn_bytes[idx + 1]
-        if disp >= 0x80:
-            disp -= 0x100
-        next_ip = (initial["ip"] + len(insn_bytes)) & 0xFFFF
-        target_ip = (next_ip + disp) & 0xFFFF
-        cx = (initial["cx"] - (0 if opcode == 0xE3 else 1)) & 0xFFFF
-        zero = (initial["flags"] >> 6) & 1
-        if opcode != 0xE3:
-            state.regs.cx = cx
-        if opcode == 0xE0:
-            taken = cx != 0 and zero == 0
-        elif opcode == 0xE1:
-            taken = cx != 0 and zero == 1
-        elif opcode == 0xE2:
-            taken = cx != 0
-        else:
-            taken = (initial["cx"] & 0xFFFF) == 0
-        state.regs.ip = target_ip if taken else next_ip
-        return True
-
-    if opcode == 0xEB:
-        disp = insn_bytes[idx + 1]
-        if disp >= 0x80:
-            disp -= 0x100
-        state.regs.ip = (initial["ip"] + len(insn_bytes) + disp) & 0xFFFF
-        return True
-
-    if opcode == 0xEA:
-        state.regs.ip = insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8)
-        state.regs.cs = insn_bytes[idx + 3] | (insn_bytes[idx + 4] << 8)
-        return True
-
-    if opcode == 0x9A:
-        _push16_concrete(state, initial["cs"] & 0xFFFF)
-        _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
-        state.regs.ip = insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8)
-        state.regs.cs = insn_bytes[idx + 3] | (insn_bytes[idx + 4] << 8)
-        return True
-
-    if opcode == 0xCD:
-        vector = insn_bytes[idx + 1]
-        _push16_concrete(state, initial["flags"] & 0xFFFF)
-        state.regs.flags = initial["flags"] & 0xFCFF
-        _push16_concrete(state, initial["cs"] & 0xFFFF)
-        _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
-        state.regs.ip = _concrete_word(state, vector * 4)
-        state.regs.cs = _concrete_word(state, vector * 4 + 2)
-        return True
-
-    if opcode == 0xCC:
-        vector = 3
-        _push16_concrete(state, initial["flags"] & 0xFFFF)
-        state.regs.flags = initial["flags"] & 0xFCFF
-        _push16_concrete(state, initial["cs"] & 0xFFFF)
-        _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
-        state.regs.ip = _concrete_word(state, vector * 4)
-        state.regs.cs = _concrete_word(state, vector * 4 + 2)
-        return True
-
-    if opcode == 0xCB:
-        state.regs.ip = _pop16_concrete(state)
-        state.regs.cs = _pop16_concrete(state)
-        return True
-
-    if opcode == 0xCA:
-        state.regs.ip = _pop16_concrete(state)
-        state.regs.cs = _pop16_concrete(state)
-        state.regs.sp = (state.solver.eval(state.regs.sp) + (insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8))) & 0xFFFF
-        return True
-
-    if opcode == 0xCF:
-        state.regs.ip = _pop16_concrete(state)
-        state.regs.cs = _pop16_concrete(state)
-        state.regs.flags = _pop16_concrete(state) & REAL_MODE_FLAGS_MASK
-        return True
-
-    if opcode == 0xFF and len(insn_bytes) >= 2:
-        modrm_reg = (insn_bytes[1] >> 3) & 0x7
-        ptr_addr = _mem_operand_linear(case, insn_bytes)
-        if ptr_addr is None:
+    def _impl():
+        idx = 0
+        while idx < len(insn_bytes) and insn_bytes[idx] in PREFIX_BYTES:
+            idx += 1
+        if idx >= len(insn_bytes):
             return False
-        if modrm_reg == 3:  # call far m16:16
+        opcode = insn_bytes[idx]
+        initial = case["initial"]["regs"]
+
+        if opcode == 0xF4:
+            state.regs.ip = (initial["ip"] + len(insn_bytes)) & 0xFFFF
+            return True
+
+        if opcode in {0xE0, 0xE1, 0xE2, 0xE3}:
+            disp = insn_bytes[idx + 1]
+            if disp >= 0x80:
+                disp -= 0x100
+            next_ip = (initial["ip"] + len(insn_bytes)) & 0xFFFF
+            target_ip = (next_ip + disp) & 0xFFFF
+            cx = (initial["cx"] - (0 if opcode == 0xE3 else 1)) & 0xFFFF
+            zero = (initial["flags"] >> 6) & 1
+            if opcode != 0xE3:
+                state.regs.cx = cx
+            if opcode == 0xE0:
+                taken = cx != 0 and zero == 0
+            elif opcode == 0xE1:
+                taken = cx != 0 and zero == 1
+            elif opcode == 0xE2:
+                taken = cx != 0
+            else:
+                taken = (initial["cx"] & 0xFFFF) == 0
+            state.regs.ip = target_ip if taken else next_ip
+            return True
+
+        if opcode == 0xEB:
+            disp = insn_bytes[idx + 1]
+            if disp >= 0x80:
+                disp -= 0x100
+            state.regs.ip = (initial["ip"] + len(insn_bytes) + disp) & 0xFFFF
+            return True
+
+        if opcode == 0xEA:
+            state.regs.ip = insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8)
+            state.regs.cs = insn_bytes[idx + 3] | (insn_bytes[idx + 4] << 8)
+            return True
+
+        if opcode == 0x9A:
             _push16_concrete(state, initial["cs"] & 0xFFFF)
             _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
-            state.regs.ip = _concrete_word(state, ptr_addr)
-            state.regs.cs = _concrete_word(state, ptr_addr + 2)
-            return True
-        if modrm_reg == 5:  # jmp far m16:16
-            state.regs.ip = _concrete_word(state, ptr_addr)
-            state.regs.cs = _concrete_word(state, ptr_addr + 2)
+            state.regs.ip = insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8)
+            state.regs.cs = insn_bytes[idx + 3] | (insn_bytes[idx + 4] << 8)
             return True
 
-    return False
+        if opcode == 0xCD:
+            vector = insn_bytes[idx + 1]
+            _push16_concrete(state, initial["flags"] & 0xFFFF)
+            state.regs.flags = initial["flags"] & 0xFCFF
+            _push16_concrete(state, initial["cs"] & 0xFFFF)
+            _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
+            state.regs.ip = _concrete_word(state, vector * 4)
+            state.regs.cs = _concrete_word(state, vector * 4 + 2)
+            return True
+
+        if opcode == 0xCC:
+            vector = 3
+            _push16_concrete(state, initial["flags"] & 0xFFFF)
+            state.regs.flags = initial["flags"] & 0xFCFF
+            _push16_concrete(state, initial["cs"] & 0xFFFF)
+            _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
+            state.regs.ip = _concrete_word(state, vector * 4)
+            state.regs.cs = _concrete_word(state, vector * 4 + 2)
+            return True
+
+        if opcode == 0xCB:
+            state.regs.ip = _pop16_concrete(state)
+            state.regs.cs = _pop16_concrete(state)
+            return True
+
+        if opcode == 0xCA:
+            state.regs.ip = _pop16_concrete(state)
+            state.regs.cs = _pop16_concrete(state)
+            state.regs.sp = (state.solver.eval(state.regs.sp) + (insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8))) & 0xFFFF
+            return True
+
+        if opcode == 0xCF:
+            state.regs.ip = _pop16_concrete(state)
+            state.regs.cs = _pop16_concrete(state)
+            state.regs.flags = _pop16_concrete(state) & REAL_MODE_FLAGS_MASK
+            return True
+
+        if opcode == 0xFF and len(insn_bytes) >= 2:
+            modrm_reg = (insn_bytes[1] >> 3) & 0x7
+            ptr_addr = _mem_operand_linear(case, insn_bytes)
+            if ptr_addr is None:
+                return False
+            if modrm_reg == 3:  # call far m16:16
+                _push16_concrete(state, initial["cs"] & 0xFFFF)
+                _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
+                state.regs.ip = _concrete_word(state, ptr_addr)
+                state.regs.cs = _concrete_word(state, ptr_addr + 2)
+                return True
+            if modrm_reg == 5:  # jmp far m16:16
+                state.regs.ip = _concrete_word(state, ptr_addr)
+                state.regs.cs = _concrete_word(state, ptr_addr + 2)
+                return True
+
+        return False
+
+    return _impl()
 
 
 def _repeated_string_iteration_limit(state, insn_bytes: bytes) -> int | None:
@@ -493,38 +496,41 @@ def _faulting_word_string_delta(state) -> int:
 
 
 def _simulate_faulting_word_string_case(project: angr.Project, state, case: dict[str, Any], insn_bytes: bytes):
-    exc = case.get("exception")
-    if exc is None or exc.get("number") != 13:
-        return None
-    opcode = _prefixed_opcode(insn_bytes)
-    if opcode not in {0xAD, 0xAF}:
-        return None
-
-    start_addr = state.addr
-    repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
-    index_reg = "si" if opcode == 0xAD else "di"
-
-    while True:
-        offset = state.solver.eval(getattr(state.regs, index_reg)) & 0xFFFF
-        if offset == 0xFFFF:
-            if repeat_limit is not None:
-                cx = state.solver.eval(state.regs.cx) & 0xFFFF
-                if cx == 0:
-                    state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
-                    return state
-                state.regs.cx = (cx - 1) & 0xFFFF
-            setattr(state.regs, index_reg, (offset + _faulting_word_string_delta(state)) & 0xFFFF)
-            _simulate_documented_exception(state, case)
-            return state
-
-        state = _step_with_lock_retry(
-            project,
-            state,
-            insn_bytes,
-            advance_ip_for_stripped_lock=repeat_limit is None,
-        )
-        if repeat_limit is None or state.addr != start_addr:
+    def _impl():
+        exc = case.get("exception")
+        if exc is None or exc.get("number") != 13:
             return None
+        opcode = _prefixed_opcode(insn_bytes)
+        if opcode not in {0xAD, 0xAF}:
+            return None
+
+        start_addr = state.addr
+        repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
+        index_reg = "si" if opcode == 0xAD else "di"
+
+        while True:
+            offset = state.solver.eval(getattr(state.regs, index_reg)) & 0xFFFF
+            if offset == 0xFFFF:
+                if repeat_limit is not None:
+                    cx = state.solver.eval(state.regs.cx) & 0xFFFF
+                    if cx == 0:
+                        state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
+                        return state
+                    state.regs.cx = (cx - 1) & 0xFFFF
+                setattr(state.regs, index_reg, (offset + _faulting_word_string_delta(state)) & 0xFFFF)
+                _simulate_documented_exception(state, case)
+                return state
+
+            state = _step_with_lock_retry(
+                project,
+                state,
+                insn_bytes,
+                advance_ip_for_stripped_lock=repeat_limit is None,
+            )
+            if repeat_limit is None or state.addr != start_addr:
+                return None
+
+    return _impl()
 
 
 def _case_flags_mask(opcode: str, case: dict[str, Any]) -> int | None:
@@ -573,42 +579,45 @@ def _maybe_execute_terminating_halt(project: angr.Project, state, case: dict[str
 
 
 def _compare_case(state, case: dict[str, Any], *, opcode: str, halted: bool) -> list[CaseMismatch]:
-    mismatches: list[CaseMismatch] = []
-    initial_regs = case["initial"].get("regs", {})
-    final_regs = case["final"].get("regs", {})
-    executed_hlt = halted or case["bytes"][:1] == [0xF4]
+    def _impl():
+        mismatches: list[CaseMismatch] = []
+        initial_regs = case["initial"].get("regs", {})
+        final_regs = case["final"].get("regs", {})
+        executed_hlt = halted or case["bytes"][:1] == [0xF4]
 
-    for reg in REG_ORDER:
-        if reg not in initial_regs:
-            continue
-        expected = final_regs.get(reg, initial_regs[reg])
-        if reg == "ip" and not executed_hlt and reg in final_regs:
-            expected = (expected - 1) & 0xFFFF
-        actual = state.solver.eval(getattr(state.regs, reg))
-        if reg == "flags":
-            mask = _case_flags_mask(opcode, case)
-            if case.get("exception", {}).get("number") == 0:
-                mask = 0x0700
-            if mask is not None:
-                expected &= mask
-                actual &= mask
-        if actual != expected:
-            mismatches.append(CaseMismatch("reg", reg, expected, actual))
+        for reg in REG_ORDER:
+            if reg not in initial_regs:
+                continue
+            expected = final_regs.get(reg, initial_regs[reg])
+            if reg == "ip" and not executed_hlt and reg in final_regs:
+                expected = (expected - 1) & 0xFFFF
+            actual = state.solver.eval(getattr(state.regs, reg))
+            if reg == "flags":
+                mask = _case_flags_mask(opcode, case)
+                if case.get("exception", {}).get("number") == 0:
+                    mask = 0x0700
+                if mask is not None:
+                    expected &= mask
+                    actual &= mask
+            if actual != expected:
+                mismatches.append(CaseMismatch("reg", reg, expected, actual))
 
-    initial_ram = {addr: byte for addr, byte in case["initial"].get("ram", [])}
-    final_ram = {addr: byte for addr, byte in case["final"].get("ram", [])}
-    flag_address = case.get("exception", {}).get("flag_address")
-    for addr in sorted(set(initial_ram) | set(final_ram)):
-        if flag_address is not None and addr in {flag_address, flag_address + 1}:
-            continue
-        expected = final_ram.get(addr, initial_ram.get(addr))
-        if expected is None:
-            continue
-        actual = _concrete_byte(state, addr)
-        if actual != expected:
-            mismatches.append(CaseMismatch("mem", f"{addr:#x}", expected, actual, address=addr))
+        initial_ram = {addr: byte for addr, byte in case["initial"].get("ram", [])}
+        final_ram = {addr: byte for addr, byte in case["final"].get("ram", [])}
+        flag_address = case.get("exception", {}).get("flag_address")
+        for addr in sorted(set(initial_ram) | set(final_ram)):
+            if flag_address is not None and addr in {flag_address, flag_address + 1}:
+                continue
+            expected = final_ram.get(addr, initial_ram.get(addr))
+            if expected is None:
+                continue
+            actual = _concrete_byte(state, addr)
+            if actual != expected:
+                mismatches.append(CaseMismatch("mem", f"{addr:#x}", expected, actual, address=addr))
 
-    return mismatches
+        return mismatches
+
+    return _impl()
 
 
 def verify_case(
@@ -619,77 +628,80 @@ def verify_case(
     execute_halt: bool = True,
     allow_ip_relocation_retry: bool = True,
 ) -> CaseResult:
-    project = _make_project() if project is None else project
-    result = CaseResult(opcode=opcode, idx=case["idx"], name=case["name"], hash=case.get("hash"), passed=False)
+    def _impl():
+        project = _make_project() if project is None else project
+        result = CaseResult(opcode=opcode, idx=case["idx"], name=case["name"], hash=case.get("hash"), passed=False)
 
-    try:
-        state = _initial_state(project, case)
-        exc = case.get("exception")
         try:
-            insn_bytes = _instruction_bytes(case)
-        except RuntimeError:
-            if exc is not None and exc.get("number") == 6:
-                _simulate_documented_exception(state, case)
-                result.mismatches = _compare_case(state, case, opcode=opcode, halted=False)
-                result.passed = not result.mismatches
-                return result
-            raise
-        start_addr = state.addr
-        repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
-        handled_exception = False
-        if _simulate_manual_control_flow(case, state, insn_bytes):
-            handled_exception = True
-        elif exc is not None:
-            faulted_string = _simulate_faulting_word_string_case(project, state, case, insn_bytes)
-            if faulted_string is not None:
-                state = faulted_string
+            state = _initial_state(project, case)
+            exc = case.get("exception")
+            try:
+                insn_bytes = _instruction_bytes(case)
+            except RuntimeError:
+                if exc is not None and exc.get("number") == 6:
+                    _simulate_documented_exception(state, case)
+                    result.mismatches = _compare_case(state, case, opcode=opcode, halted=False)
+                    result.passed = not result.mismatches
+                    return result
+                raise
+            start_addr = state.addr
+            repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
+            handled_exception = False
+            if _simulate_manual_control_flow(case, state, insn_bytes):
                 handled_exception = True
-            else:
-                _simulate_documented_exception(state, case)
-                handled_exception = True
-        elif repeat_limit == 0:
-            state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
-        else:
-            state = _step_with_lock_retry(
-                project,
-                state,
-                insn_bytes,
-                advance_ip_for_stripped_lock=repeat_limit is None,
-            )
-            if allow_ip_relocation_retry and _should_retry_with_relocated_ip(case, state):
-                relocated = deepcopy(case)
-                delta = 0x2000 - (case["initial"]["regs"]["ip"] & 0xFFFF)
-                relocated["initial"]["regs"]["ip"] = (relocated["initial"]["regs"]["ip"] + delta) & 0xFFFF
-                if "ip" in relocated["final"].get("regs", {}):
-                    relocated["final"]["regs"]["ip"] = (relocated["final"]["regs"]["ip"] + delta) & 0xFFFF
-                return verify_case(
-                    relocated,
-                    opcode=opcode,
-                    project=None,
-                    execute_halt=execute_halt,
-                    allow_ip_relocation_retry=False,
-                )
-        if repeat_limit is not None:
-            iterations = 1
-            max_iterations = max(1, repeat_limit)
-            while (
-                state.addr == start_addr and iterations < max_iterations and _repeat_should_continue(state, insn_bytes)
-            ):
-                state = _step_with_lock_retry(project, state, insn_bytes, advance_ip_for_stripped_lock=False)
-                iterations += 1
-            if state.addr == start_addr and (
-                iterations >= max_iterations or not _repeat_should_continue(state, insn_bytes)
-            ):
+            elif exc is not None:
+                faulted_string = _simulate_faulting_word_string_case(project, state, case, insn_bytes)
+                if faulted_string is not None:
+                    state = faulted_string
+                    handled_exception = True
+                else:
+                    _simulate_documented_exception(state, case)
+                    handled_exception = True
+            elif repeat_limit == 0:
                 state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
-        halted = False
-        if execute_halt:
-            state, halted = _maybe_execute_terminating_halt(project, state, case)
-        result.mismatches = _compare_case(state, case, opcode=opcode, halted=halted)
-        result.passed = not result.mismatches
-        return result
-    except Exception as ex:  # pylint:disable=broad-except
-        result.error = f"{type(ex).__name__}: {ex}"
-        return result
+            else:
+                state = _step_with_lock_retry(
+                    project,
+                    state,
+                    insn_bytes,
+                    advance_ip_for_stripped_lock=repeat_limit is None,
+                )
+                if allow_ip_relocation_retry and _should_retry_with_relocated_ip(case, state):
+                    relocated = deepcopy(case)
+                    delta = 0x2000 - (case["initial"]["regs"]["ip"] & 0xFFFF)
+                    relocated["initial"]["regs"]["ip"] = (relocated["initial"]["regs"]["ip"] + delta) & 0xFFFF
+                    if "ip" in relocated["final"].get("regs", {}):
+                        relocated["final"]["regs"]["ip"] = (relocated["final"]["regs"]["ip"] + delta) & 0xFFFF
+                    return verify_case(
+                        relocated,
+                        opcode=opcode,
+                        project=None,
+                        execute_halt=execute_halt,
+                        allow_ip_relocation_retry=False,
+                    )
+            if repeat_limit is not None:
+                iterations = 1
+                max_iterations = max(1, repeat_limit)
+                while (
+                    state.addr == start_addr and iterations < max_iterations and _repeat_should_continue(state, insn_bytes)
+                ):
+                    state = _step_with_lock_retry(project, state, insn_bytes, advance_ip_for_stripped_lock=False)
+                    iterations += 1
+                if state.addr == start_addr and (
+                    iterations >= max_iterations or not _repeat_should_continue(state, insn_bytes)
+                ):
+                    state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
+            halted = False
+            if execute_halt:
+                state, halted = _maybe_execute_terminating_halt(project, state, case)
+            result.mismatches = _compare_case(state, case, opcode=opcode, halted=halted)
+            result.passed = not result.mismatches
+            return result
+        except Exception as ex:  # pylint:disable=broad-except
+            result.error = f"{type(ex).__name__}: {ex}"
+            return result
+
+    return _impl()
 
 
 def verify_moo_file(
@@ -702,50 +714,53 @@ def verify_moo_file(
     case_start: int = 0,
     case_stop: int | None = None,
 ) -> dict[str, Any]:
-    cpu_name, cases = load_moo_cases(path)
-    opcode = opcode_name_for_path(path)
-    revoked_hashes = revoked_hashes or set()
-    project = _make_project()
+    def _impl():
+        cpu_name, cases = load_moo_cases(path)
+        opcode = opcode_name_for_path(path)
+        revoked_hashes = revoked_hashes or set()
+        project = _make_project()
 
-    results: list[CaseResult] = []
-    selected_cases = cases[case_start:case_stop]
-    if limit is not None:
-        selected_cases = selected_cases[:limit]
-    total_cases = len(selected_cases)
-    if progress_every:
-        print(f"[{opcode}] starting {total_cases} cases", flush=True)
-    for index, case in enumerate(selected_cases, start=1):
-        case_hash = case.get("hash", "").lower()
-        if case_hash and case_hash in revoked_hashes:
-            results.append(
-                CaseResult(
-                    opcode=opcode,
-                    idx=case["idx"],
-                    name=case["name"],
-                    hash=case.get("hash"),
-                    passed=False,
-                    skipped=True,
+        results: list[CaseResult] = []
+        selected_cases = cases[case_start:case_stop]
+        if limit is not None:
+            selected_cases = selected_cases[:limit]
+        total_cases = len(selected_cases)
+        if progress_every:
+            print(f"[{opcode}] starting {total_cases} cases", flush=True)
+        for index, case in enumerate(selected_cases, start=1):
+            case_hash = case.get("hash", "").lower()
+            if case_hash and case_hash in revoked_hashes:
+                results.append(
+                    CaseResult(
+                        opcode=opcode,
+                        idx=case["idx"],
+                        name=case["name"],
+                        hash=case.get("hash"),
+                        passed=False,
+                        skipped=True,
+                    )
                 )
-            )
-        else:
-            results.append(verify_case(case, opcode=opcode, project=project, execute_halt=execute_halt))
-        if progress_every and (index % progress_every == 0 or index == total_cases):
-            print(f"[{opcode}] case {index}/{total_cases}", flush=True)
+            else:
+                results.append(verify_case(case, opcode=opcode, project=project, execute_halt=execute_halt))
+            if progress_every and (index % progress_every == 0 or index == total_cases):
+                print(f"[{opcode}] case {index}/{total_cases}", flush=True)
 
-    passed = sum(1 for r in results if r.passed)
-    skipped = sum(1 for r in results if r.skipped)
-    failed = sum(1 for r in results if not r.passed and not r.skipped)
-    return {
-        "opcode": opcode,
-        "path": str(path),
-        "cpu": cpu_name,
-        "total": len(results),
-        "passed": passed,
-        "failed": failed,
-        "skipped": skipped,
-        "sample_name": results[0].name if results else "",
-        "results": [asdict(r) for r in results],
-    }
+        passed = sum(1 for r in results if r.passed)
+        skipped = sum(1 for r in results if r.skipped)
+        failed = sum(1 for r in results if not r.passed and not r.skipped)
+        return {
+            "opcode": opcode,
+            "path": str(path),
+            "cpu": cpu_name,
+            "total": len(results),
+            "passed": passed,
+            "failed": failed,
+            "skipped": skipped,
+            "sample_name": results[0].name if results else "",
+            "results": [asdict(r) for r in results],
+        }
+
+    return _impl()
 
 
 def discover_moo_files(root: Path, opcodes: list[str] | None = None) -> list[Path]:

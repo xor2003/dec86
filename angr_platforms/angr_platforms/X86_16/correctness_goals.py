@@ -100,22 +100,25 @@ def describe_x86_16_correctness_goals() -> tuple[tuple[str, str, str, str, tuple
 
 
 def summarize_x86_16_correctness_goals() -> dict[str, object]:
-    landed = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "landed")
-    partial = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "partial")
-    open_ = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "open")
-    strict_percent = round(landed / len(CORRECTNESS_GOALS) * 100, 2) if CORRECTNESS_GOALS else 0.0
-    weighted_percent = round((landed + 0.5 * partial) / len(CORRECTNESS_GOALS) * 100, 2) if CORRECTNESS_GOALS else 0.0
-    return {
-        "total": len(CORRECTNESS_GOALS),
-        "landed": landed,
-        "partial": partial,
-        "open": open_,
-        "strict_percent": strict_percent,
-        "weighted_percent": weighted_percent,
-        "landed_codes": tuple(goal.code for goal in CORRECTNESS_GOALS if goal.status == "landed"),
-        "partial_codes": tuple(goal.code for goal in CORRECTNESS_GOALS if goal.status == "partial"),
-        "open_codes": tuple(goal.code for goal in CORRECTNESS_GOALS if goal.status == "open"),
-    }
+    def _impl():
+        landed = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "landed")
+        partial = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "partial")
+        open_ = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "open")
+        strict_percent = round(landed / len(CORRECTNESS_GOALS) * 100, 2) if CORRECTNESS_GOALS else 0.0
+        weighted_percent = round((landed + 0.5 * partial) / len(CORRECTNESS_GOALS) * 100, 2) if CORRECTNESS_GOALS else 0.0
+        return {
+            "total": len(CORRECTNESS_GOALS),
+            "landed": landed,
+            "partial": partial,
+            "open": open_,
+            "strict_percent": strict_percent,
+            "weighted_percent": weighted_percent,
+            "landed_codes": tuple(goal.code for goal in CORRECTNESS_GOALS if goal.status == "landed"),
+            "partial_codes": tuple(goal.code for goal in CORRECTNESS_GOALS if goal.status == "partial"),
+            "open_codes": tuple(goal.code for goal in CORRECTNESS_GOALS if goal.status == "open"),
+        }
+
+    return _impl()
 
 
 __all__ = [

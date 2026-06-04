@@ -1,4 +1,5 @@
 from __future__ import annotations
+from types import SimpleNamespace
 
 """Layer: Postprocess / Rewrite
 Responsibility: replace flag-based `if(tmp_*)` and `if(flags & ...)` with
@@ -42,40 +43,43 @@ def _build_reg_var(project, reg_name: str, codegen, size: int = 2) -> CVariable 
 
 
 def _build_c_expr_for_operand(project, operand, codegen) -> object | None:
-    """Convert a ConditionIR operand (reg name string or int) to a C AST node."""
-    if isinstance(operand, IRValue):
-        if operand.space == MemSpace.CONST:
-            return CConstant(int(operand.const or 0), SimTypeInt(signed=False, label="int"), codegen=codegen)
-        if operand.space == MemSpace.REG and isinstance(operand.name, str) and operand.name:
-            return _build_reg_var(project, operand.name, codegen, size=max(1, int(operand.size or 2)))
+    def _impl():
+        """Convert a ConditionIR operand (reg name string or int) to a C AST node."""
+        if isinstance(operand, IRValue):
+            if operand.space == MemSpace.CONST:
+                return CConstant(int(operand.const or 0), SimTypeInt(signed=False, label="int"), codegen=codegen)
+            if operand.space == MemSpace.REG and isinstance(operand.name, str) and operand.name:
+                return _build_reg_var(project, operand.name, codegen, size=max(1, int(operand.size or 2)))
+            return None
+        if isinstance(operand, str):
+            return _build_reg_var(project, operand, codegen)
+        if isinstance(operand, int):
+            return CConstant(int(operand), SimTypeInt(signed=False, label="int"), codegen=codegen)
+        # Compatibility lane: some condition facts still carry raw VexValue-like
+        # wrappers. Resolve register/const evidence if present.
+        try:
+            value_const = getattr(operand, "value", None)
+        except Exception:
+            value_const = None
+        if isinstance(value_const, int):
+            return CConstant(int(value_const), SimTypeInt(signed=False, label="int"), codegen=codegen)
+        try:
+            reg_name = getattr(operand, "reg_name", None)
+        except Exception:
+            reg_name = None
+        if isinstance(reg_name, str) and reg_name:
+            return _build_reg_var(project, reg_name, codegen)
+        try:
+            reg_offset = getattr(operand, "reg", None)
+        except Exception:
+            reg_offset = None
+        if isinstance(reg_offset, int):
+            reg_label = project.arch.register_names.get(int(reg_offset))
+            if isinstance(reg_label, str) and reg_label:
+                return _build_reg_var(project, reg_label, codegen)
         return None
-    if isinstance(operand, str):
-        return _build_reg_var(project, operand, codegen)
-    if isinstance(operand, int):
-        return CConstant(int(operand), SimTypeInt(signed=False, label="int"), codegen=codegen)
-    # Compatibility lane: some condition facts still carry raw VexValue-like
-    # wrappers. Resolve register/const evidence if present.
-    try:
-        value_const = getattr(operand, "value", None)
-    except Exception:
-        value_const = None
-    if isinstance(value_const, int):
-        return CConstant(int(value_const), SimTypeInt(signed=False, label="int"), codegen=codegen)
-    try:
-        reg_name = getattr(operand, "reg_name", None)
-    except Exception:
-        reg_name = None
-    if isinstance(reg_name, str) and reg_name:
-        return _build_reg_var(project, reg_name, codegen)
-    try:
-        reg_offset = getattr(operand, "reg", None)
-    except Exception:
-        reg_offset = None
-    if isinstance(reg_offset, int):
-        reg_label = project.arch.register_names.get(int(reg_offset))
-        if isinstance(reg_label, str) and reg_label:
-            return _build_reg_var(project, reg_label, codegen)
-    return None
+
+    return _impl()
 
 
 def _build_c_condition_expr(project, cond: ConditionIR, codegen) -> CBinaryOp | None:
@@ -155,64 +159,70 @@ def _index_conditions_by_tag(conditions: list[ConditionIR]) -> dict[tuple, Condi
 def _resolve_condition_by_tag_with_delta(
     project, index: dict[tuple, ConditionIR], key: tuple | None
 ) -> ConditionIR | None:
-    if key is None:
-        return None
-    cond = index.get(key)
-    if cond is not None:
-        return cond
-    if not (isinstance(key, tuple) and len(key) == 2):
-        return None
-    ins_addr, block_addr = key
-    if not (isinstance(ins_addr, int) and isinstance(block_addr, int)):
-        return None
-    delta = getattr(project, "_inertia_original_linear_delta", None)
-    if not isinstance(delta, int) or delta == 0:
-        return None
-    for signed in (delta, -delta):
-        alt_key = (ins_addr + signed, block_addr + signed)
-        cond = index.get(alt_key)
+    def _impl():
+        if key is None:
+            return None
+        cond = index.get(key)
         if cond is not None:
             return cond
-    return None
+        if not (isinstance(key, tuple) and len(key) == 2):
+            return None
+        ins_addr, block_addr = key
+        if not (isinstance(ins_addr, int) and isinstance(block_addr, int)):
+            return None
+        delta = getattr(project, "_inertia_original_linear_delta", None)
+        if not isinstance(delta, int) or delta == 0:
+            return None
+        for signed in (delta, -delta):
+            alt_key = (ins_addr + signed, block_addr + signed)
+            cond = index.get(alt_key)
+            if cond is not None:
+                return cond
+        return None
+
+    return _impl()
 
 
 def _is_flag_based_condition_node(node) -> bool:
-    """Detect if a condition node is flag-based (tmp_* or flags mask pattern)."""
-    # CITE nodes: if(tmp_*)
-    from angr.analyses.decompiler.structured_codegen.c import CITE
+    def _impl():
+        """Detect if a condition node is flag-based (tmp_* or flags mask pattern)."""
+        # CITE nodes: if(tmp_*)
+        from angr.analyses.decompiler.structured_codegen.c import CITE
 
-    if isinstance(node, CITE):
-        cond = getattr(node, "cond", None)
-        if cond is not None:
-            return _is_flag_based_condition_node(cond)
+        if isinstance(node, CITE):
+            cond = getattr(node, "cond", None)
+            if cond is not None:
+                return _is_flag_based_condition_node(cond)
+            return False
+
+        # CVariable looking like flags register
+        if isinstance(node, CVariable):
+            var = getattr(node, "variable", None)
+            if isinstance(var, SimRegisterVariable):
+                reg = getattr(var, "reg", None)
+                name = getattr(var, "name", "")
+                # Flags register is typically offset 0 with name "flags" in x86_16
+                if reg == 0 or "flags" in str(name).lower() or "tmp" in str(name).lower():
+                    return True
+            if "flags" in str(var).lower():
+                return True
+
+        # CBinaryOp with And or Shr on what looks like flags
+        if isinstance(node, CBinaryOp):
+            if node.op in ("And", "Shr") and _is_flag_based_condition_node(node.lhs):
+                return True
+            if _is_flag_based_condition_node(node.lhs) or _is_flag_based_condition_node(node.rhs):
+                return True
+
+        if isinstance(node, CUnaryOp):
+            return _is_flag_based_condition_node(getattr(node, "operand", None))
+
         return False
 
-    # CVariable looking like flags register
-    if isinstance(node, CVariable):
-        var = getattr(node, "variable", None)
-        if isinstance(var, SimRegisterVariable):
-            reg = getattr(var, "reg", None)
-            name = getattr(var, "name", "")
-            # Flags register is typically offset 0 with name "flags" in x86_16
-            if reg == 0 or "flags" in str(name).lower() or "tmp" in str(name).lower():
-                return True
-        if "flags" in str(var).lower():
-            return True
-
-    # CBinaryOp with And or Shr on what looks like flags
-    if isinstance(node, CBinaryOp):
-        if node.op in ("And", "Shr") and _is_flag_based_condition_node(node.lhs):
-            return True
-        if _is_flag_based_condition_node(node.lhs) or _is_flag_based_condition_node(node.rhs):
-            return True
-
-    if isinstance(node, CUnaryOp):
-        return _is_flag_based_condition_node(getattr(node, "operand", None))
-
-    return False
+    return _impl()
 
 
-def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
+def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: SimpleNamespace) -> bool:
     """Replace flag-based conditions in C AST with explicit comparisons from ConditionIR.
 
     This is a rewrite pass (AGENTS rule: rewrite only for cleanup/formatting).

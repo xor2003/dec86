@@ -86,34 +86,37 @@ class _StackSlotIdentity:
 
 
 def _storage_view_for_variable(variable) -> _StorageView:
-    size = getattr(variable, "size", 0) or 0
-    width_bits = size * 8 if size else None
-    name = (getattr(variable, "ident", None) or getattr(variable, "name", None) or "").lower()
-    if isinstance(variable, SimRegisterVariable):
-        low_high_offsets = {
-            "al": 0,
-            "ah": 8,
-            "bl": 0,
-            "bh": 8,
-            "cl": 0,
-            "ch": 8,
-            "dl": 0,
-            "dh": 8,
-        }
-        if name in low_high_offsets:
-            return _StorageView(low_high_offsets[name], width_bits)
-        reg = getattr(variable, "reg", None)
-        if isinstance(reg, int) and size in {1, 2}:
-            if size == 1:
-                return _StorageView(8 if reg % 2 else 0, 8)
-            return _StorageView(0, width_bits)
-    if isinstance(variable, SimStackVariable):
-        return _StorageView(getattr(variable, "offset", 0) * 8, width_bits)
-    if isinstance(variable, SimMemoryVariable):
-        addr = getattr(variable, "addr", 0)
-        if isinstance(addr, int):
-            return _StorageView(addr * 8, width_bits)
-    return _StorageView(0, width_bits)
+    def _impl():
+        size = getattr(variable, "size", 0) or 0
+        width_bits = size * 8 if size else None
+        name = (getattr(variable, "ident", None) or getattr(variable, "name", None) or "").lower()
+        if isinstance(variable, SimRegisterVariable):
+            low_high_offsets = {
+                "al": 0,
+                "ah": 8,
+                "bl": 0,
+                "bh": 8,
+                "cl": 0,
+                "ch": 8,
+                "dl": 0,
+                "dh": 8,
+            }
+            if name in low_high_offsets:
+                return _StorageView(low_high_offsets[name], width_bits)
+            reg = getattr(variable, "reg", None)
+            if isinstance(reg, int) and size in {1, 2}:
+                if size == 1:
+                    return _StorageView(8 if reg % 2 else 0, 8)
+                return _StorageView(0, width_bits)
+        if isinstance(variable, SimStackVariable):
+            return _StorageView(getattr(variable, "offset", 0) * 8, width_bits)
+        if isinstance(variable, SimMemoryVariable):
+            addr = getattr(variable, "addr", 0)
+            if isinstance(addr, int):
+                return _StorageView(addr * 8, width_bits)
+        return _StorageView(0, width_bits)
+
+    return _impl()
 
 
 @dataclass(frozen=True)
@@ -259,27 +262,30 @@ def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
 
 
 def _alias_identity_for_variable(variable) -> tuple[str, Any] | None:
-    if isinstance(variable, SimStackVariable):
-        slot = _stack_slot_identity_for_variable(variable)
-        if slot is not None:
-            return ("stack", slot)
-    if isinstance(variable, SimRegisterVariable):
-        name = getattr(variable, "name", None)
-        reg = getattr(variable, "reg", None)
-        size = getattr(variable, "size", 0) or 0
-        if isinstance(reg, int) and size in {1, 2}:
-            pair_index = reg // 2
-            pair_names = ("ax", "cx", "dx", "bx")
-            if 0 <= pair_index < len(pair_names):
-                return ("register", pair_names[pair_index])
-        pair_name = register_pair_name(name)
-        if pair_name is not None:
-            return ("register", pair_name)
-    if isinstance(variable, SimMemoryVariable):
-        addr = getattr(variable, "addr", None)
-        if isinstance(addr, int):
-            return ("memory", addr)
-    return None
+    def _impl():
+        if isinstance(variable, SimStackVariable):
+            slot = _stack_slot_identity_for_variable(variable)
+            if slot is not None:
+                return ("stack", slot)
+        if isinstance(variable, SimRegisterVariable):
+            name = getattr(variable, "name", None)
+            reg = getattr(variable, "reg", None)
+            size = getattr(variable, "size", 0) or 0
+            if isinstance(reg, int) and size in {1, 2}:
+                pair_index = reg // 2
+                pair_names = ("ax", "cx", "dx", "bx")
+                if 0 <= pair_index < len(pair_names):
+                    return ("register", pair_names[pair_index])
+            pair_name = register_pair_name(name)
+            if pair_name is not None:
+                return ("register", pair_name)
+        if isinstance(variable, SimMemoryVariable):
+            addr = getattr(variable, "addr", None)
+            if isinstance(addr, int):
+                return ("memory", addr)
+        return None
+
+    return _impl()
 
 
 def _canonical_stack_offset(offset: Any) -> Any:
@@ -293,7 +299,7 @@ def _canonical_stack_offset(offset: Any) -> Any:
     return offset
 
 
-def _stack_slot_identity_for_variable(variable) -> _StackSlotIdentity | None:
+def _stack_slot_identity_for_variable(variable: SimStackVariable) -> _StackSlotIdentity | None:
     if not isinstance(variable, SimStackVariable):
         return None
     base = _canonical_stack_base(getattr(variable, "base", None))
@@ -367,79 +373,82 @@ class AliasFailure:
 
 
 def alias_facts_for_ir_address_8616(addr: "object") -> AliasStorageFacts | AliasFailure | None:
-    """Build alias storage facts from a typed IRAddress.
+    def _impl():
+        """Build alias storage facts from a typed IRAddress.
 
-    This is the canonical IR→Alias entry point.  Must be called at IR creation time,
-    not later in the pipeline.
+        This is the canonical IR→Alias entry point.  Must be called at IR creation time,
+        not later in the pipeline.
 
-    Returns:
-        AliasStorageFacts on success.
-        AliasFailure when the address cannot be classified yet (not silently hidden).
-        None for addresses that are genuinely unclassifiable.
-    Raises PipelineHardError for proven addresses that cannot be resolved.
+        Returns:
+            AliasStorageFacts on success.
+            AliasFailure when the address cannot be classified yet (not silently hidden).
+            None for addresses that are genuinely unclassifiable.
+        Raises PipelineHardError for proven addresses that cannot be resolved.
 
-    AGENTS rule #1: Must not guess. If SS is proven but unresolvable, fail hard.
-    """
-    from ..ir.core import AddressStatus, IRAddress, MemSpace, is_stack_address_8616
-    from ..pipeline.errors import PipelineHardError
+        AGENTS rule #1: Must not guess. If SS is proven but unresolvable, fail hard.
+        """
+        from ..ir.core import AddressStatus, IRAddress, MemSpace, is_stack_address_8616
+        from ..pipeline.errors import PipelineHardError
 
-    if not isinstance(addr, IRAddress):
+        if not isinstance(addr, IRAddress):
+            return None
+
+        if addr.space == MemSpace.SS:
+            # Only create stable stack facts when all conditions are met:
+            #   1. Base contains "bp"
+            #   2. Status is STABLE
+            #   3. Offset is an integer (not symbolic)
+            # IMPORTANT:
+            # ("sp",) alone is NOT sufficient.
+            # Stability additionally requires:
+            #   - proven SP delta
+            #   - stable offset
+            #
+            # Dynamic SP traffic must remain PROVISIONAL.
+            has_stack_base = addr.base in {("bp",), ("sp",)}
+            has_stable_offset = isinstance(addr.offset, int) and addr.status == AddressStatus.STABLE
+
+            if is_stack_address_8616(addr) and has_stack_base and has_stable_offset:
+                return _stack_storage_facts_for_segmented_address_8616(
+                    "ss",
+                    addr.offset,
+                    addr.size,
+                    region=None,
+                )
+
+            # Hard-fail only for STABLE SS addresses without a recognized BP base.
+            # PROVISIONAL SS addresses (e.g. SP-relative push/pop during prologue
+            # before BP is set up, or symbolic offsets not yet resolved) are expected
+            # and must not block decompilation.
+            if addr.status == AddressStatus.STABLE:
+                raise PipelineHardError(
+                    f"unresolved SS address: base={addr.base} offset={addr.offset} status={addr.status}",
+                    layer="alias",
+                )
+            # PROVISIONAL SS: return explicit AliasFailure — not silently hidden
+            return AliasFailure(
+                reason="provisional SS address cannot be classified",
+                address=addr,
+                space="SS",
+                offset=addr.offset if isinstance(addr.offset, int) else None,
+            )
+
+        # DS/ES memory
+        if addr.space in {MemSpace.DS, MemSpace.ES}:
+            return AliasStorageFacts(
+                domain=_StorageDomainSignature(
+                    "memory",
+                    addr.size,
+                    _StorageView(
+                        addr.offset * 8 if isinstance(addr.offset, int) else 0, addr.size * 8 if addr.size else None
+                    ),
+                ),
+                identity=("memory", addr.offset) if isinstance(addr.offset, int) else None,
+            )
+
         return None
 
-    if addr.space == MemSpace.SS:
-        # Only create stable stack facts when all conditions are met:
-        #   1. Base contains "bp"
-        #   2. Status is STABLE
-        #   3. Offset is an integer (not symbolic)
-        # IMPORTANT:
-        # ("sp",) alone is NOT sufficient.
-        # Stability additionally requires:
-        #   - proven SP delta
-        #   - stable offset
-        #
-        # Dynamic SP traffic must remain PROVISIONAL.
-        has_stack_base = addr.base in {("bp",), ("sp",)}
-        has_stable_offset = isinstance(addr.offset, int) and addr.status == AddressStatus.STABLE
-
-        if is_stack_address_8616(addr) and has_stack_base and has_stable_offset:
-            return _stack_storage_facts_for_segmented_address_8616(
-                "ss",
-                addr.offset,
-                addr.size,
-                region=None,
-            )
-
-        # Hard-fail only for STABLE SS addresses without a recognized BP base.
-        # PROVISIONAL SS addresses (e.g. SP-relative push/pop during prologue
-        # before BP is set up, or symbolic offsets not yet resolved) are expected
-        # and must not block decompilation.
-        if addr.status == AddressStatus.STABLE:
-            raise PipelineHardError(
-                f"unresolved SS address: base={addr.base} offset={addr.offset} status={addr.status}",
-                layer="alias",
-            )
-        # PROVISIONAL SS: return explicit AliasFailure — not silently hidden
-        return AliasFailure(
-            reason="provisional SS address cannot be classified",
-            address=addr,
-            space="SS",
-            offset=addr.offset if isinstance(addr.offset, int) else None,
-        )
-
-    # DS/ES memory
-    if addr.space in {MemSpace.DS, MemSpace.ES}:
-        return AliasStorageFacts(
-            domain=_StorageDomainSignature(
-                "memory",
-                addr.size,
-                _StorageView(
-                    addr.offset * 8 if isinstance(addr.offset, int) else 0, addr.size * 8 if addr.size else None
-                ),
-            ),
-            identity=("memory", addr.offset) if isinstance(addr.offset, int) else None,
-        )
-
-    return None
+    return _impl()
 
 
 def describe_alias_storage(expr) -> AliasStorageFacts:

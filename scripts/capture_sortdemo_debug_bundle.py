@@ -43,36 +43,39 @@ from inertia_decompiler.x86_16_exact_slice import function_original_addr
 
 
 def _collect_cod_window_lines(cod_text: str, addr: int, radius: int = 4) -> list[str]:
-    """Return a small COD listing window centered on one offset."""
+    def _impl():
+        """Return a small COD listing window centered on one offset."""
 
-    lines = cod_text.splitlines()
-    asm_rows: list[int] = []
-    hit_index: int | None = None
-    for idx, line in enumerate(lines):
-        if "***" not in line or line.lstrip().startswith(";|***"):
-            continue
-        asm_rows.append(idx)
-        parts = line.split("***", 1)[1].strip().split(None, 2)
-        if not parts:
-            continue
-        try:
-            row_addr = int(parts[0], 16)
-        except ValueError:
-            continue
-        if row_addr == addr:
-            hit_index = idx
-    if hit_index is None:
-        return [f"<no COD row for {addr:#x}>"]
+        lines = cod_text.splitlines()
+        asm_rows: list[int] = []
+        hit_index: int | None = None
+        for idx, line in enumerate(lines):
+            if "***" not in line or line.lstrip().startswith(";|***"):
+                continue
+            asm_rows.append(idx)
+            parts = line.split("***", 1)[1].strip().split(None, 2)
+            if not parts:
+                continue
+            try:
+                row_addr = int(parts[0], 16)
+            except ValueError:
+                continue
+            if row_addr == addr:
+                hit_index = idx
+        if hit_index is None:
+            return [f"<no COD row for {addr:#x}>"]
 
-    asm_pos = asm_rows.index(hit_index)
-    start_idx = asm_rows[max(0, asm_pos - radius)]
-    end_idx = asm_rows[min(len(asm_rows) - 1, asm_pos + radius)]
+        asm_pos = asm_rows.index(hit_index)
+        start_idx = asm_rows[max(0, asm_pos - radius)]
+        end_idx = asm_rows[min(len(asm_rows) - 1, asm_pos + radius)]
 
-    while start_idx > 0 and lines[start_idx - 1].lstrip().startswith(";|***"):
-        start_idx -= 1
-    while end_idx + 1 < len(lines) and lines[end_idx + 1].lstrip().startswith(";|***"):
-        end_idx += 1
-    return lines[start_idx : end_idx + 1]
+        while start_idx > 0 and lines[start_idx - 1].lstrip().startswith(";|***"):
+            start_idx -= 1
+        while end_idx + 1 < len(lines) and lines[end_idx + 1].lstrip().startswith(";|***"):
+            end_idx += 1
+        return lines[start_idx : end_idx + 1]
+
+    return _impl()
 
 
 for _name, _value in (

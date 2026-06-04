@@ -44,39 +44,42 @@ def repeat_prefix_cond(emu, instr):
 
 
 def repeat_jump(emu, instr, repeat_cond, zf_sensitive: bool = False) -> None:
-    if repeat_cond is None:
-        return
-
-    cond = repeat_cond.cast_to(Type.int_1)
-    if zf_sensitive:
-        kind = repeat_kind(instr)
-        if kind == "repz":
-            cond = cond & emu.is_zero()
-        elif kind == "repnz":
-            cond = cond & (emu.is_zero() == emu.constant(0, Type.int_1))
-    if isinstance(cond, bool):
-        if not cond:
+    def _impl():
+        if repeat_cond is None:
             return
+
+        cond = repeat_cond.cast_to(Type.int_1)
+        if zf_sensitive:
+            kind = repeat_kind(instr)
+            if kind == "repz":
+                cond = cond & emu.is_zero()
+            elif kind == "repnz":
+                cond = cond & (emu.is_zero() == emu.constant(0, Type.int_1))
+        if isinstance(cond, bool):
+            if not cond:
+                return
+            ip_reg = reg32_t.EIP if getattr(instr, "mode32", False) else reg16_t.IP
+            repeat_target = emu.get_gpreg(ip_reg)
+            repeat_target_expr = repeat_target.rdt if hasattr(repeat_target, "rdt") else repeat_target
+            emu.lifter_instruction.jump(None, repeat_target_expr, JumpKind.Boring)
+            emu.set_gpreg(ip_reg, repeat_target)
+            return
+        cond_value = getattr(cond, "rdt", None)
         ip_reg = reg32_t.EIP if getattr(instr, "mode32", False) else reg16_t.IP
         repeat_target = emu.get_gpreg(ip_reg)
         repeat_target_expr = repeat_target.rdt if hasattr(repeat_target, "rdt") else repeat_target
-        emu.lifter_instruction.jump(None, repeat_target_expr, JumpKind.Boring)
-        emu.set_gpreg(ip_reg, repeat_target)
-        return
-    cond_value = getattr(cond, "rdt", None)
-    ip_reg = reg32_t.EIP if getattr(instr, "mode32", False) else reg16_t.IP
-    repeat_target = emu.get_gpreg(ip_reg)
-    repeat_target_expr = repeat_target.rdt if hasattr(repeat_target, "rdt") else repeat_target
 
-    if isinstance(cond_value, bool):
-        if not cond_value:
+        if isinstance(cond_value, bool):
+            if not cond_value:
+                return
+            emu.lifter_instruction.jump(None, repeat_target_expr, JumpKind.Boring)
+            emu.set_gpreg(ip_reg, repeat_target)
             return
-        emu.lifter_instruction.jump(None, repeat_target_expr, JumpKind.Boring)
-        emu.set_gpreg(ip_reg, repeat_target)
-        return
 
-    emu.lifter_instruction.jump(cond, repeat_target_expr, JumpKind.Boring)
-    emu.set_gpreg(ip_reg, repeat_target)
+        emu.lifter_instruction.jump(cond, repeat_target_expr, JumpKind.Boring)
+        emu.set_gpreg(ip_reg, repeat_target)
+
+    return _impl()
 
 
 def string_advance_indices(emu, width: int, *regs) -> object:

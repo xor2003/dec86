@@ -138,80 +138,83 @@ def parse_codeview_nb0204(binary_path: Path, *, load_base_linear: int = 0) -> Co
 
 
 def parse_codeview_nb0204_bytes(data: bytes, *, load_base_linear: int = 0) -> CodeViewNB0204Info | None:
-    """Parse CodeView NB02/NB04 from binary data."""
-    located = find_codeview_nb0204(data)
-    if located is None:
-        return None
-
-    version, debug_base = located
-
-    try:
-        # Read header at debug_base
-        # struct CVHeader { char sig[4]; uint32_t subdir_offset; }
-        if debug_base + 8 > len(data):
+    def _impl():
+        """Parse CodeView NB02/NB04 from binary data."""
+        located = find_codeview_nb0204(data)
+        if located is None:
             return None
 
-        sig, subdir_offset = struct.unpack_from("<4sI", data, debug_base)
-        debug_offset = debug_base + subdir_offset
+        version, debug_base = located
 
-        if not (0 <= debug_offset < len(data)):
+        try:
+            # Read header at debug_base
+            # struct CVHeader { char sig[4]; uint32_t subdir_offset; }
+            if debug_base + 8 > len(data):
+                return None
+
+            sig, subdir_offset = struct.unpack_from("<4sI", data, debug_base)
+            debug_offset = debug_base + subdir_offset
+
+            if not (0 <= debug_offset < len(data)):
+                return None
+
+            code_labels: dict[int, str] = {}
+            data_labels: dict[int, str] = {}
+            procedures: list[CodeViewSymbol] = []
+            stack_variables: dict[str, list[CodeViewSymbol]] = {}
+            modules: list[str] = []
+
+            # Parse subsection directory
+            directory_entries = _parse_subsection_directory(data, debug_base, debug_offset)
+
+            for entry in directory_entries:
+                subsection_type = entry["type"]
+                offset = entry["offset"]
+                size = entry["size"]
+
+                if offset + size > len(data):
+                    continue
+
+                blob = data[offset : offset + size]
+
+                if subsection_type == CodeViewSubsectionType.SST_PUBLIC:
+                    _parse_public_symbols(blob, code_labels, data_labels, load_base_linear)
+
+                elif subsection_type == CodeViewSubsectionType.SST_SYMBOLS:
+                    syms = _parse_symbol_records(blob)
+                    for sym in syms:
+                        if sym.is_procedure():
+                            procedures.append(sym)
+                            if sym.name and sym.offset >= 0:
+                                code_labels[load_base_linear + sym.offset] = sym.name
+                        elif sym.is_stack_var():
+                            # Group by procedure
+                            if sym.name not in stack_variables:
+                                stack_variables[sym.name] = []
+                            stack_variables[sym.name].append(sym)
+                        elif sym.is_data_symbol():
+                            if sym.name and sym.offset >= 0:
+                                data_labels[load_base_linear + sym.offset] = sym.name
+
+                elif subsection_type == CodeViewSubsectionType.SST_MODULE:
+                    # Extract module name
+                    names = _parse_module_names(blob)
+                    modules.extend(names)
+
+            return CodeViewNB0204Info(
+                version=version,
+                debug_base=debug_base,
+                code_labels=code_labels,
+                data_labels=data_labels,
+                procedures=tuple(procedures),
+                stack_variables=stack_variables,
+                modules=tuple(modules),
+            )
+
+        except (struct.error, ValueError, IndexError):
             return None
 
-        code_labels: dict[int, str] = {}
-        data_labels: dict[int, str] = {}
-        procedures: list[CodeViewSymbol] = []
-        stack_variables: dict[str, list[CodeViewSymbol]] = {}
-        modules: list[str] = []
-
-        # Parse subsection directory
-        directory_entries = _parse_subsection_directory(data, debug_base, debug_offset)
-
-        for entry in directory_entries:
-            subsection_type = entry["type"]
-            offset = entry["offset"]
-            size = entry["size"]
-
-            if offset + size > len(data):
-                continue
-
-            blob = data[offset : offset + size]
-
-            if subsection_type == CodeViewSubsectionType.SST_PUBLIC:
-                _parse_public_symbols(blob, code_labels, data_labels, load_base_linear)
-
-            elif subsection_type == CodeViewSubsectionType.SST_SYMBOLS:
-                syms = _parse_symbol_records(blob)
-                for sym in syms:
-                    if sym.is_procedure():
-                        procedures.append(sym)
-                        if sym.name and sym.offset >= 0:
-                            code_labels[load_base_linear + sym.offset] = sym.name
-                    elif sym.is_stack_var():
-                        # Group by procedure
-                        if sym.name not in stack_variables:
-                            stack_variables[sym.name] = []
-                        stack_variables[sym.name].append(sym)
-                    elif sym.is_data_symbol():
-                        if sym.name and sym.offset >= 0:
-                            data_labels[load_base_linear + sym.offset] = sym.name
-
-            elif subsection_type == CodeViewSubsectionType.SST_MODULE:
-                # Extract module name
-                names = _parse_module_names(blob)
-                modules.extend(names)
-
-        return CodeViewNB0204Info(
-            version=version,
-            debug_base=debug_base,
-            code_labels=code_labels,
-            data_labels=data_labels,
-            procedures=tuple(procedures),
-            stack_variables=stack_variables,
-            modules=tuple(modules),
-        )
-
-    except (struct.error, ValueError, IndexError):
-        return None
+    return _impl()
 
 
 def _parse_subsection_directory(
@@ -299,96 +302,99 @@ def _parse_public_symbols(
 
 
 def _parse_symbol_records(blob: bytes) -> list[CodeViewSymbol]:
-    """Parse symbol records from SST_SYMBOLS subsection."""
-    symbols: list[CodeViewSymbol] = []
-    offset = 0
+    def _impl():
+        """Parse symbol records from SST_SYMBOLS subsection."""
+        symbols: list[CodeViewSymbol] = []
+        offset = 0
 
-    while offset < len(blob):
-        try:
-            # Each record: length (2), type (2), data...
-            if offset + 4 > len(blob):
+        while offset < len(blob):
+            try:
+                # Each record: length (2), type (2), data...
+                if offset + 4 > len(blob):
+                    break
+
+                length = struct.unpack_from("<H", blob, offset)[0]
+                offset += 2
+
+                if length < 2 or offset + length > len(blob):
+                    break
+
+                record_type = struct.unpack_from("<H", blob, offset)[0]
+                offset += 2
+
+                # Record-specific parsing
+                if record_type in {CodeViewSymbolType.S_GPROC16, CodeViewSymbolType.S_LPROC16}:
+                    # struct S_PROCnn { uint32_t parent; uint32_t end; uint32_t next;
+                    #   uint16_t length; uint16_t offset; uint16_t segment; ... char name[]; }
+                    if offset + 16 <= len(blob):
+                        proc_length, proc_offset, segment = struct.unpack_from("<HHH", blob, offset + 10)
+                        name_offset = offset + 16
+
+                        # Name is length-prefixed string
+                        if name_offset < len(blob):
+                            name_len = blob[name_offset]
+                            if name_offset + 1 + name_len <= len(blob):
+                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
+                                symbols.append(
+                                    CodeViewSymbol(
+                                        type_code=record_type,
+                                        name=name,
+                                        offset=proc_offset,
+                                        segment=segment,
+                                        length=proc_length,
+                                    )
+                                )
+
+                elif record_type == CodeViewSymbolType.S_BPREL16:
+                    # struct S_BPREL16 { int16_t offset; uint16_t type; ... char name[]; }
+                    if offset + 4 <= len(blob):
+                        bp_offset, data_type = struct.unpack_from("<hH", blob, offset)
+                        name_offset = offset + 4
+
+                        if name_offset < len(blob):
+                            name_len = blob[name_offset]
+                            if name_offset + 1 + name_len <= len(blob):
+                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
+                                symbols.append(
+                                    CodeViewSymbol(
+                                        type_code=record_type,
+                                        name=name,
+                                        offset=bp_offset,
+                                        segment=None,
+                                        data_type=data_type,
+                                        extra={"bp_relative": True},
+                                    )
+                                )
+
+                elif record_type in {CodeViewSymbolType.S_GDATA16, CodeViewSymbolType.S_LDATA16}:
+                    # struct S_LDATA16 { uint16_t offset; uint16_t segment; uint16_t type; ... char name[]; }
+                    if offset + 6 <= len(blob):
+                        data_offset, segment, data_type = struct.unpack_from("<HHH", blob, offset)
+                        name_offset = offset + 6
+
+                        if name_offset < len(blob):
+                            name_len = blob[name_offset]
+                            if name_offset + 1 + name_len <= len(blob):
+                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
+                                symbols.append(
+                                    CodeViewSymbol(
+                                        type_code=record_type,
+                                        name=name,
+                                        offset=data_offset,
+                                        segment=segment,
+                                        data_type=data_type,
+                                    )
+                                )
+
+                # Skip to next record
+                offset += length - 2  # -2 because we already read the type
+
+            except (struct.error, ValueError, IndexError):
                 break
 
-            length = struct.unpack_from("<H", blob, offset)[0]
-            offset += 2
+        return symbols
 
-            if length < 2 or offset + length > len(blob):
-                break
-
-            record_type = struct.unpack_from("<H", blob, offset)[0]
-            offset += 2
-
-            # Record-specific parsing
-            if record_type in {CodeViewSymbolType.S_GPROC16, CodeViewSymbolType.S_LPROC16}:
-                # struct S_PROCnn { uint32_t parent; uint32_t end; uint32_t next;
-                #   uint16_t length; uint16_t offset; uint16_t segment; ... char name[]; }
-                if offset + 16 <= len(blob):
-                    proc_length, proc_offset, segment = struct.unpack_from("<HHH", blob, offset + 10)
-                    name_offset = offset + 16
-
-                    # Name is length-prefixed string
-                    if name_offset < len(blob):
-                        name_len = blob[name_offset]
-                        if name_offset + 1 + name_len <= len(blob):
-                            name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
-                            symbols.append(
-                                CodeViewSymbol(
-                                    type_code=record_type,
-                                    name=name,
-                                    offset=proc_offset,
-                                    segment=segment,
-                                    length=proc_length,
-                                )
-                            )
-
-            elif record_type == CodeViewSymbolType.S_BPREL16:
-                # struct S_BPREL16 { int16_t offset; uint16_t type; ... char name[]; }
-                if offset + 4 <= len(blob):
-                    bp_offset, data_type = struct.unpack_from("<hH", blob, offset)
-                    name_offset = offset + 4
-
-                    if name_offset < len(blob):
-                        name_len = blob[name_offset]
-                        if name_offset + 1 + name_len <= len(blob):
-                            name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
-                            symbols.append(
-                                CodeViewSymbol(
-                                    type_code=record_type,
-                                    name=name,
-                                    offset=bp_offset,
-                                    segment=None,
-                                    data_type=data_type,
-                                    extra={"bp_relative": True},
-                                )
-                            )
-
-            elif record_type in {CodeViewSymbolType.S_GDATA16, CodeViewSymbolType.S_LDATA16}:
-                # struct S_LDATA16 { uint16_t offset; uint16_t segment; uint16_t type; ... char name[]; }
-                if offset + 6 <= len(blob):
-                    data_offset, segment, data_type = struct.unpack_from("<HHH", blob, offset)
-                    name_offset = offset + 6
-
-                    if name_offset < len(blob):
-                        name_len = blob[name_offset]
-                        if name_offset + 1 + name_len <= len(blob):
-                            name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
-                            symbols.append(
-                                CodeViewSymbol(
-                                    type_code=record_type,
-                                    name=name,
-                                    offset=data_offset,
-                                    segment=segment,
-                                    data_type=data_type,
-                                )
-                            )
-
-            # Skip to next record
-            offset += length - 2  # -2 because we already read the type
-
-        except (struct.error, ValueError, IndexError):
-            break
-
-    return symbols
+    return _impl()
 
 
 def _parse_module_names(blob: bytes) -> list[str]:

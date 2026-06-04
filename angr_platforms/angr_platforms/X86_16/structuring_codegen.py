@@ -137,50 +137,53 @@ class StructuringCodegenPass:
         return code
 
     def _extract_loop_info(self, region: Region) -> LoopCodegenInfo:
-        """
-        Extract loop information from a Loop region.
+        def _impl():
+            """
+            Extract loop information from a Loop region.
 
-        Args:
-            region: Loop region
+            Args:
+                region: Loop region
 
-        Returns:
-            LoopCodegenInfo with rendering parameters
-        """
-        loop_meta = region.metadata.get("loop_info")
-        exit_label = None
+            Returns:
+                LoopCodegenInfo with rendering parameters
+            """
+            loop_meta = region.metadata.get("loop_info")
+            exit_label = None
 
-        if loop_meta and hasattr(loop_meta, "exit_edges"):
-            if len(loop_meta.exit_edges) == 1:
-                loop_type = "while"
+            if loop_meta and hasattr(loop_meta, "exit_edges"):
+                if len(loop_meta.exit_edges) == 1:
+                    loop_type = "while"
+                else:
+                    loop_type = "do_while"
+                    exit_label = f"__loop_exit_{region.region_id:x}"
             else:
-                loop_type = "do_while"
+                loop_type = "while"
+
+            unstructured_exits = region.metadata.get("unstructured_exits", [])
+            unstructured_entries = region.metadata.get("unstructured_entries", [])
+            abnormal_plan = region.metadata.get("abnormal_loop_plan", {})
+            structuring_variables = tuple(region.metadata.get("structuring_variables", ()))
+            uses_goto = len(unstructured_exits) > 0 or len(unstructured_entries) > 0
+            if abnormal_plan and not exit_label and uses_goto:
                 exit_label = f"__loop_exit_{region.region_id:x}"
-        else:
-            loop_type = "while"
 
-        unstructured_exits = region.metadata.get("unstructured_exits", [])
-        unstructured_entries = region.metadata.get("unstructured_entries", [])
-        abnormal_plan = region.metadata.get("abnormal_loop_plan", {})
-        structuring_variables = tuple(region.metadata.get("structuring_variables", ()))
-        uses_goto = len(unstructured_exits) > 0 or len(unstructured_entries) > 0
-        if abnormal_plan and not exit_label and uses_goto:
-            exit_label = f"__loop_exit_{region.region_id:x}"
+            # Handle NaturalLoopInfo dataclass
+            body_regions = []
+            if loop_meta and hasattr(loop_meta, "body_regions"):
+                body_regions = list(loop_meta.body_regions) if loop_meta.body_regions else []
 
-        # Handle NaturalLoopInfo dataclass
-        body_regions = []
-        if loop_meta and hasattr(loop_meta, "body_regions"):
-            body_regions = list(loop_meta.body_regions) if loop_meta.body_regions else []
+            return LoopCodegenInfo(
+                loop_type=loop_type,
+                condition_expr=region.metadata.get("condition") or region.metadata.get("typed_ir_condition_hint") or "cond",
+                init_stmt=region.metadata.get("init"),
+                increment_stmt=region.metadata.get("increment"),
+                body_regions=body_regions,
+                exit_label=exit_label,
+                uses_goto=uses_goto,
+                structuring_variables=structuring_variables,
+            )
 
-        return LoopCodegenInfo(
-            loop_type=loop_type,
-            condition_expr=region.metadata.get("condition") or region.metadata.get("typed_ir_condition_hint") or "cond",
-            init_stmt=region.metadata.get("init"),
-            increment_stmt=region.metadata.get("increment"),
-            body_regions=body_regions,
-            exit_label=exit_label,
-            uses_goto=uses_goto,
-            structuring_variables=structuring_variables,
-        )
+        return _impl()
 
     def _extract_switch_info(self, region: Region) -> SwitchCodegenInfo:
         """

@@ -43,20 +43,23 @@ def _addr_exprs_are_same(
     split_expr_const_offset,
     same_expression_list,
 ):
-    low_class = classify_segmented_addr_expr(low_addr_expr, project)
-    high_class = classify_segmented_addr_expr(high_addr_expr, project)
+    def _impl():
+        low_class = classify_segmented_addr_expr(low_addr_expr, project)
+        high_class = classify_segmented_addr_expr(high_addr_expr, project)
 
-    if low_class is not None and high_class is not None:
-        if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
-            if low_class.kind == "stack" and low_class.cvar is not None and high_class.cvar is not None:
-                if same_c_expression(low_class.cvar, high_class.cvar):
-                    return low_class.extra_offset == high_class.extra_offset
-            if low_class.kind in {"extra", "segment_const"}:
-                return low_class.linear == high_class.linear
+        if low_class is not None and high_class is not None:
+            if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
+                if low_class.kind == "stack" and low_class.cvar is not None and high_class.cvar is not None:
+                    if same_c_expression(low_class.cvar, high_class.cvar):
+                        return low_class.extra_offset == high_class.extra_offset
+                if low_class.kind in {"extra", "segment_const"}:
+                    return low_class.linear == high_class.linear
 
-    low_terms, low_const = split_expr_const_offset(low_addr_expr)
-    high_terms, high_const = split_expr_const_offset(high_addr_expr)
-    return low_const == high_const and same_expression_list(low_terms, high_terms)
+        low_terms, low_const = split_expr_const_offset(low_addr_expr)
+        high_terms, high_const = split_expr_const_offset(high_addr_expr)
+        return low_const == high_const and same_expression_list(low_terms, high_terms)
+
+    return _impl()
 
 
 def _addr_exprs_are_byte_pair(
@@ -69,35 +72,38 @@ def _addr_exprs_are_byte_pair(
     split_expr_const_offset,
     same_expression_list,
 ):
-    def _strip_zero_segment_scale_terms(terms):
-        if project is None:
-            return terms
-        kept = []
-        for term in terms:
-            classified = classify_segmented_addr_expr(term, project)
-            if (
-                classified is not None
-                and classified.kind in {"segment_const", "extra"}
-                and classified.linear == 0
-            ):
-                continue
-            kept.append(term)
-        return kept
+    def _impl():
+        def _strip_zero_segment_scale_terms(terms):
+            if project is None:
+                return terms
+            kept = []
+            for term in terms:
+                classified = classify_segmented_addr_expr(term, project)
+                if (
+                    classified is not None
+                    and classified.kind in {"segment_const", "extra"}
+                    and classified.linear == 0
+                ):
+                    continue
+                kept.append(term)
+            return kept
 
-    if project is not None:
-        low_class = classify_segmented_addr_expr(low_addr_expr, project)
-        high_class = classify_segmented_addr_expr(high_addr_expr, project)
-        if low_class is not None and high_class is not None:
-            if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
-                if low_class.kind == "stack" and low_class.stack_var is not None and high_class.stack_var is not None:
-                    if stack_slot_identity_can_join_var(low_class.stack_var, high_class.stack_var):
-                        return high_class.extra_offset == low_class.extra_offset + 1
-                if low_class.kind in {"extra", "segment_const"}:
-                    if low_class.linear is not None and high_class.linear is not None:
-                        return high_class.linear == low_class.linear + 1
+        if project is not None:
+            low_class = classify_segmented_addr_expr(low_addr_expr, project)
+            high_class = classify_segmented_addr_expr(high_addr_expr, project)
+            if low_class is not None and high_class is not None:
+                if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
+                    if low_class.kind == "stack" and low_class.stack_var is not None and high_class.stack_var is not None:
+                        if stack_slot_identity_can_join_var(low_class.stack_var, high_class.stack_var):
+                            return high_class.extra_offset == low_class.extra_offset + 1
+                    if low_class.kind in {"extra", "segment_const"}:
+                        if low_class.linear is not None and high_class.linear is not None:
+                            return high_class.linear == low_class.linear + 1
 
-    low_terms, low_const = split_expr_const_offset(low_addr_expr)
-    high_terms, high_const = split_expr_const_offset(high_addr_expr)
-    low_terms = _strip_zero_segment_scale_terms(low_terms)
-    high_terms = _strip_zero_segment_scale_terms(high_terms)
-    return same_expression_list(low_terms, high_terms) and high_const == low_const + 1
+        low_terms, low_const = split_expr_const_offset(low_addr_expr)
+        high_terms, high_const = split_expr_const_offset(high_addr_expr)
+        low_terms = _strip_zero_segment_scale_terms(low_terms)
+        high_terms = _strip_zero_segment_scale_terms(high_terms)
+        return same_expression_list(low_terms, high_terms) and high_const == low_const + 1
+
+    return _impl()

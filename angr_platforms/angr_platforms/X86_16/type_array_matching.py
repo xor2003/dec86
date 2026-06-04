@@ -29,6 +29,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+
 from inertia_decompiler.cli_access_profiles import (
     build_access_trait_evidence_profiles,
     infer_induction_variable,
@@ -52,62 +53,68 @@ def _limit_sorted_mapping_8616(mapping: dict, limit: int) -> dict:
 
 
 def _typed_ir_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
-    artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
-    function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
-    if artifact is None or not hasattr(artifact, "blocks"):
-        return {}
+    def _impl():
+        artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
+        function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
+        if artifact is None or not hasattr(artifact, "blocks"):
+            return {}
 
-    phi_registers = {
-        getattr(phi.target, "name", None)
-        for phi in tuple(getattr(function_ssa, "phi_nodes", ()) or ())
-        if getattr(getattr(phi, "target", None), "name", None) is not None
-    }
-    candidates: dict[tuple[str, tuple[str, ...], int], dict[str, object]] = {}
-    for block in tuple(getattr(artifact, "blocks", ()) or ()):
-        for instr in tuple(getattr(block, "instrs", ()) or ()):
-            for atom in tuple(getattr(instr, "args", ()) or ()):
-                if not isinstance(atom, IRAddress):
-                    continue
-                if len(getattr(atom, "base", ()) or ()) < 2:
-                    continue
-                if not phi_registers.intersection(set(atom.base)):
-                    continue
-                key = (atom.space.value, tuple(atom.base), int(atom.size or 0))
-                candidates[key] = {
-                    "space": atom.space.value,
-                    "base": tuple(atom.base),
-                    "element_size": int(atom.size or 0),
-                    "has_phi_index": True,
-                }
-    return dict(sorted(candidates.items()))
+        phi_registers = {
+            getattr(phi.target, "name", None)
+            for phi in tuple(getattr(function_ssa, "phi_nodes", ()) or ())
+            if getattr(getattr(phi, "target", None), "name", None) is not None
+        }
+        candidates: dict[tuple[str, tuple[str, ...], int], dict[str, object]] = {}
+        for block in tuple(getattr(artifact, "blocks", ()) or ()):
+            for instr in tuple(getattr(block, "instrs", ()) or ()):
+                for atom in tuple(getattr(instr, "args", ()) or ()):
+                    if not isinstance(atom, IRAddress):
+                        continue
+                    if len(getattr(atom, "base", ()) or ()) < 2:
+                        continue
+                    if not phi_registers.intersection(set(atom.base)):
+                        continue
+                    key = (atom.space.value, tuple(atom.base), int(atom.size or 0))
+                    candidates[key] = {
+                        "space": atom.space.value,
+                        "base": tuple(atom.base),
+                        "element_size": int(atom.size or 0),
+                        "has_phi_index": True,
+                    }
+        return dict(sorted(candidates.items()))
+
+    return _impl()
 
 
 def _typed_string_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
-    artifact = getattr(codegen, "_inertia_string_effect_artifact", None)
-    if artifact is None or not hasattr(artifact, "records"):
-        return {}
+    def _impl():
+        artifact = getattr(codegen, "_inertia_string_effect_artifact", None)
+        if artifact is None or not hasattr(artifact, "records"):
+            return {}
 
-    candidates: dict[tuple[str, tuple[str, ...], int], dict[str, object]] = {}
-    for record in tuple(getattr(artifact, "records", ()) or ()):
-        for role, address in (("source", record.source), ("destination", record.destination)):
-            if not isinstance(address, IRAddress):
-                continue
-            if not address.base:
-                continue
-            if address.status.value != "stable":
-                continue
-            key = (address.space.value, tuple(address.base), int(address.size or 0))
-            candidates[key] = {
-                "space": address.space.value,
-                "base": tuple(address.base),
-                "element_size": int(address.size or 0),
-                "has_string_effect": True,
-                "segment_origin": address.segment_origin.value,
-                "string_family": record.family,
-                "repeat_kind": record.repeat_kind,
-                "role": role,
-            }
-    return dict(sorted(candidates.items()))
+        candidates: dict[tuple[str, tuple[str, ...], int], dict[str, object]] = {}
+        for record in tuple(getattr(artifact, "records", ()) or ()):
+            for role, address in (("source", record.source), ("destination", record.destination)):
+                if not isinstance(address, IRAddress):
+                    continue
+                if not address.base:
+                    continue
+                if address.status.value != "stable":
+                    continue
+                key = (address.space.value, tuple(address.base), int(address.size or 0))
+                candidates[key] = {
+                    "space": address.space.value,
+                    "base": tuple(address.base),
+                    "element_size": int(address.size or 0),
+                    "has_string_effect": True,
+                    "segment_origin": address.segment_origin.value,
+                    "string_family": record.family,
+                    "repeat_kind": record.repeat_kind,
+                    "role": role,
+                }
+        return dict(sorted(candidates.items()))
+
+    return _impl()
 
 
 def _cached_access_trait_profiles_8616(project, func_addr: int):
@@ -344,39 +351,45 @@ def _literal_true_8616(node) -> bool:
 
 
 def _extract_break_guard_8616(stmt):
-    if type(stmt).__name__ not in {"CIfElse", "CIfBreak"}:
-        return None
-    cond_nodes = getattr(stmt, "condition_and_nodes", None) or ()
-    if len(cond_nodes) != 1:
-        return None
-    cond, body = cond_nodes[0]
-    if not isinstance(body, CStatements) or len(getattr(body, "statements", ()) or ()) != 1:
-        return None
-    if not isinstance(body.statements[0], CBreak):
-        return None
-    else_node = getattr(stmt, "else_node", None)
-    if else_node is not None and not (isinstance(else_node, CStatements) and not else_node.statements):
-        return None
-    return cond
+    def _impl():
+        if type(stmt).__name__ not in {"CIfElse", "CIfBreak"}:
+            return None
+        cond_nodes = getattr(stmt, "condition_and_nodes", None) or ()
+        if len(cond_nodes) != 1:
+            return None
+        cond, body = cond_nodes[0]
+        if not isinstance(body, CStatements) or len(getattr(body, "statements", ()) or ()) != 1:
+            return None
+        if not isinstance(body.statements[0], CBreak):
+            return None
+        else_node = getattr(stmt, "else_node", None)
+        if else_node is not None and not (isinstance(else_node, CStatements) and not else_node.statements):
+            return None
+        return cond
+
+    return _impl()
 
 
 def _extract_monotonic_update_8616(stmt):
-    if not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
+    def _impl():
+        if not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
+            return None
+        rhs = stmt.rhs
+        if not isinstance(rhs, CBinaryOp) or rhs.op not in {"Add", "Sub"}:
+            return None
+        if _same_c_expression_8616(rhs.lhs, stmt.lhs) and isinstance(rhs.rhs, CConstant) and isinstance(rhs.rhs.value, int):
+            delta = rhs.rhs.value if rhs.op == "Add" else -rhs.rhs.value
+            return stmt.lhs, delta
+        if (
+            rhs.op == "Add"
+            and _same_c_expression_8616(rhs.rhs, stmt.lhs)
+            and isinstance(rhs.lhs, CConstant)
+            and isinstance(rhs.lhs.value, int)
+        ):
+            return stmt.lhs, rhs.lhs.value
         return None
-    rhs = stmt.rhs
-    if not isinstance(rhs, CBinaryOp) or rhs.op not in {"Add", "Sub"}:
-        return None
-    if _same_c_expression_8616(rhs.lhs, stmt.lhs) and isinstance(rhs.rhs, CConstant) and isinstance(rhs.rhs.value, int):
-        delta = rhs.rhs.value if rhs.op == "Add" else -rhs.rhs.value
-        return stmt.lhs, delta
-    if (
-        rhs.op == "Add"
-        and _same_c_expression_8616(rhs.rhs, stmt.lhs)
-        and isinstance(rhs.lhs, CConstant)
-        and isinstance(rhs.lhs.value, int)
-    ):
-        return stmt.lhs, rhs.lhs.value
-    return None
+
+    return _impl()
 
 
 def _cond_uses_var_8616(node, target) -> bool:
@@ -412,33 +425,36 @@ def _loop_index_key_8616(loop_var) -> tuple[object, ...] | None:
 
 
 def _expr_index_key_8616(expr) -> tuple[object, ...] | None:
-    if isinstance(expr, CVariable):
-        return _loop_index_key_8616(expr)
-    if isinstance(expr, CTypeCast):
-        return _expr_index_key_8616(expr.expr)
-    if isinstance(expr, CUnaryOp) and expr.op in {"Dereference", "Reference"}:
-        return _expr_index_key_8616(expr.operand)
-    if isinstance(expr, CIndexedVariable):
-        base_expr = getattr(expr, "variable", None)
-        if isinstance(base_expr, CUnaryOp) and base_expr.op == "Reference":
-            base_expr = base_expr.operand
-        index_expr = getattr(expr, "index", None)
-        if (
-            not isinstance(base_expr, CVariable)
-            or not isinstance(index_expr, CConstant)
-            or not isinstance(index_expr.value, int)
-        ):
-            return None
-        variable = getattr(base_expr, "variable", None)
-        if not isinstance(variable, SimStackVariable):
-            return None
-        base = getattr(variable, "base", None)
-        offset = getattr(variable, "offset", None)
-        region = getattr(variable, "region", None)
-        if base is None or not isinstance(offset, int):
-            return None
-        return ("stack", base, offset + int(index_expr.value), region)
-    return None
+    def _impl():
+        if isinstance(expr, CVariable):
+            return _loop_index_key_8616(expr)
+        if isinstance(expr, CTypeCast):
+            return _expr_index_key_8616(expr.expr)
+        if isinstance(expr, CUnaryOp) and expr.op in {"Dereference", "Reference"}:
+            return _expr_index_key_8616(expr.operand)
+        if isinstance(expr, CIndexedVariable):
+            base_expr = getattr(expr, "variable", None)
+            if isinstance(base_expr, CUnaryOp) and base_expr.op == "Reference":
+                base_expr = base_expr.operand
+            index_expr = getattr(expr, "index", None)
+            if (
+                not isinstance(base_expr, CVariable)
+                or not isinstance(index_expr, CConstant)
+                or not isinstance(index_expr.value, int)
+            ):
+                return None
+            variable = getattr(base_expr, "variable", None)
+            if not isinstance(variable, SimStackVariable):
+                return None
+            base = getattr(variable, "base", None)
+            offset = getattr(variable, "offset", None)
+            region = getattr(variable, "region", None)
+            if base is None or not isinstance(offset, int):
+                return None
+            return ("stack", base, offset + int(index_expr.value), region)
+        return None
+
+    return _impl()
 
 
 def _unwrap_double_negation_8616(node):
@@ -464,89 +480,95 @@ def _condition_index_key_8616(node) -> tuple[object, ...] | None:
 
 
 def _has_induction_evidence_for_key_8616(codegen, index_key: tuple[object, ...]) -> bool:
-    summaries = tuple(getattr(codegen, "_inertia_induction_summaries", ()) or ())
-    if any(getattr(summary, "index_key", None) == index_key for summary in summaries):
-        return True
-    project = getattr(codegen, "project", None)
-    cfunc = getattr(codegen, "cfunc", None)
-    func_addr = getattr(cfunc, "addr", None)
-    if project is None or not isinstance(func_addr, int):
-        return False
-    profiles = _cached_access_trait_profiles_8616(project, func_addr)
-    if profiles is None:
-        return False
-    direct_profile = profiles.get(index_key)
-    if direct_profile is not None and infer_induction_variable(direct_profile) is not None:
-        return True
-    for profile in profiles.values():
-        candidate = infer_induction_variable(profile)
-        if candidate is not None and candidate.index_key == index_key:
+    def _impl():
+        summaries = tuple(getattr(codegen, "_inertia_induction_summaries", ()) or ())
+        if any(getattr(summary, "index_key", None) == index_key for summary in summaries):
             return True
-    return False
+        project = getattr(codegen, "project", None)
+        cfunc = getattr(codegen, "cfunc", None)
+        func_addr = getattr(cfunc, "addr", None)
+        if project is None or not isinstance(func_addr, int):
+            return False
+        profiles = _cached_access_trait_profiles_8616(project, func_addr)
+        if profiles is None:
+            return False
+        direct_profile = profiles.get(index_key)
+        if direct_profile is not None and infer_induction_variable(direct_profile) is not None:
+            return True
+        for profile in profiles.values():
+            candidate = infer_induction_variable(profile)
+            if candidate is not None and candidate.index_key == index_key:
+                return True
+        return False
+
+    return _impl()
 
 
 def _profile_induction_match_8616(codegen, loop_var) -> InductionVariable | None:
-    variable = getattr(loop_var, "variable", None)
-    index_key = _loop_index_key_8616(loop_var)
-    if variable is None or index_key is None:
-        return None
+    def _impl():
+        variable = getattr(loop_var, "variable", None)
+        index_key = _loop_index_key_8616(loop_var)
+        if variable is None or index_key is None:
+            return None
 
-    summaries = tuple(getattr(codegen, "_inertia_induction_summaries", ()) or ())
-    best_summary = None
-    best_summary_score: tuple[int, int, int] | None = None
-    for summary in summaries:
-        if getattr(summary, "index_key", None) != index_key:
-            continue
-        score = (
-            int(getattr(summary, "count", 0) or 0),
-            abs(int(getattr(summary, "stride", 0) or 0)),
-            int(getattr(summary, "width", 0) or 0),
-        )
-        if best_summary_score is None or score > best_summary_score:
-            best_summary = summary
-            best_summary_score = score
-    if best_summary is not None:
-        return InductionVariable(
-            var_name=getattr(variable, "name", None) or f"reg_{getattr(variable, 'reg', 'unknown')}",
-            stride=int(getattr(best_summary, "stride", 0) or 0),
-            base_value=int(getattr(best_summary, "offset", 0) or 0),
-            loop_bound=int(getattr(best_summary, "bound_candidate", 0))
-            if getattr(best_summary, "bound_candidate", None) is not None
-            else None,
-            element_width=int(getattr(best_summary, "width", 0) or 0),
-        )
+        summaries = tuple(getattr(codegen, "_inertia_induction_summaries", ()) or ())
+        best_summary = None
+        best_summary_score: tuple[int, int, int] | None = None
+        for summary in summaries:
+            if getattr(summary, "index_key", None) != index_key:
+                continue
+            score = (
+                int(getattr(summary, "count", 0) or 0),
+                abs(int(getattr(summary, "stride", 0) or 0)),
+                int(getattr(summary, "width", 0) or 0),
+            )
+            if best_summary_score is None or score > best_summary_score:
+                best_summary = summary
+                best_summary_score = score
+        if best_summary is not None:
+            return InductionVariable(
+                var_name=getattr(variable, "name", None) or f"reg_{getattr(variable, 'reg', 'unknown')}",
+                stride=int(getattr(best_summary, "stride", 0) or 0),
+                base_value=int(getattr(best_summary, "offset", 0) or 0),
+                loop_bound=int(getattr(best_summary, "bound_candidate", 0))
+                if getattr(best_summary, "bound_candidate", None) is not None
+                else None,
+                element_width=int(getattr(best_summary, "width", 0) or 0),
+            )
 
-    project = getattr(codegen, "project", None)
-    cfunc = getattr(codegen, "cfunc", None)
-    func_addr = getattr(cfunc, "addr", None)
-    if not isinstance(func_addr, int):
-        return None
+        project = getattr(codegen, "project", None)
+        cfunc = getattr(codegen, "cfunc", None)
+        func_addr = getattr(cfunc, "addr", None)
+        if not isinstance(func_addr, int):
+            return None
 
-    profiles = _cached_access_trait_profiles_8616(project, func_addr)
-    if profiles is None:
-        return None
-    direct_profile = profiles.get(index_key)
-    if direct_profile is not None:
-        direct_match = infer_induction_variable(direct_profile)
-        if direct_match is not None and direct_match.index_key == index_key:
-            return direct_match
+        profiles = _cached_access_trait_profiles_8616(project, func_addr)
+        if profiles is None:
+            return None
+        direct_profile = profiles.get(index_key)
+        if direct_profile is not None:
+            direct_match = infer_induction_variable(direct_profile)
+            if direct_match is not None and direct_match.index_key == index_key:
+                return direct_match
 
-    best_match: InductionVariable | None = None
-    best_score: tuple[int, int, int, int] | None = None
-    for profile_key, profile in profiles.items():
-        candidate = infer_induction_variable(profile)
-        if candidate is None or candidate.index_key != index_key:
-            continue
-        score = (
-            int(candidate.count),
-            abs(int(candidate.stride)),
-            int(candidate.width),
-            1 if profile_key == index_key else 0,
-        )
-        if best_score is None or score > best_score:
-            best_match = candidate
-            best_score = score
-    return best_match
+        best_match: InductionVariable | None = None
+        best_score: tuple[int, int, int, int] | None = None
+        for profile_key, profile in profiles.items():
+            candidate = infer_induction_variable(profile)
+            if candidate is None or candidate.index_key != index_key:
+                continue
+            score = (
+                int(candidate.count),
+                abs(int(candidate.stride)),
+                int(candidate.width),
+                1 if profile_key == index_key else 0,
+            )
+            if best_score is None or score > best_score:
+                best_match = candidate
+                best_score = score
+        return best_match
+
+    return _impl()
 
 
 def _rewrite_induction_loops_8616(codegen) -> bool:
@@ -624,71 +646,74 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
 
 
 def apply_x86_16_array_expression_matching(codegen) -> bool:
-    """
-    Apply array expression matching pass to codegen.
+    def _impl():
+        """
+        Apply array expression matching pass to codegen.
 
-    This is the entry point for Phase 2.2 decompiler framework integration.
+        This is the entry point for Phase 2.2 decompiler framework integration.
 
-    Args:
-        codegen: The decompiler codegen object
+        Args:
+            codegen: The decompiler codegen object
 
-    Returns:
-        True if array patterns were detected, False otherwise
+        Returns:
+            True if array patterns were detected, False otherwise
 
-    Note:
-        This pass collects array recovery metadata but doesn't modify
-        codegen text directly (that happens in later phases).
-    """
-    if getattr(codegen, "cfunc", None) is None:
-        return False
+        Note:
+            This pass collects array recovery metadata but doesn't modify
+            codegen text directly (that happens in later phases).
+        """
+        if getattr(codegen, "cfunc", None) is None:
+            return False
 
-    try:
-        project = getattr(codegen, "project", None)
-        function_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
-        bridge = None
-        if project is not None:
-            bridge = load_storage_object_bridge(project, function_addr, codegen=codegen)
-        lowerable_arrays = (
-            {}
-            if bridge is None
-            else {
-                base_key: fact
-                for base_key, fact in bridge.array_facts.items()
-                if bridge.allows_object_lowering(base_key)
+        try:
+            project = getattr(codegen, "project", None)
+            function_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+            bridge = None
+            if project is not None:
+                bridge = load_storage_object_bridge(project, function_addr, codegen=codegen)
+            lowerable_arrays = (
+                {}
+                if bridge is None
+                else {
+                    base_key: fact
+                    for base_key, fact in bridge.array_facts.items()
+                    if bridge.allows_object_lowering(base_key)
+                }
+            )
+            refused_arrays = (
+                {}
+                if bridge is None
+                else {
+                    base_key: bridge.lowering_refusal_reason(base_key)
+                    for base_key in bridge.array_facts
+                    if not bridge.allows_object_lowering(base_key)
+                }
+            )
+            typed_ir_candidates = _typed_ir_array_candidates(codegen)
+            typed_string_candidates = _typed_string_array_candidates(codegen)
+            typed_ir_candidates = _limit_sorted_mapping_8616(typed_ir_candidates, MAX_TYPED_ARRAY_CANDIDATES)
+            typed_string_candidates = _limit_sorted_mapping_8616(typed_string_candidates, MAX_TYPED_ARRAY_CANDIDATES)
+            # Track that array matching pass ran
+            codegen._inertia_array_matching_applied = True
+            codegen._inertia_array_matching_bridge = bridge
+            codegen._inertia_array_matching_lowerable_arrays = lowerable_arrays
+            codegen._inertia_array_matching_refused_arrays = refused_arrays
+            codegen._inertia_array_matching_typed_ir_candidates = typed_ir_candidates
+            codegen._inertia_array_matching_string_candidates = typed_string_candidates
+            codegen._inertia_array_matching_stats = {
+                "induction_vars": len(typed_ir_candidates),
+                "array_patterns": 0 if bridge is None else len(bridge.array_facts),
+                "recovered_arrays": len(lowerable_arrays) + len(typed_ir_candidates) + len(typed_string_candidates),
+                "refused_arrays": len(refused_arrays),
+                "string_arrays": len(typed_string_candidates),
             }
-        )
-        refused_arrays = (
-            {}
-            if bridge is None
-            else {
-                base_key: bridge.lowering_refusal_reason(base_key)
-                for base_key in bridge.array_facts
-                if not bridge.allows_object_lowering(base_key)
-            }
-        )
-        typed_ir_candidates = _typed_ir_array_candidates(codegen)
-        typed_string_candidates = _typed_string_array_candidates(codegen)
-        typed_ir_candidates = _limit_sorted_mapping_8616(typed_ir_candidates, MAX_TYPED_ARRAY_CANDIDATES)
-        typed_string_candidates = _limit_sorted_mapping_8616(typed_string_candidates, MAX_TYPED_ARRAY_CANDIDATES)
-        # Track that array matching pass ran
-        codegen._inertia_array_matching_applied = True
-        codegen._inertia_array_matching_bridge = bridge
-        codegen._inertia_array_matching_lowerable_arrays = lowerable_arrays
-        codegen._inertia_array_matching_refused_arrays = refused_arrays
-        codegen._inertia_array_matching_typed_ir_candidates = typed_ir_candidates
-        codegen._inertia_array_matching_string_candidates = typed_string_candidates
-        codegen._inertia_array_matching_stats = {
-            "induction_vars": len(typed_ir_candidates),
-            "array_patterns": 0 if bridge is None else len(bridge.array_facts),
-            "recovered_arrays": len(lowerable_arrays) + len(typed_ir_candidates) + len(typed_string_candidates),
-            "refused_arrays": len(refused_arrays),
-            "string_arrays": len(typed_string_candidates),
-        }
 
-        changed = _rewrite_induction_loops_8616(codegen)
-        logger.debug("Array expression matching pass completed")
-        return changed
-    except Exception as ex:
-        logger.warning("Array expression matching pass failed: %s", ex)
-        codegen._inertia_array_matching_error = str(ex)
-        return False
+            changed = _rewrite_induction_loops_8616(codegen)
+            logger.debug("Array expression matching pass completed")
+            return changed
+        except Exception as ex:
+            logger.warning("Array expression matching pass failed: %s", ex)
+            codegen._inertia_array_matching_error = str(ex)
+            return False
+
+    return _impl()

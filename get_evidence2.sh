@@ -31,8 +31,7 @@ angr_platforms/angr_platforms/X86_16/validation_semantics.py \
 angr_platforms/angr_platforms/X86_16/architecture_guard.py \
 inertia_decompiler/decompile.py \
 inertia_decompiler/cli.py \
-SORTDEMO.dec \
-/home/xor/vextest/angr_platforms/.cache/tail_validation_details/*
+SORTDEMO.dec
 
 rm -f /home/xor/vextest/angr_platforms/.cache/tail_validation_details/*
 

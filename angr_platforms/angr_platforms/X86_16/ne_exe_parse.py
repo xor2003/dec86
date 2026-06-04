@@ -227,87 +227,90 @@ def parse_ne_entry_table(
     ordinal_names: dict[int, str],
     segments: list[NESegment],
 ) -> dict[int, tuple[int, int]]:
-    """Parse NE entry table to map ordinals to (segment, offset).
+    def _impl():
+        """Parse NE entry table to map ordinals to (segment, offset).
 
-    NE entry table format (from Open Watcom exeos2.h):
+        NE entry table format (from Open Watcom exeos2.h):
 
-    Bundle prefix (2 bytes):
-      - count (uint8): number of entries in this bundle
-      - type (uint8):
-        - 0x00: null bundle (no records)
-        - 0xFF: movable segment records
-        - 0x01-0xFE: fixed segment records for that segment number
+        Bundle prefix (2 bytes):
+          - count (uint8): number of entries in this bundle
+          - type (uint8):
+            - 0x00: null bundle (no records)
+            - 0xFF: movable segment records
+            - 0x01-0xFE: fixed segment records for that segment number
 
-    Movable records (6 bytes each, when type=0xFF):
-      - info (1 byte): flags (bit 0: exported, bit 1: shared data)
-      - reserved (2 bytes): must be 0x3FCD
-      - entrynum (1 byte): segment number containing entry point
-      - entry (2 bytes): offset within segment
+        Movable records (6 bytes each, when type=0xFF):
+          - info (1 byte): flags (bit 0: exported, bit 1: shared data)
+          - reserved (2 bytes): must be 0x3FCD
+          - entrynum (1 byte): segment number containing entry point
+          - entry (2 bytes): offset within segment
 
-    Fixed records (3 bytes each, when type=0x01-0xFE):
-      - info (1 byte): flags
-      - entry (2 bytes): offset within segment
-      - Segment number is the type value
+        Fixed records (3 bytes each, when type=0x01-0xFE):
+          - info (1 byte): flags
+          - entry (2 bytes): offset within segment
+          - Segment number is the type value
 
-    Returns: {ordinal: (segment_index, offset_in_segment)}
-    """
-    offsets = {}
-    pos = ne_offset + entry_off
-    end = pos + entry_len
-    ordinal = 1
+        Returns: {ordinal: (segment_index, offset_in_segment)}
+        """
+        offsets = {}
+        pos = ne_offset + entry_off
+        end = pos + entry_len
+        ordinal = 1
 
-    try:
-        while pos < end and pos < len(data) - 2:
-            # Bundle header: count, type
-            bundle_count = data[pos]
-            if bundle_count == 0:  # End of table
-                break
+        try:
+            while pos < end and pos < len(data) - 2:
+                # Bundle header: count, type
+                bundle_count = data[pos]
+                if bundle_count == 0:  # End of table
+                    break
 
-            bundle_type = data[pos + 1]
-            pos += 2
+                bundle_type = data[pos + 1]
+                pos += 2
 
-            if bundle_type == 0x00:
-                # Type 0x00: null bundle (skip count entries)
-                ordinal += bundle_count
+                if bundle_type == 0x00:
+                    # Type 0x00: null bundle (skip count entries)
+                    ordinal += bundle_count
 
-            elif bundle_type == 0xFF:
-                # Type 0xFF: movable entries (info, reserved, segment, offset)
-                for _ in range(bundle_count):
-                    if pos + 6 > len(data):
-                        break
-                    info = data[pos]
-                    reserved = struct.unpack_from("<H", data, pos + 1)[0]
-                    segment = data[pos + 3]
-                    offset = struct.unpack_from("<H", data, pos + 4)[0]
+                elif bundle_type == 0xFF:
+                    # Type 0xFF: movable entries (info, reserved, segment, offset)
+                    for _ in range(bundle_count):
+                        if pos + 6 > len(data):
+                            break
+                        info = data[pos]
+                        reserved = struct.unpack_from("<H", data, pos + 1)[0]
+                        segment = data[pos + 3]
+                        offset = struct.unpack_from("<H", data, pos + 4)[0]
 
-                    # Only add if we have a name for this ordinal
-                    # and segment is valid (1-based index into segment table)
-                    if ordinal in ordinal_names and 1 <= segment <= 255:
-                        offsets[ordinal] = (segment, offset)
+                        # Only add if we have a name for this ordinal
+                        # and segment is valid (1-based index into segment table)
+                        if ordinal in ordinal_names and 1 <= segment <= 255:
+                            offsets[ordinal] = (segment, offset)
 
-                    ordinal += 1
-                    pos += 6
+                        ordinal += 1
+                        pos += 6
 
-            else:
-                # Fixed entry: segment embedded in type (0x01-0xFE)
-                segment_num = bundle_type
-                for _ in range(bundle_count):
-                    if pos + 3 > len(data):
-                        break
-                    info = data[pos]
-                    offset = struct.unpack_from("<H", data, pos + 1)[0]
+                else:
+                    # Fixed entry: segment embedded in type (0x01-0xFE)
+                    segment_num = bundle_type
+                    for _ in range(bundle_count):
+                        if pos + 3 > len(data):
+                            break
+                        info = data[pos]
+                        offset = struct.unpack_from("<H", data, pos + 1)[0]
 
-                    # Only add if we have a name for this ordinal
-                    if ordinal in ordinal_names and 1 <= segment_num <= 255:
-                        offsets[ordinal] = (segment_num, offset)
+                        # Only add if we have a name for this ordinal
+                        if ordinal in ordinal_names and 1 <= segment_num <= 255:
+                            offsets[ordinal] = (segment_num, offset)
 
-                    ordinal += 1
-                    pos += 3
+                        ordinal += 1
+                        pos += 3
 
-    except (struct.error, IndexError):
-        pass
+        except (struct.error, IndexError):
+            pass
 
-    return offsets
+        return offsets
+
+    return _impl()
 
 
 def parse_ne_exe(

@@ -41,38 +41,41 @@ def resolve_clinic_from_codegen(codegen: Any) -> Any | None:
 
 
 def build_region_graph(codegen: Any) -> RegionGraphBuildResult:
-    """Build a deterministic RegionGraph from a clinic AIL graph."""
+    def _impl():
+        """Build a deterministic RegionGraph from a clinic AIL graph."""
 
-    graph = RegionGraph()
-    regions_by_addr: dict[int, Region] = {}
-    clinic = resolve_clinic_from_codegen(codegen)
+        graph = RegionGraph()
+        regions_by_addr: dict[int, Region] = {}
+        clinic = resolve_clinic_from_codegen(codegen)
 
-    if clinic is not None and hasattr(clinic, "graph"):
-        ail_graph = clinic.graph
-        for node in ail_graph.nodes():
-            node_addr = getattr(node, "addr", None)
-            if node_addr is None:
-                continue
-            region = Region(
-                block_addr=node_addr,
-                region_type=RegionType.Linear,
-            )
-            graph.add_node(region)
-            regions_by_addr[node_addr] = region
+        if clinic is not None and hasattr(clinic, "graph"):
+            ail_graph = clinic.graph
+            for node in ail_graph.nodes():
+                node_addr = getattr(node, "addr", None)
+                if node_addr is None:
+                    continue
+                region = Region(
+                    block_addr=node_addr,
+                    region_type=RegionType.Linear,
+                )
+                graph.add_node(region)
+                regions_by_addr[node_addr] = region
 
-        for src, dst in ail_graph.edges():
-            src_addr = getattr(src, "addr", None)
-            dst_addr = getattr(dst, "addr", None)
-            if src_addr in regions_by_addr and dst_addr in regions_by_addr:
-                graph.add_edge(regions_by_addr[src_addr], regions_by_addr[dst_addr])
+            for src, dst in ail_graph.edges():
+                src_addr = getattr(src, "addr", None)
+                dst_addr = getattr(dst, "addr", None)
+                if src_addr in regions_by_addr and dst_addr in regions_by_addr:
+                    graph.add_edge(regions_by_addr[src_addr], regions_by_addr[dst_addr])
 
-    cfunc = getattr(codegen, "cfunc", None)
-    func_addr = getattr(cfunc, "addr", None)
-    if func_addr is not None and func_addr in regions_by_addr:
-        graph.entry = regions_by_addr[func_addr]
-    elif regions_by_addr:
-        graph.entry = next(iter(regions_by_addr.values()))
+        cfunc = getattr(codegen, "cfunc", None)
+        func_addr = getattr(cfunc, "addr", None)
+        if func_addr is not None and func_addr in regions_by_addr:
+            graph.entry = regions_by_addr[func_addr]
+        elif regions_by_addr:
+            graph.entry = next(iter(regions_by_addr.values()))
 
-    if not graph.nodes:
-        return RegionGraphBuildResult(graph=None, entry=None)
-    return RegionGraphBuildResult(graph=graph, entry=graph.entry)
+        if not graph.nodes:
+            return RegionGraphBuildResult(graph=None, entry=None)
+        return RegionGraphBuildResult(graph=graph, entry=graph.entry)
+
+    return _impl()

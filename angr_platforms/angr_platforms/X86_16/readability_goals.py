@@ -165,39 +165,42 @@ def summarize_readability_goals(
     readability_clusters: list[dict[str, object]],
     family_ownership: Mapping[str, object],
 ) -> tuple[dict[str, object], ...]:
-    cluster_counts = {
-        str(item.get("cluster")): int(item.get("count", 0) or 0)
-        for item in (readability_clusters or top_ugly_clusters)
-        if item.get("cluster") is not None
-    }
-    family_clusters = {
-        (str(item.get("cluster")), str(item.get("family"))): int(item.get("count", 0) or 0)
-        for item in family_ownership.get("top_ugly_clusters", [])  # type: ignore[index]
-        if isinstance(item, dict) and item.get("cluster") is not None and item.get("family") is not None
-    }
-    summaries: list[dict[str, object]] = []
-    for goal in READABILITY_GOALS:
-        observed_cluster_count = sum(cluster_counts.get(cluster, 0) for cluster in goal.target_clusters)
-        observed_family_count = sum(
-            count
-            for cluster in goal.target_clusters
-            for (family_cluster, _family), count in family_clusters.items()
-            if family_cluster == cluster
-        )
-        summaries.append(
-            {
-                "step": goal.step,
-                "title": goal.title,
-                "priority": goal.priority,
-                "deterministic_goal": goal.deterministic_goal,
-                "target_clusters": goal.target_clusters,
-                "owner_surfaces": goal.owner_surfaces,
-                "completion_signal": goal.completion_signal,
-                "observed_cluster_count": observed_cluster_count,
-                "observed_family_count": observed_family_count,
-            }
-        )
-    return tuple(summaries)
+    def _impl():
+        cluster_counts = {
+            str(item.get("cluster")): int(item.get("count", 0) or 0)
+            for item in (readability_clusters or top_ugly_clusters)
+            if item.get("cluster") is not None
+        }
+        family_clusters = {
+            (str(item.get("cluster")), str(item.get("family"))): int(item.get("count", 0) or 0)
+            for item in family_ownership.get("top_ugly_clusters", [])  # type: ignore[index]
+            if isinstance(item, dict) and item.get("cluster") is not None and item.get("family") is not None
+        }
+        summaries: list[dict[str, object]] = []
+        for goal in READABILITY_GOALS:
+            observed_cluster_count = sum(cluster_counts.get(cluster, 0) for cluster in goal.target_clusters)
+            observed_family_count = sum(
+                count
+                for cluster in goal.target_clusters
+                for (family_cluster, _family), count in family_clusters.items()
+                if family_cluster == cluster
+            )
+            summaries.append(
+                {
+                    "step": goal.step,
+                    "title": goal.title,
+                    "priority": goal.priority,
+                    "deterministic_goal": goal.deterministic_goal,
+                    "target_clusters": goal.target_clusters,
+                    "owner_surfaces": goal.owner_surfaces,
+                    "completion_signal": goal.completion_signal,
+                    "observed_cluster_count": observed_cluster_count,
+                    "observed_family_count": observed_family_count,
+                }
+            )
+        return tuple(summaries)
+
+    return _impl()
 
 
 def rank_readability_goal_queue(

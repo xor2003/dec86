@@ -351,44 +351,47 @@ def _stdout_is_cacheable_success(stdout_text: str) -> bool:
 
 
 def _load_success_cache(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> CodWorkResult | None:
-    key = _success_cache_key(item, timeout=timeout, max_memory_mb=max_memory_mb)
-    if key is None:
-        return None
-    try:
-        payload = json.loads(_success_cache_path(key).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict) or payload.get("status") != "ok":
-        return None
-    stdout_text = payload.get("stdout")
-    if not isinstance(stdout_text, str):
-        return None
-    raw_records = payload.get("tail_validation_records", ())
-    records: tuple[dict[str, object], ...] = ()
-    if isinstance(raw_records, list):
-        records = tuple(dict(record) for record in raw_records if isinstance(record, dict))
-    scanned = payload.get("tail_validation_scanned", 0)
-    if not isinstance(scanned, int):
-        scanned = 0
-    stdout_path = _write_temp_stdout_for_result(
-        item,
-        stdout_text,
-        suffix=".cached.dec.stdout",
-        directory=_SUCCESS_CACHE_DIR,
-    )
-    return CodWorkResult(
-        cod_path=item.cod_path,
-        proc_name=item.proc_name,
-        proc_kind=item.proc_kind,
-        proc_index=item.proc_index,
-        proc_total=item.proc_total,
-        stdout_path=stdout_path,
-        stderr=_coerce_output_text(payload.get("stderr") if isinstance(payload.get("stderr"), str) else ""),
-        returncode=0,
-        tail_validation_records=records,
-        tail_validation_scanned=scanned,
-        from_cache=True,
-    )
+    def _impl():
+        key = _success_cache_key(item, timeout=timeout, max_memory_mb=max_memory_mb)
+        if key is None:
+            return None
+        try:
+            payload = json.loads(_success_cache_path(key).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict) or payload.get("status") != "ok":
+            return None
+        stdout_text = payload.get("stdout")
+        if not isinstance(stdout_text, str):
+            return None
+        raw_records = payload.get("tail_validation_records", ())
+        records: tuple[dict[str, object], ...] = ()
+        if isinstance(raw_records, list):
+            records = tuple(dict(record) for record in raw_records if isinstance(record, dict))
+        scanned = payload.get("tail_validation_scanned", 0)
+        if not isinstance(scanned, int):
+            scanned = 0
+        stdout_path = _write_temp_stdout_for_result(
+            item,
+            stdout_text,
+            suffix=".cached.dec.stdout",
+            directory=_SUCCESS_CACHE_DIR,
+        )
+        return CodWorkResult(
+            cod_path=item.cod_path,
+            proc_name=item.proc_name,
+            proc_kind=item.proc_kind,
+            proc_index=item.proc_index,
+            proc_total=item.proc_total,
+            stdout_path=stdout_path,
+            stderr=_coerce_output_text(payload.get("stderr") if isinstance(payload.get("stderr"), str) else ""),
+            returncode=0,
+            tail_validation_records=records,
+            tail_validation_scanned=scanned,
+            from_cache=True,
+        )
+
+    return _impl()
 
 
 def _store_success_cache(
@@ -466,28 +469,31 @@ def _output_looks_like_memory_pressure(text: str) -> bool:
 
 
 def _describe_returncode(returncode: int | None, stdout_text: str, stderr_text: str, *, subprocess_timed_out: bool = False) -> tuple[str, str]:
-    if subprocess_timed_out:
-        return "subprocess_timeout", "worker-side subprocess timed out before the CLI returned"
-    if returncode is None:
-        return "unknown_exit", "child exit status unavailable"
-    if returncode == 0:
-        return "ok", ""
+    def _impl():
+        if subprocess_timed_out:
+            return "subprocess_timeout", "worker-side subprocess timed out before the CLI returned"
+        if returncode is None:
+            return "unknown_exit", "child exit status unavailable"
+        if returncode == 0:
+            return "ok", ""
 
-    combined = _combined_output(stdout_text, stderr_text)
-    if returncode == 3 and "timed out while recovering" in combined.lower():
-        return "timeout", "decompiler CLI reported a recovery timeout"
-    if returncode < 0:
-        signum = -returncode
-        try:
-            sig_name = signal.Signals(signum).name
-        except ValueError:
-            sig_name = f"SIG{signum}"
-        if signum == signal.SIGKILL and _output_looks_like_memory_pressure(combined):
-            return "rlimit_kill", f"child terminated by {sig_name} ({signum}) after memory pressure"
-        return "signal_termination", f"child terminated by {sig_name} ({signum})"
-    if _output_looks_like_memory_pressure(combined):
-        return "rlimit_kill", f"child exited with status {returncode} after memory pressure"
-    return "cli_exit", f"child exited with status {returncode}"
+        combined = _combined_output(stdout_text, stderr_text)
+        if returncode == 3 and "timed out while recovering" in combined.lower():
+            return "timeout", "decompiler CLI reported a recovery timeout"
+        if returncode < 0:
+            signum = -returncode
+            try:
+                sig_name = signal.Signals(signum).name
+            except ValueError:
+                sig_name = f"SIG{signum}"
+            if signum == signal.SIGKILL and _output_looks_like_memory_pressure(combined):
+                return "rlimit_kill", f"child terminated by {sig_name} ({signum}) after memory pressure"
+            return "signal_termination", f"child terminated by {sig_name} ({signum})"
+        if _output_looks_like_memory_pressure(combined):
+            return "rlimit_kill", f"child exited with status {returncode} after memory pressure"
+        return "cli_exit", f"child exited with status {returncode}"
+
+    return _impl()
 
 
 def _run_scan_safe_fallback(item: CodWorkItem, timeout: int) -> FunctionScanResult | None:
@@ -506,11 +512,16 @@ def _run_scan_safe_fallback(item: CodWorkItem, timeout: int) -> FunctionScanResu
         return None
 
 
-def _should_run_scan_safe_fallback(exit_kind: str) -> bool:
-    # A timeout already consumed the bounded child budget.  Running scan-safe in
-    # the corpus-runner process after that can block the whole sweep and leave
-    # orphaned children.  Keep the timeout attributable instead.
-    return exit_kind not in {"timeout", "subprocess_timeout"}
+def _should_run_scan_safe_fallback(exit_kind: str, item: CodWorkItem) -> bool:
+    # Keep worker-side scheduler timeouts attributable.
+    if exit_kind == "subprocess_timeout":
+        return False
+    # For timeout exits, run scan-safe fallback only for one-off targets
+    # (single proc investigations). In batch sweeps, preserve timeout
+    # attribution and avoid extra runner-side work.
+    if exit_kind == "timeout":
+        return int(getattr(item, "proc_total", 0) or 0) <= 1
+    return True
 
 
 def _describe_scan_safe_result(item: CodWorkItem, scan_result: FunctionScanResult) -> tuple[str, str]:
@@ -525,41 +536,44 @@ def _describe_scan_safe_result(item: CodWorkItem, scan_result: FunctionScanResul
 
 
 def _render_scan_safe_block(result: CodWorkResult, scan_result: FunctionScanResult) -> str:
-    parts = [
-        f"/* == scan-safe {result.proc_index}/{result.proc_total} {result.cod_path.name}",
-    ]
-    if result.proc_name is not None:
-        parts[0] += f" :: {result.proc_name}"
-        if result.proc_kind:
-            parts[0] += f" [{result.proc_kind}]"
-    else:
-        parts[0] += " :: whole-file"
-    parts[0] += " == */"
-    parts.append(f"/* child exit kind: {result.child_exit_kind} */")
-    if result.child_exit_detail:
-        parts.append(f"/* child exit detail: {result.child_exit_detail} */")
-    parts.append(f"/* scan-safe ok: {scan_result.ok} */")
-    if scan_result.fallback_kind not in (None, "none"):
-        parts.append(f"/* fallback kind: {scan_result.fallback_kind} */")
-    if scan_result.failure_class is not None:
-        parts.append(f"/* failure class: {scan_result.failure_class} */")
-    if scan_result.reason is not None:
-        parts.append(f"/* reason: {scan_result.reason} */")
-    if scan_result.stage_reached:
-        parts.append(f"/* stage reached: {scan_result.stage_reached} */")
-    if scan_result.semantic_family is not None:
-        parts.append(f"/* semantic family: {scan_result.semantic_family} */")
-    if scan_result.semantic_family_reason is not None:
-        parts.append(f"/* family reason: {scan_result.semantic_family_reason} */")
-    if scan_result.confidence_scan_safe_classification is not None:
-        parts.append(f"/* confidence scan-safe: {scan_result.confidence_scan_safe_classification} */")
-    if scan_result.confidence_status is not None:
-        parts.append(f"/* confidence status: {scan_result.confidence_status} */")
-    if scan_result.confidence_assumption_kinds:
-        parts.append(f"/* assumptions: {', '.join(scan_result.confidence_assumption_kinds)} */")
-    if scan_result.confidence_evidence_kinds:
-        parts.append(f"/* evidence: {', '.join(scan_result.confidence_evidence_kinds)} */")
-    return "\n".join(parts)
+    def _impl():
+        parts = [
+            f"/* == scan-safe {result.proc_index}/{result.proc_total} {result.cod_path.name}",
+        ]
+        if result.proc_name is not None:
+            parts[0] += f" :: {result.proc_name}"
+            if result.proc_kind:
+                parts[0] += f" [{result.proc_kind}]"
+        else:
+            parts[0] += " :: whole-file"
+        parts[0] += " == */"
+        parts.append(f"/* child exit kind: {result.child_exit_kind} */")
+        if result.child_exit_detail:
+            parts.append(f"/* child exit detail: {result.child_exit_detail} */")
+        parts.append(f"/* scan-safe ok: {scan_result.ok} */")
+        if scan_result.fallback_kind not in (None, "none"):
+            parts.append(f"/* fallback kind: {scan_result.fallback_kind} */")
+        if scan_result.failure_class is not None:
+            parts.append(f"/* failure class: {scan_result.failure_class} */")
+        if scan_result.reason is not None:
+            parts.append(f"/* reason: {scan_result.reason} */")
+        if scan_result.stage_reached:
+            parts.append(f"/* stage reached: {scan_result.stage_reached} */")
+        if scan_result.semantic_family is not None:
+            parts.append(f"/* semantic family: {scan_result.semantic_family} */")
+        if scan_result.semantic_family_reason is not None:
+            parts.append(f"/* family reason: {scan_result.semantic_family_reason} */")
+        if scan_result.confidence_scan_safe_classification is not None:
+            parts.append(f"/* confidence scan-safe: {scan_result.confidence_scan_safe_classification} */")
+        if scan_result.confidence_status is not None:
+            parts.append(f"/* confidence status: {scan_result.confidence_status} */")
+        if scan_result.confidence_assumption_kinds:
+            parts.append(f"/* assumptions: {', '.join(scan_result.confidence_assumption_kinds)} */")
+        if scan_result.confidence_evidence_kinds:
+            parts.append(f"/* evidence: {', '.join(scan_result.confidence_evidence_kinds)} */")
+        return "\n".join(parts)
+
+    return _impl()
 
 
 @dataclasses.dataclass
@@ -631,36 +645,39 @@ def _iter_cod_files(root: Path):
 
 
 def _resolve_selected_cod_files(cod_dir: Path, selectors: list[str] | None) -> list[Path]:
-    all_files = list(_iter_cod_files(cod_dir))
-    if not selectors:
-        return all_files
+    def _impl():
+        all_files = list(_iter_cod_files(cod_dir))
+        if not selectors:
+            return all_files
 
-    selected: dict[Path, Path] = {}
-    rel_names = {path.relative_to(cod_dir).as_posix().lower(): path for path in all_files}
-    base_names: dict[str, list[Path]] = {}
-    for path in all_files:
-        base_names.setdefault(path.name.lower(), []).append(path)
+        selected: dict[Path, Path] = {}
+        rel_names = {path.relative_to(cod_dir).as_posix().lower(): path for path in all_files}
+        base_names: dict[str, list[Path]] = {}
+        for path in all_files:
+            base_names.setdefault(path.name.lower(), []).append(path)
 
-    for selector in selectors:
-        wanted = Path(selector)
-        matches: list[Path] = []
-        if wanted.is_absolute():
-            if wanted.is_file() and wanted.suffix.lower() == ".cod":
-                matches.append(wanted)
-        else:
-            direct = cod_dir / wanted
-            if direct.is_file() and direct.suffix.lower() == ".cod":
-                matches.append(direct)
-            matches.extend(base_names.get(selector.lower(), ()))
-            rel_match = rel_names.get(selector.lower())
-            if rel_match is not None:
-                matches.append(rel_match)
-        if not matches:
-            raise ValueError(f"COD file selector matched nothing: {selector}")
-        for match in matches:
-            selected[match.resolve()] = match
+        for selector in selectors:
+            wanted = Path(selector)
+            matches: list[Path] = []
+            if wanted.is_absolute():
+                if wanted.is_file() and wanted.suffix.lower() == ".cod":
+                    matches.append(wanted)
+            else:
+                direct = cod_dir / wanted
+                if direct.is_file() and direct.suffix.lower() == ".cod":
+                    matches.append(direct)
+                matches.extend(base_names.get(selector.lower(), ()))
+                rel_match = rel_names.get(selector.lower())
+                if rel_match is not None:
+                    matches.append(rel_match)
+            if not matches:
+                raise ValueError(f"COD file selector matched nothing: {selector}")
+            for match in matches:
+                selected[match.resolve()] = match
 
-    return sorted(selected.values())
+        return sorted(selected.values())
+
+    return _impl()
 
 
 def _filter_work_items_by_proc_names(
@@ -810,138 +827,132 @@ def _run_decompiler_child(
     child_timeout: int,
 ) -> tuple[int | None, str, bool]:
     start_new_session = os.name == "posix"
-    proc: subprocess.Popen[str] | None = None
     with stdout_path.open("w", encoding="utf-8") as stdout_file:
-        proc = subprocess.Popen(
-            command,
-            cwd=str(REPO_ROOT),
-            env=command_env,
-            stdout=stdout_file,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=start_new_session,
-        )
         try:
-            _stdout_unused, stderr_text = proc.communicate(timeout=child_timeout)
-            return int(proc.returncode), _coerce_output_text(stderr_text), False
+            completed = subprocess.run(
+                command,
+                cwd=str(REPO_ROOT),
+                env=command_env,
+                stdout=stdout_file,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=child_timeout,
+                check=False,
+                start_new_session=start_new_session,
+            )
+            return int(completed.returncode), _coerce_output_text(completed.stderr), False
         except subprocess.TimeoutExpired as ex:
-            if start_new_session:
-                with contextlib.suppress(ProcessLookupError, OSError):
-                    os.killpg(proc.pid, signal.SIGKILL)
-            else:
-                with contextlib.suppress(ProcessLookupError, OSError):
-                    proc.kill()
-            with contextlib.suppress(Exception):
-                _stdout_unused, stderr_text = proc.communicate(timeout=5)
-                return None, _coerce_output_text(stderr_text), True
             return None, _coerce_output_text(ex.stderr), True
 
 
 def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> CodWorkResult:
-    cached_result = _load_success_cache(item, timeout=timeout, max_memory_mb=max_memory_mb)
-    if cached_result is not None:
-        return cached_result
+    def _impl():
+        cached_result = _load_success_cache(item, timeout=timeout, max_memory_mb=max_memory_mb)
+        if cached_result is not None:
+            return cached_result
 
-    stdout_fd, stdout_name = tempfile.mkstemp(
-        prefix=f"{item.cod_path.stem}.{item.proc_index:04d}.",
-        suffix=".dec.stdout",
-        dir=item.cod_path.parent,
-    )
-    os.close(stdout_fd)
-    stdout_path = Path(stdout_name)
-    stderr_text = ""
-    returncode: int | None = None
-    child_exit_kind = "ok"
-    child_exit_detail = ""
-    exit_kind = "ok"
-    exit_detail = ""
-    scan_safe_result: FunctionScanResult | None = None
-    tail_validation_payload: dict[str, object] | None = None
-    child_timeout = _bounded_child_timeout(timeout)
-    command = [
-        sys.executable,
-        str(REPO_ROOT / "decompile.py"),
-        str(item.cod_path),
-        "--timeout",
-        str(timeout),
-        "--max-memory-mb",
-        str(max_memory_mb),
-    ]
-    if item.proc_name is not None:
-        command.extend(["--proc", item.proc_name, "--proc-kind", item.proc_kind or "NEAR"])
-    command_env = dict(os.environ)
-    command_env[_TAIL_VALIDATION_METADATA_ENV] = "1"
+        stdout_fd, stdout_name = tempfile.mkstemp(
+            prefix=f"{item.cod_path.stem}.{item.proc_index:04d}.",
+            suffix=".dec.stdout",
+            dir=item.cod_path.parent,
+        )
+        os.close(stdout_fd)
+        stdout_path = Path(stdout_name)
+        stderr_text = ""
+        returncode: int | None = None
+        child_exit_kind = "ok"
+        child_exit_detail = ""
+        exit_kind = "ok"
+        exit_detail = ""
+        scan_safe_result: FunctionScanResult | None = None
+        tail_validation_payload: dict[str, object] | None = None
+        child_timeout = _bounded_child_timeout(timeout)
+        command = [
+            sys.executable,
+            str(REPO_ROOT / "decompile.py"),
+            str(item.cod_path),
+            "--timeout",
+            str(timeout),
+            "--max-memory-mb",
+            str(max_memory_mb),
+        ]
+        if item.proc_name is not None:
+            command.extend(["--proc", item.proc_name, "--proc-kind", item.proc_kind or "NEAR"])
+        command_env = dict(os.environ)
+        command_env[_TAIL_VALIDATION_METADATA_ENV] = "1"
 
-    try:
-        returncode, stderr_text, child_timed_out = _run_decompiler_child(
-            command,
-            command_env=command_env,
-            stdout_path=stdout_path,
-            child_timeout=child_timeout,
-        )
-        child_exit_kind, child_exit_detail = _describe_returncode(
-            returncode,
-            stdout_path.read_text(encoding="utf-8", errors="replace"),
-            stderr_text,
-            subprocess_timed_out=child_timed_out,
-        )
-        stderr_text, tail_validation_payload = _strip_tail_validation_stderr(stderr_text)
-        exit_kind, exit_detail = child_exit_kind, child_exit_detail
-        if exit_kind != "ok" and _should_run_scan_safe_fallback(exit_kind):
+        try:
+            returncode, stderr_text, child_timed_out = _run_decompiler_child(
+                command,
+                command_env=command_env,
+                stdout_path=stdout_path,
+                child_timeout=child_timeout,
+            )
+            child_exit_kind, child_exit_detail = _describe_returncode(
+                returncode,
+                stdout_path.read_text(encoding="utf-8", errors="replace"),
+                stderr_text,
+                subprocess_timed_out=child_timed_out,
+            )
+            stderr_text, tail_validation_payload = _strip_tail_validation_stderr(stderr_text)
+            exit_kind, exit_detail = child_exit_kind, child_exit_detail
+            if exit_kind != "ok" and _should_run_scan_safe_fallback(exit_kind, item):
+                scan_safe_result = _run_scan_safe_fallback(item, timeout)
+                if scan_safe_result is not None:
+                    exit_kind, exit_detail = _describe_scan_safe_result(item, scan_safe_result)
+        except Exception as ex:  # pragma: no cover - defensive fallback
+            returncode = 99
+            stderr_text = f"{type(ex).__name__}: {ex}\n"
+            child_exit_kind = "worker_exception"
+            child_exit_detail = f"worker-side exception: {type(ex).__name__}"
+            exit_kind = child_exit_kind
+            exit_detail = child_exit_detail
+            tail_validation_payload = None
             scan_safe_result = _run_scan_safe_fallback(item, timeout)
             if scan_safe_result is not None:
                 exit_kind, exit_detail = _describe_scan_safe_result(item, scan_safe_result)
-    except Exception as ex:  # pragma: no cover - defensive fallback
-        returncode = 99
-        stderr_text = f"{type(ex).__name__}: {ex}\n"
-        child_exit_kind = "worker_exception"
-        child_exit_detail = f"worker-side exception: {type(ex).__name__}"
-        exit_kind = child_exit_kind
-        exit_detail = child_exit_detail
-        tail_validation_payload = None
-        scan_safe_result = _run_scan_safe_fallback(item, timeout)
-        if scan_safe_result is not None:
-            exit_kind, exit_detail = _describe_scan_safe_result(item, scan_safe_result)
 
-    tail_validation_records: tuple[dict[str, object], ...] = ()
-    tail_validation_scanned = 0
-    if isinstance(tail_validation_payload, dict):
-        raw_records = tail_validation_payload.get("records", ())
-        if isinstance(raw_records, list):
-            enriched_records: list[dict[str, object]] = []
-            for record in raw_records:
-                if not isinstance(record, dict):
-                    continue
-                enriched_records.append(
-                    _normalize_tail_validation_record(
-                        record,
-                        cod_path=item.cod_path,
-                        proc_name=item.proc_name,
-                        proc_kind=item.proc_kind,
+        tail_validation_records: tuple[dict[str, object], ...] = ()
+        tail_validation_scanned = 0
+        if isinstance(tail_validation_payload, dict):
+            raw_records = tail_validation_payload.get("records", ())
+            if isinstance(raw_records, list):
+                enriched_records: list[dict[str, object]] = []
+                for record in raw_records:
+                    if not isinstance(record, dict):
+                        continue
+                    enriched_records.append(
+                        _normalize_tail_validation_record(
+                            record,
+                            cod_path=item.cod_path,
+                            proc_name=item.proc_name,
+                            proc_kind=item.proc_kind,
+                        )
                     )
-                )
-            tail_validation_records = tuple(enriched_records)
-        tail_validation_scanned = int(tail_validation_payload.get("scanned", 0) or 0)
+                tail_validation_records = tuple(enriched_records)
+            tail_validation_scanned = int(tail_validation_payload.get("scanned", 0) or 0)
 
-    result = CodWorkResult(
-        cod_path=item.cod_path,
-        proc_name=item.proc_name,
-        proc_kind=item.proc_kind,
-        proc_index=item.proc_index,
-        proc_total=item.proc_total,
-        stdout_path=stdout_path,
-        stderr=stderr_text,
-        returncode=returncode,
-        child_exit_kind=child_exit_kind,
-        child_exit_detail=child_exit_detail,
-        exit_kind=exit_kind,
-        exit_detail=exit_detail,
-        scan_safe_result=scan_safe_result,
-        tail_validation_records=tail_validation_records,
-        tail_validation_scanned=tail_validation_scanned,
-    )
-    _store_success_cache(item, result, timeout=timeout, max_memory_mb=max_memory_mb)
-    return result
+        result = CodWorkResult(
+            cod_path=item.cod_path,
+            proc_name=item.proc_name,
+            proc_kind=item.proc_kind,
+            proc_index=item.proc_index,
+            proc_total=item.proc_total,
+            stdout_path=stdout_path,
+            stderr=stderr_text,
+            returncode=returncode,
+            child_exit_kind=child_exit_kind,
+            child_exit_detail=child_exit_detail,
+            exit_kind=exit_kind,
+            exit_detail=exit_detail,
+            scan_safe_result=scan_safe_result,
+            tail_validation_records=tail_validation_records,
+            tail_validation_scanned=tail_validation_scanned,
+        )
+        _store_success_cache(item, result, timeout=timeout, max_memory_mb=max_memory_mb)
+        return result
+
+    return _impl()
 
 
 def _extract_proc_body(raw_output: str) -> str:
@@ -970,55 +981,58 @@ def _strip_nonsemantic_fallback_markers(body: str) -> str:
 
 
 def _render_result_block(result: CodWorkResult) -> str:
-    raw_output = result.stdout_path.read_text(encoding="utf-8", errors="replace")
-    stderr_text = _coerce_output_text(result.stderr)
-    if result.exit_kind == "ok":
-        body = _extract_proc_body(raw_output)
-        if body:
-            rendered = body
+    def _impl():
+        raw_output = result.stdout_path.read_text(encoding="utf-8", errors="replace")
+        stderr_text = _coerce_output_text(result.stderr)
+        if result.exit_kind == "ok":
+            body = _extract_proc_body(raw_output)
+            if body:
+                rendered = body
+            else:
+                rendered = raw_output.strip()
+        elif result.scan_safe_result is not None:
+            rendered = _render_scan_safe_block(result, result.scan_safe_result)
         else:
             rendered = raw_output.strip()
-    elif result.scan_safe_result is not None:
-        rendered = _render_scan_safe_block(result, result.scan_safe_result)
-    else:
-        rendered = raw_output.strip()
 
-    parts = [
-        f"/* == {result.proc_index}/{result.proc_total} {result.cod_path.name}",
-    ]
-    if result.proc_name is not None:
-        parts[0] += f" :: {result.proc_name}"
-        if result.proc_kind:
-            parts[0] += f" [{result.proc_kind}]"
-    else:
-        parts[0] += " :: whole-file"
-    parts[0] += " == */"
-    if result.exit_kind not in {"ok"}:
-        parts.append(f"/* == exit kind {result.exit_kind} == */")
-        detail = result.exit_detail or "no further detail"
-        parts.append(f"/* {detail} */")
-    if rendered:
-        parts.append(rendered)
-    parts.append(
-        f"/* == end {result.proc_index}/{result.proc_total} {result.cod_path.name}"
-        + (
-            f" :: {result.proc_name}" + (f" [{result.proc_kind}]" if result.proc_kind else "")
-            if result.proc_name is not None
-            else " :: whole-file"
+        parts = [
+            f"/* == {result.proc_index}/{result.proc_total} {result.cod_path.name}",
+        ]
+        if result.proc_name is not None:
+            parts[0] += f" :: {result.proc_name}"
+            if result.proc_kind:
+                parts[0] += f" [{result.proc_kind}]"
+        else:
+            parts[0] += " :: whole-file"
+        parts[0] += " == */"
+        if result.exit_kind not in {"ok"}:
+            parts.append(f"/* == exit kind {result.exit_kind} == */")
+            detail = result.exit_detail or "no further detail"
+            parts.append(f"/* {detail} */")
+        if rendered:
+            parts.append(rendered)
+        parts.append(
+            f"/* == end {result.proc_index}/{result.proc_total} {result.cod_path.name}"
+            + (
+                f" :: {result.proc_name}" + (f" [{result.proc_kind}]" if result.proc_kind else "")
+                if result.proc_name is not None
+                else " :: whole-file"
+            )
+            + " == */"
         )
-        + " == */"
-    )
-    if stderr_text.strip():
-        parts.append(f"/* == stderr {result.cod_path.name} == */")
-        parts.append(stderr_text.rstrip())
-    if result.returncode not in (None, 0):
-        parts.append(f"/* == exit code {result.cod_path.name} == */")
-        parts.append(str(result.returncode))
+        if stderr_text.strip():
+            parts.append(f"/* == stderr {result.cod_path.name} == */")
+            parts.append(stderr_text.rstrip())
+        if result.returncode not in (None, 0):
+            parts.append(f"/* == exit code {result.cod_path.name} == */")
+            parts.append(str(result.returncode))
 
-    with contextlib.suppress(OSError):
-        result.stdout_path.unlink()
+        with contextlib.suppress(OSError):
+            result.stdout_path.unlink()
 
-    return "\n".join(parts).rstrip() + "\n"
+        return "\n".join(parts).rstrip() + "\n"
+
+    return _impl()
 
 
 def _cache_label_part(value: str) -> str:
@@ -1104,303 +1118,306 @@ def _write_tail_validation_baseline(path: Path, baseline: dict[str, object]) -> 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Decompile all .COD files into sibling .dec files.")
-    parser.add_argument("cod_dir", type=Path, help="Root directory containing .COD files.")
-    parser.add_argument(
-        "--cod-file",
-        action="append",
-        default=None,
-        help=(
-            "Limit the run to one COD file. Can be repeated. "
-            "Accepts a basename, a path relative to cod_dir, or an absolute path."
-        ),
-    )
-    parser.add_argument(
-        "--proc-name",
-        action="append",
-        default=None,
-        help="Limit the run to one PROC name. Can be repeated. Matching is case-insensitive.",
-    )
-    parser.add_argument("--timeout", type=int, default=20, help="Per-procedure decompiler timeout in seconds.")
-    parser.add_argument(
-        "--max-memory-mb",
-        type=int,
-        default=DEFAULT_MAX_MEMORY_MB,
-        help="Per-worker RLIMIT_AS cap in MB, also used as the parallelism memory floor.",
-    )
-    parser.add_argument(
-        "--max-workers",
-        type=int,
-        default=DEFAULT_MAX_WORKERS,
-        help="Hard cap for the worker pool. Lower this if decompilation memory grows too high.",
-    )
-    parser.add_argument(
-        "--max-tasks-per-worker",
-        type=int,
-        default=DEFAULT_MAX_TASKS_PER_WORKER,
-        help="Recycle the worker pool after this many procedures per worker to bound memory growth.",
-    )
-    parser.add_argument(
-        "--subprocess-timeout",
-        type=int,
-        default=900,
-        help="Soft wait timeout in seconds for the worker pool scheduler before outstanding work is marked failed.",
-    )
-    parser.add_argument(
-        "--skip-existing",
-        action="store_true",
-        help="Skip files whose sibling .dec already exists.",
-    )
-    parser.add_argument(
-        "--tail-validation-baseline",
-        type=Path,
-        default=None,
-        help="Optional baseline JSON for accepted whole-tail changed verdicts. Defaults to a per-corpus cache path if present.",
-    )
-    parser.add_argument(
-        "--write-tail-validation-baseline",
-        action="store_true",
-        help="Write the current whole-tail changed-set to the selected baseline path after the run.",
-    )
-    args = parser.parse_args()
-
-    _lower_process_priority()
-    try:
-        cod_files = _resolve_selected_cod_files(args.cod_dir, args.cod_file)
-    except ValueError as ex:
-        parser.error(str(ex))
-    print(f"found {len(cod_files)} COD files under {args.cod_dir}")
-    if args.cod_file:
-        print(f"/* COD file filter: {', '.join(args.cod_file)} */")
-    if args.proc_name:
-        print(f"/* PROC name filter: {', '.join(args.proc_name)} */")
-
-    work_items: list[CodWorkItem] = []
-    items_by_file: dict[Path, list[CodWorkItem]] = {}
-    for cod_path in cod_files:
-        if args.skip_existing and cod_path.with_suffix(".dec").exists():
-            print(f"[skip] {cod_path}")
-            continue
-        items = _filter_work_items_by_proc_names(_build_work_items(cod_path), args.proc_name)
-        if args.proc_name and not items:
-            print(f"[skip] {cod_path}: no selected PROC matched")
-            continue
-        items_by_file[cod_path] = items
-        work_items.extend(items)
-
-    start = time.perf_counter()
-    if not work_items:
-        print("done in 0.0s; failures=0/0")
-        return 0
-
-    workers = _choose_parallelism(len(work_items), args.max_memory_mb, args.max_workers)
-    worker_memory_limit_mb = _determine_worker_memory_limit_mb(args.max_memory_mb, workers)
-    if workers <= 1:
-        print(
-            f"/* parallelism: single worker process, "
-            f"worker-memory-limit={worker_memory_limit_mb}MB */"
+    def _impl():
+        parser = argparse.ArgumentParser(description="Decompile all .COD files into sibling .dec files.")
+        parser.add_argument("cod_dir", type=Path, help="Root directory containing .COD files.")
+        parser.add_argument(
+            "--cod-file",
+            action="append",
+            default=None,
+            help=(
+                "Limit the run to one COD file. Can be repeated. "
+                "Accepts a basename, a path relative to cod_dir, or an absolute path."
+            ),
         )
-    else:
-        available_mb = _mem_available_mb()
-        budget_mb = int(available_mb * DEFAULT_FREE_RAM_BUDGET_FRACTION) if available_mb is not None else -1
-        print(
-            f"/* parallelism: {workers} worker processes, shared imports, n-1 CPU target, "
-            f"max-workers={args.max_workers}, budget={budget_mb}MB, "
-            f"worker-memory-limit={worker_memory_limit_mb}MB, "
-            f"max-tasks-per-worker={args.max_tasks_per_worker}, "
-            f"free-ram-fraction={DEFAULT_FREE_RAM_BUDGET_FRACTION:.2f}, "
-            f"avail={available_mb if available_mb is not None else 'unknown'}MB */"
+        parser.add_argument(
+            "--proc-name",
+            action="append",
+            default=None,
+            help="Limit the run to one PROC name. Can be repeated. Matching is case-insensitive.",
         )
-
-    file_writers: dict[Path, CodFileWriter] = {
-        cod_path: CodFileWriter(
-            cod_path=cod_path,
-            out_path=cod_path.with_suffix(".dec"),
-            proc_total=len(items),
+        parser.add_argument("--timeout", type=int, default=20, help="Per-procedure decompiler timeout in seconds.")
+        parser.add_argument(
+            "--max-memory-mb",
+            type=int,
+            default=DEFAULT_MAX_MEMORY_MB,
+            help="Per-worker RLIMIT_AS cap in MB, also used as the parallelism memory floor.",
         )
-        for cod_path, items in items_by_file.items()
-    }
-    failures = 0
-    tail_validation_records: list[dict[str, object]] = []
-    tail_validation_scanned = 0
-
-    def handle_result(item: CodWorkItem, result: CodWorkResult) -> None:
-        nonlocal failures, tail_validation_scanned
-        writer = file_writers[item.cod_path]
-        writer.add_block(item.proc_index, _render_result_block(result))
-        tail_validation_scanned += _append_tail_validation_records_for_result(
-            tail_validation_records,
-            result,
+        parser.add_argument(
+            "--max-workers",
+            type=int,
+            default=DEFAULT_MAX_WORKERS,
+            help="Hard cap for the worker pool. Lower this if decompilation memory grows too high.",
         )
-        if result.exit_kind not in {"ok", "fallback"}:
-            failures += 1
-        source = "cache" if result.from_cache else "child"
-        print(f"  captured {item.label} ({source})")
-        if writer.is_complete():
-            writer.close()
-            writer.reported = True
-            print(f"  wrote {writer.out_path}")
-
-    def handle_failure(item: CodWorkItem, ex: BaseException) -> None:
-        nonlocal failures, tail_validation_scanned
-        failures += 1
-        print(f"  {_worker_failure_summary(item, ex)}: {item.cod_path} :: {item.label}")
-        tail_validation_scanned += _append_uncollected_tail_validation_record(
-            tail_validation_records,
-            cod_path=item.cod_path,
-            proc_name=item.proc_name,
-            proc_kind=item.proc_kind,
-            exit_kind="worker_exception",
-            exit_detail=f"{type(ex).__name__}: {ex}",
+        parser.add_argument(
+            "--max-tasks-per-worker",
+            type=int,
+            default=DEFAULT_MAX_TASKS_PER_WORKER,
+            help="Recycle the worker pool after this many procedures per worker to bound memory growth.",
         )
-        writer = file_writers[item.cod_path]
-        writer.add_failure(item.proc_index, _format_worker_failure(item, ex))
-        if writer.is_complete():
-            writer.close()
-            writer.reported = True
-            print(f"  wrote {writer.out_path}")
+        parser.add_argument(
+            "--subprocess-timeout",
+            type=int,
+            default=900,
+            help="Soft wait timeout in seconds for the worker pool scheduler before outstanding work is marked failed.",
+        )
+        parser.add_argument(
+            "--skip-existing",
+            action="store_true",
+            help="Skip files whose sibling .dec already exists.",
+        )
+        parser.add_argument(
+            "--tail-validation-baseline",
+            type=Path,
+            default=None,
+            help="Optional baseline JSON for accepted whole-tail changed verdicts. Defaults to a per-corpus cache path if present.",
+        )
+        parser.add_argument(
+            "--write-tail-validation-baseline",
+            action="store_true",
+            help="Write the current whole-tail changed-set to the selected baseline path after the run.",
+        )
+        args = parser.parse_args()
 
-    if workers <= 1:
-        # Avoid wrapping the CLI child in a memory-limited forked worker.  The CLI
-        # applies its own limit after imports; inheriting RLIMIT_AS before Python
-        # startup changes COD fallback behavior and can turn clean direct runs into
-        # timeouts.
-        for task_counter, item in enumerate(work_items, start=1):
-            print(f"[{task_counter}/{len(work_items)}] {item.cod_path} :: {item.label}")
-            cached_result = _load_success_cache(item, timeout=args.timeout, max_memory_mb=worker_memory_limit_mb)
-            if cached_result is not None:
-                handle_result(item, cached_result)
-                continue
-            try:
-                result = _run_work_item(item, timeout=args.timeout, max_memory_mb=worker_memory_limit_mb)
-            except Exception as ex:  # pragma: no cover - defensive fallback
-                handle_failure(item, ex)
-                continue
-            handle_result(item, result)
-
-        task_batches = []
-    else:
-        task_batches = _iter_task_batches(work_items, workers, args.max_tasks_per_worker)
-
-    task_counter = 0
-    for batch_index, batch in enumerate(task_batches, start=1):
-        if workers > 1:
-            print(f"/* batch {batch_index}/{len(task_batches)}: recycling worker pool */")
-        future_map = {}
-        executor = None
-        scheduler_timed_out = False
+        _lower_process_priority()
         try:
-            for item in batch:
-                task_counter += 1
+            cod_files = _resolve_selected_cod_files(args.cod_dir, args.cod_file)
+        except ValueError as ex:
+            parser.error(str(ex))
+        print(f"found {len(cod_files)} COD files under {args.cod_dir}")
+        if args.cod_file:
+            print(f"/* COD file filter: {', '.join(args.cod_file)} */")
+        if args.proc_name:
+            print(f"/* PROC name filter: {', '.join(args.proc_name)} */")
+
+        work_items: list[CodWorkItem] = []
+        items_by_file: dict[Path, list[CodWorkItem]] = {}
+        for cod_path in cod_files:
+            if args.skip_existing and cod_path.with_suffix(".dec").exists():
+                print(f"[skip] {cod_path}")
+                continue
+            items = _filter_work_items_by_proc_names(_build_work_items(cod_path), args.proc_name)
+            if args.proc_name and not items:
+                print(f"[skip] {cod_path}: no selected PROC matched")
+                continue
+            items_by_file[cod_path] = items
+            work_items.extend(items)
+
+        start = time.perf_counter()
+        if not work_items:
+            print("done in 0.0s; failures=0/0")
+            return 0
+
+        workers = _choose_parallelism(len(work_items), args.max_memory_mb, args.max_workers)
+        worker_memory_limit_mb = _determine_worker_memory_limit_mb(args.max_memory_mb, workers)
+        if workers <= 1:
+            print(
+                f"/* parallelism: single worker process, "
+                f"worker-memory-limit={worker_memory_limit_mb}MB */"
+            )
+        else:
+            available_mb = _mem_available_mb()
+            budget_mb = int(available_mb * DEFAULT_FREE_RAM_BUDGET_FRACTION) if available_mb is not None else -1
+            print(
+                f"/* parallelism: {workers} worker processes, shared imports, n-1 CPU target, "
+                f"max-workers={args.max_workers}, budget={budget_mb}MB, "
+                f"worker-memory-limit={worker_memory_limit_mb}MB, "
+                f"max-tasks-per-worker={args.max_tasks_per_worker}, "
+                f"free-ram-fraction={DEFAULT_FREE_RAM_BUDGET_FRACTION:.2f}, "
+                f"avail={available_mb if available_mb is not None else 'unknown'}MB */"
+            )
+
+        file_writers: dict[Path, CodFileWriter] = {
+            cod_path: CodFileWriter(
+                cod_path=cod_path,
+                out_path=cod_path.with_suffix(".dec"),
+                proc_total=len(items),
+            )
+            for cod_path, items in items_by_file.items()
+        }
+        failures = 0
+        tail_validation_records: list[dict[str, object]] = []
+        tail_validation_scanned = 0
+
+        def handle_result(item: CodWorkItem, result: CodWorkResult) -> None:
+            nonlocal failures, tail_validation_scanned
+            writer = file_writers[item.cod_path]
+            writer.add_block(item.proc_index, _render_result_block(result))
+            tail_validation_scanned += _append_tail_validation_records_for_result(
+                tail_validation_records,
+                result,
+            )
+            if result.exit_kind not in {"ok", "fallback"}:
+                failures += 1
+            source = "cache" if result.from_cache else "child"
+            print(f"  captured {item.label} ({source})")
+            if writer.is_complete():
+                writer.close()
+                writer.reported = True
+                print(f"  wrote {writer.out_path}")
+
+        def handle_failure(item: CodWorkItem, ex: BaseException) -> None:
+            nonlocal failures, tail_validation_scanned
+            failures += 1
+            print(f"  {_worker_failure_summary(item, ex)}: {item.cod_path} :: {item.label}")
+            tail_validation_scanned += _append_uncollected_tail_validation_record(
+                tail_validation_records,
+                cod_path=item.cod_path,
+                proc_name=item.proc_name,
+                proc_kind=item.proc_kind,
+                exit_kind="worker_exception",
+                exit_detail=f"{type(ex).__name__}: {ex}",
+            )
+            writer = file_writers[item.cod_path]
+            writer.add_failure(item.proc_index, _format_worker_failure(item, ex))
+            if writer.is_complete():
+                writer.close()
+                writer.reported = True
+                print(f"  wrote {writer.out_path}")
+
+        if workers <= 1:
+            # Avoid wrapping the CLI child in a memory-limited forked worker.  The CLI
+            # applies its own limit after imports; inheriting RLIMIT_AS before Python
+            # startup changes COD fallback behavior and can turn clean direct runs into
+            # timeouts.
+            for task_counter, item in enumerate(work_items, start=1):
                 print(f"[{task_counter}/{len(work_items)}] {item.cod_path} :: {item.label}")
                 cached_result = _load_success_cache(item, timeout=args.timeout, max_memory_mb=worker_memory_limit_mb)
                 if cached_result is not None:
                     handle_result(item, cached_result)
                     continue
-                if executor is None:
-                    executor = _make_executor(max(1, workers), worker_memory_limit_mb)
-                future = executor.submit(
-                    _run_work_item,
-                    item,
-                    timeout=args.timeout,
-                    max_memory_mb=worker_memory_limit_mb,
-                )
-                future_map[future] = item
+                try:
+                    result = _run_work_item(item, timeout=args.timeout, max_memory_mb=worker_memory_limit_mb)
+                except Exception as ex:  # pragma: no cover - defensive fallback
+                    handle_failure(item, ex)
+                    continue
+                handle_result(item, result)
 
-            if not future_map:
-                continue
-            pending = set(future_map)
-            deadline = time.monotonic() + max(1, args.subprocess_timeout)
-            while pending:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    scheduler_timed_out = True
-                    for future in pending:
-                        item = future_map[future]
-                        failures += 1
-                        print(f"  timeout after {args.subprocess_timeout}s: {item.cod_path} :: {item.label}")
-                        writer = file_writers[item.cod_path]
-                        tail_validation_scanned += _append_uncollected_tail_validation_record(
-                            tail_validation_records,
-                            cod_path=item.cod_path,
-                            proc_name=item.proc_name,
-                            proc_kind=item.proc_kind,
-                            exit_kind="subprocess_timeout",
-                            exit_detail=f"worker pool scheduler timeout after {args.subprocess_timeout}s",
-                        )
-                        writer.add_failure(
-                            item.proc_index,
-                            f"/* timeout after {args.subprocess_timeout}s */",
-                        )
-                        if writer.is_complete():
-                            writer.close()
-                            writer.reported = True
-                            print(f"  wrote {writer.out_path}")
-                    break
+            task_batches = []
+        else:
+            task_batches = _iter_task_batches(work_items, workers, args.max_tasks_per_worker)
 
-                done, pending = wait(pending, timeout=min(1.0, remaining), return_when=FIRST_COMPLETED)
-                for future in done:
-                    item = future_map[future]
-                    try:
-                        result = future.result()
-                    except Exception as ex:  # pragma: no cover - defensive fallback
-                        handle_failure(item, ex)
+        task_counter = 0
+        for batch_index, batch in enumerate(task_batches, start=1):
+            if workers > 1:
+                print(f"/* batch {batch_index}/{len(task_batches)}: recycling worker pool */")
+            future_map = {}
+            executor = None
+            scheduler_timed_out = False
+            try:
+                for item in batch:
+                    task_counter += 1
+                    print(f"[{task_counter}/{len(work_items)}] {item.cod_path} :: {item.label}")
+                    cached_result = _load_success_cache(item, timeout=args.timeout, max_memory_mb=worker_memory_limit_mb)
+                    if cached_result is not None:
+                        handle_result(item, cached_result)
                         continue
-                    handle_result(item, result)
-        finally:
-            if executor is not None:
-                executor.shutdown(wait=not scheduler_timed_out, cancel_futures=True)
+                    if executor is None:
+                        executor = _make_executor(max(1, workers), worker_memory_limit_mb)
+                    future = executor.submit(
+                        _run_work_item,
+                        item,
+                        timeout=args.timeout,
+                        max_memory_mb=worker_memory_limit_mb,
+                    )
+                    future_map[future] = item
 
-    for cod_path, writer in file_writers.items():
-        if not writer.closed:
-            writer.close()
-        if writer.received_count > 0 and not writer.reported and writer.out_path.exists():
-            writer.reported = True
-            print(f"  wrote {writer.out_path}")
+                if not future_map:
+                    continue
+                pending = set(future_map)
+                deadline = time.monotonic() + max(1, args.subprocess_timeout)
+                while pending:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        scheduler_timed_out = True
+                        for future in pending:
+                            item = future_map[future]
+                            failures += 1
+                            print(f"  timeout after {args.subprocess_timeout}s: {item.cod_path} :: {item.label}")
+                            writer = file_writers[item.cod_path]
+                            tail_validation_scanned += _append_uncollected_tail_validation_record(
+                                tail_validation_records,
+                                cod_path=item.cod_path,
+                                proc_name=item.proc_name,
+                                proc_kind=item.proc_kind,
+                                exit_kind="subprocess_timeout",
+                                exit_detail=f"worker pool scheduler timeout after {args.subprocess_timeout}s",
+                            )
+                            writer.add_failure(
+                                item.proc_index,
+                                f"/* timeout after {args.subprocess_timeout}s */",
+                            )
+                            if writer.is_complete():
+                                writer.close()
+                                writer.reported = True
+                                print(f"  wrote {writer.out_path}")
+                        break
 
-    aggregate = build_x86_16_tail_validation_aggregate(tail_validation_records, scanned=tail_validation_scanned)
-    baseline_path = args.tail_validation_baseline or _default_tail_validation_baseline_path(
-        args.cod_dir,
-        timeout=args.timeout,
-        cod_files=cod_files,
-        proc_names=args.proc_name,
-    )
-    baseline_payload = _load_tail_validation_baseline(baseline_path)
-    comparison = compare_x86_16_tail_validation_baseline(aggregate.get("summary", {}), baseline_payload)
-    surface = annotate_x86_16_tail_validation_surface_with_baseline(
-        dict(aggregate.get("surface", {}) or {}),
-        comparison,
-    )
-    console_cache_path = _default_tail_validation_console_cache_path(
-        args.cod_dir,
-        timeout=args.timeout,
-        cod_files=cod_files,
-        proc_names=args.proc_name,
-    )
-    detail_cache_path = _default_tail_validation_detail_path(
-        args.cod_dir,
-        timeout=args.timeout,
-        cod_files=cod_files,
-        proc_names=args.proc_name,
-    )
-    sys.stdout.flush()
-    emit_tail_validation_surface_summary(
-        records=tail_validation_records,
-        scanned=tail_validation_scanned,
-        summary=dict(aggregate.get("summary", {}) or {}),
-        surface=surface,
-        console_cache_path=console_cache_path,
-        detail_cache_path=detail_cache_path,
-    )
-    if args.write_tail_validation_baseline:
-        baseline = build_x86_16_tail_validation_baseline(aggregate.get("summary", {}))
-        _write_tail_validation_baseline(baseline_path, baseline)
-        print(f"{_TAIL_VALIDATION_STDERR_PREFIX}wrote baseline {baseline_path}", file=sys.stderr)
+                    done, pending = wait(pending, timeout=min(1.0, remaining), return_when=FIRST_COMPLETED)
+                    for future in done:
+                        item = future_map[future]
+                        try:
+                            result = future.result()
+                        except Exception as ex:  # pragma: no cover - defensive fallback
+                            handle_failure(item, ex)
+                            continue
+                        handle_result(item, result)
+            finally:
+                if executor is not None:
+                    executor.shutdown(wait=not scheduler_timed_out, cancel_futures=True)
 
-    elapsed = time.perf_counter() - start
-    print(f"done in {elapsed:.1f}s; failures={failures}/{len(work_items)}")
-    return 0 if failures == 0 else 1
+        for cod_path, writer in file_writers.items():
+            if not writer.closed:
+                writer.close()
+            if writer.received_count > 0 and not writer.reported and writer.out_path.exists():
+                writer.reported = True
+                print(f"  wrote {writer.out_path}")
+
+        aggregate = build_x86_16_tail_validation_aggregate(tail_validation_records, scanned=tail_validation_scanned)
+        baseline_path = args.tail_validation_baseline or _default_tail_validation_baseline_path(
+            args.cod_dir,
+            timeout=args.timeout,
+            cod_files=cod_files,
+            proc_names=args.proc_name,
+        )
+        baseline_payload = _load_tail_validation_baseline(baseline_path)
+        comparison = compare_x86_16_tail_validation_baseline(aggregate.get("summary", {}), baseline_payload)
+        surface = annotate_x86_16_tail_validation_surface_with_baseline(
+            dict(aggregate.get("surface", {}) or {}),
+            comparison,
+        )
+        console_cache_path = _default_tail_validation_console_cache_path(
+            args.cod_dir,
+            timeout=args.timeout,
+            cod_files=cod_files,
+            proc_names=args.proc_name,
+        )
+        detail_cache_path = _default_tail_validation_detail_path(
+            args.cod_dir,
+            timeout=args.timeout,
+            cod_files=cod_files,
+            proc_names=args.proc_name,
+        )
+        sys.stdout.flush()
+        emit_tail_validation_surface_summary(
+            records=tail_validation_records,
+            scanned=tail_validation_scanned,
+            summary=dict(aggregate.get("summary", {}) or {}),
+            surface=surface,
+            console_cache_path=console_cache_path,
+            detail_cache_path=detail_cache_path,
+        )
+        if args.write_tail_validation_baseline:
+            baseline = build_x86_16_tail_validation_baseline(aggregate.get("summary", {}))
+            _write_tail_validation_baseline(baseline_path, baseline)
+            print(f"{_TAIL_VALIDATION_STDERR_PREFIX}wrote baseline {baseline_path}", file=sys.stderr)
+
+        elapsed = time.perf_counter() - start
+        print(f"done in {elapsed:.1f}s; failures={failures}/{len(work_items)}")
+        return 0 if failures == 0 else 1
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+    if __name__ == "__main__":
+        raise SystemExit(main())
+
+    return _impl()

@@ -121,57 +121,51 @@ def _write_decl_and_name(api_style: str) -> tuple[str, str, str]:
     return spec.modern_decl or "int write(int fd, const void *buf, unsigned int count);", spec.modern_name, ""
 
 
-def _match_lookup_then_stderr_write(project, function) -> StructuredHelperRender | None:
-    insns = _decode_linear_insns(project, function.addr)
-    if len(insns) < 21:
-        return None
+def _matches_lookup_then_stderr_window_8616(window: list[CsInsn]) -> bool:
+    def _impl():
+        return (
+            _is_push_reg(window[0], X86_REG_BP)
+            and _is_mov_reg_reg(window[1], X86_REG_BP, X86_REG_SP)
+            and _is_push_reg(window[2], X86_REG_DI)
+            and _is_push_bp_plus_4(window[3])
+            and window[4].id == X86_INS_CALL
+            and window[5].id == X86_INS_OR
+            and _op_reg(window[5], 0) == X86_REG_AX
+            and _op_reg(window[5], 1) == X86_REG_AX
+            and window[6].id == X86_INS_JE
+            and window[7].id == X86_INS_XCHG
+            and {_op_reg(window[7], 0), _op_reg(window[7], 1)} == {X86_REG_AX, X86_REG_DX}
+            and _is_mov_reg_reg(window[8], X86_REG_DI, X86_REG_DX)
+            and window[9].id == X86_INS_XOR
+            and _op_reg(window[9], 0) == X86_REG_AX
+            and _op_reg(window[9], 1) == X86_REG_AX
+            and _is_mov_reg_imm(window[10], X86_REG_CX, 0xFFFF)
+            and window[11].id == X86_INS_REPE_SCASB
+            and window[12].id == X86_INS_NOT
+            and _op_reg(window[12], 0) == X86_REG_CX
+            and window[13].id == X86_INS_DEC
+            and _op_reg(window[13], 0) == X86_REG_CX
+            and _is_mov_reg_imm(window[14], X86_REG_BX, 2)
+            and _is_mov_reg_imm(window[15], X86_REG_AH, 0x40)
+            and window[16].id == X86_INS_INT
+            and _op_imm(window[16], 0) == 0x21
+            and _is_pop_reg(window[17], X86_REG_DI)
+            and _is_mov_reg_reg(window[18], X86_REG_SP, X86_REG_BP)
+            and _is_pop_reg(window[19], X86_REG_BP)
+            and _is_ret_imm(window[20], 2)
+        )
 
-    window = insns[:21]
-    if not (
-        _is_push_reg(window[0], X86_REG_BP)
-        and _is_mov_reg_reg(window[1], X86_REG_BP, X86_REG_SP)
-        and _is_push_reg(window[2], X86_REG_DI)
-        and _is_push_bp_plus_4(window[3])
-        and window[4].id == X86_INS_CALL
-        and window[5].id == X86_INS_OR
-        and _op_reg(window[5], 0) == X86_REG_AX
-        and _op_reg(window[5], 1) == X86_REG_AX
-        and window[6].id == X86_INS_JE
-        and window[7].id == X86_INS_XCHG
-        and {_op_reg(window[7], 0), _op_reg(window[7], 1)} == {X86_REG_AX, X86_REG_DX}
-        and _is_mov_reg_reg(window[8], X86_REG_DI, X86_REG_DX)
-        and window[9].id == X86_INS_XOR
-        and _op_reg(window[9], 0) == X86_REG_AX
-        and _op_reg(window[9], 1) == X86_REG_AX
-        and _is_mov_reg_imm(window[10], X86_REG_CX, 0xFFFF)
-        and window[11].id == X86_INS_REPE_SCASB
-        and window[12].id == X86_INS_NOT
-        and _op_reg(window[12], 0) == X86_REG_CX
-        and window[13].id == X86_INS_DEC
-        and _op_reg(window[13], 0) == X86_REG_CX
-        and _is_mov_reg_imm(window[14], X86_REG_BX, 2)
-        and _is_mov_reg_imm(window[15], X86_REG_AH, 0x40)
-        and window[16].id == X86_INS_INT
-        and _op_imm(window[16], 0) == 0x21
-        and _is_pop_reg(window[17], X86_REG_DI)
-        and _is_mov_reg_reg(window[18], X86_REG_SP, X86_REG_BP)
-        and _is_pop_reg(window[19], X86_REG_BP)
-        and _is_ret_imm(window[20], 2)
-    ):
-        return None
+    return _impl()
 
-    call_target = _op_imm(window[4], 0)
-    if call_target is None:
-        return None
-    helper_name = _resolved_helper_name(project, call_target)
+
+def _render_lookup_then_stderr_c_text_8616(function_name: str, helper_name: str) -> str | None:
     write_decl, write_name, pointer_cast = _write_decl_and_name("modern")
     if normalize_api_style("modern") != "modern":
         return None
-    func_name = getattr(function, "name", None) or f"sub_{function.addr:x}"
-    c_text = (
+    return (
         f"{write_decl}\n"
         f"const char *{helper_name}(unsigned short a1);\n\n"
-        f"int {func_name}(unsigned short a1)\n"
+        f"int {function_name}(unsigned short a1)\n"
         "{\n"
         "    const char *message;\n"
         "    unsigned int length;\n\n"
@@ -184,6 +178,25 @@ def _match_lookup_then_stderr_write(project, function) -> StructuredHelperRender
         f"    return {write_name}(2, {pointer_cast}message, length);\n"
         "}\n"
     )
+
+
+def _match_lookup_then_stderr_write(project, function) -> StructuredHelperRender | None:
+    insns = _decode_linear_insns(project, function.addr)
+    if len(insns) < 21:
+        return None
+
+    window = insns[:21]
+    if not _matches_lookup_then_stderr_window_8616(window):
+        return None
+
+    call_target = _op_imm(window[4], 0)
+    if call_target is None:
+        return None
+    helper_name = _resolved_helper_name(project, call_target)
+    func_name = getattr(function, "name", None) or f"sub_{function.addr:x}"
+    c_text = _render_lookup_then_stderr_c_text_8616(func_name, helper_name)
+    if c_text is None:
+        return None
     return StructuredHelperRender(c_text=c_text, family="lookup_then_stderr_write")
 
 

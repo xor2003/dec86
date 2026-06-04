@@ -243,25 +243,28 @@ def _parse_type_record(record: bytes) -> tuple[CodeViewNB00TypeLeaf, ...]:
 
 
 def _read_leaf(record: bytes, offset: int) -> tuple[CodeViewNB00TypeLeaf, int]:
-    if offset >= len(record):
-        return CodeViewNB00TypeLeaf("invalid", None), 0
-    tag = record[offset]
-    if tag <= 0x7F:
-        return CodeViewNB00TypeLeaf("int8", tag), 1
-    if tag == 0x89 and offset + 3 <= len(record):
-        return CodeViewNB00TypeLeaf("uint16", struct.unpack_from("<H", record, offset + 1)[0]), 3
-    if tag == 0x8A and offset + 5 <= len(record):
-        return CodeViewNB00TypeLeaf("uint32", struct.unpack_from("<I", record, offset + 1)[0]), 5
-    if tag == 0x8D and offset + 2 <= len(record):
-        strlen = record[offset + 1]
-        end = offset + 2 + strlen
-        if end <= len(record):
-            return CodeViewNB00TypeLeaf("string", record[offset + 2 : end].decode("ascii", errors="ignore")), 2 + strlen
-    if tag == 0x83 and offset + 3 <= len(record):
-        return CodeViewNB00TypeLeaf("index", struct.unpack_from("<H", record, offset + 1)[0]), 3
-    if tag in {0x8B, 0x8C, 0x8E, 0x8F, 0x92, 0x94}:
-        return CodeViewNB00TypeLeaf(f"leaf_{tag:02x}", None), 1
-    return CodeViewNB00TypeLeaf(f"unknown_{tag:02x}", None), 1
+    def _impl():
+        if offset >= len(record):
+            return CodeViewNB00TypeLeaf("invalid", None), 0
+        tag = record[offset]
+        if tag <= 0x7F:
+            return CodeViewNB00TypeLeaf("int8", tag), 1
+        if tag == 0x89 and offset + 3 <= len(record):
+            return CodeViewNB00TypeLeaf("uint16", struct.unpack_from("<H", record, offset + 1)[0]), 3
+        if tag == 0x8A and offset + 5 <= len(record):
+            return CodeViewNB00TypeLeaf("uint32", struct.unpack_from("<I", record, offset + 1)[0]), 5
+        if tag == 0x8D and offset + 2 <= len(record):
+            strlen = record[offset + 1]
+            end = offset + 2 + strlen
+            if end <= len(record):
+                return CodeViewNB00TypeLeaf("string", record[offset + 2 : end].decode("ascii", errors="ignore")), 2 + strlen
+        if tag == 0x83 and offset + 3 <= len(record):
+            return CodeViewNB00TypeLeaf("index", struct.unpack_from("<H", record, offset + 1)[0]), 3
+        if tag in {0x8B, 0x8C, 0x8E, 0x8F, 0x92, 0x94}:
+            return CodeViewNB00TypeLeaf(f"leaf_{tag:02x}", None), 1
+        return CodeViewNB00TypeLeaf(f"unknown_{tag:02x}", None), 1
+
+    return _impl()
 
 
 def _public_is_code_symbol(
@@ -284,27 +287,30 @@ def _synthesize_code_ranges(
     *,
     load_base_linear: int,
 ) -> dict[int, tuple[int, int]]:
-    module_ranges = {
-        module.module_index: module.linear_range(load_base_linear=load_base_linear)
-        for module in modules
-        if module.cs_length > 0
-    }
-    by_module: dict[int, list[int]] = {}
-    for symbol in publics:
-        if symbol.segment != 0 and symbol.module_index not in module_ranges:
-            continue
-        linear = symbol.linear_addr(load_base_linear=load_base_linear)
-        module_range = module_ranges.get(symbol.module_index)
-        if module_range is None or not (module_range[0] <= linear < module_range[1]):
-            continue
-        by_module.setdefault(symbol.module_index, []).append(linear)
+    def _impl():
+        module_ranges = {
+            module.module_index: module.linear_range(load_base_linear=load_base_linear)
+            for module in modules
+            if module.cs_length > 0
+        }
+        by_module: dict[int, list[int]] = {}
+        for symbol in publics:
+            if symbol.segment != 0 and symbol.module_index not in module_ranges:
+                continue
+            linear = symbol.linear_addr(load_base_linear=load_base_linear)
+            module_range = module_ranges.get(symbol.module_index)
+            if module_range is None or not (module_range[0] <= linear < module_range[1]):
+                continue
+            by_module.setdefault(symbol.module_index, []).append(linear)
 
-    ranges: dict[int, tuple[int, int]] = {}
-    for module_index, starts in by_module.items():
-        start_end = module_ranges[module_index][1]
-        ordered = sorted(set(starts))
-        for index, start in enumerate(ordered):
-            end = ordered[index + 1] if index + 1 < len(ordered) else start_end
-            if start < end:
-                ranges[start] = (start, end)
-    return ranges
+        ranges: dict[int, tuple[int, int]] = {}
+        for module_index, starts in by_module.items():
+            start_end = module_ranges[module_index][1]
+            ordered = sorted(set(starts))
+            for index, start in enumerate(ordered):
+                end = ordered[index + 1] if index + 1 < len(ordered) else start_end
+                if start < end:
+                    ranges[start] = (start, end)
+        return ranges
+
+    return _impl()

@@ -31,36 +31,39 @@ class CachedSidecarMetadata:
 
 
 def _maybe_rebase_stale_absolute_metadata(metadata: LSTMetadata, project) -> LSTMetadata:
-    main_object = getattr(getattr(project, "loader", None), "main_object", None)
-    linked_base = getattr(main_object, "linked_base", 0) or 0
-    if linked_base <= 0:
-        return metadata
-    if not metadata.absolute_addrs:
-        return metadata
-    if "cod_listing" not in (metadata.source_format or ""):
-        return metadata
-    code_keys = tuple(metadata.code_labels.keys())
-    if not code_keys:
-        return metadata
-    if max(code_keys) >= linked_base:
-        return metadata
-    if getattr(project, "entry", 0) < linked_base:
-        return metadata
-    shift = linked_base
-    return LSTMetadata(
-        data_labels={addr + shift: name for addr, name in metadata.data_labels.items()},
-        code_labels={addr + shift: name for addr, name in metadata.code_labels.items()},
-        code_ranges={
-            addr + shift: (start + shift, end + shift)
-            for addr, (start, end) in metadata.code_ranges.items()
-        },
-        signature_code_addrs=frozenset(addr + shift for addr in metadata.signature_code_addrs),
-        absolute_addrs=True,
-        source_format=metadata.source_format,
-        struct_names=metadata.struct_names,
-        cod_path=metadata.cod_path,
-        cod_proc_kinds={addr + shift: kind for addr, kind in metadata.cod_proc_kinds.items()},
-    )
+    def _impl():
+        main_object = getattr(getattr(project, "loader", None), "main_object", None)
+        linked_base = getattr(main_object, "linked_base", 0) or 0
+        if linked_base <= 0:
+            return metadata
+        if not metadata.absolute_addrs:
+            return metadata
+        if "cod_listing" not in (metadata.source_format or ""):
+            return metadata
+        code_keys = tuple(metadata.code_labels.keys())
+        if not code_keys:
+            return metadata
+        if max(code_keys) >= linked_base:
+            return metadata
+        if getattr(project, "entry", 0) < linked_base:
+            return metadata
+        shift = linked_base
+        return LSTMetadata(
+            data_labels={addr + shift: name for addr, name in metadata.data_labels.items()},
+            code_labels={addr + shift: name for addr, name in metadata.code_labels.items()},
+            code_ranges={
+                addr + shift: (start + shift, end + shift)
+                for addr, (start, end) in metadata.code_ranges.items()
+            },
+            signature_code_addrs=frozenset(addr + shift for addr in metadata.signature_code_addrs),
+            absolute_addrs=True,
+            source_format=metadata.source_format,
+            struct_names=metadata.struct_names,
+            cod_path=metadata.cod_path,
+            cod_proc_kinds={addr + shift: kind for addr, kind in metadata.cod_proc_kinds.items()},
+        )
+
+    return _impl()
 
 
 def sidecar_metadata_cache_key(

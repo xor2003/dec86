@@ -91,33 +91,36 @@ class AccessTraitEvidenceProfile:
         )
 
     def best_rewrite_kind(self, base_key: tuple[object, ...] | None = None) -> str | None:
-        if base_key is not None and base_key and base_key[0] == "stack" and self.stack_like:
-            return "stack"
-        structured_counts: dict[str, int] = {}
-        for evidence in self.induction_evidence + self.stride_evidence:
-            structured_counts[evidence.kind] = structured_counts.get(evidence.kind, 0) + max(int(evidence.count), 1)
-        if structured_counts:
-            dominant_kind = max(
-                structured_counts.items(),
-                key=lambda item: (item[1], {"induction_like": 3, "array_like": 2, "member_like": 1}.get(item[0], 0), item[0]),
-            )[0]
-            if dominant_kind == "induction_like":
-                return "induction"
-            if dominant_kind == "array_like":
+        def _impl():
+            if base_key is not None and base_key and base_key[0] == "stack" and self.stack_like:
+                return "stack"
+            structured_counts: dict[str, int] = {}
+            for evidence in self.induction_evidence + self.stride_evidence:
+                structured_counts[evidence.kind] = structured_counts.get(evidence.kind, 0) + max(int(evidence.count), 1)
+            if structured_counts:
+                dominant_kind = max(
+                    structured_counts.items(),
+                    key=lambda item: (item[1], {"induction_like": 3, "array_like": 2, "member_like": 1}.get(item[0], 0), item[0]),
+                )[0]
+                if dominant_kind == "induction_like":
+                    return "induction"
+                if dominant_kind == "array_like":
+                    return "array"
+                if dominant_kind == "member_like":
+                    return "member"
+            if self.member_like and self.array_like:
+                return None
+            if self.array_like:
                 return "array"
-            if dominant_kind == "member_like":
+            if self.member_like:
                 return "member"
-        if self.member_like and self.array_like:
+            if self.induction_like:
+                return "induction"
+            if self.stack_like:
+                return "stack"
             return None
-        if self.array_like:
-            return "array"
-        if self.member_like:
-            return "member"
-        if self.induction_like:
-            return "induction"
-        if self.stack_like:
-            return "stack"
-        return None
+
+        return _impl()
 
 
 def infer_induction_variable(profile: AccessTraitEvidenceProfile) -> AccessTraitInductionVar | None:
@@ -135,34 +138,37 @@ def infer_induction_variable(profile: AccessTraitEvidenceProfile) -> AccessTrait
 
 
 def infer_induction_summary(profile: AccessTraitEvidenceProfile) -> InductionSummary | None:
-    candidates = tuple(
-        evidence
-        for evidence in profile.induction_evidence + profile.stride_evidence
-        if evidence.kind == "induction_like"
-    )
-    if not candidates:
-        return None
+    def _impl():
+        candidates = tuple(
+            evidence
+            for evidence in profile.induction_evidence + profile.stride_evidence
+            if evidence.kind == "induction_like"
+        )
+        if not candidates:
+            return None
 
-    stride_set = {int(evidence.stride) for evidence in candidates}
-    index_keys = {evidence.index_key for evidence in candidates}
-    base_keys = {evidence.base_key for evidence in candidates}
-    widths = {int(evidence.width) for evidence in candidates}
-    if len(stride_set) != 1 or len(index_keys) != 1 or len(base_keys) != 1 or len(widths) != 1:
-        return None
+        stride_set = {int(evidence.stride) for evidence in candidates}
+        index_keys = {evidence.index_key for evidence in candidates}
+        base_keys = {evidence.base_key for evidence in candidates}
+        widths = {int(evidence.width) for evidence in candidates}
+        if len(stride_set) != 1 or len(index_keys) != 1 or len(base_keys) != 1 or len(widths) != 1:
+            return None
 
-    best = max(candidates, key=lambda evidence: (int(evidence.count), int(evidence.width), -abs(int(evidence.offset))))
-    if int(best.count) < 2:
-        return None
-    return InductionSummary(
-        base_key=best.base_key,
-        index_key=best.index_key,
-        stride=int(best.stride),
-        direction="decrement" if int(best.stride) < 0 else "increment",
-        bound_candidate=int(best.offset) if int(best.offset) != 0 else None,
-        width=int(best.width),
-        offset=int(best.offset),
-        count=int(best.count),
-    )
+        best = max(candidates, key=lambda evidence: (int(evidence.count), int(evidence.width), -abs(int(evidence.offset))))
+        if int(best.count) < 2:
+            return None
+        return InductionSummary(
+            base_key=best.base_key,
+            index_key=best.index_key,
+            stride=int(best.stride),
+            direction="decrement" if int(best.stride) < 0 else "increment",
+            bound_candidate=int(best.offset) if int(best.offset) != 0 else None,
+            width=int(best.width),
+            offset=int(best.offset),
+            count=int(best.count),
+        )
+
+    return _impl()
 
 
 @dataclass(frozen=True)

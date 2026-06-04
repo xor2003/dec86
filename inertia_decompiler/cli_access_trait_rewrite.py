@@ -112,111 +112,114 @@ def _attach_pointer_member_names(
     access_trait_field_name: Callable[[int, int], str],
     replace_c_children: ReplaceCChildren,
 ) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
-        return False
-    if not should_attach_access_trait_names(codegen):
-        return False
-    artifact = load_access_rewrite_artifact(project, getattr(codegen.cfunc, "addr", None))
-    if artifact is None or not artifact.object_hints:
-        return False
-    object_hints = artifact.object_hints
+    def _impl():
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+        if not should_attach_access_trait_names(codegen):
+            return False
+        artifact = load_access_rewrite_artifact(project, getattr(codegen.cfunc, "addr", None))
+        if artifact is None or not artifact.object_hints:
+            return False
+        object_hints = artifact.object_hints
 
-    def is_generic_name(name: object) -> bool:
-        return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
+        def is_generic_name(name: object) -> bool:
+            return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
 
-    def candidate_field_names(base_key: BaseKey) -> tuple[str, ...]:
-        if base_key in artifact.refusal_reasons or (len(base_key) == 4 and base_key[:3] in artifact.refusal_reasons):
-            return ()
-        hint = stable_access_object_hint_for_key(object_hints, base_key)
-        if hint is None:
-            return ()
-        if hint.kind not in {"member", "array", "induction"}:
-            return ()
-        return hint.candidate_field_names(access_trait_field_name=access_trait_field_name)
+        def candidate_field_names(base_key: BaseKey) -> tuple[str, ...]:
+            if base_key in artifact.refusal_reasons or (len(base_key) == 4 and base_key[:3] in artifact.refusal_reasons):
+                return ()
+            hint = stable_access_object_hint_for_key(object_hints, base_key)
+            if hint is None:
+                return ()
+            if hint.kind not in {"member", "array", "induction"}:
+                return ()
+            return hint.candidate_field_names(access_trait_field_name=access_trait_field_name)
 
-    changed = False
-    assigned_names: dict[int, str] = {}
-    name_cursors: dict[BaseKey, int] = {}
+        changed = False
+        assigned_names: dict[int, str] = {}
+        name_cursors: dict[BaseKey, int] = {}
 
-    def assign_member_name(base_key: BaseKey) -> str | None:
-        names = candidate_field_names(base_key)
-        if not names:
-            return None
-        index = name_cursors.get(base_key, 0)
-        if index < len(names):
-            field_name = names[index]
-            name_cursors[base_key] = index + 1
-            return field_name
-        return names[-1]
+        def assign_member_name(base_key: BaseKey) -> str | None:
+            names = candidate_field_names(base_key)
+            if not names:
+                return None
+            index = name_cursors.get(base_key, 0)
+            if index < len(names):
+                field_name = names[index]
+                name_cursors[base_key] = index + 1
+                return field_name
+            return names[-1]
 
-    variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
-    if isinstance(variables_in_use, dict):
-        for variable, cvar in list(variables_in_use.items()):
+        variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+        if isinstance(variables_in_use, dict):
+            for variable, cvar in list(variables_in_use.items()):
+                if not isinstance(variable, (SimRegisterVariable, SimStackVariable, SimMemoryVariable)):
+                    continue
+                if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(getattr(cvar, "name", None)):
+                    continue
+                base_key = access_trait_variable_key(variable)
+                if base_key is None:
+                    continue
+                field_name = assign_member_name(base_key)
+                if field_name is None:
+                    continue
+                target = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
+                if target is not None and getattr(target, "name", None) != field_name:
+                    target.name = field_name
+                    changed = True
+                if getattr(variable, "name", None) != field_name:
+                    variable.name = field_name
+                    changed = True
+                if getattr(cvar, "name", None) != field_name:
+                    setattr(cvar, "name", field_name)
+                    changed = True
+                assigned_names[id(variable)] = field_name
+
+        def rename_member_variable(cvar: Any) -> Any:
+            nonlocal changed
+            if not isinstance(cvar, structured_c.CVariable):
+                return None
+            variable = getattr(cvar, "variable", None)
             if not isinstance(variable, (SimRegisterVariable, SimStackVariable, SimMemoryVariable)):
-                continue
+                return None
             if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(getattr(cvar, "name", None)):
-                continue
+                return None
             base_key = access_trait_variable_key(variable)
             if base_key is None:
-                continue
-            field_name = assign_member_name(base_key)
+                return None
+            field_name = assigned_names.get(id(variable))
             if field_name is None:
-                continue
-            target = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
-            if target is not None and getattr(target, "name", None) != field_name:
-                target.name = field_name
-                changed = True
+                field_name = assign_member_name(base_key)
+            if field_name is None:
+                return None
             if getattr(variable, "name", None) != field_name:
                 variable.name = field_name
                 changed = True
             if getattr(cvar, "name", None) != field_name:
-                setattr(cvar, "name", field_name)
-                changed = True
-            assigned_names[id(variable)] = field_name
+                try:
+                    setattr(cvar, "name", field_name)
+                except Exception:
+                    pass
+                else:
+                    changed = True
+            return cvar
 
-    def rename_member_variable(cvar: Any) -> Any:
-        nonlocal changed
-        if not isinstance(cvar, structured_c.CVariable):
-            return None
-        variable = getattr(cvar, "variable", None)
-        if not isinstance(variable, (SimRegisterVariable, SimStackVariable, SimMemoryVariable)):
-            return None
-        if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(getattr(cvar, "name", None)):
-            return None
-        base_key = access_trait_variable_key(variable)
-        if base_key is None:
-            return None
-        field_name = assigned_names.get(id(variable))
-        if field_name is None:
-            field_name = assign_member_name(base_key)
-        if field_name is None:
-            return None
-        if getattr(variable, "name", None) != field_name:
-            variable.name = field_name
+        def transform(node: Any) -> Any:
+            if isinstance(node, structured_c.CVariable):
+                renamed = rename_member_variable(node)
+                if renamed is not None:
+                    return renamed
+            return node
+
+        root = codegen.cfunc.statements
+        new_root = transform(root)
+        if new_root is not root:
+            codegen.cfunc.statements = new_root
+            root = new_root
             changed = True
-        if getattr(cvar, "name", None) != field_name:
-            try:
-                setattr(cvar, "name", field_name)
-            except Exception:
-                pass
-            else:
-                changed = True
-        return cvar
+        if replace_c_children(root, transform):
+            changed = True
+        return changed
 
-    def transform(node: Any) -> Any:
-        if isinstance(node, structured_c.CVariable):
-            renamed = rename_member_variable(node)
-            if renamed is not None:
-                return renamed
-        return node
-
-    root = codegen.cfunc.statements
-    new_root = transform(root)
-    if new_root is not root:
-        codegen.cfunc.statements = new_root
-        root = new_root
-        changed = True
-    if replace_c_children(root, transform):
-        changed = True
-    return changed
+    return _impl()
 

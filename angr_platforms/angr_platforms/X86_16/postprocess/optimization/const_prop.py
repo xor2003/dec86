@@ -55,69 +55,75 @@ def _is_const_expr(node) -> bool:
 
 
 def _eval_const_expr(node) -> int | None:
-    if isinstance(node, CConstant):
-        return _c_constant_value_8616(node)
-    if isinstance(node, CBinaryOp):
-        a = _eval_const_expr(node.lhs)
-        b = _eval_const_expr(node.rhs)
-        if a is None or b is None:
-            return None
-        fn = _CONST_PROP_BINARY_OPS.get(node.op)
-        if fn is None:
-            return None
-        result = fn(a, b)
-        return _c_constant_value_8616(result) if isinstance(result, CConstant) else None
-    if isinstance(node, CUnaryOp):
-        operand = _eval_const_expr(node.operand)
-        if operand is None:
-            return None
-        if node.op == "Neg":
-            return -operand
-        if node.op == "Not":
-            return int(not operand)
-    return None
+    def _impl():
+        if isinstance(node, CConstant):
+            return _c_constant_value_8616(node)
+        if isinstance(node, CBinaryOp):
+            a = _eval_const_expr(node.lhs)
+            b = _eval_const_expr(node.rhs)
+            if a is None or b is None:
+                return None
+            fn = _CONST_PROP_BINARY_OPS.get(node.op)
+            if fn is None:
+                return None
+            result = fn(a, b)
+            return _c_constant_value_8616(result) if isinstance(result, CConstant) else None
+        if isinstance(node, CUnaryOp):
+            operand = _eval_const_expr(node.operand)
+            if operand is None:
+                return None
+            if node.op == "Neg":
+                return -operand
+            if node.op == "Not":
+                return int(not operand)
+        return None
+
+    return _impl()
 
 
 def _fold_constants_in_node(node) -> bool:
-    """Fold constant sub-expressions in-place. Returns True if any folding occurred."""
-    changed = False
+    def _impl():
+        """Fold constant sub-expressions in-place. Returns True if any folding occurred."""
+        changed = False
 
-    if isinstance(node, CBinaryOp):
-        a_val = _eval_const_expr(node.lhs)
-        b_val = _eval_const_expr(node.rhs)
-        if a_val is not None and b_val is not None:
-            fn = _CONST_PROP_BINARY_OPS.get(node.op)
-            if fn is not None:
-                result = fn(a_val, b_val)
-                if isinstance(result, CConstant):
-                    node.lhs = result
-                    node.rhs = CConstant(0, _CONST_DEFAULT_TYPE)
-                    node.op = "Add"
+        if isinstance(node, CBinaryOp):
+            a_val = _eval_const_expr(node.lhs)
+            b_val = _eval_const_expr(node.rhs)
+            if a_val is not None and b_val is not None:
+                fn = _CONST_PROP_BINARY_OPS.get(node.op)
+                if fn is not None:
+                    result = fn(a_val, b_val)
+                    if isinstance(result, CConstant):
+                        node.lhs = result
+                        node.rhs = CConstant(0, _CONST_DEFAULT_TYPE)
+                        node.op = "Add"
+                        changed = True
+                        return changed
+
+            # Fold: X + 0 → X, X - 0 → X
+            if isinstance(node.rhs, CConstant):
+                rhs_val = _c_constant_value_8616(node.rhs)
+                if rhs_val == 0 and node.op in ("Add", "Sub"):
                     changed = True
                     return changed
 
-        # Fold: X + 0 → X, X - 0 → X
-        if isinstance(node.rhs, CConstant):
-            rhs_val = _c_constant_value_8616(node.rhs)
-            if rhs_val == 0 and node.op in ("Add", "Sub"):
-                changed = True
-                return changed
+        if isinstance(node, CUnaryOp):
+            operand_val = _eval_const_expr(node.operand)
+            if operand_val is not None:
+                if node.op == "Neg":
+                    result = CConstant(-operand_val, _CONST_DEFAULT_TYPE)
+                    node.operand = result
+                    changed = True
+                    return changed
+                if node.op == "Not":
+                    result = CConstant(int(not operand_val), _CONST_DEFAULT_TYPE)
+                    node.operand = result
+                    changed = True
+                    return changed
 
-    if isinstance(node, CUnaryOp):
-        operand_val = _eval_const_expr(node.operand)
-        if operand_val is not None:
-            if node.op == "Neg":
-                result = CConstant(-operand_val, _CONST_DEFAULT_TYPE)
-                node.operand = result
-                changed = True
-                return changed
-            if node.op == "Not":
-                result = CConstant(int(not operand_val), _CONST_DEFAULT_TYPE)
-                node.operand = result
-                changed = True
-                return changed
+        return changed
 
-    return changed
+    return _impl()
 
 
 def _constant_propagation_8616(stmts, codegen=None):

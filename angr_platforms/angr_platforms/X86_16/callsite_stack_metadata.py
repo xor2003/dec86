@@ -127,17 +127,59 @@ class StackCarrierPruneDecision8616(enum.Enum):
     UNKNOWN_REFUSE = "unknown_refuse"
 
 
+class SafeDeadCarrierPruneMode8616(enum.Enum):
+    DISABLED = "disabled"
+    DIAGNOSTIC = "diagnostic"
+    PRODUCTION = "production"
+
+
+def _safe_dead_carrier_prune_mode_8616(codegen: object | None) -> SafeDeadCarrierPruneMode8616:
+    def _impl():
+        mode = os.environ.get("INERTIA_SAFE_DEAD_CARRIER_PRUNE_MODE", "").strip().lower()
+        if mode in {"disabled", "off", "0", "false", "no"}:
+            return SafeDeadCarrierPruneMode8616.DISABLED
+        if mode in {"diagnostic", "diag"}:
+            return SafeDeadCarrierPruneMode8616.DIAGNOSTIC
+        if mode in {"production", "prod", "on", "1", "true", "yes"}:
+            return SafeDeadCarrierPruneMode8616.PRODUCTION
+        flag = os.environ.get("INERTIA_ENABLE_SAFE_DEAD_CARRIER_PRUNE", "").strip().lower()
+        if flag in {"1", "true", "yes", "on"}:
+            return SafeDeadCarrierPruneMode8616.PRODUCTION
+        if flag in {"0", "false", "off", "no"}:
+            return SafeDeadCarrierPruneMode8616.DISABLED
+
+        legacy_disable = os.environ.get("INERTIA_DISABLE_SAFE_DEAD_CARRIER_PRUNE", "").strip().lower()
+        if legacy_disable in {"1", "true", "yes", "on"}:
+            return SafeDeadCarrierPruneMode8616.DISABLED
+        if legacy_disable in {"0", "false", "off", "no"}:
+            return SafeDeadCarrierPruneMode8616.DIAGNOSTIC
+
+        if codegen is not None:
+            explicit_mode = getattr(codegen, "_inertia_safe_dead_carrier_prune_mode", None)
+            if isinstance(explicit_mode, SafeDeadCarrierPruneMode8616):
+                return explicit_mode
+            if isinstance(explicit_mode, str):
+                explicit = explicit_mode.strip().lower()
+                if explicit in {"disabled", "off", "0", "false", "no"}:
+                    return SafeDeadCarrierPruneMode8616.DISABLED
+                if explicit in {"diagnostic", "diag"}:
+                    return SafeDeadCarrierPruneMode8616.DIAGNOSTIC
+                if explicit in {"production", "prod", "on", "1", "true", "yes"}:
+                    return SafeDeadCarrierPruneMode8616.PRODUCTION
+            attr = getattr(codegen, "_inertia_enable_safe_dead_carrier_prune", None)
+            if isinstance(attr, bool):
+                return SafeDeadCarrierPruneMode8616.PRODUCTION if attr else SafeDeadCarrierPruneMode8616.DISABLED
+
+        # Conservative default keeps proof and avoids semantic regression.
+        return SafeDeadCarrierPruneMode8616.DIAGNOSTIC
+
+    return _impl()
+
+
 def _safe_dead_carrier_prune_enabled_8616(codegen: object | None) -> bool:
     # Emergency kill switch.
-    flag_disable = os.environ.get("INERTIA_DISABLE_SAFE_DEAD_CARRIER_PRUNE", "").strip().lower()
-    if flag_disable in {"1", "true", "yes", "on"}:
-        return False
-    if codegen is not None:
-        attr = getattr(codegen, "_inertia_enable_safe_dead_carrier_prune", None)
-        if isinstance(attr, bool):
-            return attr
-    # Production default.
-    return True
+    mode = _safe_dead_carrier_prune_mode_8616(codegen)
+    return mode == SafeDeadCarrierPruneMode8616.PRODUCTION
 
 
 def _callsite_materialization_complete_8616(codegen: object | None) -> bool:
@@ -257,54 +299,63 @@ def _classify_dead_carrier_candidate_8616(
     statements: list[object],
     codegen: object | None,
 ) -> StackCarrierPruneDecision8616:
-    if _stmt_has_memory_write_8616(stmt):
-        return StackCarrierPruneDecision8616.LIVE_MEMORY_WRITE
-    if lhs_key in live:
-        return StackCarrierPruneDecision8616.LIVE_STACK_CARRIER
-    if _carrier_key_protected_8616(lhs_key, codegen):
-        return StackCarrierPruneDecision8616.LIVE_WIDENING_CARRIER
-    if _stmt_has_call_8616(stmt):
-        return StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP
-    # Keep setup around call boundaries only when the call actually references
-    # this carrier key.
-    for near in (stmt_index - 1, stmt_index + 1):
-        if (
-            near in call_indices
-            and 0 <= near < len(statements)
-            and _stmt_uses_carrier_key_8616(statements[near], lhs_key)
-        ):
+    def _impl():
+        if _stmt_has_memory_write_8616(stmt):
+            return StackCarrierPruneDecision8616.LIVE_MEMORY_WRITE
+        if lhs_key in live:
+            return StackCarrierPruneDecision8616.LIVE_STACK_CARRIER
+        if _carrier_key_protected_8616(lhs_key, codegen):
+            return StackCarrierPruneDecision8616.LIVE_WIDENING_CARRIER
+        if _stmt_has_call_8616(stmt):
             return StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP
-    if _generic_stack_carrier_keys_8616(rhs).intersection(known_carriers):
-        # If RHS references other carrier keys, preserve unless we can prove the
-        # entire chain is dead; conservative by default.
-        return StackCarrierPruneDecision8616.UNKNOWN_REFUSE
-    return StackCarrierPruneDecision8616.DEFINITELY_DEAD
+        # Keep setup around call boundaries only when the call actually references
+        # this carrier key.
+        for near in (stmt_index - 1, stmt_index + 1):
+            if (
+                near in call_indices
+                and 0 <= near < len(statements)
+                and _stmt_uses_carrier_key_8616(statements[near], lhs_key)
+            ):
+                return StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP
+        if _generic_stack_carrier_keys_8616(rhs).intersection(known_carriers):
+            # If RHS references other carrier keys, preserve unless we can prove the
+            # entire chain is dead; conservative by default.
+            referenced_carriers = _generic_stack_carrier_keys_8616(rhs).intersection(known_carriers)
+            if referenced_carriers.intersection(live):
+                return StackCarrierPruneDecision8616.LIVE_STACK_CARRIER
+            return StackCarrierPruneDecision8616.DEFINITELY_DEAD
+        return StackCarrierPruneDecision8616.DEFINITELY_DEAD
+
+    return _impl()
 
 
 def _expr_is_pure_stack_address_carrier_8616(
     expr: object,
     known_carriers: set[CarrierKey8616] | None = None,
 ) -> bool:
-    """Return true for side-effect-free stack-address shuttle expressions."""
-    node = expr
-    while isinstance(node, CTypeCast):
-        node = node.expr
-    if isinstance(node, CFunctionCall):
-        return False
-    if isinstance(node, CUnaryOp):
-        if node.op == "Dereference":
+    def _impl():
+        """Return true for side-effect-free stack-address shuttle expressions."""
+        node = expr
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        if isinstance(node, CFunctionCall):
             return False
-        if node.op == "Reference":
-            return True
-        return _expr_is_pure_stack_address_carrier_8616(getattr(node, "operand", None), known_carriers)
-    if isinstance(node, CBinaryOp):
-        if node.op not in {"Add", "Sub", "Mul", "Shl", "Shr", "And", "Or", "Xor"}:
-            return False
-        return _expr_is_pure_stack_address_carrier_8616(
-            node.lhs, known_carriers
-        ) or _expr_is_pure_stack_address_carrier_8616(node.rhs, known_carriers)
-    key = _stack_carrier_key_8616(node)
-    return key is not None and (_generic_stack_carrier_name_8616(node) is not None or key in (known_carriers or set()))
+        if isinstance(node, CUnaryOp):
+            if node.op == "Dereference":
+                return False
+            if node.op == "Reference":
+                return True
+            return _expr_is_pure_stack_address_carrier_8616(getattr(node, "operand", None), known_carriers)
+        if isinstance(node, CBinaryOp):
+            if node.op not in {"Add", "Sub", "Mul", "Shl", "Shr", "And", "Or", "Xor"}:
+                return False
+            return _expr_is_pure_stack_address_carrier_8616(
+                node.lhs, known_carriers
+            ) or _expr_is_pure_stack_address_carrier_8616(node.rhs, known_carriers)
+        key = _stack_carrier_key_8616(node)
+        return key is not None and (_generic_stack_carrier_name_8616(node) is not None or key in (known_carriers or set()))
+
+    return _impl()
 
 
 def _dead_stack_carrier_assignment_8616(
@@ -345,97 +396,105 @@ def _collect_stack_carrier_assignments_8616(block: object) -> set[CarrierKey8616
 
 
 def _prune_dead_stack_carrier_assignments_8616(block: object, codegen: object | None = None) -> bool:
-    """Remove dead generic address carriers left after call arguments are materialized."""
-    if not _safe_dead_carrier_prune_enabled_8616(codegen):
-        _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
-        _bump_dead_setup_counter_8616(codegen, "dead_setup_unknown_refuse")
-        return False
-    if not _callsite_materialization_complete_8616(codegen):
-        # Evidence gate: do not prune carrier setup until callsite argument facts
-        # are fully materialized.
-        _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
-        _bump_dead_setup_counter_8616(codegen, "dead_setup_live_call_arg")
-        return False
-    changed = False
-    if not _is_plain_statement_block_8616(block):
-        return False
-    statements = getattr(block, "statements", None)
-    if not isinstance(statements, (list, tuple)):
-        return False
-
-    for stmt in list(statements):
-        for child in (
-            getattr(stmt, "body", None),
-            getattr(stmt, "else_node", None),
-        ):
-            if _is_plain_statement_block_8616(child):
-                changed |= _prune_dead_stack_carrier_assignments_8616(child, codegen=codegen)
-        if _is_plain_statement_block_8616(stmt):
-            changed |= _prune_dead_stack_carrier_assignments_8616(stmt, codegen=codegen)
-        for pair in getattr(stmt, "condition_and_nodes", ()) or ():
-            if isinstance(pair, tuple) and len(pair) == 2 and _is_plain_statement_block_8616(pair[1]):
-                changed |= _prune_dead_stack_carrier_assignments_8616(pair[1], codegen=codegen)
-
-    statement_list = list(getattr(block, "statements", ()) or ())
-    known_carriers = _collect_stack_carrier_assignments_8616(block)
-    call_indices = {idx for idx, stmt in enumerate(statement_list) if _stmt_has_call_8616(stmt)}
-    live: set[CarrierKey8616] = set()
-    kept_reversed: list = []
-    removed = 0
-    reversed_pairs = list(enumerate(statement_list))
-    reversed_pairs.reverse()
-    for stmt_index, stmt in reversed_pairs:
-        carrier = _dead_stack_carrier_assignment_8616(stmt, known_carriers)
-        if carrier is not None:
-            lhs_key, rhs = carrier
-            _bump_dead_setup_counter_8616(codegen, "dead_setup_candidates")
-            _bump_dead_setup_counter_8616(codegen, "dead_setup_raw_fact_count")
-            _bump_dead_setup_counter_8616(codegen, "dead_setup_normalized_fact_count")
-            _bump_dead_setup_counter_8616(codegen, "dead_setup_classified_fact_count")
-            decision = _classify_dead_carrier_candidate_8616(
-                stmt,
-                lhs_key,
-                rhs,
-                live=live,
-                known_carriers=known_carriers,
-                call_indices=call_indices,
-                stmt_index=stmt_index,
-                statements=statement_list,
-                codegen=codegen,
-            )
-            if decision == StackCarrierPruneDecision8616.DEFINITELY_DEAD:
-                changed = True
-                removed += 1
-                _bump_dead_setup_counter_8616(codegen, "dead_setup_pruned")
-                _bump_dead_setup_counter_8616(codegen, "dead_setup_materialized_count")
-                continue
-            if decision == StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP:
-                _bump_dead_setup_counter_8616(codegen, "dead_setup_live_call_arg")
-            elif decision == StackCarrierPruneDecision8616.LIVE_STACK_CARRIER:
-                _bump_dead_setup_counter_8616(codegen, "dead_setup_live_stack_carrier")
-            elif decision == StackCarrierPruneDecision8616.LIVE_WIDENING_CARRIER:
-                _bump_dead_setup_counter_8616(codegen, "dead_setup_live_widening_carrier")
-            elif decision == StackCarrierPruneDecision8616.LIVE_CONDITION_SOURCE:
-                _bump_dead_setup_counter_8616(codegen, "dead_setup_live_condition_source")
-            else:
-                _bump_dead_setup_counter_8616(codegen, "dead_setup_unknown_refuse")
+    def _impl():
+        """Remove dead generic address carriers left after call arguments are materialized."""
+        prune_mode = _safe_dead_carrier_prune_mode_8616(codegen)
+        if prune_mode == SafeDeadCarrierPruneMode8616.DISABLED:
             _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
-            live.discard(lhs_key)
-            live.update(_generic_stack_carrier_keys_8616(rhs).intersection(known_carriers))
-            kept_reversed.append(stmt)
-            continue
-        live.update(_generic_stack_carrier_keys_8616(stmt).intersection(known_carriers))
-        kept_reversed.append(stmt)
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_unknown_refuse")
+            return False
+        if prune_mode == SafeDeadCarrierPruneMode8616.DIAGNOSTIC:
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_unknown_refuse")
+            return False
+        if not _callsite_materialization_complete_8616(codegen):
+            # Evidence gate: do not prune carrier setup until callsite argument facts
+            # are fully materialized.
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_live_call_arg")
+            return False
+        changed = False
+        if not _is_plain_statement_block_8616(block):
+            return False
+        statements = getattr(block, "statements", None)
+        if not isinstance(statements, (list, tuple)):
+            return False
 
-    if changed:
-        logger.debug(
-            "Pruned %d dead stack-address carrier assignment(s) from callsite metadata block with %d carrier key(s)",
-            removed,
-            len(known_carriers),
-        )
-        kept_reversed.reverse()
-        block.statements = kept_reversed if isinstance(statements, list) else tuple(kept_reversed)
-    return changed
+        for stmt in list(statements):
+            for child in (
+                getattr(stmt, "body", None),
+                getattr(stmt, "else_node", None),
+            ):
+                if _is_plain_statement_block_8616(child):
+                    changed |= _prune_dead_stack_carrier_assignments_8616(child, codegen=codegen)
+            if _is_plain_statement_block_8616(stmt):
+                changed |= _prune_dead_stack_carrier_assignments_8616(stmt, codegen=codegen)
+            for pair in getattr(stmt, "condition_and_nodes", ()) or ():
+                if isinstance(pair, tuple) and len(pair) == 2 and _is_plain_statement_block_8616(pair[1]):
+                    changed |= _prune_dead_stack_carrier_assignments_8616(pair[1], codegen=codegen)
+
+        statement_list = list(getattr(block, "statements", ()) or ())
+        known_carriers = _collect_stack_carrier_assignments_8616(block)
+        call_indices = {idx for idx, stmt in enumerate(statement_list) if _stmt_has_call_8616(stmt)}
+        live: set[CarrierKey8616] = set()
+        kept_reversed: list = []
+        removed = 0
+        reversed_pairs = list(enumerate(statement_list))
+        reversed_pairs.reverse()
+        for stmt_index, stmt in reversed_pairs:
+            carrier = _dead_stack_carrier_assignment_8616(stmt, known_carriers)
+            if carrier is not None:
+                lhs_key, rhs = carrier
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_candidates")
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_raw_fact_count")
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_normalized_fact_count")
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_classified_fact_count")
+                decision = _classify_dead_carrier_candidate_8616(
+                    stmt,
+                    lhs_key,
+                    rhs,
+                    live=live,
+                    known_carriers=known_carriers,
+                    call_indices=call_indices,
+                    stmt_index=stmt_index,
+                    statements=statement_list,
+                    codegen=codegen,
+                )
+                if decision == StackCarrierPruneDecision8616.DEFINITELY_DEAD:
+                    changed = True
+                    removed += 1
+                    _bump_dead_setup_counter_8616(codegen, "dead_setup_pruned")
+                    _bump_dead_setup_counter_8616(codegen, "dead_setup_materialized_count")
+                    continue
+                if decision == StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP:
+                    _bump_dead_setup_counter_8616(codegen, "dead_setup_live_call_arg")
+                elif decision == StackCarrierPruneDecision8616.LIVE_STACK_CARRIER:
+                    _bump_dead_setup_counter_8616(codegen, "dead_setup_live_stack_carrier")
+                elif decision == StackCarrierPruneDecision8616.LIVE_WIDENING_CARRIER:
+                    _bump_dead_setup_counter_8616(codegen, "dead_setup_live_widening_carrier")
+                elif decision == StackCarrierPruneDecision8616.LIVE_CONDITION_SOURCE:
+                    _bump_dead_setup_counter_8616(codegen, "dead_setup_live_condition_source")
+                else:
+                    _bump_dead_setup_counter_8616(codegen, "dead_setup_unknown_refuse")
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
+                live.discard(lhs_key)
+                live.update(_generic_stack_carrier_keys_8616(rhs).intersection(known_carriers))
+                kept_reversed.append(stmt)
+                continue
+            live.update(_generic_stack_carrier_keys_8616(stmt).intersection(known_carriers))
+            kept_reversed.append(stmt)
+
+        if changed:
+            logger.debug(
+                "Pruned %d dead stack-address carrier assignment(s) from callsite metadata block with %d carrier key(s)",
+                removed,
+                len(known_carriers),
+            )
+            kept_reversed.reverse()
+            block.statements = kept_reversed if isinstance(statements, list) else tuple(kept_reversed)
+        return changed
+
+    return _impl()
 
 
 def _prune_trailing_segment_metadata_8616(statements: list, project: object) -> bool:

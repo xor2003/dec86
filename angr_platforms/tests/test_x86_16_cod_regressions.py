@@ -12,12 +12,15 @@ import decompile
 import pytest
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.calling_conventions import SimRegArg
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.cod_extract import extract_cod_proc_metadata
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
+from angr_platforms.X86_16.decompiler_postprocess_utils import _replace_c_children_8616
 from angr_platforms.X86_16.decompiler_return_compat import apply_x86_16_decompiler_return_compatibility
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1013,6 +1016,38 @@ def test_decompiler_return_compat_falls_back_when_return_expression_is_unsupport
         assert result == "orig"
         assert calls
         assert fake_self._new_block is None
+    finally:
+        ReturnMaker._handle_Return = original_handle_return
+
+
+def test_decompiler_return_compat_refuses_stack_base_return_register():
+    original_handle_return = ReturnMaker._handle_Return
+    calls = []
+
+    def fake_handle_return(self, stmt_idx, stmt, block):
+        calls.append((stmt_idx, stmt, block))
+        return "fallback"
+
+    try:
+        ReturnMaker._handle_Return = fake_handle_return
+        apply_x86_16_decompiler_return_compatibility()
+
+        fake_stmt = SimpleNamespace(ret_exprs=[], copy=lambda: SimpleNamespace(ret_exprs=[]), tags={"ins_addr": 0x2000})
+        fake_function = SimpleNamespace(
+            prototype=SimpleNamespace(returnty=SimTypeShort(False)),
+            calling_convention=SimpleNamespace(return_val=lambda _returnty: SimRegArg("sp", 2)),
+        )
+        fake_self = SimpleNamespace(
+            function=fake_function,
+            arch=SimpleNamespace(registers={"sp": (4, 2), "translate_register_name": lambda reg_name, size: reg_name}),
+            _next_atom=lambda: 1,
+            _new_block=None,
+        )
+
+        result = ReturnMaker._handle_Return(fake_self, 0, fake_stmt, None)
+
+        assert result == "fallback"
+        assert calls, "expected fallback path"
     finally:
         ReturnMaker._handle_Return = original_handle_return
 
@@ -2112,6 +2147,89 @@ def test_canonicalize_stack_cvar_expr_prefers_annotated_slot():
     assert canonical.lhs.variable is arg_var
     assert canonical.rhs.value == 1
     assert decompile._canonicalize_stack_cvar_expr(alias_cvar, codegen).variable is arg_var
+
+
+def test_canonicalize_stack_cvars_skips_invalid_assignment_lhs_forms():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    slot_var = SimStackVariable(4, 2, base="bp", name="a", region=0x1000)
+    slot_cvar = structured_c.CVariable(slot_var, variable_type=SimTypeShort(False), codegen=codegen)
+    bad_lhs = structured_c.CBinaryOp(
+        "Sub",
+        slot_cvar,
+        structured_c.CConstant(2, SimTypeShort(True), codegen=codegen),
+        codegen=codegen,
+    )
+
+    assignment = structured_c.CAssignment(
+        bad_lhs,
+        slot_cvar,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        variables_in_use={slot_var: slot_cvar},
+        statements=structured_c.CStatements([assignment], addr=0x1000, codegen=codegen),
+    )
+
+    changed = _cli_stack_cvars._canonicalize_stack_cvars(
+        codegen,
+        replace_c_children=_replace_c_children_8616,
+        canonicalize_stack_cvar_expr=decompile._canonicalize_stack_cvar_expr,
+    )
+
+    assert changed is False
+    assert isinstance(codegen.cfunc.statements.statements[0], structured_c.CAssignment)
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten.lhs, structured_c.CBinaryOp)
+    assert isinstance(rewritten.lhs.lhs, structured_c.CVariable)
+    assert rewritten.lhs.lhs.variable is slot_var
+
+
+def test_canonicalize_stack_cvars_keeps_simple_lvalue_canonicalization():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    arg_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
+    alias_var = SimStackVariable(4, 2, base="bp", name="s_3", region=0x1000)
+    arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
+    alias_cvar = structured_c.CVariable(alias_var, variable_type=SimTypeShort(False), codegen=codegen)
+    assignment = structured_c.CAssignment(alias_cvar, arg_cvar, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[arg_cvar],
+        variables_in_use={arg_var: arg_cvar, alias_var: alias_cvar},
+        statements=structured_c.CStatements([assignment], addr=0x1000, codegen=codegen),
+    )
+
+    _cli_stack_cvars._canonicalize_stack_cvars(
+        codegen,
+        replace_c_children=_replace_c_children_8616,
+        canonicalize_stack_cvar_expr=decompile._canonicalize_stack_cvar_expr,
+    )
+
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, structured_c.CAssignment)
+    rewritten_var = getattr(rewritten.lhs, "variable", None)
+    assert isinstance(rewritten_var, SimStackVariable)
+    assert rewritten_var.base == "bp"
+    assert rewritten_var.offset == 4
 
 
 def test_canonicalize_stack_cvar_expr_rewrites_indexed_stack_reference_to_exact_slot():

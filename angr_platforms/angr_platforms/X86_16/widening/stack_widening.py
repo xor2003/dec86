@@ -118,84 +118,87 @@ def prove_adjacent_storage_slices(
     alias_state: AliasState | None = None,
     register_version_for_expr=None,
 ) -> WideningProof:
-    version_resolver = register_version_for_expr or _register_version_for_expr
-    low_facts = describe_alias_storage(low_expr)
-    high_facts = describe_alias_storage(high_expr)
-    register_pair = None
-    if low_facts.identity is not None and high_facts.identity is not None:
-        low_kind, low_value = low_facts.identity
-        high_kind, high_value = high_facts.identity
-        low_view = low_facts.domain.view
-        high_view = high_facts.domain.view
-        if (
-            low_kind == high_kind == "register"
-            and low_value == high_value
-            and low_view is not None
-            and high_view is not None
-            and low_view.bit_offset < high_view.bit_offset
-        ):
-            register_pair = low_value
-    low_version = version_resolver(low_expr, alias_state)
-    high_version = version_resolver(high_expr, alias_state)
+    def _impl():
+        version_resolver = register_version_for_expr or _register_version_for_expr
+        low_facts = describe_alias_storage(low_expr)
+        high_facts = describe_alias_storage(high_expr)
+        register_pair = None
+        if low_facts.identity is not None and high_facts.identity is not None:
+            low_kind, low_value = low_facts.identity
+            high_kind, high_value = high_facts.identity
+            low_view = low_facts.domain.view
+            high_view = high_facts.domain.view
+            if (
+                low_kind == high_kind == "register"
+                and low_value == high_value
+                and low_view is not None
+                and high_view is not None
+                and low_view.bit_offset < high_view.bit_offset
+            ):
+                register_pair = low_value
+        low_version = version_resolver(low_expr, alias_state)
+        high_version = version_resolver(high_expr, alias_state)
 
-    if low_facts.needs_synthesis() or high_facts.needs_synthesis():
-        return WideningProof(
-            False, "needs_synthesis", low_facts, high_facts, left_version=low_version, right_version=high_version
-        )
-    if not same_alias_storage_domain(low_expr, high_expr):
-        return WideningProof(
-            False, "domain_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version
-        )
-    if not can_join_alias_storage(low_expr, high_expr):
-        return WideningProof(
-            False, "view_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version
-        )
-    if alias_state is not None:
-        if (
-            low_facts.identity is not None
-            and high_facts.identity is not None
-            and low_facts.identity[0] == "register"
-            and high_facts.identity[0] == "register"
-        ):
-            if register_pair is None:
-                return WideningProof(
-                    False,
-                    "register_pair_mismatch",
-                    low_facts,
-                    high_facts,
-                    left_version=low_version,
-                    right_version=high_version,
-                )
-            if low_version is None or high_version is None:
-                return WideningProof(
-                    False,
-                    "missing_version_evidence",
-                    low_facts,
-                    high_facts,
-                    left_version=low_version,
-                    right_version=high_version,
-                )
-            if low_version != high_version:
-                return WideningProof(
-                    False,
-                    "version_mismatch",
-                    low_facts,
-                    high_facts,
-                    left_version=low_version,
-                    right_version=high_version,
-                )
+        if low_facts.needs_synthesis() or high_facts.needs_synthesis():
+            return WideningProof(
+                False, "needs_synthesis", low_facts, high_facts, left_version=low_version, right_version=high_version
+            )
+        if not same_alias_storage_domain(low_expr, high_expr):
+            return WideningProof(
+                False, "domain_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version
+            )
+        if not can_join_alias_storage(low_expr, high_expr):
+            return WideningProof(
+                False, "view_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version
+            )
+        if alias_state is not None:
+            if (
+                low_facts.identity is not None
+                and high_facts.identity is not None
+                and low_facts.identity[0] == "register"
+                and high_facts.identity[0] == "register"
+            ):
+                if register_pair is None:
+                    return WideningProof(
+                        False,
+                        "register_pair_mismatch",
+                        low_facts,
+                        high_facts,
+                        left_version=low_version,
+                        right_version=high_version,
+                    )
+                if low_version is None or high_version is None:
+                    return WideningProof(
+                        False,
+                        "missing_version_evidence",
+                        low_facts,
+                        high_facts,
+                        left_version=low_version,
+                        right_version=high_version,
+                    )
+                if low_version != high_version:
+                    return WideningProof(
+                        False,
+                        "version_mismatch",
+                        low_facts,
+                        high_facts,
+                        left_version=low_version,
+                        right_version=high_version,
+                    )
 
-    merged_domain = _merge_storage_domains(_storage_domain_for_expr(low_expr), _storage_domain_for_expr(high_expr))
-    return WideningProof(
-        True,
-        "ok",
-        low_facts,
-        high_facts,
-        merged_domain=merged_domain,
-        register_pair=register_pair,
-        left_version=low_version,
-        right_version=high_version,
-    )
+        merged_domain = _merge_storage_domains(_storage_domain_for_expr(low_expr), _storage_domain_for_expr(high_expr))
+        return WideningProof(
+            True,
+            "ok",
+            low_facts,
+            high_facts,
+            merged_domain=merged_domain,
+            register_pair=register_pair,
+            left_version=low_version,
+            right_version=high_version,
+        )
+
+    return _impl()
 
 
 def analyze_adjacent_storage_slices(
@@ -253,32 +256,35 @@ def describe_x86_16_widening_pipeline() -> tuple[tuple[str, str, tuple[str, ...]
 
 
 def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasState | None = None) -> bool:
-    proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
-    if not proof.ok:
-        return False
-    try:
-        low_candidate = RegisterWideningCandidate.from_expr(low_expr)
-        high_candidate = RegisterWideningCandidate.from_expr(high_expr)
-    except ValueError:
-        low_candidate = None
-        high_candidate = None
-    if low_candidate is not None and high_candidate is not None:
-        if alias_state is None:
-            return low_candidate.is_joinable_with(high_candidate)
-        return can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof)
+    def _impl():
+        proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+        if not proof.ok:
+            return False
+        try:
+            low_candidate = RegisterWideningCandidate.from_expr(low_expr)
+            high_candidate = RegisterWideningCandidate.from_expr(high_expr)
+        except ValueError:
+            low_candidate = None
+            high_candidate = None
+        if low_candidate is not None and high_candidate is not None:
+            if alias_state is None:
+                return low_candidate.is_joinable_with(high_candidate)
+            return can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof)
 
-    try:
-        low_candidate = WideningCandidate.from_expr(low_expr)
-        high_candidate = WideningCandidate.from_expr(high_expr)
-    except ValueError:
-        return False
-    if low_candidate.domain.is_unknown() or high_candidate.domain.is_unknown():
-        return False
-    if low_candidate.domain.is_mixed() or high_candidate.domain.is_mixed():
-        return False
-    if not low_candidate.is_joinable_with(high_candidate):
-        return False
-    return True
+        try:
+            low_candidate = WideningCandidate.from_expr(low_expr)
+            high_candidate = WideningCandidate.from_expr(high_expr)
+        except ValueError:
+            return False
+        if low_candidate.domain.is_unknown() or high_candidate.domain.is_unknown():
+            return False
+        if low_candidate.domain.is_mixed() or high_candidate.domain.is_mixed():
+            return False
+        if not low_candidate.is_joinable_with(high_candidate):
+            return False
+        return True
+
+    return _impl()
 
 
 def merge_storage_slice_domains(

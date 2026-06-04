@@ -169,53 +169,56 @@ def _parse_validation_state_8616(v: str | None) -> ValidationState:
 
 
 def _count_record_into_aggregate_8616(agg: ValidationAggregate, r: ValidationRecord) -> None:
-    """Count the worst state for a record into the aggregate.
+    def _impl():
+        """Count the worst state for a record into the aggregate.
 
-    A record contributes to the worst category it falls into:
-      crash > timeout > fallback > uncollected > changed > passed
+        A record contributes to the worst category it falls into:
+          crash > timeout > fallback > uncollected > changed > passed
 
-    Only the worst state is counted — one record = one bucket.
-    """
-    # Order: worst first
-    worst: ValidationState | None = None
-    for state in (r.structuring_state, r.postprocess_state):
-        if state in (ValidationState.CRASH,):
-            worst = ValidationState.CRASH
-            break
-        if state == ValidationState.TIMEOUT and worst not in (ValidationState.CRASH,):
-            worst = ValidationState.TIMEOUT
-        elif state == ValidationState.FALLBACK and worst not in (ValidationState.CRASH, ValidationState.TIMEOUT):
-            worst = ValidationState.FALLBACK
-        elif state == ValidationState.UNCOLLECTED and worst not in (
-            ValidationState.CRASH,
-            ValidationState.TIMEOUT,
-            ValidationState.FALLBACK,
-        ):
+        Only the worst state is counted — one record = one bucket.
+        """
+        # Order: worst first
+        worst: ValidationState | None = None
+        for state in (r.structuring_state, r.postprocess_state):
+            if state in (ValidationState.CRASH,):
+                worst = ValidationState.CRASH
+                break
+            if state == ValidationState.TIMEOUT and worst not in (ValidationState.CRASH,):
+                worst = ValidationState.TIMEOUT
+            elif state == ValidationState.FALLBACK and worst not in (ValidationState.CRASH, ValidationState.TIMEOUT):
+                worst = ValidationState.FALLBACK
+            elif state == ValidationState.UNCOLLECTED and worst not in (
+                ValidationState.CRASH,
+                ValidationState.TIMEOUT,
+                ValidationState.FALLBACK,
+            ):
+                worst = ValidationState.UNCOLLECTED
+            elif state == ValidationState.CHANGED and worst not in (
+                ValidationState.CRASH,
+                ValidationState.TIMEOUT,
+                ValidationState.FALLBACK,
+                ValidationState.UNCOLLECTED,
+            ):
+                worst = ValidationState.CHANGED
+            elif state == ValidationState.PASSED and worst is None:
+                worst = ValidationState.PASSED
+
+        if worst is None:
             worst = ValidationState.UNCOLLECTED
-        elif state == ValidationState.CHANGED and worst not in (
-            ValidationState.CRASH,
-            ValidationState.TIMEOUT,
-            ValidationState.FALLBACK,
-            ValidationState.UNCOLLECTED,
-        ):
-            worst = ValidationState.CHANGED
-        elif state == ValidationState.PASSED and worst is None:
-            worst = ValidationState.PASSED
 
-    if worst is None:
-        worst = ValidationState.UNCOLLECTED
+        if worst == ValidationState.PASSED:
+            agg.passed += 1
+        elif worst == ValidationState.CHANGED:
+            agg.changed += 1
+        elif worst == ValidationState.UNCOLLECTED:
+            agg.uncollected += 1
+        elif worst == ValidationState.UNKNOWN:
+            agg.unknown += 1
+        elif worst == ValidationState.TIMEOUT:
+            agg.timeout += 1
+        elif worst == ValidationState.FALLBACK:
+            agg.fallback += 1
+        elif worst == ValidationState.CRASH:
+            agg.crash += 1
 
-    if worst == ValidationState.PASSED:
-        agg.passed += 1
-    elif worst == ValidationState.CHANGED:
-        agg.changed += 1
-    elif worst == ValidationState.UNCOLLECTED:
-        agg.uncollected += 1
-    elif worst == ValidationState.UNKNOWN:
-        agg.unknown += 1
-    elif worst == ValidationState.TIMEOUT:
-        agg.timeout += 1
-    elif worst == ValidationState.FALLBACK:
-        agg.fallback += 1
-    elif worst == ValidationState.CRASH:
-        agg.crash += 1
+    return _impl()

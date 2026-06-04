@@ -52,6 +52,110 @@ _MASM_SYMBOL_ROW_RE = re.compile(
 )
 
 
+def _update_summary_section_8616(stripped: str, current_summary_section: str | None) -> str | None:
+    if _PROCEDURES_HEADER_RE.match(stripped):
+        return "procedures"
+    if _SYMBOLS_HEADER_RE.match(stripped):
+        return "symbols"
+    if current_summary_section is not None and _SECTION_HEADER_RE.match(stripped):
+        return None
+    return current_summary_section
+
+
+def _consume_summary_row_8616(
+    stripped: str,
+    current_summary_section: str | None,
+    code_labels: dict[int, str],
+    code_ranges: dict[int, tuple[int, int]],
+    data_labels: dict[int, str],
+) -> bool:
+    if current_summary_section == "procedures":
+        procedure_row = _MASM_PROCEDURE_ROW_RE.match(stripped)
+        if procedure_row is not None:
+            name = procedure_row.group(1)
+            start_offset = int(procedure_row.group(2), 16)
+            length = int(procedure_row.group(3), 16)
+            code_labels.setdefault(start_offset, name)
+            if length > 0:
+                code_ranges.setdefault(start_offset, (start_offset, start_offset + length))
+        return True
+    if current_summary_section == "symbols":
+        symbol_row = _MASM_SYMBOL_ROW_RE.match(stripped)
+        if symbol_row is not None:
+            data_labels.setdefault(int(symbol_row.group(3), 16), symbol_row.group(1))
+        return True
+    return False
+
+
+def _maybe_update_current_segment_8616(stripped: str, upper: str, current_segment: str | None) -> tuple[str | None, bool]:
+    def _impl():
+        segment_match = _SEGMENT_RE.match(stripped)
+        if segment_match is not None:
+            segment_name = segment_match.group(1).lower()
+            if "code" in segment_name or segment_name in {"text", "_text"}:
+                return "CODE", True
+            if "data" in segment_name or segment_name in {"_data", "dseg"}:
+                return "DATA", True
+            return current_segment, True
+        ends_match = _ENDS_RE.match(stripped)
+        if ends_match is not None:
+            segment_name = ends_match.group(1).lower()
+            if current_segment == "CODE" and ("code" in segment_name or segment_name in {"text", "_text"}):
+                return None, True
+            if current_segment == "DATA" and ("data" in segment_name or segment_name in {"_data", "dseg"}):
+                return None, True
+            return current_segment, True
+        dot_segment_match = _DOT_SEGMENT_RE.match(stripped)
+        if dot_segment_match is not None:
+            return dot_segment_match.group(1).upper(), True
+        if "SEGMENT" in upper and "USE16" in upper:
+            if "CODE" in upper:
+                return "CODE", True
+            if "DATA" in upper:
+                return "DATA", True
+            return current_segment, True
+        return current_segment, False
+
+    return _impl()
+
+
+def _consume_code_segment_line_8616(
+    stripped: str,
+    code_labels: dict[int, str],
+    code_ranges: dict[int, tuple[int, int]],
+    colon_code_labels: dict[str, int],
+    open_proc_starts: dict[str, int],
+) -> None:
+    proc_match = _PROC_RE.match(stripped)
+    if proc_match is not None:
+        offset = int(proc_match.group(1), 16)
+        name = proc_match.group(2)
+        code_labels.setdefault(offset, name)
+        open_proc_starts[name] = offset
+        return
+    endp_match = _ENDP_RE.match(stripped)
+    if endp_match is not None:
+        end_offset = int(endp_match.group(1), 16)
+        name = endp_match.group(2)
+        start_offset = open_proc_starts.pop(name, None)
+        if start_offset is not None and end_offset > start_offset:
+            code_ranges[start_offset] = (start_offset, end_offset)
+        return
+    label_match = _CODE_LABEL_RE.match(stripped)
+    if label_match is not None:
+        colon_code_labels.setdefault(label_match.group(2), int(label_match.group(1), 16))
+
+
+def _infer_lst_source_format_8616(lines: list[str]) -> str:
+    if lines and lines[0].startswith("UASM "):
+        return "uasm_lst"
+    if lines and lines[0].startswith("Microsoft (R) Macro Assembler"):
+        return "masm_lst"
+    if any(line.startswith("seg") and "; |" not in line for line in lines[:32]):
+        return "ida_lst"
+    return "generic_lst"
+
+
 def extract_lst_metadata(lst_path: Path) -> LSTMetadata:
     lines = lst_path.read_text(errors="ignore").splitlines()
     data_labels: dict[int, str] = {}
@@ -70,53 +174,8 @@ def extract_lst_metadata(lst_path: Path) -> LSTMetadata:
             continue
 
         upper = stripped.upper()
-        if _PROCEDURES_HEADER_RE.match(stripped):
-            current_summary_section = "procedures"
-            continue
-        if _SYMBOLS_HEADER_RE.match(stripped):
-            current_summary_section = "symbols"
-            continue
-        if current_summary_section is not None and _SECTION_HEADER_RE.match(stripped):
-            current_summary_section = None
-        if current_summary_section == "procedures":
-            procedure_row = _MASM_PROCEDURE_ROW_RE.match(stripped)
-            if procedure_row is not None:
-                name = procedure_row.group(1)
-                start_offset = int(procedure_row.group(2), 16)
-                length = int(procedure_row.group(3), 16)
-                code_labels.setdefault(start_offset, name)
-                if length > 0:
-                    code_ranges.setdefault(start_offset, (start_offset, start_offset + length))
-            continue
-        if current_summary_section == "symbols":
-            symbol_row = _MASM_SYMBOL_ROW_RE.match(stripped)
-            if symbol_row is not None:
-                name = symbol_row.group(1)
-                offset = int(symbol_row.group(3), 16)
-                data_labels.setdefault(offset, name)
-            continue
-
-        segment_match = _SEGMENT_RE.match(stripped)
-        if segment_match is not None:
-            segment_name = segment_match.group(1).lower()
-            if "code" in segment_name or segment_name in {"text", "_text"}:
-                current_segment = "CODE"
-            elif "data" in segment_name or segment_name in {"_data", "dseg"}:
-                current_segment = "DATA"
-            continue
-
-        ends_match = _ENDS_RE.match(stripped)
-        if ends_match is not None:
-            segment_name = ends_match.group(1).lower()
-            if current_segment == "CODE" and ("code" in segment_name or segment_name in {"text", "_text"}):
-                current_segment = None
-            elif current_segment == "DATA" and ("data" in segment_name or segment_name in {"_data", "dseg"}):
-                current_segment = None
-            continue
-
-        dot_segment_match = _DOT_SEGMENT_RE.match(stripped)
-        if dot_segment_match is not None:
-            current_segment = dot_segment_match.group(1).upper()
+        current_summary_section = _update_summary_section_8616(stripped, current_summary_section)
+        if _consume_summary_row_8616(stripped, current_summary_section, code_labels, code_ranges, data_labels):
             continue
 
         end_match = _END_RE.match(stripped)
@@ -124,11 +183,8 @@ def extract_lst_metadata(lst_path: Path) -> LSTMetadata:
             entry_label_name = end_match.group(1)
             continue
 
-        if "SEGMENT" in upper and "USE16" in upper:
-            if "CODE" in upper:
-                current_segment = "CODE"
-            elif "DATA" in upper:
-                current_segment = "DATA"
+        current_segment, consumed_segment = _maybe_update_current_segment_8616(stripped, upper, current_segment)
+        if consumed_segment:
             continue
 
         match = _DATA_LABEL_RE.match(stripped)
@@ -138,41 +194,14 @@ def extract_lst_metadata(lst_path: Path) -> LSTMetadata:
             continue
 
         if current_segment == "CODE":
-            proc_match = _PROC_RE.match(stripped)
-            if proc_match is not None:
-                offset = int(proc_match.group(1), 16)
-                name = proc_match.group(2)
-                code_labels.setdefault(offset, name)
-                open_proc_starts[name] = offset
-                continue
-
-            endp_match = _ENDP_RE.match(stripped)
-            if endp_match is not None:
-                end_offset = int(endp_match.group(1), 16)
-                name = endp_match.group(2)
-                start_offset = open_proc_starts.pop(name, None)
-                if start_offset is not None and end_offset > start_offset:
-                    code_ranges[start_offset] = (start_offset, end_offset)
-                continue
-
-            label_match = _CODE_LABEL_RE.match(stripped)
-            if label_match is not None:
-                offset = int(label_match.group(1), 16)
-                colon_code_labels.setdefault(label_match.group(2), offset)
+            _consume_code_segment_line_8616(stripped, code_labels, code_ranges, colon_code_labels, open_proc_starts)
 
     if entry_label_name is not None:
         entry_offset = colon_code_labels.get(entry_label_name)
         if entry_offset is not None:
             code_labels.setdefault(entry_offset, entry_label_name)
 
-    if lines and lines[0].startswith("UASM "):
-        source_format = "uasm_lst"
-    elif lines and lines[0].startswith("Microsoft (R) Macro Assembler"):
-        source_format = "masm_lst"
-    elif any(line.startswith("seg") and "; |" not in line for line in lines[:32]):
-        source_format = "ida_lst"
-    else:
-        source_format = "generic_lst"
+    source_format = _infer_lst_source_format_8616(lines)
     return LSTMetadata(
         data_labels=data_labels, code_labels=code_labels, code_ranges=code_ranges, source_format=source_format
     )

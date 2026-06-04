@@ -71,58 +71,61 @@ class CFGSnapshot:
 
 
 def build_cfg_snapshot(codegen: Any) -> CFGSnapshot | None:
-    """Build a deterministic CFG snapshot from codegen."""
+    def _impl():
+        """Build a deterministic CFG snapshot from codegen."""
 
-    result = build_region_graph(codegen)
-    graph = result.graph
-    if graph is None:
-        return None
+        result = build_region_graph(codegen)
+        graph = result.graph
+        if graph is None:
+            return None
 
-    reachable_from_entry: set[int] = set()
-    if result.entry is not None:
-        worklist = [result.entry]
-        seen = set()
-        while worklist:
-            region = worklist.pop()
-            if region in seen:
-                continue
-            seen.add(region)
-            if region.region_id is not None:
-                reachable_from_entry.add(region.region_id)
-            for succ in graph.successors(region):
-                if succ not in seen:
-                    worklist.append(succ)
+        reachable_from_entry: set[int] = set()
+        if result.entry is not None:
+            worklist = [result.entry]
+            seen = set()
+            while worklist:
+                region = worklist.pop()
+                if region in seen:
+                    continue
+                seen.add(region)
+                if region.region_id is not None:
+                    reachable_from_entry.add(region.region_id)
+                for succ in graph.successors(region):
+                    if succ not in seen:
+                        worklist.append(succ)
 
-    snapshot_nodes: list[CFGSnapshotNode] = []
-    edge_count = 0
-    ordered_regions = sorted(
-        graph.nodes,
-        key=lambda item: ((item.region_id is None), item.region_id if item.region_id is not None else -1),
-    )
-    for region in ordered_regions:
-        predecessor_ids = tuple(
-            sorted(pred.region_id for pred in graph.predecessors(region) if pred.region_id is not None)
+        snapshot_nodes: list[CFGSnapshotNode] = []
+        edge_count = 0
+        ordered_regions = sorted(
+            graph.nodes,
+            key=lambda item: ((item.region_id is None), item.region_id if item.region_id is not None else -1),
         )
-        successor_ids = tuple(sorted(succ.region_id for succ in graph.successors(region) if succ.region_id is not None))
-        edge_count += len(successor_ids)
-        ownership = "shared" if len(predecessor_ids) > 1 else "single"
-        snapshot_nodes.append(
-            CFGSnapshotNode(
-                region_id=region.region_id if region.region_id is not None else -1,
-                block_addr=region.block_addr,
-                predecessor_ids=predecessor_ids,
-                successor_ids=successor_ids,
-                ownership=ownership,
-                reachable_from_entry=(region.region_id in reachable_from_entry),
+        for region in ordered_regions:
+            predecessor_ids = tuple(
+                sorted(pred.region_id for pred in graph.predecessors(region) if pred.region_id is not None)
             )
+            successor_ids = tuple(sorted(succ.region_id for succ in graph.successors(region) if succ.region_id is not None))
+            edge_count += len(successor_ids)
+            ownership = "shared" if len(predecessor_ids) > 1 else "single"
+            snapshot_nodes.append(
+                CFGSnapshotNode(
+                    region_id=region.region_id if region.region_id is not None else -1,
+                    block_addr=region.block_addr,
+                    predecessor_ids=predecessor_ids,
+                    successor_ids=successor_ids,
+                    ownership=ownership,
+                    reachable_from_entry=(region.region_id in reachable_from_entry),
+                )
+            )
+
+        shared_region_ids = tuple(node.region_id for node in snapshot_nodes if node.ownership == "shared")
+        entry_region_id = result.entry.region_id if result.entry is not None else None
+        return CFGSnapshot(
+            entry_region_id=entry_region_id,
+            node_count=len(snapshot_nodes),
+            edge_count=edge_count,
+            nodes=tuple(snapshot_nodes),
+            shared_region_ids=shared_region_ids,
         )
 
-    shared_region_ids = tuple(node.region_id for node in snapshot_nodes if node.ownership == "shared")
-    entry_region_id = result.entry.region_id if result.entry is not None else None
-    return CFGSnapshot(
-        entry_region_id=entry_region_id,
-        node_count=len(snapshot_nodes),
-        edge_count=edge_count,
-        nodes=tuple(snapshot_nodes),
-        shared_region_ids=shared_region_ids,
-    )
+    return _impl()

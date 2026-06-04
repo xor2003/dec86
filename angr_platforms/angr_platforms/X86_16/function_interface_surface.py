@@ -98,31 +98,34 @@ def _prepend_header(rendered: str, header_lines: list[str]) -> str:
 
 
 def _annotate_call_lines(rendered: str, call_comments: dict[str, str]) -> str:
-    if not call_comments:
-        return rendered
-    lines = rendered.splitlines()
-    updated: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if (
-            not stripped
-            or stripped.startswith(("//", "/*", "*"))
-            or stripped.endswith("{")
-            or _PROTOTYPE_RE.match(stripped)
-            or "/* io " in stripped
-        ):
-            updated.append(line)
-            continue
-        appended = False
-        for name, comment in call_comments.items():
-            if f"{name}(" not in line or not stripped.endswith(";"):
+    def _impl():
+        if not call_comments:
+            return rendered
+        lines = rendered.splitlines()
+        updated: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if (
+                not stripped
+                or stripped.startswith(("//", "/*", "*"))
+                or stripped.endswith("{")
+                or _PROTOTYPE_RE.match(stripped)
+                or "/* io " in stripped
+            ):
+                updated.append(line)
                 continue
-            updated.append(f"{line} {comment}")
-            appended = True
-            break
-        if not appended:
-            updated.append(line)
-    return "\n".join(updated)
+            appended = False
+            for name, comment in call_comments.items():
+                if f"{name}(" not in line or not stripped.endswith(";"):
+                    continue
+                updated.append(f"{line} {comment}")
+                appended = True
+                break
+            if not appended:
+                updated.append(line)
+        return "\n".join(updated)
+
+    return _impl()
 
 
 def _render_with_interface_surface(project, codegen, rendered: str) -> str:

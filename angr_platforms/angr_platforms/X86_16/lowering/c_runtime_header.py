@@ -5,12 +5,17 @@ def render_c_runtime_header_8616(target: str | None) -> str:
     normalized = str(target or "").strip().lower()
     if normalized == "msc-dos":
         return (
-            "#include <dos.h>\n"
-            "#include <stdint.h>\n"
+            "#include <DOS.H>\n"
             "\n"
             "typedef unsigned char  uint8_t;\n"
             "typedef unsigned short uint16_t;\n"
             "typedef unsigned long  uint32_t;\n"
+            "typedef unsigned long clock_t;\n"
+            "typedef long time_t;\n"
+            "\n"
+            "#ifndef MK_FP\n"
+            "#define MK_FP(seg, off) ((void far *)((((unsigned long)(unsigned short)(seg)) << 16) | (unsigned short)(off)))\n"
+            "#endif\n"
             "\n"
             "#define SEG_PTR(seg, off)  MK_FP((seg), (off))\n"
             "#define SEG_U8(seg, off)   (*(uint8_t  far *)MK_FP((seg), (off)))\n"

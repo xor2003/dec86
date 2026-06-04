@@ -62,34 +62,37 @@ def _write_manifest(manifest_path: Path, source_lines: tuple[str, ...]) -> None:
 
 @lru_cache(maxsize=2)
 def default_signature_catalog_path(repo_root: Path | None = None) -> Path | None:
-    """Return a cached repo-local signature catalog built from bundled and user-added PAT inputs."""
-    if signature_matching_disabled():
-        return None
-    root = repo_root or Path(__file__).resolve().parents[1]
-    catalog_root = root / "signature_catalogs"
-    if not catalog_root.exists():
-        return None
-    cache_dir = catalog_root / ".signature_catalog_cache"
-    output_path = cache_dir / "repo_signature_catalog.pat"
-    manifest_path = _catalog_manifest_path(output_path)
-    tool_manifest_path = _catalog_tool_manifest_path(output_path)
-    force_refresh = os.environ.get("INERTIA_REBUILD_SIGNATURE_CATALOG", "").strip() not in {"", "0", "false", "False"}
-    tool_lines = _catalog_tool_lines(root)
-    if (
-        output_path.exists()
-        and manifest_path.exists()
-        and _manifest_matches(tool_manifest_path, tool_lines)
-        and not force_refresh
-    ):
-        return output_path
-    source_lines = _catalog_source_lines(catalog_root)
-    if output_path.exists() and _manifest_matches(manifest_path, source_lines):
-        _write_manifest(tool_manifest_path, tool_lines)
-        return output_path
-    try:
-        build_signature_catalog((catalog_root,), output_path, recursive=True, cache_dir=cache_dir)
-        _write_manifest(manifest_path, source_lines)
-        _write_manifest(tool_manifest_path, tool_lines)
-    except Exception:
-        return None
-    return output_path if output_path.exists() else None
+    def _impl():
+        """Return a cached repo-local signature catalog built from bundled and user-added PAT inputs."""
+        if signature_matching_disabled():
+            return None
+        root = repo_root or Path(__file__).resolve().parents[1]
+        catalog_root = root / "signature_catalogs"
+        if not catalog_root.exists():
+            return None
+        cache_dir = catalog_root / ".signature_catalog_cache"
+        output_path = cache_dir / "repo_signature_catalog.pat"
+        manifest_path = _catalog_manifest_path(output_path)
+        tool_manifest_path = _catalog_tool_manifest_path(output_path)
+        force_refresh = os.environ.get("INERTIA_REBUILD_SIGNATURE_CATALOG", "").strip() not in {"", "0", "false", "False"}
+        tool_lines = _catalog_tool_lines(root)
+        if (
+            output_path.exists()
+            and manifest_path.exists()
+            and _manifest_matches(tool_manifest_path, tool_lines)
+            and not force_refresh
+        ):
+            return output_path
+        source_lines = _catalog_source_lines(catalog_root)
+        if output_path.exists() and _manifest_matches(manifest_path, source_lines):
+            _write_manifest(tool_manifest_path, tool_lines)
+            return output_path
+        try:
+            build_signature_catalog((catalog_root,), output_path, recursive=True, cache_dir=cache_dir)
+            _write_manifest(manifest_path, source_lines)
+            _write_manifest(tool_manifest_path, tool_lines)
+        except Exception:
+            return None
+        return output_path if output_path.exists() else None
+
+    return _impl()

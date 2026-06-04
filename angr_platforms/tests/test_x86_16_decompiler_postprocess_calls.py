@@ -78,6 +78,44 @@ def _empty_codegen(project):
     return _codegen(project, [])
 
 
+def _ss_sp_stack_store(codegen, project, displacement: int, rhs):
+    structured_c = _scg.c
+    sp_reg = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["sp"][0], 2, name="sp"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    ss_reg = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    return CAssignment(
+        structured_c.CUnaryOp(
+            "Dereference",
+            structured_c.CBinaryOp(
+                "Add",
+                structured_c.CBinaryOp(
+                    "Mul",
+                    ss_reg,
+                    structured_c.CConstant(16, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                structured_c.CBinaryOp(
+                    "Sub",
+                    sp_reg,
+                    structured_c.CConstant(-displacement, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        rhs,
+        codegen=codegen,
+    )
+
+
 def test_normalize_call_target_names_rewrites_namespaced_callee_target():
     project = _project()
     codegen = _empty_codegen(project)
@@ -118,6 +156,8 @@ def test_normalize_call_target_names_rewrites_namespaced_callee_func_name():
 
     assert changed is True
     assert callee_func.name == "InitBars"
+
+
 
 
 def test_normalize_call_target_names_keeps_tail_validation_stable():
@@ -976,6 +1016,52 @@ def test_materialize_callsite_stack_arguments_accepts_virtual_dirty_ss_carrier_w
     assert len(only_call_stmt.expr.args) == 2
     assert _same_c_expression_8616(only_call_stmt.expr.args[0], frequency)
     assert only_call_stmt.expr.args[1].value == 97
+
+
+def test_materialize_callsite_stack_arguments_unknown_call_does_not_overcollect():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+    call = CFunctionCall("classify", SimpleNamespace(name="classify"), [], codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            _ss_sp_stack_store(
+                codegen,
+                project,
+                -4,
+                structured_c.CConstant(0x1234, SimTypeShort(False), codegen=codegen),
+            ),
+            _ss_sp_stack_store(
+                codegen,
+                project,
+                -2,
+                structured_c.CConstant(0x4567, SimTypeShort(False), codegen=codegen),
+            ),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1020,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=None,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register=None,
+            return_used=False,
+        )
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+    only_call_stmt = codegen.cfunc.statements.statements[-1]
+    assert isinstance(only_call_stmt, CExpressionStatement)
+    assert len(only_call_stmt.expr.args) == 1
+    assert only_call_stmt.expr.args[0].value == 0x4567
 
 
 def test_materialize_callsite_stack_arguments_matches_same_register_with_renamed_carrier():

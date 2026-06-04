@@ -57,72 +57,75 @@ def collect_typed_conditions_from_emulator_8616(
     project,
     func_addr: int,
 ) -> list[ConditionIR]:
-    """Collect ConditionIR objects from the module-level cache in lift_86_16.
+    def _impl():
+        """Collect ConditionIR objects from the module-level cache in lift_86_16.
 
-    During lifting, _record_typed_condition_8616() writes ConditionIR objects
-    into Instruction_ANY._inertia_module_condition_cache (keyed by block address).
-    This function reads from that cache instead of re-lifting.
+        During lifting, _record_typed_condition_8616() writes ConditionIR objects
+        into Instruction_ANY._inertia_module_condition_cache (keyed by block address).
+        This function reads from that cache instead of re-lifting.
 
-    Returns a deduplicated, deterministically sorted list of ConditionIR.
-    """
-    kb = getattr(project, "kb", None) if project is not None else None
-    if kb is None:
-        return []
+        Returns a deduplicated, deterministically sorted list of ConditionIR.
+        """
+        kb = getattr(project, "kb", None) if project is not None else None
+        if kb is None:
+            return []
 
-    func = kb.functions.function(addr=func_addr, create=False)
-    if func is None:
-        return []
+        func = kb.functions.function(addr=func_addr, create=False)
+        if func is None:
+            return []
 
-    block_addrs = sorted(getattr(func, "block_addrs_set", set()) or set())
-    if not block_addrs:
-        return []
+        block_addrs = sorted(getattr(func, "block_addrs_set", set()) or set())
+        if not block_addrs:
+            return []
 
-    # Read from the module-level cache populated during the initial lift
-    try:
-        from ..lift_86_16 import Instruction_ANY
+        # Read from the module-level cache populated during the initial lift
+        try:
+            from ..lift_86_16 import Instruction_ANY
 
-        module_cache = Instruction_ANY._inertia_module_condition_cache
-    except Exception as ex:
-        import logging
+            module_cache = Instruction_ANY._inertia_module_condition_cache
+        except Exception as ex:
+            import logging
 
-        logging.getLogger(__name__).warning(
-            "condition transfer import failed: %s: %s",
-            type(ex).__name__,
-            ex,
-        )
-        module_cache = {}
+            logging.getLogger(__name__).warning(
+                "condition transfer import failed: %s: %s",
+                type(ex).__name__,
+                ex,
+            )
+            module_cache = {}
 
-    if not any(isinstance(module_cache.get(block_addr, None), list) for block_addr in block_addrs):
-        _relift_blocks_for_condition_cache_8616(project, block_addrs)
-    if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
-        cache_keys = tuple(sorted(k for k in module_cache.keys() if isinstance(k, int)))
-        log.warning(
-            "[condition-transfer] func=%#x blocks=%s cache_keys=%s",
-            func_addr,
-            tuple(hex(a) for a in block_addrs),
-            tuple(hex(a) for a in cache_keys),
-        )
+        if not any(isinstance(module_cache.get(block_addr, None), list) for block_addr in block_addrs):
+            _relift_blocks_for_condition_cache_8616(project, block_addrs)
+        if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+            cache_keys = tuple(sorted(k for k in module_cache.keys() if isinstance(k, int)))
+            log.warning(
+                "[condition-transfer] func=%#x blocks=%s cache_keys=%s",
+                func_addr,
+                tuple(hex(a) for a in block_addrs),
+                tuple(hex(a) for a in cache_keys),
+            )
 
-    all_conditions: list[ConditionIR] = []
-    for block_addr in block_addrs:
-        block_conds = module_cache.get(block_addr, None)
-        if isinstance(block_conds, list):
-            for cond in block_conds:
-                if isinstance(cond, ConditionIR):
-                    all_conditions.append(cond)
-                    if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
-                        log.warning(
-                            "[condition-transfer] cond cache_block=%#x src_insn=%r block=%r op=%s source=%s lhs=%r rhs=%r",
-                            block_addr,
-                            cond.src_insn,
-                            cond.block_addr,
-                            cond.op,
-                            cond.source,
-                            cond.lhs,
-                            cond.rhs,
-                        )
+        all_conditions: list[ConditionIR] = []
+        for block_addr in block_addrs:
+            block_conds = module_cache.get(block_addr, None)
+            if isinstance(block_conds, list):
+                for cond in block_conds:
+                    if isinstance(cond, ConditionIR):
+                        all_conditions.append(cond)
+                        if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+                            log.warning(
+                                "[condition-transfer] cond cache_block=%#x src_insn=%r block=%r op=%s source=%s lhs=%r rhs=%r",
+                                block_addr,
+                                cond.src_insn,
+                                cond.block_addr,
+                                cond.op,
+                                cond.source,
+                                cond.lhs,
+                                cond.rhs,
+                            )
 
-    return deduplicate_conditions_8616(all_conditions)
+        return deduplicate_conditions_8616(all_conditions)
+
+    return _impl()
 
 
 def transfer_typed_conditions_from_emulator_8616(

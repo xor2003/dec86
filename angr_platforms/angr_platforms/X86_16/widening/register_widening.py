@@ -58,54 +58,60 @@ def _register_pair_name_for_variable(variable: SimRegisterVariable) -> str | Non
 
 
 def _register_domain_and_view(variable: SimRegisterVariable) -> tuple[DomainKey | None, object | None]:
-    pair_name = _register_pair_name_for_variable(variable)
-    if pair_name is None:
-        return None, None
-    domain = register_domain_for_name(pair_name)
-    if domain is None:
-        return None, None
-    view = register_view_for_name(getattr(variable, "name", None))
-    size = getattr(variable, "size", 0) or 0
-    if view is not None and view.bit_width == size * 8:
-        return domain, view
-    reg = getattr(variable, "reg", None)
-    if isinstance(reg, int) and size == 1:
-        view = HIGH8 if reg % 2 else LOW8
-    elif isinstance(reg, int) and size == 2:
-        view = FULL16
-    else:
+    def _impl():
+        pair_name = _register_pair_name_for_variable(variable)
+        if pair_name is None:
+            return None, None
+        domain = register_domain_for_name(pair_name)
+        if domain is None:
+            return None, None
         view = register_view_for_name(getattr(variable, "name", None))
-    return domain, view
+        size = getattr(variable, "size", 0) or 0
+        if view is not None and view.bit_width == size * 8:
+            return domain, view
+        reg = getattr(variable, "reg", None)
+        if isinstance(reg, int) and size == 1:
+            view = HIGH8 if reg % 2 else LOW8
+        elif isinstance(reg, int) and size == 2:
+            view = FULL16
+        else:
+            view = register_view_for_name(getattr(variable, "name", None))
+        return domain, view
+
+    return _impl()
 
 
 def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None, proof=None) -> bool:
-    if alias_state is None:
-        return False
-    if proof is None:
-        from .. import widening_model as _widening_model
+    def _impl():
+        if alias_state is None:
+            return False
+        if proof is None:
+            from .. import widening_model as _widening_model
 
-        proof = _widening_model.prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
-    if not proof.ok:
-        return False
-    if proof.register_pair is None:
-        return False
-    if proof.left_version is None or proof.right_version is None:
-        return False
-    if proof.left_version <= 0 or proof.right_version <= 0:
-        return False
-    if proof.left_version != proof.right_version:
-        return False
-    try:
-        low_candidate = RegisterWideningCandidate.from_expr(low_expr)
-        high_candidate = RegisterWideningCandidate.from_expr(high_expr)
-    except ValueError:
-        return False
-    expected_domain = register_domain_for_name(proof.register_pair)
-    if expected_domain is None:
-        return False
-    if low_candidate.domain != expected_domain or high_candidate.domain != expected_domain:
-        return False
-    return low_candidate.is_joinable_with(high_candidate)
+            proof = _widening_model.prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+        if not proof.ok:
+            return False
+        if proof.register_pair is None:
+            return False
+        if proof.left_version is None or proof.right_version is None:
+            return False
+        if proof.left_version <= 0 or proof.right_version <= 0:
+            return False
+        if proof.left_version != proof.right_version:
+            return False
+        try:
+            low_candidate = RegisterWideningCandidate.from_expr(low_expr)
+            high_candidate = RegisterWideningCandidate.from_expr(high_expr)
+        except ValueError:
+            return False
+        expected_domain = register_domain_for_name(proof.register_pair)
+        if expected_domain is None:
+            return False
+        if low_candidate.domain != expected_domain or high_candidate.domain != expected_domain:
+            return False
+        return low_candidate.is_joinable_with(high_candidate)
+
+    return _impl()
 
 
 def join_adjacent_register_slices(

@@ -24,34 +24,37 @@ def analyze_adjacent_storage_slices(low_expr, high_expr, *, alias_state=None):
 
 
 def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state=None) -> bool:
-    proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
-    if not proof.ok:
-        return False
-    try:
-        low_candidate = _stack_widening.RegisterWideningCandidate.from_expr(low_expr)
-        high_candidate = _stack_widening.RegisterWideningCandidate.from_expr(high_expr)
-    except ValueError:
-        low_candidate = None
-        high_candidate = None
-    if low_candidate is not None and high_candidate is not None:
-        if alias_state is None:
-            return low_candidate.is_joinable_with(high_candidate)
-        return _stack_widening.can_join_adjacent_register_slices(
-            low_expr,
-            high_expr,
-            alias_state=alias_state,
-            proof=proof,
-        )
-    try:
-        low_generic = _stack_widening.WideningCandidate.from_expr(low_expr)
-        high_generic = _stack_widening.WideningCandidate.from_expr(high_expr)
-    except ValueError:
-        return False
-    if low_generic.domain.is_unknown() or high_generic.domain.is_unknown():
-        return False
-    if low_generic.domain.is_mixed() or high_generic.domain.is_mixed():
-        return False
-    return low_generic.is_joinable_with(high_generic)
+    def _impl():
+        proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+        if not proof.ok:
+            return False
+        try:
+            low_candidate = _stack_widening.RegisterWideningCandidate.from_expr(low_expr)
+            high_candidate = _stack_widening.RegisterWideningCandidate.from_expr(high_expr)
+        except ValueError:
+            low_candidate = None
+            high_candidate = None
+        if low_candidate is not None and high_candidate is not None:
+            if alias_state is None:
+                return low_candidate.is_joinable_with(high_candidate)
+            return _stack_widening.can_join_adjacent_register_slices(
+                low_expr,
+                high_expr,
+                alias_state=alias_state,
+                proof=proof,
+            )
+        try:
+            low_generic = _stack_widening.WideningCandidate.from_expr(low_expr)
+            high_generic = _stack_widening.WideningCandidate.from_expr(high_expr)
+        except ValueError:
+            return False
+        if low_generic.domain.is_unknown() or high_generic.domain.is_unknown():
+            return False
+        if low_generic.domain.is_mixed() or high_generic.domain.is_mixed():
+            return False
+        return low_generic.is_joinable_with(high_generic)
+
+    return _impl()
 
 
 def merge_storage_slice_domains(low_expr, high_expr, *, alias_state=None):

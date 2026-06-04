@@ -8,6 +8,8 @@ Inserted early in the postprocess stage, before rewrite passes.
 Forbidden: semantic recovery, alias decisions, type inference."""
 
 from dataclasses import dataclass
+import os
+import sys
 from typing import Callable
 
 from ...widening.widening_copyprop_8616 import _widening_copy_propagation_8616
@@ -107,5 +109,22 @@ def _run_optimization_passes_8616(codegen) -> bool:
     for spec in OPTIMIZATION_PASSES:
         if spec.func(codegen):
             changed = True
+            if os.environ.get("INERTIA_DEBUG_OPTIMIZATION", "").strip().lower() in {"1", "true", "yes", "on"}:
+                print(f"[optimization] pass_changed={spec.name}", file=sys.stderr, flush=True)
+        elif os.environ.get("INERTIA_DEBUG_OPTIMIZATION", "").strip().lower() in {"1", "true", "yes", "on"}:
+            print(f"[optimization] pass_stable={spec.name}", file=sys.stderr, flush=True)
+    if os.environ.get("INERTIA_DEBUG_OPTIMIZATION", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print(
+            "[optimization] counters "
+            f"dce_candidates={int(getattr(codegen, 'dce_candidates', 0) or 0)} "
+            f"dce_deleted={int(getattr(codegen, 'dce_deleted', 0) or 0)} "
+            f"dce_keep_live_use={int(getattr(codegen, 'dce_keep_live_use', 0) or 0)} "
+            f"dce_keep_side_effect={int(getattr(codegen, 'dce_keep_side_effect', 0) or 0)} "
+            f"dce_keep_protected={int(getattr(codegen, 'dce_keep_protected', 0) or 0)} "
+            f"dce_keep_observable={int(getattr(codegen, 'dce_keep_observable', 0) or 0)} "
+            f"dce_keep_unknown={int(getattr(codegen, 'dce_keep_unknown', 0) or 0)}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     return changed

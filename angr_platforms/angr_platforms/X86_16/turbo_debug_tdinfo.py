@@ -123,120 +123,123 @@ def parse_tdinfo_exe(path: Path, *, load_base_linear: int = 0) -> TDInfoEXEInfo 
 
 
 def parse_tdinfo_exe_bytes(data: bytes, *, load_base_linear: int = 0) -> TDInfoEXEInfo | None:
-    if len(data) < 0x40 or data[:2] != b"MZ":
-        return None
+    def _impl():
+        if len(data) < 0x40 or data[:2] != b"MZ":
+            return None
 
-    used_bytes_in_last_page, file_size_in_pages = struct.unpack_from("<HH", data, 2)
-    if file_size_in_pages == 0:
-        return None
-    used_bytes = used_bytes_in_last_page or _PAGE_SIZE
-    debug_info_offset = file_size_in_pages * _PAGE_SIZE - (_PAGE_SIZE - used_bytes)
-    if debug_info_offset < 0 or debug_info_offset + 44 > len(data):
-        return None
+        used_bytes_in_last_page, file_size_in_pages = struct.unpack_from("<HH", data, 2)
+        if file_size_in_pages == 0:
+            return None
+        used_bytes = used_bytes_in_last_page or _PAGE_SIZE
+        debug_info_offset = file_size_in_pages * _PAGE_SIZE - (_PAGE_SIZE - used_bytes)
+        if debug_info_offset < 0 or debug_info_offset + 44 > len(data):
+            return None
 
-    magic_number = struct.unpack_from("<H", data, debug_info_offset)[0]
-    if magic_number != _TDINFO_MAGIC:
-        return None
+        magic_number = struct.unpack_from("<H", data, debug_info_offset)[0]
+        if magic_number != _TDINFO_MAGIC:
+            return None
 
-    (
-        _magic,
-        minor_version,
-        major_version,
-        names_pool_size_in_bytes,
-        names_count,
-        types_count,
-        members_count,
-        symbols_count,
-        globals_count,
-    ) = struct.unpack_from("<HBBIHHHHH", data, debug_info_offset)
-    extension_size = struct.unpack_from("<H", data, debug_info_offset + 42)[0]
-    symbol_records_offset = debug_info_offset + 44 + extension_size
-    if symbol_records_offset + symbols_count * 9 > len(data):
-        return None
-    names_pool_offset = len(data) - names_pool_size_in_bytes
-    if names_pool_offset < symbol_records_offset or names_pool_offset < 0:
-        return None
+        (
+            _magic,
+            minor_version,
+            major_version,
+            names_pool_size_in_bytes,
+            names_count,
+            types_count,
+            members_count,
+            symbols_count,
+            globals_count,
+        ) = struct.unpack_from("<HBBIHHHHH", data, debug_info_offset)
+        extension_size = struct.unpack_from("<H", data, debug_info_offset + 42)[0]
+        symbol_records_offset = debug_info_offset + 44 + extension_size
+        if symbol_records_offset + symbols_count * 9 > len(data):
+            return None
+        names_pool_offset = len(data) - names_pool_size_in_bytes
+        if names_pool_offset < symbol_records_offset or names_pool_offset < 0:
+            return None
 
-    header = TDInfoHeader(
-        major_version=major_version,
-        minor_version=minor_version,
-        names_pool_size_in_bytes=names_pool_size_in_bytes,
-        names_count=names_count,
-        types_count=types_count,
-        members_count=members_count,
-        symbols_count=symbols_count,
-        globals_count=globals_count,
-        extension_size=extension_size,
-    )
-    names = _parse_tdinfo_name_pool(data[names_pool_offset:], expected_count=names_count)
-
-    symbols: list[TDInfoSymbolRecord] = []
-    symbols_by_class: dict[TDInfoSymbolClass, list[TDInfoSymbolRecord]] = {klass: [] for klass in TDInfoSymbolClass}
-    code_labels: dict[int, str] = {}
-    data_labels: dict[int, str] = {}
-    type_names: list[str] = []
-    for index in range(symbols_count):
-        entry_offset = symbol_records_offset + index * 9
-        name_index, type_index, offset, segment, bitfield = struct.unpack_from("<HHHHB", data, entry_offset)
-        symbol_class = TDInfoSymbolClass(bitfield & 0x7)
-        symbol = TDInfoSymbolRecord(
-            index=name_index,
-            type_index=type_index,
-            offset=offset,
-            segment=segment,
-            symbol_class=symbol_class,
+        header = TDInfoHeader(
+            major_version=major_version,
+            minor_version=minor_version,
+            names_pool_size_in_bytes=names_pool_size_in_bytes,
+            names_count=names_count,
+            types_count=types_count,
+            members_count=members_count,
+            symbols_count=symbols_count,
+            globals_count=globals_count,
+            extension_size=extension_size,
         )
-        symbols.append(symbol)
-        symbols_by_class.setdefault(symbol_class, []).append(symbol)
-        if 1 <= symbol.index <= len(names) and symbol_class in {
-            TDInfoSymbolClass.TYPEDEF,
-            TDInfoSymbolClass.STRUCT_UNION_OR_ENUM,
-        }:
+        names = _parse_tdinfo_name_pool(data[names_pool_offset:], expected_count=names_count)
+
+        symbols: list[TDInfoSymbolRecord] = []
+        symbols_by_class: dict[TDInfoSymbolClass, list[TDInfoSymbolRecord]] = {klass: [] for klass in TDInfoSymbolClass}
+        code_labels: dict[int, str] = {}
+        data_labels: dict[int, str] = {}
+        type_names: list[str] = []
+        for index in range(symbols_count):
+            entry_offset = symbol_records_offset + index * 9
+            name_index, type_index, offset, segment, bitfield = struct.unpack_from("<HHHHB", data, entry_offset)
+            symbol_class = TDInfoSymbolClass(bitfield & 0x7)
+            symbol = TDInfoSymbolRecord(
+                index=name_index,
+                type_index=type_index,
+                offset=offset,
+                segment=segment,
+                symbol_class=symbol_class,
+            )
+            symbols.append(symbol)
+            symbols_by_class.setdefault(symbol_class, []).append(symbol)
+            if 1 <= symbol.index <= len(names) and symbol_class in {
+                TDInfoSymbolClass.TYPEDEF,
+                TDInfoSymbolClass.STRUCT_UNION_OR_ENUM,
+            }:
+                name = names[symbol.index - 1]
+                if name and name != "?":
+                    type_names.append(name)
+            if symbol.symbol_class is not TDInfoSymbolClass.STATIC:
+                continue
+            if not (1 <= symbol.index <= len(names)):
+                continue
             name = names[symbol.index - 1]
-            if name and name != "?":
-                type_names.append(name)
-        if symbol.symbol_class is not TDInfoSymbolClass.STATIC:
-            continue
-        if not (1 <= symbol.index <= len(names)):
-            continue
-        name = names[symbol.index - 1]
-        if not name or name == "?":
-            continue
-        linear = symbol.linear_addr(load_base_linear=load_base_linear)
-        if _tdinfo_name_looks_like_code(name):
-            code_labels.setdefault(linear, name.lstrip("_"))
+            if not name or name == "?":
+                continue
+            linear = symbol.linear_addr(load_base_linear=load_base_linear)
+            if _tdinfo_name_looks_like_code(name):
+                code_labels.setdefault(linear, name.lstrip("_"))
+            else:
+                data_labels.setdefault(linear, name)
+
+        # Lookup TLink/TDS version identification
+        tds_key = (major_version, minor_version)
+        if tds_key in _OLD_FORMAT_NO_TDS:
+            tds_version_str = "N/A (pre-2.0 format)"
+            tlink_version_str = "1.0/1.1"
+            commandline_hint = "No TDS info in header"
+            products = "Turbo C 1.0/1.5"
+        elif tds_key in _TDS_VERSION_MAP:
+            tds_version_str, tlink_version_str, commandline_hint, products = _TDS_VERSION_MAP[tds_key]
         else:
-            data_labels.setdefault(linear, name)
+            tds_version_str = f"{major_version}.{minor_version}"
+            tlink_version_str = "unknown"
+            commandline_hint = ""
+            products = ""
 
-    # Lookup TLink/TDS version identification
-    tds_key = (major_version, minor_version)
-    if tds_key in _OLD_FORMAT_NO_TDS:
-        tds_version_str = "N/A (pre-2.0 format)"
-        tlink_version_str = "1.0/1.1"
-        commandline_hint = "No TDS info in header"
-        products = "Turbo C 1.0/1.5"
-    elif tds_key in _TDS_VERSION_MAP:
-        tds_version_str, tlink_version_str, commandline_hint, products = _TDS_VERSION_MAP[tds_key]
-    else:
-        tds_version_str = f"{major_version}.{minor_version}"
-        tlink_version_str = "unknown"
-        commandline_hint = ""
-        products = ""
+        return TDInfoEXEInfo(
+            header=header,
+            debug_info_offset=debug_info_offset,
+            symbols=tuple(symbols),
+            names=names,
+            symbols_by_class={klass: tuple(items) for klass, items in symbols_by_class.items() if items},
+            type_names=tuple(dict.fromkeys(type_names)),
+            code_labels=code_labels,
+            data_labels=data_labels,
+            tds_version_str=tds_version_str,
+            tlink_version_str=tlink_version_str,
+            commandline_hint=commandline_hint,
+            products=products,
+        )
 
-    return TDInfoEXEInfo(
-        header=header,
-        debug_info_offset=debug_info_offset,
-        symbols=tuple(symbols),
-        names=names,
-        symbols_by_class={klass: tuple(items) for klass, items in symbols_by_class.items() if items},
-        type_names=tuple(dict.fromkeys(type_names)),
-        code_labels=code_labels,
-        data_labels=data_labels,
-        tds_version_str=tds_version_str,
-        tlink_version_str=tlink_version_str,
-        commandline_hint=commandline_hint,
-        products=products,
-    )
+    return _impl()
 
 
 def _parse_tdinfo_name_pool(data: bytes, *, expected_count: int) -> tuple[str, ...]:

@@ -75,6 +75,7 @@ from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.pipeline.architecture_guard import assert_final_c_quality_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import build_typed_stack_probe_return_facts_8616
 from angr_platforms.X86_16.stack_probe_fact_trace import format_stack_probe_fact_stats_8616
+from angr_platforms.X86_16.tail_validation import x86_16_tail_validation_snapshot_passed
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
 
@@ -321,6 +322,7 @@ from .cli_c_text_postprocess import (
     _dedupe_adjacent_prototype_lines,
     _dedupe_duplicate_local_declarations_text,
     _format_known_helper_calls,
+    _hoist_c89_local_declarations_text,
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_direct_call_prototypes_text,
     _materialize_missing_generic_local_declarations_text,
@@ -1597,6 +1599,8 @@ def _format_minimal_codegen_output(
     # Keep partial/timeout payloads syntactically and semantically diagnosable
     # by applying the same unresolved-token normalization used in full output.
     formatted = normalize_unresolved_c_text(formatted)
+    formatted = _materialize_missing_generic_local_declarations_text(formatted)
+    formatted = _hoist_c89_local_declarations_text(formatted)
     forced = _forced_function_template(getattr(function, "name", None), binary_path, api_style)
     if forced is not None:
         return forced
@@ -1698,6 +1702,20 @@ def _expected_call_presence_score_8616(rendered_text: str, cod_metadata: CODProc
             if name in found_calls:
                 score += 1
         return score
+
+    return _impl()
+
+
+_IMPLICIT_STACK_PLACEHOLDER_RE_8616 = re.compile(r"\b(?:arg|s|ir|vvar)_[0-9a-fA-F]+\b")
+
+
+def _implicit_placeholder_artifact_count_8616(rendered_text: str) -> int:
+    def _impl():
+        if not isinstance(rendered_text, str) or not rendered_text:
+            return 0
+        text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered_text, flags=re.S)
+        text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+        return len(tuple(dict.fromkeys(_IMPLICIT_STACK_PLACEHOLDER_RE_8616.findall(text_wo_comments))))
 
     return _impl()
 
@@ -1837,6 +1855,60 @@ def _rehydrate_missing_evidenced_calls_on_live_codegen_8616(
         return refreshed if isinstance(refreshed, str) and refreshed.strip() else rendered_text
 
     return _impl()
+
+
+def _missing_return_chain_values_from_text_8616(codegen, text: str) -> list[int]:
+    if not getattr(codegen, "_inertia_return_chain_flattened_8616", False):
+        return []
+    values = [int(value) for value in tuple(getattr(codegen, "_inertia_return_chain_materialized_values_8616", ()) or ())]
+    final_value = getattr(codegen, "_inertia_return_chain_final_value_8616", None)
+    if isinstance(final_value, int):
+        values.append(int(final_value))
+    if not values or not isinstance(text, str):
+        return []
+    emitted_text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("///"))
+    missing: list[int] = []
+    for value in dict.fromkeys(values):
+        if re.search(rf"\breturn\s+{re.escape(str(value))}\s*;", emitted_text) is None:
+            missing.append(int(value))
+    return missing
+
+
+def _preserve_return_chain_text_8616(project, function, codegen, formatted: str) -> str:
+    missing = _missing_return_chain_values_from_text_8616(codegen, formatted)
+    if not missing:
+        return formatted
+    live_text = _snapshot_codegen_text(codegen)
+    if isinstance(live_text, str) and live_text.strip():
+        live_text = re.sub(r"::0x[0-9a-fA-F]+::(?P<name>[A-Za-z_]\w*)", lambda match: match.group("name"), live_text)
+        live_text = _materialize_missing_direct_call_prototypes_text(live_text)
+    live_missing = _missing_return_chain_values_from_text_8616(codegen, live_text)
+    if not live_missing and isinstance(live_text, str) and live_text.strip():
+        logging.getLogger(__name__).warning(
+            "Restored live codegen text after CLI cleanup lost CFG return-chain values at function=%#x missing=%r",
+            function_original_addr(function),
+            missing,
+        )
+        if os.environ.get("INERTIA_DEBUG_RETURN_BRANCH"):
+            with contextlib.suppress(Exception):
+                debug_dir = Path("angr_platforms/.cache/return_chain_debug")
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                debug_path = debug_dir / f"{function_original_addr(function):#x}.restored.c"
+                debug_path.write_text(live_text, encoding="utf-8")
+                logging.getLogger(__name__).warning("[return-chain-cli] restored payload artifact=%s", debug_path)
+        return live_text
+    raise PipelineHardError(
+        "final C lost CFG-proven return-chain values",
+        layer="codegen",
+        function_addr=function_original_addr(function),
+        details={
+            "missing_values": tuple(missing),
+            "live_missing_values": tuple(live_missing),
+            "function_name": getattr(function, "name", None),
+            "project_stage": getattr(project, "_inertia_decompiler_stage", None),
+        },
+    )
+
 
 def _decompile_function(
     project: angr.Project,
@@ -2398,6 +2470,7 @@ def _decompile_function(
         setattr(dec.codegen, "_inertia_stack_local_declaration_candidates", stack_local_candidates)
         changed = False
         small_function = bool(profile.get("wrapper_like") or profile.get("tiny_single_call_helper"))
+        large_x86_16_function = bool(project.arch.name == "86_16" and block_count >= 40)
         fold_values_cod_outlier = (
             binary_path is not None
             and binary_path.name.lower().endswith(".cod")
@@ -2418,6 +2491,8 @@ def _decompile_function(
             return sum(1 for node in _iter_c_nodes_deep(root) if isinstance(node, structured_c.CFunctionCall))
 
         def _snapshot_codegen_cfunc():
+            if large_x86_16_function:
+                return None
             cfunc = getattr(dec.codegen, "cfunc", None)
             if cfunc is None:
                 return None
@@ -2459,6 +2534,8 @@ def _decompile_function(
             return changed_local
 
         def _run_callsite_stack_fact_pass() -> bool:
+            if large_x86_16_function:
+                return False
             changed_local = False
             for rewrite in (
                 lambda: _attach_callsite_summaries_8616(project, dec.codegen),
@@ -2664,6 +2741,25 @@ def _decompile_function(
                 setattr(project, "_inertia_partial_codegen_text", _rehydrated)
         except Exception as ex:
             logging.getLogger(__name__).debug("live call rehydration skipped: %s", ex)
+        if (
+            getattr(getattr(project, "arch", None), "name", "") == "86_16"
+            and block_count >= 40
+            and isinstance(_live_snapshot, str)
+            and len(_live_snapshot) >= 50_000
+            and x86_16_tail_validation_snapshot_passed(_tail_validation_snapshot_for_function_run(project, function))
+        ):
+            setattr(
+                dec.codegen,
+                "_inertia_legacy_cli_rewrite_refused_large_validated_ast",
+                int(getattr(dec.codegen, "_inertia_legacy_cli_rewrite_refused_large_validated_ast", 0) or 0) + 1,
+            )
+            logging.getLogger(__name__).warning(
+                "Skipping legacy CLI rewrite loop for large validated x86-16 AST at function=%#x blocks=%d text_bytes=%d",
+                function_original_addr(function),
+                block_count,
+                len(_live_snapshot),
+            )
+            rewrite_passes = ()
         if os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
             try:
                 pre_rewrite_text = _snapshot_codegen_text(dec.codegen)
@@ -2957,6 +3053,7 @@ def _decompile_function(
         _debug_dump_calls_8616("post-materialize-missing-generic-locals-final", formatted, debug_call_addr)
         formatted = _prune_unused_local_declarations_text(formatted)
         _debug_dump_calls_8616("post-prune-unused-local-decls-final", formatted, debug_call_addr)
+        pre_final_text_cleanup = formatted
         _emit_c_stage_trace(
             project,
             function,
@@ -2991,6 +3088,8 @@ def _decompile_function(
             formatted = redundant_wrapper_pattern.sub(rf"\g<indent>return {helper_name}(\g<args>);", formatted)
             _debug_dump_calls_8616("post-redundant-wrapper-collapse", formatted, debug_call_addr)
         _debug_dump_calls_8616("final-emitted-c", formatted, debug_call_addr)
+        formatted = _prune_non_lvalue_arithmetic_assignments(formatted)
+        _debug_dump_calls_8616("post-final-non-lvalue-arithmetic-prune", formatted, debug_call_addr)
         formatted = _dedupe_duplicate_local_declarations_text(formatted)
         formatted = _normalize_scalar_assigned_extern_arrays_text(formatted)
         formatted = _materialize_missing_generic_local_declarations_text(formatted)
@@ -3007,7 +3106,12 @@ def _decompile_function(
         if effective_cod_metadata is not None:
             # Evidence-first final text selection: later text-only cleanup passes may
             # accidentally degrade call-floor evidence. Keep the strongest candidate.
-            fallback_candidates = [formatted, rendered_text, _pre_helper_format_text]
+            fallback_candidates = [
+                formatted,
+                pre_final_text_cleanup,
+                rendered_text,
+                _pre_helper_format_text,
+            ]
 
             def _semantic_rank(text: str) -> tuple[int, int, int]:
                 if not isinstance(text, str) or not text.strip():
@@ -3015,6 +3119,7 @@ def _decompile_function(
                 return (
                     _expected_call_presence_score_8616(text, effective_cod_metadata),
                     _global_declaration_coverage_score_8616(text, effective_cod_metadata, synthetic_globals),
+                    -_implicit_placeholder_artifact_count_8616(text),
                     len(text),
                 )
 
@@ -3051,6 +3156,9 @@ def _decompile_function(
         formatted = _normalize_scalar_gb_array_declarations_text(formatted)
         formatted = _normalize_seg_offset_void_pointer_args_text(formatted)
         formatted = normalize_unresolved_c_text(formatted)
+        formatted = _materialize_missing_generic_local_declarations_text(formatted)
+        formatted = _hoist_c89_local_declarations_text(formatted)
+        formatted = _preserve_return_chain_text_8616(project, function, dec.codegen, formatted)
 
         _emit_c_stage_trace(
             project,
@@ -3061,6 +3169,12 @@ def _decompile_function(
         )
         quality = assess_decompiled_c_text(formatted)
         if quality.reject_as_decompiled:
+            if os.environ.get("INERTIA_DEBUG_RETURN_BRANCH"):
+                logging.getLogger(__name__).warning(
+                    "[return-chain-cli] quality rejected function=%#x markers=%r",
+                    function_original_addr(function),
+                    tuple(quality.markers[:8]),
+                )
             _remember_tail_validation_snapshot(dec.codegen)
             setattr(project, "_inertia_partial_codegen_text", formatted)
             marker_summary = ", ".join(quality.markers[:3])
@@ -3080,6 +3194,14 @@ def _decompile_function(
             function_addr=function_original_addr(function),
         )
 
+        setattr(project, "_inertia_last_validated_function_payload", (function_original_addr(function), formatted))
+        if os.environ.get("INERTIA_DEBUG_RETURN_BRANCH"):
+            logging.getLogger(__name__).warning(
+                "[return-chain-cli] set validated payload function=%#x len=%d missing=%r",
+                function_original_addr(function),
+                len(formatted),
+                _missing_return_chain_values_from_text_8616(dec.codegen, formatted),
+            )
         setattr(project, "_inertia_partial_codegen_text", None)
         return "ok", formatted
 
@@ -3786,6 +3908,32 @@ def _decompile_function_with_stats(
     if forced_payload is not None:
         status = "ok"
         payload = forced_payload
+    validated_payload_record = getattr(project, "_inertia_last_validated_function_payload", None)
+    if os.environ.get("INERTIA_DEBUG_RETURN_BRANCH"):
+        logging.getLogger(__name__).warning(
+            "[return-chain-cli] with-stats status=%s payload_len=%d record=%s payload=%r",
+            status,
+            len(payload) if isinstance(payload, str) else 0,
+            (
+                (validated_payload_record[0], len(validated_payload_record[1]))
+                if isinstance(validated_payload_record, tuple)
+                and len(validated_payload_record) == 2
+                and isinstance(validated_payload_record[1], str)
+                else None
+            ),
+            payload,
+        )
+    if status == "ok" and isinstance(validated_payload_record, tuple) and len(validated_payload_record) == 2:
+        validated_addr, validated_payload = validated_payload_record
+        if validated_addr == function_original_addr(function) and isinstance(validated_payload, str) and validated_payload.strip():
+            if payload != validated_payload:
+                logging.getLogger(__name__).warning(
+                    "Corrected returned payload to validated codegen artifact at function=%#x old_len=%d new_len=%d",
+                    function_original_addr(function),
+                    len(payload) if isinstance(payload, str) else 0,
+                    len(validated_payload),
+                )
+            payload = validated_payload
     partial_payload = getattr(project, "_inertia_partial_codegen_text", None)
     elapsed = time.perf_counter() - start
     advance_failure_family_state(failure_family_state)

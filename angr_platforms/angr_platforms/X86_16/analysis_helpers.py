@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +39,8 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
     "settextcolor": "int settextcolor(int color);",
     "settextposition": "void settextposition(int row, int col);",
     "outtext": "int outtext(const char *text);",
+    "sprintf": "int sprintf(char *buf, const char *fmt, ...);",
+    "_sprintf": "int _sprintf(char *buf, const char *fmt, ...);",
     "exit": "void exit(int status);",
     "memset": "void *memset(void *dst, int ch, unsigned long count);",
     "inp": "unsigned char inp(unsigned short port);",
@@ -49,8 +53,8 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
     "writestringat": "void writestringat(unsigned short rowcol, const char *s);",
     "dispdigit": "void dispdigit(unsigned char digit);",
     "dispnum": "void dispnum(unsigned short value);",
-    "Swaps": "int Swaps(void *lhs, void *rhs);",
-    "_Swaps": "int _Swaps(void *lhs, void *rhs);",
+    "Swaps": "void Swaps(void *lhs, void *rhs);",
+    "_Swaps": "void _Swaps(void *lhs, void *rhs);",
     "SwapBars": "int SwapBars(int iRow1, int iRow2);",
     "_SwapBars": "int _SwapBars(int iRow1, int iRow2);",
     "PercolateUp": "short PercolateUp(int iMaxLevel);",
@@ -427,43 +431,46 @@ def interrupt_service_addr(call: InterruptCall) -> int:
 
 
 def interrupt_service_name(call: InterruptCall, api_style: str = "pseudo") -> str:
-    spec = _interrupt_service_spec_for_call(call)
-    if spec is not None:
-        if api_style == "pseudo":
-            return spec.pseudo_name
-        if api_style in {"dos", "msc", "compiler"}:
-            return spec.dos_name
-        return spec.modern_name
-
-    if call.vector == 0x21:
-        spec = INT21_SERVICE_SPECS.get(call.ah or -1)
+    def _impl():
+        spec = _interrupt_service_spec_for_call(call)
         if spec is not None:
             if api_style == "pseudo":
                 return spec.pseudo_name
             if api_style in {"dos", "msc", "compiler"}:
                 return spec.dos_name
             return spec.modern_name
-        return "dos_int21"
 
-    if call.vector == 0x10:
-        return "bios_int10_video" if api_style == "pseudo" else "_bios_int10_video"
-    if call.vector == 0x11:
-        return "bios_equiplist" if api_style == "pseudo" else "_bios_equiplist"
-    if call.vector == 0x12:
-        return "bios_memsize" if api_style == "pseudo" else "_bios_memsize"
-    if call.vector == 0x13:
-        return "bios_int13_disk" if api_style == "pseudo" else "_bios_disk"
-    if call.vector == 0x14:
-        return "bios_int14_serial" if api_style == "pseudo" else "_bios_serialcom"
-    if call.vector == 0x15:
-        return "bios_int15_system" if api_style == "pseudo" else "_bios_int15_system"
-    if call.vector == 0x16:
-        return "bios_keybrd" if api_style == "pseudo" else "_bios_keybrd"
-    if call.vector == 0x17:
-        return "bios_int17_printer" if api_style == "pseudo" else "_bios_printer"
-    if call.vector == 0x1A:
-        return "bios_timeofday" if api_style == "pseudo" else "_bios_timeofday"
-    return f"int{call.vector:02x}"
+        if call.vector == 0x21:
+            spec = INT21_SERVICE_SPECS.get(call.ah or -1)
+            if spec is not None:
+                if api_style == "pseudo":
+                    return spec.pseudo_name
+                if api_style in {"dos", "msc", "compiler"}:
+                    return spec.dos_name
+                return spec.modern_name
+            return "dos_int21"
+
+        if call.vector == 0x10:
+            return "bios_int10_video" if api_style == "pseudo" else "_bios_int10_video"
+        if call.vector == 0x11:
+            return "bios_equiplist" if api_style == "pseudo" else "_bios_equiplist"
+        if call.vector == 0x12:
+            return "bios_memsize" if api_style == "pseudo" else "_bios_memsize"
+        if call.vector == 0x13:
+            return "bios_int13_disk" if api_style == "pseudo" else "_bios_disk"
+        if call.vector == 0x14:
+            return "bios_int14_serial" if api_style == "pseudo" else "_bios_serialcom"
+        if call.vector == 0x15:
+            return "bios_int15_system" if api_style == "pseudo" else "_bios_int15_system"
+        if call.vector == 0x16:
+            return "bios_keybrd" if api_style == "pseudo" else "_bios_keybrd"
+        if call.vector == 0x17:
+            return "bios_int17_printer" if api_style == "pseudo" else "_bios_printer"
+        if call.vector == 0x1A:
+            return "bios_timeofday" if api_style == "pseudo" else "_bios_timeofday"
+        return f"int{call.vector:02x}"
+
+    return _impl()
 
 
 def dos_service_name(call: InterruptCall) -> str:
@@ -631,17 +638,18 @@ def known_helper_signature_decl(name: str) -> str | None:
 
 
 def preferred_known_helper_signature_decl(name: str) -> str | None:
+    if not isinstance(name, str) or not name:
+        return None
+    stripped = name.lstrip("_")
+    underscored = f"_{stripped}" if stripped else name
+    if underscored in KNOWN_HELPER_SIGNATURE_DECLS:
+        return KNOWN_HELPER_SIGNATURE_DECLS[underscored]
     if name in KNOWN_HELPER_SIGNATURE_DECLS:
-        if name.startswith("_"):
-            stripped = name.lstrip("_")
-            if stripped and stripped in KNOWN_HELPER_SIGNATURE_DECLS:
-                return KNOWN_HELPER_SIGNATURE_DECLS[stripped]
         return KNOWN_HELPER_SIGNATURE_DECLS[name]
     if not name.startswith("_"):
         underscored = f"_{name}"
         if underscored in KNOWN_HELPER_SIGNATURE_DECLS:
             return KNOWN_HELPER_SIGNATURE_DECLS[underscored]
-    stripped = name.lstrip("_")
     if stripped != name:
         return KNOWN_HELPER_SIGNATURE_DECLS.get(stripped)
     return None
@@ -656,66 +664,72 @@ def describe_x86_16_known_helper_signatures() -> dict[str, object]:
 
 
 def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[int, int]:
-    """
-    Infer a bounded `.COM` code region by scanning until a likely terminator.
+    def _impl():
+        """
+        Infer a bounded `.COM` code region by scanning until a likely terminator.
 
-    This keeps tiny DOS stubs from decompiling their trailing strings as code.
-    """
+        This keeps tiny DOS stubs from decompiling their trailing strings as code.
+        """
 
-    data = path.read_bytes()
-    end_limit = min(len(data), window)
-    current = 0
-    ah = None
+        data = path.read_bytes()
+        end_limit = min(len(data), window)
+        current = 0
+        ah = None
 
-    while current < end_limit:
-        chunk = data[current : current + 16]
-        insn = next(arch.capstone.disasm(chunk, base_addr + current, 1), None)
-        if insn is None:
-            break
-
-        text = f"{insn.mnemonic} {insn.op_str}".strip().lower()
-        if text.startswith("mov ah, "):
-            ah = int(text.split(", ", 1)[1], 0)
-        elif text.startswith("mov ax, "):
-            ax = int(text.split(", ", 1)[1], 0)
-            ah = (ax >> 8) & 0xFF
-
-        current += insn.size
-
-        if insn.mnemonic == "int":
-            if insn.op_str.lower() == "0x20":
+        while current < end_limit:
+            chunk = data[current : current + 16]
+            insn = next(arch.capstone.disasm(chunk, base_addr + current, 1), None)
+            if insn is None:
                 break
-            if insn.op_str.lower() == "0x21" and ah == 0x4C:
-                break
-            if insn.op_str.lower() == "0x27":
-                break
-        if insn.mnemonic in {"ret", "retf", "iret", "jmp"}:
-            break
 
-    return base_addr, base_addr + max(current, 1)
+            text = f"{insn.mnemonic} {insn.op_str}".strip().lower()
+            if text.startswith("mov ah, "):
+                ah = int(text.split(", ", 1)[1], 0)
+            elif text.startswith("mov ax, "):
+                ax = int(text.split(", ", 1)[1], 0)
+                ah = (ax >> 8) & 0xFF
+
+            current += insn.size
+
+            if insn.mnemonic == "int":
+                if insn.op_str.lower() == "0x20":
+                    break
+                if insn.op_str.lower() == "0x21" and ah == 0x4C:
+                    break
+                if insn.op_str.lower() == "0x27":
+                    break
+            if insn.mnemonic in {"ret", "retf", "iret", "jmp"}:
+                break
+
+        return base_addr, base_addr + max(current, 1)
+
+    return _impl()
 
 
 def _decode_com_ascii_string(binary_path: Path | None, dx: int | None, *, terminator: int) -> str | None:
-    if binary_path is None or binary_path.suffix.lower() != ".com" or dx is None or dx < 0x100:
-        return None
-    try:
-        data = binary_path.read_bytes()
-    except OSError:
-        return None
+    def _impl():
+        if binary_path is None or binary_path.suffix.lower() != ".com" or dx is None or dx < 0x100:
+            return None
+        try:
+            data = binary_path.read_bytes()
+        except OSError:
+            return None
 
-    start = dx - 0x100
-    if start < 0 or start >= len(data):
-        return None
-    end = data.find(bytes([terminator]), start)
-    if end == -1:
-        return None
-    raw = data[start:end]
-    if not raw:
-        return ""
-    if any(byte < 0x20 or byte > 0x7E for byte in raw):
-        return None
-    text = raw.decode("ascii", errors="ignore")
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+        start = dx - 0x100
+        if start < 0 or start >= len(data):
+            return None
+        end = data.find(bytes([terminator]), start)
+        if end == -1:
+            return None
+        raw = data[start:end]
+        if not raw:
+            return ""
+        if any(byte < 0x20 or byte > 0x7E for byte in raw):
+            return None
+        text = raw.decode("ascii", errors="ignore")
+        return text.replace("\\", "\\\\").replace('"', '\\"')
+
+    return _impl()
 
 
 def _coerce_path(binary_path: Path | str | None) -> Path | None:
@@ -782,169 +796,173 @@ def collect_interrupt_calls(
     *,
     vectors: set[int] | None = None,
 ) -> list[InterruptCall]:
-    binary_path = _coerce_path(binary_path)
-    project = function.project
-    if project is None:
-        return []
+    def _impl():
+        nonlocal binary_path
+        binary_path = _coerce_path(binary_path)
+        project = function.project
+        if project is None:
+            return []
 
-    calls: list[InterruptCall] = []
-    regs: dict[str, tuple[int | None, str | None]] = {
-        "ah": (None, None),
-        "al": (None, None),
-        "ax": (None, None),
-        "bh": (None, None),
-        "bl": (None, None),
-        "bx": (None, None),
-        "ch": (None, None),
-        "cl": (None, None),
-        "cx": (None, None),
-        "dh": (None, None),
-        "dl": (None, None),
-        "dx": (None, None),
-        "si": (None, None),
-        "di": (None, None),
-        "ds": (None, None),
-        "es": (None, None),
-        "ss": (None, None),
-        "cs": (None, None),
-    }
+        calls: list[InterruptCall] = []
+        regs: dict[str, tuple[int | None, str | None]] = {
+            "ah": (None, None),
+            "al": (None, None),
+            "ax": (None, None),
+            "bh": (None, None),
+            "bl": (None, None),
+            "bx": (None, None),
+            "ch": (None, None),
+            "cl": (None, None),
+            "cx": (None, None),
+            "dh": (None, None),
+            "dl": (None, None),
+            "dx": (None, None),
+            "si": (None, None),
+            "di": (None, None),
+            "ds": (None, None),
+            "es": (None, None),
+            "ss": (None, None),
+            "cs": (None, None),
+        }
 
-    def set_reg(reg_name: str, value: int | None, expr: str | None) -> None:
-        regs[reg_name] = (value, expr)
+        def set_reg(reg_name: str, value: int | None, expr: str | None) -> None:
+            regs[reg_name] = (value, expr)
 
-        if reg_name in {"ax", "bx", "cx", "dx"}:
-            if value is not None:
-                high = (value >> 8) & 0xFF
-                low = value & 0xFF
-                regs[f"{reg_name[0]}h"] = (high, _format_imm(high))
-                regs[f"{reg_name[0]}l"] = (low, _format_imm(low))
-            else:
-                regs[f"{reg_name[0]}h"] = (None, None)
-                regs[f"{reg_name[0]}l"] = (None, None)
-        elif reg_name in {"ah", "al"}:
-            high, _ = regs["ah"]
-            low, _ = regs["al"]
-            if high is not None and low is not None:
-                regs["ax"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
-            else:
-                regs["ax"] = (None, None)
-        elif reg_name in {"bh", "bl"}:
-            high, _ = regs["bh"]
-            low, _ = regs["bl"]
-            if high is not None and low is not None:
-                regs["bx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
-            else:
-                regs["bx"] = (None, None)
-        elif reg_name in {"ch", "cl"}:
-            high, _ = regs["ch"]
-            low, _ = regs["cl"]
-            if high is not None and low is not None:
-                regs["cx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
-            else:
-                regs["cx"] = (None, None)
-        elif reg_name in {"dh", "dl"}:
-            high, _ = regs["dh"]
-            low, _ = regs["dl"]
-            if high is not None and low is not None:
-                regs["dx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
-            else:
-                regs["dx"] = (None, None)
+            if reg_name in {"ax", "bx", "cx", "dx"}:
+                if value is not None:
+                    high = (value >> 8) & 0xFF
+                    low = value & 0xFF
+                    regs[f"{reg_name[0]}h"] = (high, _format_imm(high))
+                    regs[f"{reg_name[0]}l"] = (low, _format_imm(low))
+                else:
+                    regs[f"{reg_name[0]}h"] = (None, None)
+                    regs[f"{reg_name[0]}l"] = (None, None)
+            elif reg_name in {"ah", "al"}:
+                high, _ = regs["ah"]
+                low, _ = regs["al"]
+                if high is not None and low is not None:
+                    regs["ax"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
+                else:
+                    regs["ax"] = (None, None)
+            elif reg_name in {"bh", "bl"}:
+                high, _ = regs["bh"]
+                low, _ = regs["bl"]
+                if high is not None and low is not None:
+                    regs["bx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
+                else:
+                    regs["bx"] = (None, None)
+            elif reg_name in {"ch", "cl"}:
+                high, _ = regs["ch"]
+                low, _ = regs["cl"]
+                if high is not None and low is not None:
+                    regs["cx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
+                else:
+                    regs["cx"] = (None, None)
+            elif reg_name in {"dh", "dl"}:
+                high, _ = regs["dh"]
+                low, _ = regs["dl"]
+                if high is not None and low is not None:
+                    regs["dx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
+                else:
+                    regs["dx"] = (None, None)
 
-    for block_addr in sorted(getattr(function, "block_addrs_set", ())):
-        block = project.factory.block(block_addr, opt_level=0)
-        for ins in block.capstone.insns:
-            operands = getattr(ins, "operands", ())
-            if ins.mnemonic == "mov" and len(operands) == 2:
-                dst, src = operands
-                if dst.type == 1:
-                    reg_name = ins.reg_name(dst.reg).lower()
-                    if reg_name in regs:
-                        value, expr = _operand_expr(ins, src)
-                        set_reg(reg_name, value, expr)
-            elif ins.mnemonic == "xor" and len(operands) == 2 and operands[0].type == 1 and operands[1].type == 1:
-                dst_name = ins.reg_name(operands[0].reg).lower()
-                src_name = ins.reg_name(operands[1].reg).lower()
-                if dst_name == src_name and dst_name in regs:
-                    set_reg(dst_name, 0, "0")
-            elif ins.mnemonic == "int":
-                vector_text = ins.op_str.lower().strip()
-                try:
-                    vector = int(vector_text, 0) & 0xFF
-                except ValueError:
-                    continue
-                if vectors is not None and vector not in vectors:
-                    continue
+        for block_addr in sorted(getattr(function, "block_addrs_set", ())):
+            block = project.factory.block(block_addr, opt_level=0)
+            for ins in block.capstone.insns:
+                operands = getattr(ins, "operands", ())
+                if ins.mnemonic == "mov" and len(operands) == 2:
+                    dst, src = operands
+                    if dst.type == 1:
+                        reg_name = ins.reg_name(dst.reg).lower()
+                        if reg_name in regs:
+                            value, expr = _operand_expr(ins, src)
+                            set_reg(reg_name, value, expr)
+                elif ins.mnemonic == "xor" and len(operands) == 2 and operands[0].type == 1 and operands[1].type == 1:
+                    dst_name = ins.reg_name(operands[0].reg).lower()
+                    src_name = ins.reg_name(operands[1].reg).lower()
+                    if dst_name == src_name and dst_name in regs:
+                        set_reg(dst_name, 0, "0")
+                elif ins.mnemonic == "int":
+                    vector_text = ins.op_str.lower().strip()
+                    try:
+                        vector = int(vector_text, 0) & 0xFF
+                    except ValueError:
+                        continue
+                    if vectors is not None and vector not in vectors:
+                        continue
 
-                ah, ah_expr = regs["ah"]
-                al, al_expr = regs["al"]
-                ax, ax_expr = regs["ax"]
-                bh, bh_expr = regs["bh"]
-                bl, bl_expr = regs["bl"]
-                bx, bx_expr = regs["bx"]
-                ch, ch_expr = regs["ch"]
-                cl, cl_expr = regs["cl"]
-                cx, cx_expr = regs["cx"]
-                dh, dh_expr = regs["dh"]
-                dl, dl_expr = regs["dl"]
-                dx, dx_expr = regs["dx"]
-                si, si_expr = regs["si"]
-                di, di_expr = regs["di"]
-                ds, ds_expr = regs["ds"]
-                es, es_expr = regs["es"]
-                ss, ss_expr = regs["ss"]
-                cs, cs_expr = regs["cs"]
-                path_literal = None
-                if vector == 0x21 and ah in {0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x41}:
-                    path_literal = decode_com_c_string(binary_path, dx)
-                elif vector == 0x21 and ah == 0x09:
-                    path_literal = decode_com_dollar_string(binary_path, dx)
-                calls.append(
-                    InterruptCall(
-                        insn_addr=ins.address,
-                        vector=vector,
-                        ah=ah,
-                        al=al,
-                        ax=ax,
-                        bh=bh,
-                        bl=bl,
-                        bx=bx,
-                        ch=ch,
-                        cl=cl,
-                        cx=cx,
-                        dh=dh,
-                        dl=dl,
-                        dx=dx,
-                        si=si,
-                        di=di,
-                        ds=ds,
-                        es=es,
-                        ss=ss,
-                        cs=cs,
-                        ah_expr=ah_expr,
-                        al_expr=al_expr,
-                        ax_expr=ax_expr,
-                        bh_expr=bh_expr,
-                        bl_expr=bl_expr,
-                        bx_expr=bx_expr,
-                        ch_expr=ch_expr,
-                        cl_expr=cl_expr,
-                        cx_expr=cx_expr,
-                        dh_expr=dh_expr,
-                        dl_expr=dl_expr,
-                        dx_expr=dx_expr,
-                        si_expr=si_expr,
-                        di_expr=di_expr,
-                        ds_expr=ds_expr,
-                        es_expr=es_expr,
-                        ss_expr=ss_expr,
-                        cs_expr=cs_expr,
-                        string_literal=path_literal,
+                    ah, ah_expr = regs["ah"]
+                    al, al_expr = regs["al"]
+                    ax, ax_expr = regs["ax"]
+                    bh, bh_expr = regs["bh"]
+                    bl, bl_expr = regs["bl"]
+                    bx, bx_expr = regs["bx"]
+                    ch, ch_expr = regs["ch"]
+                    cl, cl_expr = regs["cl"]
+                    cx, cx_expr = regs["cx"]
+                    dh, dh_expr = regs["dh"]
+                    dl, dl_expr = regs["dl"]
+                    dx, dx_expr = regs["dx"]
+                    si, si_expr = regs["si"]
+                    di, di_expr = regs["di"]
+                    ds, ds_expr = regs["ds"]
+                    es, es_expr = regs["es"]
+                    ss, ss_expr = regs["ss"]
+                    cs, cs_expr = regs["cs"]
+                    path_literal = None
+                    if vector == 0x21 and ah in {0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x41}:
+                        path_literal = decode_com_c_string(binary_path, dx)
+                    elif vector == 0x21 and ah == 0x09:
+                        path_literal = decode_com_dollar_string(binary_path, dx)
+                    calls.append(
+                        InterruptCall(
+                            insn_addr=ins.address,
+                            vector=vector,
+                            ah=ah,
+                            al=al,
+                            ax=ax,
+                            bh=bh,
+                            bl=bl,
+                            bx=bx,
+                            ch=ch,
+                            cl=cl,
+                            cx=cx,
+                            dh=dh,
+                            dl=dl,
+                            dx=dx,
+                            si=si,
+                            di=di,
+                            ds=ds,
+                            es=es,
+                            ss=ss,
+                            cs=cs,
+                            ah_expr=ah_expr,
+                            al_expr=al_expr,
+                            ax_expr=ax_expr,
+                            bh_expr=bh_expr,
+                            bl_expr=bl_expr,
+                            bx_expr=bx_expr,
+                            ch_expr=ch_expr,
+                            cl_expr=cl_expr,
+                            cx_expr=cx_expr,
+                            dh_expr=dh_expr,
+                            dl_expr=dl_expr,
+                            dx_expr=dx_expr,
+                            si_expr=si_expr,
+                            di_expr=di_expr,
+                            ds_expr=ds_expr,
+                            es_expr=es_expr,
+                            ss_expr=ss_expr,
+                            cs_expr=cs_expr,
+                            string_literal=path_literal,
+                        )
                     )
-                )
-                if vector == 0x21:
-                    set_reg("dx", None, None)
+                    if vector == 0x21:
+                        set_reg("dx", None, None)
 
-    return calls
+        return calls
+
+    return _impl()
 
 
 def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> list[DOSInt21Call]:
@@ -1051,6 +1069,91 @@ def _interrupt_service_decl(spec: InterruptServiceSpec, api_style: str) -> str:
     return f"int {spec.modern_name.lstrip('_')}(void);"
 
 
+def _render_string_dollar_call_8616(call: DOSInt21Call, api_style: str, name: str) -> str:
+    if api_style == "dos":
+        if call.string_literal is not None:
+            return f'_dos_print_dollar_string("{call.string_literal}")'
+        if call.dx is None:
+            return "_dos_print_dollar_string()"
+        return f"_dos_print_dollar_string((const char far *)0x{call.dx:x})"
+    if api_style == "pseudo":
+        if call.string_literal is not None:
+            return f'{name}("{call.string_literal}")'
+        if call.dx is None:
+            return f"{name}()"
+        return f"{name}((const char *)0x{call.dx:x})"
+    if call.string_literal is not None:
+        return f'print_dos_string("{call.string_literal}")'
+    if call.dx is None:
+        return "print_dos_string()"
+    return f"print_dos_string((const char *)0x{call.dx:x})"
+
+
+def _render_setvect_call_8616(call: DOSInt21Call, api_style: str, name: str) -> str:
+    vector = _dos_vector_arg(call) or "0"
+    handler = _dos_far_pointer_arg(call) or "NULL"
+    if api_style == "dos":
+        return f"_dos_setvect({vector}, {handler})"
+    if api_style == "pseudo":
+        return f"{name}({vector}, {handler})"
+    return f"setvect({vector}, {handler})"
+
+
+def _render_getvect_call_8616(call: DOSInt21Call, api_style: str, name: str) -> str:
+    vector = _dos_vector_arg(call) or "0"
+    if api_style == "dos":
+        return f"_dos_getvect({vector})"
+    if api_style == "pseudo":
+        return f"{name}({vector})"
+    return f"getvect({vector})"
+
+
+def _render_dos_int21_by_kind_8616(call: DOSInt21Call, api_style: str, name: str, render_kind: str) -> str:
+    def _impl():
+        if render_kind == "string_dollar":
+            return _render_string_dollar_call_8616(call, api_style, name)
+        if render_kind == "drive":
+            return f"{name}({_dos_drive_arg(call) or '0'})"
+        if render_kind == "path":
+            return f"{name}({_dos_path_arg(call, far_ptr=api_style == 'dos') or 'NULL'})"
+        if render_kind == "path_mode":
+            path = _dos_path_arg(call, far_ptr=api_style == "dos") or "NULL"
+            mode = _dos_arg(call.al, call.al_expr) or "0"
+            return f"{name}({path}, {mode})"
+        if render_kind == "path_attrs":
+            path = _dos_path_arg(call, far_ptr=api_style == "dos") or "NULL"
+            attrs = _dos_arg(call.cx, call.cx_expr) or "0"
+            return f"{name}({path}, {attrs})"
+        if render_kind == "handle":
+            return f"{name}({_dos_arg(call.bx, call.bx_expr) or '0'})"
+        if render_kind == "handle_buffer_count":
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            buffer = _dos_buffer_arg(call, far_ptr=api_style == "dos", const=call.ah == 0x40) or "NULL"
+            count = _dos_arg(call.cx, call.cx_expr) or "0"
+            return f"{name}({handle}, {buffer}, {count})"
+        if render_kind == "handle_seek":
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            offset = _dos_seek_offset_arg(call)
+            origin = _dos_arg(call.al, call.al_expr) or "0"
+            return f"{name}({handle}, {offset}, {origin})"
+        if render_kind == "drive_buffer":
+            drive = _dos_drive_arg(call) or "0"
+            buffer = _dos_si_buffer_arg(call, far_ptr=api_style == "dos", const=False) or "NULL"
+            return f"{name}({drive}, {buffer})"
+        if render_kind == "setvect":
+            return _render_setvect_call_8616(call, api_style, name)
+        if render_kind == "getvect":
+            return _render_getvect_call_8616(call, api_style, name)
+        if render_kind == "exit":
+            exit_code = call.ax & 0xFF if call.ax is not None else 0
+            return f"{name}({exit_code})"
+        if render_kind in {"zero_arg", "wrapper", "setblock", "get_version"}:
+            return f"{name}()"
+        return f"{name}()"
+
+    return _impl()
+
+
 def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
     api_style = normalize_api_style(api_style)
 
@@ -1062,129 +1165,41 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
         return "dos_int21()"
 
     name = interrupt_service_name(call, api_style)
-
-    if spec.render_kind == "string_dollar":
-        if api_style == "dos":
-            if call.string_literal is not None:
-                return f'_dos_print_dollar_string("{call.string_literal}")'
-            if call.dx is None:
-                return "_dos_print_dollar_string()"
-            return f"_dos_print_dollar_string((const char far *)0x{call.dx:x})"
-        if api_style == "pseudo":
-            if call.string_literal is not None:
-                return f'{name}("{call.string_literal}")'
-            if call.dx is None:
-                return f"{name}()"
-            return f"{name}((const char *)0x{call.dx:x})"
-        if call.string_literal is not None:
-            return f'print_dos_string("{call.string_literal}")'
-        if call.dx is None:
-            return "print_dos_string()"
-        return f"print_dos_string((const char *)0x{call.dx:x})"
-
-    if spec.render_kind == "drive":
-        drive = _dos_drive_arg(call) or "0"
-        return f"{name}({drive})"
-
-    if spec.render_kind == "path":
-        path = _dos_path_arg(call, far_ptr=api_style == "dos") or "NULL"
-        return f"{name}({path})"
-
-    if spec.render_kind == "path_mode":
-        path = _dos_path_arg(call, far_ptr=api_style == "dos") or "NULL"
-        mode = _dos_arg(call.al, call.al_expr) or "0"
-        return f"{name}({path}, {mode})"
-
-    if spec.render_kind == "path_attrs":
-        path = _dos_path_arg(call, far_ptr=api_style == "dos") or "NULL"
-        attrs = _dos_arg(call.cx, call.cx_expr) or "0"
-        return f"{name}({path}, {attrs})"
-
-    if spec.render_kind == "handle":
-        handle = _dos_arg(call.bx, call.bx_expr) or "0"
-        return f"{name}({handle})"
-
-    if spec.render_kind == "handle_buffer_count":
-        handle = _dos_arg(call.bx, call.bx_expr) or "0"
-        buffer = _dos_buffer_arg(call, far_ptr=api_style == "dos", const=call.ah == 0x40) or "NULL"
-        count = _dos_arg(call.cx, call.cx_expr) or "0"
-        return f"{name}({handle}, {buffer}, {count})"
-
-    if spec.render_kind == "handle_seek":
-        handle = _dos_arg(call.bx, call.bx_expr) or "0"
-        offset = _dos_seek_offset_arg(call)
-        origin = _dos_arg(call.al, call.al_expr) or "0"
-        return f"{name}({handle}, {offset}, {origin})"
-
-    if spec.render_kind == "drive_buffer":
-        drive = _dos_drive_arg(call) or "0"
-        buffer = _dos_si_buffer_arg(call, far_ptr=api_style == "dos", const=False) or "NULL"
-        return f"{name}({drive}, {buffer})"
-
-    if spec.render_kind == "setvect":
-        vector = _dos_vector_arg(call) or "0"
-        handler = _dos_far_pointer_arg(call) or "NULL"
-        if api_style == "dos":
-            return f"_dos_setvect({vector}, {handler})"
-        if api_style == "pseudo":
-            return f"{name}({vector}, {handler})"
-        return f"setvect({vector}, {handler})"
-
-    if spec.render_kind == "getvect":
-        vector = _dos_vector_arg(call) or "0"
-        if api_style == "dos":
-            return f"_dos_getvect({vector})"
-        if api_style == "pseudo":
-            return f"{name}({vector})"
-        return f"getvect({vector})"
-
-    if spec.render_kind == "exit":
-        exit_code = call.ax & 0xFF if call.ax is not None else 0
-        return f"{name}({exit_code})"
-
-    if spec.render_kind == "zero_arg":
-        return f"{name}()"
-
-    if spec.render_kind == "wrapper":
-        return f"{name}()"
-
-    if spec.render_kind == "setblock":
-        return f"{name}()"
-
-    if spec.render_kind == "get_version":
-        return f"{name}()"
-
-    return f"{name}()"
+    return _render_dos_int21_by_kind_8616(call, api_style, name, spec.render_kind)
 
 
 def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
-    api_style = normalize_api_style(api_style)
-    spec = interrupt_service_spec(call)
-    if spec is None:
-        return render_dos_int21_call(call, api_style)
-    if api_style == "raw":
-        return f"int{call.vector:02x}()"
+    def _impl():
+        nonlocal api_style
+        api_style = normalize_api_style(api_style)
+        spec = interrupt_service_spec(call)
+        if spec is None:
+            return render_dos_int21_call(call, api_style)
+        if api_style == "raw":
+            return f"int{call.vector:02x}()"
 
-    if call.vector == 0x10 and spec.render_kind == "wrapper":
-        if call.ah is not None:
-            selector = _format_imm(call.ah)
-            return f"{interrupt_service_name(call, api_style)}({selector})"
-        extended = any(value is not None for value in (call.ds, call.es, call.ss, call.cs))
-        if extended:
-            return "int86x(0x10, &inregs, &outregs, &sregs)"
-        return "int86(0x10, &inregs, &outregs)"
+        if call.vector == 0x10 and spec.render_kind == "wrapper":
+            if call.ah is not None:
+                selector = _format_imm(call.ah)
+                return f"{interrupt_service_name(call, api_style)}({selector})"
+            extended = any(value is not None for value in (call.ds, call.es, call.ss, call.cs))
+            if extended:
+                return "int86x(0x10, &inregs, &outregs, &sregs)"
+            return "int86(0x10, &inregs, &outregs)"
 
-    name = interrupt_service_name(call, api_style)
-    if call.vector == 0x16:
-        selector = _dos_arg(call.ah, call.ah_expr)
-        if selector is not None:
-            return f"{name}({selector})"
+        name = interrupt_service_name(call, api_style)
+        if call.vector == 0x16:
+            selector = _dos_arg(call.ah, call.ah_expr)
+            if selector is not None:
+                return f"{name}({selector})"
+            return f"{name}()"
+        if call.vector == 0x10 and api_style in {"dos", "msc", "compiler"}:
+            return f"{name}(0x10)"
+        if call.vector == 0x13 and api_style == "pseudo":
+            return f"{name}()"
         return f"{name}()"
-    if call.vector == 0x10 and api_style in {"dos", "msc", "compiler"}:
-        return f"{name}(0x10)"
-    if call.vector == 0x13 and api_style == "pseudo":
-        return f"{name}()"
-    return f"{name}()"
+
+    return _impl()
 
 
 def render_interrupt_call(call: InterruptCall, api_style: str) -> str:
@@ -1218,32 +1233,36 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
 
 
 def interrupt_service_declarations(calls: list[InterruptCall], api_style: str) -> list[str]:
-    api_style = normalize_api_style(api_style)
-    if api_style == "raw":
-        return []
+    def _impl():
+        nonlocal api_style
+        api_style = normalize_api_style(api_style)
+        if api_style == "raw":
+            return []
 
-    declarations: list[str] = []
-    seen: set[str] = set()
-    for call in calls:
-        spec = _interrupt_service_spec_for_call(call)
-        if spec is None:
-            decls = dos_helper_declarations([call], api_style)
-            for decl in decls:
-                if decl not in seen:
-                    seen.add(decl)
-                    declarations.append(decl)
-            continue
+        declarations: list[str] = []
+        seen: set[str] = set()
+        for call in calls:
+            spec = _interrupt_service_spec_for_call(call)
+            if spec is None:
+                decls = dos_helper_declarations([call], api_style)
+                for decl in decls:
+                    if decl not in seen:
+                        seen.add(decl)
+                        declarations.append(decl)
+                continue
 
-        if spec.render_kind == "wrapper" and call.vector not in {0x21, 0x10}:
-            continue
-        if call.vector == 0x10 and call.ah is None:
-            continue
+            if spec.render_kind == "wrapper" and call.vector not in {0x21, 0x10}:
+                continue
+            if call.vector == 0x10 and call.ah is None:
+                continue
 
-        decl = _interrupt_service_decl(spec, api_style)
-        if decl not in seen:
-            seen.add(decl)
-            declarations.append(decl)
-    return declarations
+            decl = _interrupt_service_decl(spec, api_style)
+            if decl not in seen:
+                seen.add(decl)
+                declarations.append(decl)
+        return declarations
+
+    return _impl()
 
 
 def _absolute_mem_disp(operand) -> int | None:
@@ -1343,208 +1362,217 @@ def resolve_direct_call_target_from_block(project, block_addr: int) -> int | Non
 
 
 def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | None:
-    """
-    Recover a direct jump target from the last instruction in a block.
+    def _impl():
+        """
+        Recover a direct jump target from the last instruction in a block.
 
-    This is used for tail-jump thunks that should seed neighbor recovery even
-    when no explicit call edge exists.
-    """
+        This is used for tail-jump thunks that should seed neighbor recovery even
+        when no explicit call edge exists.
+        """
 
-    block = project.factory.block(block_addr, opt_level=0)
-    insns = getattr(block.capstone, "insns", ())
-    if not insns:
+        block = project.factory.block(block_addr, opt_level=0)
+        insns = getattr(block.capstone, "insns", ())
+        if not insns:
+            return None
+
+        last = insns[-1]
+        capstone_insn = getattr(last, "insn", None)
+        operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+
+        if last.mnemonic == "ljmp" and len(operands) == 2 and all(op.type == 2 for op in operands):
+            seg = operands[0].imm & 0xFFFF
+            off = operands[1].imm & 0xFFFF
+            return _canonical_code_linear_addr(project, (seg << 4) + off)
+
+        if last.mnemonic == "jmp" and len(operands) == 1 and operands[0].type == 2:
+            return _canonical_code_linear_addr(project, operands[0].imm & 0xFFFF)
+
+        op_str = str(getattr(last, "op_str", "") or "").strip().lower()
+        if last.mnemonic == "jmp" and op_str and "[" not in op_str:
+            for token in op_str.replace(":", " ").split():
+                try:
+                    return _canonical_code_linear_addr(project, int(token, 0) & 0xFFFF)
+                except ValueError:
+                    continue
+
         return None
 
-    last = insns[-1]
-    capstone_insn = getattr(last, "insn", None)
-    operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
-
-    if last.mnemonic == "ljmp" and len(operands) == 2 and all(op.type == 2 for op in operands):
-        seg = operands[0].imm & 0xFFFF
-        off = operands[1].imm & 0xFFFF
-        return _canonical_code_linear_addr(project, (seg << 4) + off)
-
-    if last.mnemonic == "jmp" and len(operands) == 1 and operands[0].type == 2:
-        return _canonical_code_linear_addr(project, operands[0].imm & 0xFFFF)
-
-    op_str = str(getattr(last, "op_str", "") or "").strip().lower()
-    if last.mnemonic == "jmp" and op_str and "[" not in op_str:
-        for token in op_str.replace(":", " ").split():
-            try:
-                return _canonical_code_linear_addr(project, int(token, 0) & 0xFFFF)
-            except ValueError:
-                continue
-
-    return None
+    return _impl()
 
 
 def patch_direct_call_sites(function) -> bool:
-    """
-    Recover direct near/far callsites from block ends when CFG left `_call_sites` empty.
+    def _impl():
+        """
+        Recover direct near/far callsites from block ends when CFG left `_call_sites` empty.
 
-    Rebased exact-region recovery for small 16-bit functions sometimes keeps the
-    block boundaries but loses the function callsite inventory. Downstream
-    callsite summaries and argument recovery consume `Function.get_call_sites()`,
-    so patch the direct block-end calls back into `_call_sites` before later
-    passes give up on call reasoning.
-    """
+        Rebased exact-region recovery for small 16-bit functions sometimes keeps the
+        block boundaries but loses the function callsite inventory. Downstream
+        callsite summaries and argument recovery consume `Function.get_call_sites()`,
+        so patch the direct block-end calls back into `_call_sites` before later
+        passes give up on call reasoning.
+        """
 
-    project = getattr(function, "project", None)
-    if project is None or getattr(getattr(project, "arch", None), "name", None) != "86_16":
-        return False
+        project = getattr(function, "project", None)
+        if project is None or getattr(getattr(project, "arch", None), "name", None) != "86_16":
+            return False
 
-    call_sites = getattr(function, "_call_sites", None)
-    if not isinstance(call_sites, dict):
-        return False
-    if call_sites:
-        return False
-
-    changed = False
-    for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
-        try:
-            block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
-            continue
-        insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
-        if not insns:
-            continue
-        for insn in insns:
-            mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
-            if mnemonic not in {"call", "lcall"}:
+        call_sites = getattr(function, "_call_sites", None)
+        if not isinstance(call_sites, dict):
+            return False
+        changed = False
+        for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
+            try:
+                block = project.factory.block(block_addr, opt_level=0)
+            except Exception:
                 continue
-            callsite_addr = getattr(insn, "address", None)
-            if not isinstance(callsite_addr, int):
+            insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+            if not insns:
                 continue
-            target_addr = _resolve_direct_call_target_from_insn(project, insn)
-            if target_addr is None:
-                target_addr = resolve_stored_near_call_target_from_function(function, callsite_addr)
-            if target_addr is None:
-                continue
-            size = getattr(insn, "size", None)
-            if not isinstance(size, int) or size <= 0:
-                size = getattr(getattr(insn, "insn", None), "size", None)
-            return_addr = None
-            if isinstance(size, int) and size > 0:
-                return_addr = callsite_addr + size
-            current = call_sites.get(callsite_addr)
-            recovered = (target_addr, return_addr)
-            if current != recovered:
-                call_sites[callsite_addr] = recovered
-                changed = True
-    return changed
+            for insn in insns:
+                mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+                if mnemonic not in {"call", "lcall"}:
+                    continue
+                callsite_addr = getattr(insn, "address", None)
+                if not isinstance(callsite_addr, int):
+                    continue
+                target_addr = _resolve_direct_call_target_from_insn(project, insn)
+                if target_addr is None:
+                    target_addr = resolve_stored_near_call_target_from_function(function, callsite_addr)
+                if target_addr is None:
+                    continue
+                size = getattr(insn, "size", None)
+                if not isinstance(size, int) or size <= 0:
+                    size = getattr(getattr(insn, "insn", None), "size", None)
+                return_addr = None
+                if isinstance(size, int) and size > 0:
+                    return_addr = callsite_addr + size
+                current = call_sites.get(callsite_addr)
+                recovered = (target_addr, return_addr)
+                if current != recovered:
+                    call_sites[callsite_addr] = recovered
+                    changed = True
+        return changed
+
+    return _impl()
 
 
 def resolve_stored_near_call_target_from_function(function, callsite_addr: int) -> int | None:
-    """
-    Recover a near call target from a startup-built absolute pointer slot.
+    def _impl():
+        """
+        Recover a near call target from a startup-built absolute pointer slot.
 
-    This is intentionally narrow. It only handles patterns like:
+        This is intentionally narrow. It only handles patterns like:
 
-        mov word ptr ss:[0x60], 0x01a2
-        ...
-        call word ptr [0x60]
+            mov word ptr ss:[0x60], 0x01a2
+            ...
+            call word ptr [0x60]
 
-    which appear in MSC startup code for real-mode DOS.
-    """
+        which appear in MSC startup code for real-mode DOS.
+        """
 
-    project = function.project
-    if project is None:
+        project = function.project
+        if project is None:
+            return None
+
+        block = project.factory.block(callsite_addr, opt_level=0)
+        insns = getattr(block.capstone, "insns", ())
+        if not insns:
+            return None
+        last = insns[-1]
+        capstone_insn = getattr(last, "insn", None)
+        operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        if last.mnemonic != "call" or len(operands) != 1 or operands[0].type != 3:
+            return None
+
+        slot_disp = _absolute_mem_disp(operands[0])
+        if slot_disp is None:
+            return None
+
+        cs_base = _initial_cs_linear_base(project)
+        if cs_base is None:
+            return None
+
+        prior_insns = []
+        for addr in sorted(function.block_addrs_set):
+            if addr >= callsite_addr:
+                continue
+            prior_block = project.factory.block(addr, opt_level=0)
+            prior_insns.extend(getattr(prior_block.capstone, "insns", ()))
+
+        for ins in reversed(prior_insns):
+            if ins.address >= callsite_addr:
+                continue
+            opers = getattr(ins.insn, "operands", ())
+            if ins.mnemonic != "mov" or len(opers) != 2:
+                continue
+            dst, src = opers
+            if dst.type != 3 or src.type != 2:
+                continue
+            dst_disp = _absolute_mem_disp(dst)
+            if dst_disp != slot_disp:
+                continue
+            return _canonical_code_linear_addr(project, cs_base + (src.imm & 0xFFFF))
+
         return None
 
-    block = project.factory.block(callsite_addr, opt_level=0)
-    insns = getattr(block.capstone, "insns", ())
-    if not insns:
-        return None
-    last = insns[-1]
-    capstone_insn = getattr(last, "insn", None)
-    operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
-    if last.mnemonic != "call" or len(operands) != 1 or operands[0].type != 3:
-        return None
-
-    slot_disp = _absolute_mem_disp(operands[0])
-    if slot_disp is None:
-        return None
-
-    cs_base = _initial_cs_linear_base(project)
-    if cs_base is None:
-        return None
-
-    prior_insns = []
-    for addr in sorted(function.block_addrs_set):
-        if addr >= callsite_addr:
-            continue
-        prior_block = project.factory.block(addr, opt_level=0)
-        prior_insns.extend(getattr(prior_block.capstone, "insns", ()))
-
-    for ins in reversed(prior_insns):
-        if ins.address >= callsite_addr:
-            continue
-        opers = getattr(ins.insn, "operands", ())
-        if ins.mnemonic != "mov" or len(opers) != 2:
-            continue
-        dst, src = opers
-        if dst.type != 3 or src.type != 2:
-            continue
-        dst_disp = _absolute_mem_disp(dst)
-        if dst_disp != slot_disp:
-            continue
-        return _canonical_code_linear_addr(project, cs_base + (src.imm & 0xFFFF))
-
-    return None
+    return _impl()
 
 
 def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> int | None:
-    """
-    Recover a near jump target from a startup-built absolute pointer slot.
+    def _impl():
+        """
+        Recover a near jump target from a startup-built absolute pointer slot.
 
-    This mirrors ``resolve_stored_near_call_target_from_function`` for tail-jump
-    thunks that end in ``jmp word ptr [slot]``.
-    """
+        This mirrors ``resolve_stored_near_call_target_from_function`` for tail-jump
+        thunks that end in ``jmp word ptr [slot]``.
+        """
 
-    project = function.project
-    if project is None:
+        project = function.project
+        if project is None:
+            return None
+
+        block = project.factory.block(jump_addr, opt_level=0)
+        insns = getattr(block.capstone, "insns", ())
+        if not insns:
+            return None
+        last = insns[-1]
+        capstone_insn = getattr(last, "insn", None)
+        operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        if last.mnemonic != "jmp" or len(operands) != 1 or operands[0].type != 3:
+            return None
+
+        slot_disp = _absolute_mem_disp(operands[0])
+        if slot_disp is None:
+            return None
+
+        cs_base = _initial_cs_linear_base(project)
+        if cs_base is None:
+            return None
+
+        prior_insns = []
+        for addr in sorted(function.block_addrs_set):
+            if addr >= jump_addr:
+                continue
+            prior_block = project.factory.block(addr, opt_level=0)
+            prior_insns.extend(getattr(prior_block.capstone, "insns", ()))
+
+        for ins in reversed(prior_insns):
+            if ins.address >= jump_addr:
+                continue
+            opers = getattr(ins.insn, "operands", ())
+            if ins.mnemonic != "mov" or len(opers) != 2:
+                continue
+            dst, src = opers
+            if dst.type != 3 or src.type != 2:
+                continue
+            dst_disp = _absolute_mem_disp(dst)
+            if dst_disp != slot_disp:
+                continue
+            return _canonical_code_linear_addr(project, cs_base + (src.imm & 0xFFFF))
+
         return None
 
-    block = project.factory.block(jump_addr, opt_level=0)
-    insns = getattr(block.capstone, "insns", ())
-    if not insns:
-        return None
-    last = insns[-1]
-    capstone_insn = getattr(last, "insn", None)
-    operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
-    if last.mnemonic != "jmp" or len(operands) != 1 or operands[0].type != 3:
-        return None
-
-    slot_disp = _absolute_mem_disp(operands[0])
-    if slot_disp is None:
-        return None
-
-    cs_base = _initial_cs_linear_base(project)
-    if cs_base is None:
-        return None
-
-    prior_insns = []
-    for addr in sorted(function.block_addrs_set):
-        if addr >= jump_addr:
-            continue
-        prior_block = project.factory.block(addr, opt_level=0)
-        prior_insns.extend(getattr(prior_block.capstone, "insns", ()))
-
-    for ins in reversed(prior_insns):
-        if ins.address >= jump_addr:
-            continue
-        opers = getattr(ins.insn, "operands", ())
-        if ins.mnemonic != "mov" or len(opers) != 2:
-            continue
-        dst, src = opers
-        if dst.type != 3 or src.type != 2:
-            continue
-        dst_disp = _absolute_mem_disp(dst)
-        if dst_disp != slot_disp:
-            continue
-        return _canonical_code_linear_addr(project, cs_base + (src.imm & 0xFFFF))
-
-    return None
+    return _impl()
 
 
 def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
@@ -1586,99 +1614,102 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
 
 
 def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
-    """
-    Recover direct x86-16 call neighbors from a function's traced call sites.
+    def _impl():
+        """
+        Recover direct x86-16 call neighbors from a function's traced call sites.
 
-    We prefer targets already recorded by CFG when they stay inside the loaded
-    image, then fall back to block-level decoding for direct near/far calls and
-    the narrow startup pointer-slot recovery used by MSC-style startup code.
-    """
+        We prefer targets already recorded by CFG when they stay inside the loaded
+        image, then fall back to block-level decoding for direct near/far calls and
+        the narrow startup pointer-slot recovery used by MSC-style startup code.
+        """
 
-    project = getattr(function, "project", None)
-    if project is None or project.arch.name != "86_16":
-        return []
+        project = getattr(function, "project", None)
+        if project is None or project.arch.name != "86_16":
+            return []
 
-    patch_direct_call_sites(function)
+        patch_direct_call_sites(function)
 
-    linked_base, image_end = _neighbor_image_bounds(project)
+        linked_base, image_end = _neighbor_image_bounds(project)
 
-    recovered: list[CallTargetSeed] = []
-    seen: set[tuple[int, int]] = set()
-    far_targets = {
-        (target.callsite_addr, target.target_addr): target for target in collect_direct_far_call_targets(function)
-    }
+        recovered: list[CallTargetSeed] = []
+        seen: set[tuple[int, int]] = set()
+        far_targets = {
+            (target.callsite_addr, target.target_addr): target for target in collect_direct_far_call_targets(function)
+        }
 
-    for callsite_addr in sorted(function.get_call_sites()):
-        target_addr = None
-        kind = "existing"
-        try:
-            target_addr = function.get_call_target(callsite_addr)
-        except Exception:
+        for callsite_addr in sorted(function.get_call_sites()):
             target_addr = None
-        if not isinstance(target_addr, int):
-            target_addr = None
-        if target_addr is not None and image_end is not None and not (linked_base <= target_addr < image_end):
-            target_addr = None
+            kind = "existing"
+            try:
+                target_addr = function.get_call_target(callsite_addr)
+            except Exception:
+                target_addr = None
+            if not isinstance(target_addr, int):
+                target_addr = None
+            if target_addr is not None and image_end is not None and not (linked_base <= target_addr < image_end):
+                target_addr = None
 
-        far_target = far_targets.get((callsite_addr, target_addr)) if target_addr is not None else None
-        if far_target is not None:
-            kind = "direct_far"
-        elif target_addr is None:
-            direct_target = resolve_direct_call_target_from_block(project, callsite_addr)
-            if direct_target is not None:
-                target_addr = direct_target
-                kind = "direct_far" if (callsite_addr, direct_target) in far_targets else "direct_near"
-            else:
-                stored_target = resolve_stored_near_call_target_from_function(function, callsite_addr)
-                if stored_target is not None:
-                    target_addr = stored_target
-                    kind = "stored_near"
-        if target_addr is None:
-            continue
-        if image_end is not None and not (linked_base <= target_addr < image_end):
-            continue
-        key = (callsite_addr, target_addr)
-        if key in seen:
-            continue
-        seen.add(key)
-        recovered.append(
-            CallTargetSeed(
-                callsite_addr=callsite_addr,
-                target_addr=target_addr,
-                return_addr=function.get_call_return(callsite_addr),
-                kind=kind,
+            far_target = far_targets.get((callsite_addr, target_addr)) if target_addr is not None else None
+            if far_target is not None:
+                kind = "direct_far"
+            elif target_addr is None:
+                direct_target = resolve_direct_call_target_from_block(project, callsite_addr)
+                if direct_target is not None:
+                    target_addr = direct_target
+                    kind = "direct_far" if (callsite_addr, direct_target) in far_targets else "direct_near"
+                else:
+                    stored_target = resolve_stored_near_call_target_from_function(function, callsite_addr)
+                    if stored_target is not None:
+                        target_addr = stored_target
+                        kind = "stored_near"
+            if target_addr is None:
+                continue
+            if image_end is not None and not (linked_base <= target_addr < image_end):
+                continue
+            key = (callsite_addr, target_addr)
+            if key in seen:
+                continue
+            seen.add(key)
+            recovered.append(
+                CallTargetSeed(
+                    callsite_addr=callsite_addr,
+                    target_addr=target_addr,
+                    return_addr=function.get_call_return(callsite_addr),
+                    kind=kind,
+                )
             )
-        )
 
-    block_addrs = sorted(getattr(function, "block_addrs_set", ()))
-    block_addr_set = set(block_addrs)
-    for block_addr in block_addrs:
-        jump_target = resolve_direct_jump_target_from_block(project, block_addr)
-        kind = "tail_jump"
-        if jump_target is None:
-            jump_target = resolve_stored_near_jump_target_from_function(function, block_addr)
-            if jump_target is not None:
-                kind = "stored_tail_jump"
-        if jump_target is None:
-            continue
-        if jump_target in block_addr_set or jump_target == function.addr:
-            continue
-        if image_end is not None and not (linked_base <= jump_target < image_end):
-            continue
-        key = (block_addr, jump_target)
-        if key in seen:
-            continue
-        seen.add(key)
-        recovered.append(
-            CallTargetSeed(
-                callsite_addr=block_addr,
-                target_addr=jump_target,
-                return_addr=None,
-                kind=kind,
+        block_addrs = sorted(getattr(function, "block_addrs_set", ()))
+        block_addr_set = set(block_addrs)
+        for block_addr in block_addrs:
+            jump_target = resolve_direct_jump_target_from_block(project, block_addr)
+            kind = "tail_jump"
+            if jump_target is None:
+                jump_target = resolve_stored_near_jump_target_from_function(function, block_addr)
+                if jump_target is not None:
+                    kind = "stored_tail_jump"
+            if jump_target is None:
+                continue
+            if jump_target in block_addr_set or jump_target == function.addr:
+                continue
+            if image_end is not None and not (linked_base <= jump_target < image_end):
+                continue
+            key = (block_addr, jump_target)
+            if key in seen:
+                continue
+            seen.add(key)
+            recovered.append(
+                CallTargetSeed(
+                    callsite_addr=block_addr,
+                    target_addr=jump_target,
+                    return_addr=None,
+                    kind=kind,
+                )
             )
-        )
 
-    return recovered
+        return recovered
+
+    return _impl()
 
 
 def patch_far_call_sites(function, far_targets: list[FarCallTarget]) -> bool:
@@ -1722,15 +1753,39 @@ def seed_calling_conventions(cfg) -> None:
         normalized = name.strip().lower().lstrip("_")
         return normalized in {"anchkstk", "analloca_probe"}
 
+    track = True
+    candidate_count = 0
+    success_count = 0
+    error_count = 0
+    stack_probe_count = 0
+    total_functions = len(getattr(cfg, "functions", {}))
+    if track:
+        start = time.perf_counter()
     for function in getattr(cfg, "functions", {}).values():
+        candidate_count += 1
         try:
             function._init_prototype_and_calling_convention()
+            success_count += 1
+            if _is_stack_probe_helper_name(getattr(function, "name", None)):
+                stack_probe_count += 1
         except Exception as ex:
             logging.getLogger(__name__).debug("prototype init skipped: %s", ex)
+            error_count += 1
             continue
+
         if _is_stack_probe_helper_name(getattr(function, "name", None)):
             with contextlib.suppress(Exception):
                 function.returning = True
+
+    if track:
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        print(
+            f"[metric] seed_calling_conventions cfg_functions={total_functions} "
+            f"candidates={candidate_count} initialized={success_count} errors={error_count} "
+            f"stack_probes={stack_probe_count} elapsed_ms={elapsed_ms}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_window: int = 0x80):
@@ -1871,58 +1926,61 @@ def extend_cfg_for_neighbor_calls(
     callee_window: int = 0x80,
     max_targets: int = 8,
 ):
-    """
-    Re-run bounded CFG with nearby traced callees seeded as extra starts.
+    def _impl():
+        """
+        Re-run bounded CFG with nearby traced callees seeded as extra starts.
 
-    This keeps 16-bit function recovery local: once we recover one function we
-    immediately reuse its traced call neighbors instead of widening into a
-    broader scan of unrelated code bytes.
-    """
+        This keeps 16-bit function recovery local: once we recover one function we
+        immediately reuse its traced call neighbors instead of widening into a
+        broader scan of unrelated code bytes.
+        """
 
-    neighbor_targets = collect_neighbor_call_targets(function)
-    if not neighbor_targets:
-        return None
+        neighbor_targets = collect_neighbor_call_targets(function)
+        if not neighbor_targets:
+            return None
 
-    far_targets = collect_direct_far_call_targets(function)
-    if far_targets:
-        patch_far_call_sites(function, far_targets)
+        far_targets = collect_direct_far_call_targets(function)
+        if far_targets:
+            patch_far_call_sites(function, far_targets)
 
-    unique_targets: list[CallTargetSeed] = []
-    seen_targets: set[int] = {function.addr}
-    for target in sorted(
-        neighbor_targets,
-        key=lambda item: (abs(item.target_addr - function.addr), item.callsite_addr, item.target_addr),
-    ):
-        if target.target_addr in seen_targets:
-            continue
-        seen_targets.add(target.target_addr)
-        unique_targets.append(target)
-        if len(unique_targets) >= max_targets:
-            break
-    if not unique_targets:
-        return None
+        unique_targets: list[CallTargetSeed] = []
+        seen_targets: set[int] = {function.addr}
+        for target in sorted(
+            neighbor_targets,
+            key=lambda item: (abs(item.target_addr - function.addr), item.callsite_addr, item.target_addr),
+        ):
+            if target.target_addr in seen_targets:
+                continue
+            seen_targets.add(target.target_addr)
+            unique_targets.append(target)
+            if len(unique_targets) >= max_targets:
+                break
+        if not unique_targets:
+            return None
 
-    function_starts = [function.addr, *(target.target_addr for target in unique_targets)]
-    regions = [(function.addr, function.addr + entry_window)]
-    regions.extend((target.target_addr, target.target_addr + callee_window) for target in unique_targets)
+        function_starts = [function.addr, *(target.target_addr for target in unique_targets)]
+        regions = [(function.addr, function.addr + entry_window)]
+        regions.extend((target.target_addr, target.target_addr + callee_window) for target in unique_targets)
 
-    cfg = project.analyses.CFGFast(
-        start_at_entry=False,
-        function_starts=sorted(set(function_starts)),
-        regions=regions,
-        normalize=True,
-        force_complete_scan=False,
-    )
-    seed_calling_conventions(cfg)
+        cfg = project.analyses.CFGFast(
+            start_at_entry=False,
+            function_starts=sorted(set(function_starts)),
+            regions=regions,
+            normalize=True,
+            force_complete_scan=False,
+        )
+        seed_calling_conventions(cfg)
 
-    if function.addr in cfg.functions:
-        recovered_function = cfg.functions[function.addr]
-        recovered_far_targets = collect_direct_far_call_targets(recovered_function)
-        if recovered_far_targets:
-            patch_far_call_sites(recovered_function, recovered_far_targets)
-    for target in unique_targets:
-        callee = cfg.kb.functions.function(addr=target.target_addr, create=True)
-        if callee is not None:
-            callee._init_prototype_and_calling_convention()
-    seed_calling_conventions(cfg)
-    return cfg
+        if function.addr in cfg.functions:
+            recovered_function = cfg.functions[function.addr]
+            recovered_far_targets = collect_direct_far_call_targets(recovered_function)
+            if recovered_far_targets:
+                patch_far_call_sites(recovered_function, recovered_far_targets)
+        for target in unique_targets:
+            callee = cfg.kb.functions.function(addr=target.target_addr, create=True)
+            if callee is not None:
+                callee._init_prototype_and_calling_convention()
+        seed_calling_conventions(cfg)
+        return cfg
+
+    return _impl()

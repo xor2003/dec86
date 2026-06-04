@@ -3,8 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import CodeType
 
-from monkeytype.config import default_code_filter
-
+from monkeytype.config import default_code_filter  # pyright: ignore[reportMissingImports]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MONKEYTYPE_CACHE_DIR = REPO_ROOT / ".cache" / "monkeytype"
@@ -29,9 +28,6 @@ DEFAULT_MONKEYTYPE_TEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
     "angr_platforms/tests/test_x86_16_segmented_memory.py",
     "angr_platforms/tests/test_x86_16_type_equivalence_classes.py",
-    "angr_platforms/tests/test_x86_16_stack_prototype_promotion.py",
-    "angr_platforms/tests/test_x86_16_tail_validation.py",
-    "angr_platforms/tests/test_x86_16_widening_model.py",
 )
 
 DEFAULT_STUB_MODULE_PREFIXES: tuple[str, ...] = (

@@ -153,30 +153,33 @@ def _same_var(a: object, b: object) -> bool:
 
 
 def match_induction_update(stmt: object) -> InductionUpdate | None:
-    """Match:  i = i + c  or  i = i - c
+    def _impl():
+        """Match:  i = i + c  or  i = i - c
 
-    Operates on structured IR node objects, not rendered text.
-    """
-    target = getattr(stmt, "target", None) or getattr(stmt, "lhs", None)
-    value = getattr(stmt, "value", None) or getattr(stmt, "rhs", None)
-    if target is None or value is None:
-        return None
+        Operates on structured IR node objects, not rendered text.
+        """
+        target = getattr(stmt, "target", None) or getattr(stmt, "lhs", None)
+        value = getattr(stmt, "value", None) or getattr(stmt, "rhs", None)
+        if target is None or value is None:
+            return None
 
-    op = getattr(value, "op", None)
-    left = getattr(value, "left", None) or getattr(value, "lhs", None)
-    right = getattr(value, "right", None) or getattr(value, "rhs", None)
+        op = getattr(value, "op", None)
+        left = getattr(value, "left", None) or getattr(value, "lhs", None)
+        right = getattr(value, "right", None) or getattr(value, "rhs", None)
 
-    if op not in ("Add", "Sub"):
-        return None
-    if not _same_var(target, left):
-        return None
-    if not _is_const(right):
-        return None
+        if op not in ("Add", "Sub"):
+            return None
+        if not _same_var(target, left):
+            return None
+        if not _is_const(right):
+            return None
 
-    c = int(getattr(right, "value"))
-    step = c if op == "Add" else -c
+        c = int(getattr(right, "value"))
+        step = c if op == "Add" else -c
 
-    return InductionUpdate(variable=target, initial=None, step=step, update_block=-1, confidence=0.75)
+        return InductionUpdate(variable=target, initial=None, step=step, update_block=-1, confidence=0.75)
+
+    return _impl()
 
 
 def find_loop_induction(loop: NaturalLoop, semantics: BlockSemantics) -> InductionUpdate | None:
@@ -203,41 +206,44 @@ def find_loop_induction(loop: NaturalLoop, semantics: BlockSemantics) -> Inducti
 
 
 def match_loop_guard(cond: object, induction: InductionUpdate | None, guard_block: int) -> LoopGuard | None:
-    """Match:  i < N, i <= N, i != N, i > N, i >= N
+    def _impl():
+        """Match:  i < N, i <= N, i != N, i > N, i >= N
 
-    Operates on typed condition objects, not text.
-    """
-    if cond is None or induction is None:
-        return None
+        Operates on typed condition objects, not text.
+        """
+        if cond is None or induction is None:
+            return None
 
-    op = getattr(cond, "op", None)
-    left = getattr(cond, "left", None) or getattr(cond, "lhs", None)
-    right = getattr(cond, "right", None) or getattr(cond, "rhs", None)
+        op = getattr(cond, "op", None)
+        left = getattr(cond, "left", None) or getattr(cond, "lhs", None)
+        right = getattr(cond, "right", None) or getattr(cond, "rhs", None)
 
-    if op is None or left is None or right is None:
-        return None
+        if op is None or left is None or right is None:
+            return None
 
-    op_str = str(op)
-    known = {"LT", "LE", "GT", "GE", "NE", "EQ"}
-    if op_str not in known and op_str.lstrip("SU") not in known:
-        return None
+        op_str = str(op)
+        known = {"LT", "LE", "GT", "GE", "NE", "EQ"}
+        if op_str not in known and op_str.lstrip("SU") not in known:
+            return None
 
-    if not _same_var(left, induction.variable):
-        return None
+        if not _same_var(left, induction.variable):
+            return None
 
-    signed = op_str.startswith("S")
-    normalized_op = op_str
-    if normalized_op.startswith(("S", "U")):
-        normalized_op = normalized_op[1:]
+        signed = op_str.startswith("S")
+        normalized_op = op_str
+        if normalized_op.startswith(("S", "U")):
+            normalized_op = normalized_op[1:]
 
-    return LoopGuard(
-        variable=left,
-        bound=right,
-        op=normalized_op,
-        signed=signed,
-        guard_block=guard_block,
-        confidence=0.75,
-    )
+        return LoopGuard(
+            variable=left,
+            bound=right,
+            op=normalized_op,
+            signed=signed,
+            guard_block=guard_block,
+            confidence=0.75,
+        )
+
+    return _impl()
 
 
 def find_loop_guard(

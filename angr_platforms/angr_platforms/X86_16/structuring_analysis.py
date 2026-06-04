@@ -101,77 +101,80 @@ class StructureAnalysis:
         return self._execute()
 
     def _execute(self) -> RegionGraph:
-        """
-        Core structuring algorithm.
+        def _impl():
+            """
+            Core structuring algorithm.
 
-        Iteratively:
-        1. Recompute dominators
-        2. Visit regions in post-order
-        3. Try to match acyclic patterns
-        4. Try to match cyclic patterns
-        5. If no progress, apply refinement strategies
-        6. Repeat until graph converges to a single region or max iterations
-        """
-        iterations = 0
+            Iteratively:
+            1. Recompute dominators
+            2. Visit regions in post-order
+            3. Try to match acyclic patterns
+            4. Try to match cyclic patterns
+            5. If no progress, apply refinement strategies
+            6. Repeat until graph converges to a single region or max iterations
+            """
+            iterations = 0
 
-        while True:
-            iterations += 1
-            self.stats.iterations = iterations
+            while True:
+                iterations += 1
+                self.stats.iterations = iterations
 
-            # Check cancellation
-            self.event_listener(f"Structuring iteration {iterations}")
+                # Check cancellation
+                self.event_listener(f"Structuring iteration {iterations}")
 
-            # Check iteration limit
-            if iterations > self.max_iterations:
-                logger.warning(
-                    "Structure analysis stopped due to iteration limit (%d). Control flow may not be fully structured.",
-                    self.max_iterations,
-                )
-                self.stats.max_iterations_reached = True
-                break
-
-            # Recompute dominators for this iteration
-            self.dominators = compute_dominators(self.graph)
-
-            # Track progress
-            old_node_count = len(self.graph.nodes)
-
-            # Reset unresolved lists for this iteration
-            self.unresolved_cycles.clear()
-            self.unresolved_switches.clear()
-
-            # Visit regions in post-order
-            post_order = self.graph.iter_postorder()
-
-            for region in post_order:
-                # Try to reduce acyclic regions
-                reduced = self._reduce_acyclic(region)
-
-                # If no acyclic reduction, try cyclic patterns
-                if not reduced and self._is_cyclic(region):
-                    reduced = self._reduce_cyclic(region)
-
-            # Check for progress
-            new_node_count = len(self.graph.nodes)
-            if new_node_count == old_node_count and new_node_count > 1:
-                # No progress this round - try refinement strategies
-                # But only if there are unresolved regions to process
-                if self.unresolved_cycles or self.unresolved_switches:
-                    self._process_unresolved_regions()
-                else:
-                    # No unresolved regions and no progress - we're stuck
-                    # This is normal for well-structured CFGs that can't be fully reduced
-                    logger.debug(
-                        "No progress and no unresolved regions, stopping at %d nodes",
-                        new_node_count,
+                # Check iteration limit
+                if iterations > self.max_iterations:
+                    logger.warning(
+                        "Structure analysis stopped due to iteration limit (%d). Control flow may not be fully structured.",
+                        self.max_iterations,
                     )
+                    self.stats.max_iterations_reached = True
                     break
 
-            # Check convergence
-            if len(self.graph.nodes) <= 1:
-                break
+                # Recompute dominators for this iteration
+                self.dominators = compute_dominators(self.graph)
 
-        return self.graph
+                # Track progress
+                old_node_count = len(self.graph.nodes)
+
+                # Reset unresolved lists for this iteration
+                self.unresolved_cycles.clear()
+                self.unresolved_switches.clear()
+
+                # Visit regions in post-order
+                post_order = self.graph.iter_postorder()
+
+                for region in post_order:
+                    # Try to reduce acyclic regions
+                    reduced = self._reduce_acyclic(region)
+
+                    # If no acyclic reduction, try cyclic patterns
+                    if not reduced and self._is_cyclic(region):
+                        reduced = self._reduce_cyclic(region)
+
+                # Check for progress
+                new_node_count = len(self.graph.nodes)
+                if new_node_count == old_node_count and new_node_count > 1:
+                    # No progress this round - try refinement strategies
+                    # But only if there are unresolved regions to process
+                    if self.unresolved_cycles or self.unresolved_switches:
+                        self._process_unresolved_regions()
+                    else:
+                        # No unresolved regions and no progress - we're stuck
+                        # This is normal for well-structured CFGs that can't be fully reduced
+                        logger.debug(
+                            "No progress and no unresolved regions, stopping at %d nodes",
+                            new_node_count,
+                        )
+                        break
+
+                # Check convergence
+                if len(self.graph.nodes) <= 1:
+                    break
+
+            return self.graph
+
+        return _impl()
 
     def _reduce_acyclic(self, region: Region) -> bool:
         """
@@ -372,61 +375,64 @@ class StructureAnalysis:
         return False
 
     def _try_if_then_else(self, region: Region) -> bool:
-        """
-        Try to form an if-then-else pattern.
+        def _impl():
+            """
+            Try to form an if-then-else pattern.
 
-        If-then-else is: a condition region with exactly two branches that
-        can be merged together as a complete if-then-else structure.
+            If-then-else is: a condition region with exactly two branches that
+            can be merged together as a complete if-then-else structure.
 
-        Conservative: don't merge if the region itself is cyclic (has back-edges),
-        to preserve loop detection.
+            Conservative: don't merge if the region itself is cyclic (has back-edges),
+            to preserve loop detection.
 
-        Args:
-            region: Candidate condition region
+            Args:
+                region: Candidate condition region
 
-        Returns:
-            True if pattern found and merged, False otherwise
-        """
-        if region not in self.graph.nodes:
-            return False
+            Returns:
+                True if pattern found and merged, False otherwise
+            """
+            if region not in self.graph.nodes:
+                return False
 
-        # Don't process if already marked as switch candidate
-        if region.region_type == RegionType.IncSwitch:
-            return False
+            # Don't process if already marked as switch candidate
+            if region.region_type == RegionType.IncSwitch:
+                return False
 
-        succs = self.graph.successors(region)
-        if len(succs) != 2:
-            return False
+            succs = self.graph.successors(region)
+            if len(succs) != 2:
+                return False
 
-        # Don't merge if this region is cyclic (has back-edges to it)
-        # This preserves the ability to detect loops
-        if self._is_cyclic(region):
-            return False
+            # Don't merge if this region is cyclic (has back-edges to it)
+            # This preserves the ability to detect loops
+            if self._is_cyclic(region):
+                return False
 
-        # Try to merge both branches into the condition region
-        # This creates a complete if-then-else structure
-        branch1, branch2 = succs
-        if merge_would_hide_cycle(self.graph, self.dominators, region, branch1):
-            return False
-        if merge_would_hide_cycle(self.graph, self.dominators, region, branch2):
-            return False
+            # Try to merge both branches into the condition region
+            # This creates a complete if-then-else structure
+            branch1, branch2 = succs
+            if merge_would_hide_cycle(self.graph, self.dominators, region, branch1):
+                return False
+            if merge_would_hide_cycle(self.graph, self.dominators, region, branch2):
+                return False
 
-        # Merge both branches into region
-        try:
-            # Merge first branch
-            if branch1 in self.graph.nodes:
-                self.graph.merge_regions(branch1, region, transfer_edges="succ")
+            # Merge both branches into region
+            try:
+                # Merge first branch
+                if branch1 in self.graph.nodes:
+                    self.graph.merge_regions(branch1, region, transfer_edges="succ")
 
-            # Merge second branch (if still present after first merge)
-            if branch2 in self.graph.nodes and branch2 != region:
-                self.graph.merge_regions(branch2, region, transfer_edges="succ")
+                # Merge second branch (if still present after first merge)
+                if branch2 in self.graph.nodes and branch2 != region:
+                    self.graph.merge_regions(branch2, region, transfer_edges="succ")
 
-            # Mark region as a condition structure
-            region.region_type = RegionType.Condition
-            return True
-        except Exception as e:
-            logger.debug(f"Failed to merge if-then-else branches: {e}")
-            return False
+                # Mark region as a condition structure
+                region.region_type = RegionType.Condition
+                return True
+            except Exception as e:
+                logger.debug(f"Failed to merge if-then-else branches: {e}")
+                return False
+
+        return _impl()
 
     def _is_cyclic(self, region: Region) -> bool:
         """
@@ -561,61 +567,64 @@ class RegionBasedStructuringPass:
         self.stats = StructuringStats()
 
     def __call__(self, codegen) -> bool:
-        """
-        Apply region-based structuring to codegen.
+        def _impl():
+            """
+            Apply region-based structuring to codegen.
 
-        Args:
-            codegen: The codegen object to structure
+            Args:
+                codegen: The codegen object to structure
 
-        Returns:
-            True if changes were made, False otherwise
-        """
-        if getattr(codegen, "cfunc", None) is None:
-            return False
-
-        try:
-            # Build region graph from the decompiler's AIL/Clinic graph
-            graph, entry = self._build_region_graph(codegen)
-            if graph is None or entry is None or len(graph.nodes) < 2:
-                # Nothing to structure
+            Returns:
+                True if changes were made, False otherwise
+            """
+            if getattr(codegen, "cfunc", None) is None:
                 return False
 
-            # Run StructureAnalysis
-            analysis = StructureAnalysis(graph)
-            structured = analysis.structure()
-            self.stats = analysis.stats
+            try:
+                # Build region graph from the decompiler's AIL/Clinic graph
+                graph, entry = self._build_region_graph(codegen)
+                if graph is None or entry is None or len(graph.nodes) < 2:
+                    # Nothing to structure
+                    return False
 
-            # Record structuring stats on cfunc metadata
-            cfunc = codegen.cfunc
-            if not hasattr(cfunc, "_structuring_stats"):
-                cfunc._structuring_stats = {}
-            cfunc._structuring_stats["iterations"] = self.stats.iterations
-            cfunc._structuring_stats["regions_reduced"] = self.stats.regions_reduced
-            cfunc._structuring_stats["cycles_resolved"] = self.stats.cycles_resolved
-            cfunc._structuring_stats["sequences_created"] = self.stats.sequences_created
-            cfunc._structuring_stats["final_node_count"] = len(structured.nodes)
+                # Run StructureAnalysis
+                analysis = StructureAnalysis(graph)
+                structured = analysis.structure()
+                self.stats = analysis.stats
 
-            # Record structured region types on cfunc
-            structured_regions = []
-            for region in structured.nodes:
-                if region.region_type != RegionType.Linear:
-                    structured_regions.append(
-                        {
-                            "addr": region.block_addr,
-                            "type": region.region_type.value,
-                            "metadata_keys": list(region.metadata.keys()),
-                        }
-                    )
-            cfunc._structuring_stats["structured_regions"] = structured_regions
+                # Record structuring stats on cfunc metadata
+                cfunc = codegen.cfunc
+                if not hasattr(cfunc, "_structuring_stats"):
+                    cfunc._structuring_stats = {}
+                cfunc._structuring_stats["iterations"] = self.stats.iterations
+                cfunc._structuring_stats["regions_reduced"] = self.stats.regions_reduced
+                cfunc._structuring_stats["cycles_resolved"] = self.stats.cycles_resolved
+                cfunc._structuring_stats["sequences_created"] = self.stats.sequences_created
+                cfunc._structuring_stats["final_node_count"] = len(structured.nodes)
 
-            # Return True if any structuring occurred
-            changed = (
-                self.stats.regions_reduced > 0 or self.stats.cycles_resolved > 0 or self.stats.sequences_created > 0
-            )
-            return changed
-        except Exception as ex:
-            logger.warning("Region-based structuring pass failed: %s", ex)
-            return False
+                # Record structured region types on cfunc
+                structured_regions = []
+                for region in structured.nodes:
+                    if region.region_type != RegionType.Linear:
+                        structured_regions.append(
+                            {
+                                "addr": region.block_addr,
+                                "type": region.region_type.value,
+                                "metadata_keys": list(region.metadata.keys()),
+                            }
+                        )
+                cfunc._structuring_stats["structured_regions"] = structured_regions
+
+                # Return True if any structuring occurred
+                changed = (
+                    self.stats.regions_reduced > 0 or self.stats.cycles_resolved > 0 or self.stats.sequences_created > 0
+                )
+                return changed
+            except Exception as ex:
+                logger.warning("Region-based structuring pass failed: %s", ex)
+                return False
+
+        return _impl()
 
     def _build_region_graph(self, codegen) -> tuple:
         result = build_region_graph(codegen)

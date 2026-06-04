@@ -213,63 +213,74 @@ class ResolvedMemoryOperand:
             )
 
     def typed_address(self, *, expr: tuple[str, ...] | None = None) -> IRAddress:
-        space_map = {
-            sgreg_t.SS: MemSpace.SS,
-            sgreg_t.DS: MemSpace.DS,
-            sgreg_t.ES: MemSpace.ES,
-            sgreg_t.CS: MemSpace.UNKNOWN,
-            MemSpace.SS: MemSpace.SS,
-            MemSpace.DS: MemSpace.DS,
-            MemSpace.ES: MemSpace.ES,
-            MemSpace.UNKNOWN: MemSpace.UNKNOWN,
-        }
-        space = space_map.get(self.segment, MemSpace.UNKNOWN)
-        explicit_segment = isinstance(self.segment, (sgreg_t, MemSpace)) and space != MemSpace.UNKNOWN
-        stable = explicit_segment and space in {MemSpace.SS, MemSpace.DS, MemSpace.ES}
-        if isinstance(self.segment, sgreg_t):
-            base = (self.segment.name.lower(),)
-        elif isinstance(self.segment, MemSpace) and self.segment != MemSpace.UNKNOWN:
-            base = (self.segment.value,)
-        else:
-            base = ()
+        def _impl():
+            space_map = {
+                sgreg_t.SS: MemSpace.SS,
+                sgreg_t.DS: MemSpace.DS,
+                sgreg_t.ES: MemSpace.ES,
+                sgreg_t.CS: MemSpace.UNKNOWN,
+                MemSpace.SS: MemSpace.SS,
+                MemSpace.DS: MemSpace.DS,
+                MemSpace.ES: MemSpace.ES,
+                MemSpace.UNKNOWN: MemSpace.UNKNOWN,
+            }
+            space = space_map.get(self.segment, MemSpace.UNKNOWN)
+            explicit_segment = isinstance(self.segment, (sgreg_t, MemSpace)) and space != MemSpace.UNKNOWN
+            stable = explicit_segment and space in {MemSpace.SS, MemSpace.DS, MemSpace.ES}
+            if isinstance(self.segment, sgreg_t):
+                base = (self.segment.name.lower(),)
+            elif isinstance(self.segment, MemSpace) and self.segment != MemSpace.UNKNOWN:
+                base = (self.segment.value,)
+            else:
+                base = ()
 
-        size = max(1, self.width_bits // 8) if isinstance(self.width_bits, int) and self.width_bits > 0 else 0
-        seg_origin = (
-            SegmentOrigin.PROVEN
-            if explicit_segment
-            else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN)
-        )
+            size = max(1, self.width_bits // 8) if isinstance(self.width_bits, int) and self.width_bits > 0 else 0
+            seg_origin = (
+                SegmentOrigin.PROVEN
+                if explicit_segment
+                else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN)
+            )
 
-        # Unwrap VexValue wrapper and resolve RdTmp chain via IRSB
-        offset_raw = self.offset
-        tmp_defs = None
-        if hasattr(self.offset, "rdt"):
-            offset_raw = self.offset.rdt
-            irsb_c = getattr(self.offset, "irsb_c", None)
-            if irsb_c is not None:
-                tmp_defs = _build_tmp_defs_from_irsb(irsb_c)
-                offset_raw = _resolve_rdtmp_chain(offset_raw, tmp_defs)
+            # Unwrap VexValue wrapper and resolve RdTmp chain via IRSB
+            offset_raw = self.offset
+            tmp_defs = None
+            if hasattr(self.offset, "rdt"):
+                offset_raw = self.offset.rdt
+                irsb_c = getattr(self.offset, "irsb_c", None)
+                if irsb_c is not None:
+                    tmp_defs = _build_tmp_defs_from_irsb(irsb_c)
+                    offset_raw = _resolve_rdtmp_chain(offset_raw, tmp_defs)
 
-        # Integer offset
-        if isinstance(offset_raw, int):
-            # IMPORTANT:
-            # SS memory activity is not automatically a stack variable.
-            #
-            # The following are intentionally PROVISIONAL:
-            #   - push/pop traffic
-            #   - transient SP movement
-            #   - call frame setup
-            #   - unresolved symbolic SP expressions
-            #
-            # Only proven frame-relative accesses
-            # (BP+const or proven SP+stable_delta+const)
-            # may become STABLE stack slots.
-            #
-            # AGENTS rule:
-            # stack activity != materializable variable
-            if space == MemSpace.SS:
-                if not base:
-                    base = ("ss",)
+            # Integer offset
+            if isinstance(offset_raw, int):
+                # IMPORTANT:
+                # SS memory activity is not automatically a stack variable.
+                #
+                # The following are intentionally PROVISIONAL:
+                #   - push/pop traffic
+                #   - transient SP movement
+                #   - call frame setup
+                #   - unresolved symbolic SP expressions
+                #
+                # Only proven frame-relative accesses
+                # (BP+const or proven SP+stable_delta+const)
+                # may become STABLE stack slots.
+                #
+                # AGENTS rule:
+                # stack activity != materializable variable
+                if space == MemSpace.SS:
+                    if not base:
+                        base = ("ss",)
+                    return IRAddress(
+                        space=space,
+                        base=base,
+                        offset=offset_raw,
+                        size=size,
+                        status=AddressStatus.STABLE if stable else AddressStatus.PROVISIONAL,
+                        segment_origin=seg_origin,
+                        expr=expr,
+                    )
+                # DS/ES:int — stable memory address
                 return IRAddress(
                     space=space,
                     base=base,
@@ -279,44 +290,36 @@ class ResolvedMemoryOperand:
                     segment_origin=seg_origin,
                     expr=expr,
                 )
-            # DS/ES:int — stable memory address
+
+            # Symbolic offset — try to extract BP-relative constant
+            extracted = extract_bp_relative_offset_8616(offset_raw, tmp_defs=tmp_defs)
+            if extracted is not None:
+                offset_val, bp_base = extracted
+                # BP-relative stack slot: STABLE status, base = ("bp",)
+                if space == MemSpace.SS:
+                    base = ("bp",)
+                return IRAddress(
+                    space=space,
+                    base=base,
+                    offset=offset_val,
+                    size=size,
+                    status=AddressStatus.STABLE,
+                    segment_origin=seg_origin,
+                    expr=None,
+                )
+
+            # Not BP-relative: return PROVISIONAL — do NOT fake offset 0
             return IRAddress(
                 space=space,
                 base=base,
-                offset=offset_raw,
+                offset=0,
                 size=size,
-                status=AddressStatus.STABLE if stable else AddressStatus.PROVISIONAL,
+                status=AddressStatus.PROVISIONAL,
                 segment_origin=seg_origin,
-                expr=expr,
+                expr=(str(self.offset),) if self.offset is not None else expr,
             )
 
-        # Symbolic offset — try to extract BP-relative constant
-        extracted = extract_bp_relative_offset_8616(offset_raw, tmp_defs=tmp_defs)
-        if extracted is not None:
-            offset_val, bp_base = extracted
-            # BP-relative stack slot: STABLE status, base = ("bp",)
-            if space == MemSpace.SS:
-                base = ("bp",)
-            return IRAddress(
-                space=space,
-                base=base,
-                offset=offset_val,
-                size=size,
-                status=AddressStatus.STABLE,
-                segment_origin=seg_origin,
-                expr=None,
-            )
-
-        # Not BP-relative: return PROVISIONAL — do NOT fake offset 0
-        return IRAddress(
-            space=space,
-            base=base,
-            offset=0,
-            size=size,
-            status=AddressStatus.PROVISIONAL,
-            segment_origin=seg_origin,
-            expr=(str(self.offset),) if self.offset is not None else expr,
-        )
+        return _impl()
 
 
 def default_segment_for_modrm16(mod: int, rm: int) -> sgreg_t:
@@ -500,67 +503,71 @@ def _resolve_rdtmp_chain(expr: Any, tmp_defs: dict) -> Any:
 def extract_bp_relative_offset_8616(
     offset_expr: Any, *, tmp_defs: dict | None = None
 ) -> tuple[int, tuple[str, ...]] | None:
-    """Extract a BP-relative constant offset from a symbolic offset expression.
+    def _impl():
+        nonlocal offset_expr
+        """Extract a BP-relative constant offset from a symbolic offset expression.
 
-    Handles only proven forms:
-        BP + const
-        BP - const
-        const + BP
-        BP
-        BP + SI/DI + const
-        BP + SI/DI - const
+        Handles only proven forms:
+            BP + const
+            BP - const
+            const + BP
+            BP
+            BP + SI/DI + const
+            BP + SI/DI - const
 
-    Returns (offset, base_tuple) or None.
-    Does NOT guess for BX+SI, SP+unknown, tmp, or other complex forms.
-    """
-    # Resolve RdTmp → defining expression if tmp_defs available
-    if tmp_defs is not None:
-        offset_expr = _resolve_rdtmp_chain(offset_expr, tmp_defs)
+        Returns (offset, base_tuple) or None.
+        Does NOT guess for BX+SI, SP+unknown, tmp, or other complex forms.
+        """
+        # Resolve RdTmp → defining expression if tmp_defs available
+        if tmp_defs is not None:
+            offset_expr = _resolve_rdtmp_chain(offset_expr, tmp_defs)
 
-    # Integer offset: pass through
-    if isinstance(offset_expr, int):
-        return (offset_expr, ("bp",))
+        # Integer offset: pass through
+        if isinstance(offset_expr, int):
+            return (offset_expr, ("bp",))
 
-    # VEX expression: try to match BP +/- const pattern
-    op = getattr(offset_expr, "op", None)
-    if op is None:
+        # VEX expression: try to match BP +/- const pattern
+        op = getattr(offset_expr, "op", None)
+        if op is None:
+            return None
+
+        op_str = str(op)
+        args = getattr(offset_expr, "args", None) or []
+
+        if len(args) < 2:
+            # Unary or single-arg — check if it's just BP
+            for arg in args:
+                if _is_bp_reg(arg, tmp_defs=tmp_defs):
+                    return (0, ("bp",))
+            return None
+
+        # Flatten nested Add/Sub chains into terms
+        terms, const = _collect_add_sub_terms(offset_expr, tmp_defs=tmp_defs)
+        if terms is None:
+            # Fallback to simple 2-arg patterns
+            left, right = args[0], args[1]
+            if op_str in {"Iop_Add16", "Iop_Add32"}:
+                if _is_bp_reg(left, tmp_defs=tmp_defs) and isinstance(right, int):
+                    return (right & 0xFFFF, ("bp",))
+                if isinstance(left, int) and _is_bp_reg(right, tmp_defs=tmp_defs):
+                    return (left & 0xFFFF, ("bp",))
+            if op_str in {"Iop_Sub16", "Iop_Sub32"}:
+                if _is_bp_reg(left, tmp_defs=tmp_defs) and isinstance(right, int):
+                    return (-(right & 0xFFFF), ("bp",))
+            return None
+
+        # Accept: BP (+ SI/DI) + const
+        has_bp = any(_is_bp_reg(term, tmp_defs=tmp_defs) for term in terms)
+        has_index = any(_is_index_reg_8616(term) for term in terms)
+        non_reg_terms = [t for t in terms if not _is_bp_reg(t, tmp_defs=tmp_defs) and not _is_index_reg_8616(t)]
+
+        if has_bp and not non_reg_terms:
+            # BP only or BP + index: accept
+            return (const & 0xFFFF, ("bp",))
+
         return None
 
-    op_str = str(op)
-    args = getattr(offset_expr, "args", None) or []
-
-    if len(args) < 2:
-        # Unary or single-arg — check if it's just BP
-        for arg in args:
-            if _is_bp_reg(arg, tmp_defs=tmp_defs):
-                return (0, ("bp",))
-        return None
-
-    # Flatten nested Add/Sub chains into terms
-    terms, const = _collect_add_sub_terms(offset_expr, tmp_defs=tmp_defs)
-    if terms is None:
-        # Fallback to simple 2-arg patterns
-        left, right = args[0], args[1]
-        if op_str in {"Iop_Add16", "Iop_Add32"}:
-            if _is_bp_reg(left, tmp_defs=tmp_defs) and isinstance(right, int):
-                return (right & 0xFFFF, ("bp",))
-            if isinstance(left, int) and _is_bp_reg(right, tmp_defs=tmp_defs):
-                return (left & 0xFFFF, ("bp",))
-        if op_str in {"Iop_Sub16", "Iop_Sub32"}:
-            if _is_bp_reg(left, tmp_defs=tmp_defs) and isinstance(right, int):
-                return (-(right & 0xFFFF), ("bp",))
-        return None
-
-    # Accept: BP (+ SI/DI) + const
-    has_bp = any(_is_bp_reg(term, tmp_defs=tmp_defs) for term in terms)
-    has_index = any(_is_index_reg_8616(term) for term in terms)
-    non_reg_terms = [t for t in terms if not _is_bp_reg(t, tmp_defs=tmp_defs) and not _is_index_reg_8616(t)]
-
-    if has_bp and not non_reg_terms:
-        # BP only or BP + index: accept
-        return (const & 0xFFFF, ("bp",))
-
-    return None
+    return _impl()
 
 
 def _collect_add_sub_terms(
@@ -568,84 +575,88 @@ def _collect_add_sub_terms(
     *,
     tmp_defs: dict | None = None,
 ) -> tuple[list[Any], int] | None:
-    """Flatten Iop_Add16/Add32 and Iop_Sub16/Sub32 chains.
+    def _impl():
+        nonlocal expr
+        """Flatten Iop_Add16/Add32 and Iop_Sub16/Sub32 chains.
 
-    Returns (non_constant_terms, constant_total) or None if unsupported.
-    Constant terms are summed into the constant_total.
-    Sub-expressions in Sub positions negate their constant contribution.
-    """
-    # Resolve RdTmp chains through tmp_defs first
-    if tmp_defs is not None:
-        expr = _resolve_rdtmp_chain(expr, tmp_defs)
+        Returns (non_constant_terms, constant_total) or None if unsupported.
+        Constant terms are summed into the constant_total.
+        Sub-expressions in Sub positions negate their constant contribution.
+        """
+        # Resolve RdTmp chains through tmp_defs first
+        if tmp_defs is not None:
+            expr = _resolve_rdtmp_chain(expr, tmp_defs)
 
-    op = getattr(expr, "op", None)
-    if op is None:
-        # Leaf expression: VEX Get, RdTmp, Const, or int literal.
-        # These are atomic terms — return them as a single-term list.
-        # Handle VEX Const objects (tag=Iex_Const, .con.value)
-        tag = getattr(expr, "tag", None)
-        if tag == "Iex_Const":
-            con = getattr(expr, "con", None)
-            if con is not None:
-                val = getattr(con, "value", None)
-                if isinstance(val, int):
-                    return ([], val & 0xFFFF)
+        op = getattr(expr, "op", None)
+        if op is None:
+            # Leaf expression: VEX Get, RdTmp, Const, or int literal.
+            # These are atomic terms — return them as a single-term list.
+            # Handle VEX Const objects (tag=Iex_Const, .con.value)
+            tag = getattr(expr, "tag", None)
+            if tag == "Iex_Const":
+                con = getattr(expr, "con", None)
+                if con is not None:
+                    val = getattr(con, "value", None)
+                    if isinstance(val, int):
+                        return ([], val & 0xFFFF)
+            if isinstance(expr, int):
+                return ([], expr & 0xFFFF)
+            return ([expr], 0)
+
+        op_str = str(op)
+        args = getattr(expr, "args", None) or []
+        if not args:
+            return None
+
+        if op_str in {"Iop_Add16", "Iop_Add32"}:
+            left_res = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
+            right_res = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
+            if left_res is None or right_res is None:
+                return ([args[0], args[1]], 0)
+            left_terms, left_const = left_res
+            right_terms, right_const = right_res
+            if left_terms is not None and right_terms is not None:
+                return (left_terms + right_terms, (left_const + right_const) & 0xFFFF)
+            # One side may be non-decomposable; treat it as a term
+            if left_terms is not None:
+                return (left_terms + [args[1]], left_const & 0xFFFF)
+            if right_terms is not None:
+                return (right_terms + [args[0]], right_const & 0xFFFF)
+            return ([args[0], args[1]], 0)
+
+        if op_str in {"Iop_Sub16", "Iop_Sub32"}:
+            left_res = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
+            right_res = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
+            if left_res is None or right_res is None:
+                return ([args[0], args[1]], 0)
+            left_terms, left_const = left_res
+            right_terms, right_const = right_res
+            if left_terms is not None and right_terms is not None:
+                return (left_terms + right_terms, (left_const - right_const) & 0xFFFF)
+            if left_terms is not None:
+                return (left_terms + [args[1]], left_const & 0xFFFF)
+            if right_terms is not None:
+                return (right_terms + [args[0]], (-right_const) & 0xFFFF)
+            return ([args[0], args[1]], 0)
+
+            # Leaf: constant or register
+            # Handle VEX Const objects (tag=Iex_Const, .con.value)
+            tag = getattr(expr, "tag", None)
+            if tag == "Iex_Const":
+                con = getattr(expr, "con", None)
+                if con is not None:
+                    val = getattr(con, "value", None)
+                    if isinstance(val, int):
+                        return ([], val & 0xFFFF)
         if isinstance(expr, int):
             return ([], expr & 0xFFFF)
-        return ([expr], 0)
+        reg_offset = getattr(expr, "reg", None)
+        if isinstance(reg_offset, int):
+            return ([expr], 0)
 
-    op_str = str(op)
-    args = getattr(expr, "args", None) or []
-    if not args:
         return None
 
-    if op_str in {"Iop_Add16", "Iop_Add32"}:
-        left_res = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
-        right_res = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
-        if left_res is None or right_res is None:
-            return ([args[0], args[1]], 0)
-        left_terms, left_const = left_res
-        right_terms, right_const = right_res
-        if left_terms is not None and right_terms is not None:
-            return (left_terms + right_terms, (left_const + right_const) & 0xFFFF)
-        # One side may be non-decomposable; treat it as a term
-        if left_terms is not None:
-            return (left_terms + [args[1]], left_const & 0xFFFF)
-        if right_terms is not None:
-            return (right_terms + [args[0]], right_const & 0xFFFF)
-        return ([args[0], args[1]], 0)
-
-    if op_str in {"Iop_Sub16", "Iop_Sub32"}:
-        left_res = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
-        right_res = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
-        if left_res is None or right_res is None:
-            return ([args[0], args[1]], 0)
-        left_terms, left_const = left_res
-        right_terms, right_const = right_res
-        if left_terms is not None and right_terms is not None:
-            return (left_terms + right_terms, (left_const - right_const) & 0xFFFF)
-        if left_terms is not None:
-            return (left_terms + [args[1]], left_const & 0xFFFF)
-        if right_terms is not None:
-            return (right_terms + [args[0]], (-right_const) & 0xFFFF)
-        return ([args[0], args[1]], 0)
-
-        # Leaf: constant or register
-        # Handle VEX Const objects (tag=Iex_Const, .con.value)
-        tag = getattr(expr, "tag", None)
-        if tag == "Iex_Const":
-            con = getattr(expr, "con", None)
-            if con is not None:
-                val = getattr(con, "value", None)
-                if isinstance(val, int):
-                    return ([], val & 0xFFFF)
-    if isinstance(expr, int):
-        return ([], expr & 0xFFFF)
-    reg_offset = getattr(expr, "reg", None)
-    if isinstance(reg_offset, int):
-        return ([expr], 0)
-
-    return None
+    return _impl()
 
 
 def _is_index_reg_8616(expr: Any) -> bool:
@@ -671,38 +682,41 @@ def _is_index_reg_8616(expr: Any) -> bool:
 
 
 def _is_bp_reg(expr: Any, *, tmp_defs: dict | None = None) -> bool:
-    """Check if a VEX expression is a BP register reference.
+    def _impl():
+        """Check if a VEX expression is a BP register reference.
 
-    BP appears as:
-      - Get(offset=28, ...)   — VEX guest state offset for bp (archinfo arch_from_id('x86_16'))
-      - RdTmp(tmp=N) when tmp_defs maps N → WrTmp(..., Get(offset=28, ...))
+        BP appears as:
+          - Get(offset=28, ...)   — VEX guest state offset for bp (archinfo arch_from_id('x86_16'))
+          - RdTmp(tmp=N) when tmp_defs maps N → WrTmp(..., Get(offset=28, ...))
 
-    The old reg16_t enum value 5 is NOT a VEX guest offset — that was a bug.
-    """
-    class_name = getattr(type(expr), "__name__", "")
+        The old reg16_t enum value 5 is NOT a VEX guest offset — that was a bug.
+        """
+        class_name = getattr(type(expr), "__name__", "")
 
-    # RdTmp: resolve through tmp_defs if available
-    if "RdTmp" in class_name and tmp_defs is not None:
-        tmp_idx = getattr(expr, "tmp", None)
-        if isinstance(tmp_idx, int):
-            stmt = tmp_defs.get(tmp_idx)
-            if stmt is not None:
-                stmt_expr = getattr(stmt, "data", None) or getattr(stmt, "expr", None)
-                if stmt_expr is not None:
-                    return _is_bp_reg(stmt_expr, tmp_defs=tmp_defs)
+        # RdTmp: resolve through tmp_defs if available
+        if "RdTmp" in class_name and tmp_defs is not None:
+            tmp_idx = getattr(expr, "tmp", None)
+            if isinstance(tmp_idx, int):
+                stmt = tmp_defs.get(tmp_idx)
+                if stmt is not None:
+                    stmt_expr = getattr(stmt, "data", None) or getattr(stmt, "expr", None)
+                    if stmt_expr is not None:
+                        return _is_bp_reg(stmt_expr, tmp_defs=tmp_defs)
 
-    # Direct Get node: VEX guest state offset 28 = bp
-    if "Get" in class_name:
-        offset = getattr(expr, "offset", None)
-        if isinstance(offset, int) and offset in {10, 28}:
+        # Direct Get node: VEX guest state offset 28 = bp
+        if "Get" in class_name:
+            offset = getattr(expr, "offset", None)
+            if isinstance(offset, int) and offset in {10, 28}:
+                return True
+
+        # Obsolete path: reg16_t enum value (never matched VEX expressions)
+        reg_offset = getattr(expr, "reg", None)
+        if isinstance(reg_offset, int) and reg_offset == 5:
             return True
 
-    # Obsolete path: reg16_t enum value (never matched VEX expressions)
-    reg_offset = getattr(expr, "reg", None)
-    if isinstance(reg_offset, int) and reg_offset == 5:
-        return True
+        return False
 
-    return False
+    return _impl()
 
 
 def advance_ip16(emu, byte_count: int):

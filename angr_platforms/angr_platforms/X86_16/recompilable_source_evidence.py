@@ -90,44 +90,47 @@ def _normalize_source_evidence_text(text: str, *, proc_name: str | None = None) 
 
 
 def build_recompilable_source_evidence_text(case: RecompilableSubsetCase) -> str | None:
-    if case.cod_path is None or case.proc_name is None:
-        return None
+    def _impl():
+        if case.cod_path is None or case.proc_name is None:
+            return None
 
-    metadata = extract_cod_proc_metadata(case.cod_path, case.proc_name, case.proc_kind)
-    function_lines = _extract_source_function_lines(metadata.source_lines, case.proc_name)
-    if not function_lines:
-        return None
+        metadata = extract_cod_proc_metadata(case.cod_path, case.proc_name, case.proc_kind)
+        function_lines = _extract_source_function_lines(metadata.source_lines, case.proc_name)
+        if not function_lines:
+            return None
 
-    prelude_lines: list[str] = []
-    if any("exeLoadParams" in line for line in metadata.source_lines):
-        prelude_lines.append("static ExeLoadParams exeLoadParams;")
-    if any("ovlLoadParams" in line for line in metadata.source_lines):
-        prelude_lines.append("static OvlLoadParams ovlLoadParams;")
-    if any(re.search(r"\brin\b", line) for line in function_lines) or any(
-        re.search(r"\brout\b", line) for line in function_lines
-    ):
-        prelude_lines.append("static REGS rin, rout;")
+        prelude_lines: list[str] = []
+        if any("exeLoadParams" in line for line in metadata.source_lines):
+            prelude_lines.append("static ExeLoadParams exeLoadParams;")
+        if any("ovlLoadParams" in line for line in metadata.source_lines):
+            prelude_lines.append("static OvlLoadParams ovlLoadParams;")
+        if any(re.search(r"\brin\b", line) for line in function_lines) or any(
+            re.search(r"\brout\b", line) for line in function_lines
+        ):
+            prelude_lines.append("static REGS rin, rout;")
 
-    pieces = []
-    if prelude_lines:
-        pieces.append("\n".join(prelude_lines))
-    pieces.append("\n".join(function_lines))
-    normalized = _normalize_source_evidence_text("\n\n".join(pieces).strip() + "\n", proc_name=case.proc_name)
-    signature_anchor = next((anchor for anchor in case.expected_c_anchors if "(" in anchor and ")" in anchor), None)
-    if signature_anchor is not None:
-        normalized = re.sub(
-            r"(?m)^(?:static\s+)?(?:(?:unsigned short|int|void)\s+)?[A-Za-z_]\w*\([^)]*\)\s*\{",
-            signature_anchor + " {",
-            normalized,
-            count=1,
-        )
-        normalized = re.sub(
-            r"(?m)^(?:static\s+)?(?:(?:unsigned short|int|void)\s+)?[A-Za-z_]\w*\([^)]*\)\s*$",
-            signature_anchor,
-            normalized,
-            count=1,
-        )
-    return normalized
+        pieces = []
+        if prelude_lines:
+            pieces.append("\n".join(prelude_lines))
+        pieces.append("\n".join(function_lines))
+        normalized = _normalize_source_evidence_text("\n\n".join(pieces).strip() + "\n", proc_name=case.proc_name)
+        signature_anchor = next((anchor for anchor in case.expected_c_anchors if "(" in anchor and ")" in anchor), None)
+        if signature_anchor is not None:
+            normalized = re.sub(
+                r"(?m)^(?:static\s+)?(?:(?:unsigned short|int|void)\s+)?[A-Za-z_]\w*\([^)]*\)\s*\{",
+                signature_anchor + " {",
+                normalized,
+                count=1,
+            )
+            normalized = re.sub(
+                r"(?m)^(?:static\s+)?(?:(?:unsigned short|int|void)\s+)?[A-Za-z_]\w*\([^)]*\)\s*$",
+                signature_anchor,
+                normalized,
+                count=1,
+            )
+        return normalized
+
+    return _impl()
 
 
 def load_or_build_recompilable_source_evidence(case: RecompilableSubsetCase) -> tuple[str | None, Path | None]:

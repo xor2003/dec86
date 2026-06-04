@@ -186,47 +186,14 @@ def _coalesce_word_global_constant_stores_8616(project, codegen) -> set[int]:
 
 
 def _apply_word_global_types_8616(codegen, addrs: set[int]) -> bool:
-    if not addrs or getattr(codegen, "cfunc", None) is None:
-        return False
+    def _impl():
+        if not addrs or getattr(codegen, "cfunc", None) is None:
+            return False
 
-    changed = False
-    target_type = SimTypeShort(False)
+        changed = False
+        target_type = SimTypeShort(False)
 
-    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
-        if not isinstance(variable, SimMemoryVariable):
-            continue
-        if getattr(variable, "addr", None) not in addrs:
-            continue
-        if getattr(variable, "size", None) != 2:
-            variable.size = 2
-            changed = True
-        if getattr(cvar, "variable_type", None) != target_type:
-            cvar.variable_type = target_type
-            changed = True
-        unified = getattr(cvar, "unified_variable", None)
-        if unified is not None and getattr(unified, "size", None) != 2:
-            try:
-                unified.size = 2
-                changed = True
-            except Exception:
-                pass
-
-    for cextern in getattr(codegen, "cexterns", ()) or ():
-        variable = getattr(cextern, "variable", None)
-        if not isinstance(variable, SimMemoryVariable):
-            continue
-        if getattr(variable, "addr", None) not in addrs:
-            continue
-        if getattr(variable, "size", None) != 2:
-            variable.size = 2
-            changed = True
-        if getattr(cextern, "variable_type", None) != target_type:
-            cextern.variable_type = target_type
-            changed = True
-
-    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
-    if isinstance(unified_locals, dict):
-        for variable, cvar_and_vartypes in list(unified_locals.items()):
+        for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
             if not isinstance(variable, SimMemoryVariable):
                 continue
             if getattr(variable, "addr", None) not in addrs:
@@ -234,45 +201,84 @@ def _apply_word_global_types_8616(codegen, addrs: set[int]) -> bool:
             if getattr(variable, "size", None) != 2:
                 variable.size = 2
                 changed = True
-            new_entries = {(cvariable, target_type) for cvariable, _vartype in cvar_and_vartypes}
-            if new_entries != cvar_and_vartypes:
-                unified_locals[variable] = new_entries
+            if getattr(cvar, "variable_type", None) != target_type:
+                cvar.variable_type = target_type
+                changed = True
+            unified = getattr(cvar, "unified_variable", None)
+            if unified is not None and getattr(unified, "size", None) != 2:
+                try:
+                    unified.size = 2
+                    changed = True
+                except Exception:
+                    pass
+
+        for cextern in getattr(codegen, "cexterns", ()) or ():
+            variable = getattr(cextern, "variable", None)
+            if not isinstance(variable, SimMemoryVariable):
+                continue
+            if getattr(variable, "addr", None) not in addrs:
+                continue
+            if getattr(variable, "size", None) != 2:
+                variable.size = 2
+                changed = True
+            if getattr(cextern, "variable_type", None) != target_type:
+                cextern.variable_type = target_type
                 changed = True
 
-    return changed
+        unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+        if isinstance(unified_locals, dict):
+            for variable, cvar_and_vartypes in list(unified_locals.items()):
+                if not isinstance(variable, SimMemoryVariable):
+                    continue
+                if getattr(variable, "addr", None) not in addrs:
+                    continue
+                if getattr(variable, "size", None) != 2:
+                    variable.size = 2
+                    changed = True
+                new_entries = {(cvariable, target_type) for cvariable, _vartype in cvar_and_vartypes}
+                if new_entries != cvar_and_vartypes:
+                    unified_locals[variable] = new_entries
+                    changed = True
+
+        return changed
+
+    return _impl()
 
 
 def _prune_unused_unnamed_memory_declarations_8616(codegen) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
-        return False
+    def _impl():
+        if getattr(codegen, "cfunc", None) is None:
+            return False
 
-    used_variables: set[int] = set()
-    for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements):
-        if not isinstance(node, CVariable):
-            continue
-        variable = getattr(node, "variable", None)
-        if variable is not None:
-            used_variables.add(id(variable))
-        unified = getattr(node, "unified_variable", None)
-        if unified is not None:
-            used_variables.add(id(unified))
+        used_variables: set[int] = set()
+        for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements):
+            if not isinstance(node, CVariable):
+                continue
+            variable = getattr(node, "variable", None)
+            if variable is not None:
+                used_variables.add(id(variable))
+            unified = getattr(node, "unified_variable", None)
+            if unified is not None:
+                used_variables.add(id(unified))
 
-    changed = False
-    variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
-    if isinstance(variables_in_use, dict):
-        for variable in list(variables_in_use):
-            if not isinstance(variable, SimMemoryVariable):
-                continue
-            name = getattr(variable, "name", None)
-            if not isinstance(name, str) or not name.startswith("g_"):
-                continue
-            if id(variable) in used_variables:
-                continue
-            cvar = variables_in_use[variable]
-            unified = getattr(cvar, "unified_variable", None)
-            if unified is not None and id(unified) in used_variables:
-                continue
-            del variables_in_use[variable]
-            changed = True
+        changed = False
+        variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+        if isinstance(variables_in_use, dict):
+            for variable in list(variables_in_use):
+                if not isinstance(variable, SimMemoryVariable):
+                    continue
+                name = getattr(variable, "name", None)
+                if not isinstance(name, str) or not name.startswith("g_"):
+                    continue
+                if id(variable) in used_variables:
+                    continue
+                cvar = variables_in_use[variable]
+                unified = getattr(cvar, "unified_variable", None)
+                if unified is not None and id(unified) in used_variables:
+                    continue
+                del variables_in_use[variable]
+                changed = True
 
-    return changed
+        return changed
+
+    return _impl()

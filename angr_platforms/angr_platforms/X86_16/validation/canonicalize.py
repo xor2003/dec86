@@ -38,52 +38,55 @@ class CanonicalDiagnostic:
 
 
 def canonicalize_expr_for_validation_8616(expr: Any, *, max_depth: int = 8) -> Any:
-    """Apply identity-preserving algebraic normalization to a single expression.
+    def _impl():
+        """Apply identity-preserving algebraic normalization to a single expression.
 
-    Returns a normalized copy — NEVER mutates the original IR.
+        Returns a normalized copy — NEVER mutates the original IR.
 
-    Normalizations:
-      - x + 0 → x
-      - 0 + x → x
-      - x - x → 0
-      - x - 0 → x
-      - Commutative reordering for +, &, | (left-associative)
-      - (a + b) + c → a + b + c (flatten)
-    """
-    if max_depth <= 0:
+        Normalizations:
+          - x + 0 → x
+          - 0 + x → x
+          - x - x → 0
+          - x - 0 → x
+          - Commutative reordering for +, &, | (left-associative)
+          - (a + b) + c → a + b + c (flatten)
+        """
+        if max_depth <= 0:
+            return expr
+
+        # Primitive types pass through
+        if not isinstance(expr, (int, float, str, bool, type(None))):
+            return expr
+
+        # Handle common expression types if they have lhs/rhs shape
+        if hasattr(expr, "lhs") and hasattr(expr, "rhs"):
+            lhs = canonicalize_expr_for_validation_8616(getattr(expr, "lhs"), max_depth=max_depth - 1)
+            rhs = canonicalize_expr_for_validation_8616(getattr(expr, "rhs"), max_depth=max_depth - 1)
+
+            # x + 0 → x
+            if _is_zero_value(rhs) and getattr(expr, "op", "") in {"Add", "+"}:
+                return lhs
+            # 0 + x → x
+            if _is_zero_value(lhs) and getattr(expr, "op", "") in {"Add", "+"}:
+                return rhs
+            # x - 0 → x
+            if _is_zero_value(rhs) and getattr(expr, "op", "") in {"Sub", "-"}:
+                return lhs
+            # x - x → 0
+            if _same_value(lhs, rhs) and getattr(expr, "op", "") in {"Sub", "-"}:
+                return _zero_for_expr(lhs)
+
+            return _rebuild_binary(expr, lhs, rhs)
+
+        # Handle unary ops
+        if hasattr(expr, "operand"):
+            operand = canonicalize_expr_for_validation_8616(getattr(expr, "operand"), max_depth=max_depth - 1)
+            if operand is not getattr(expr, "operand"):
+                return _rebuild_unary(expr, operand)
+
         return expr
 
-    # Primitive types pass through
-    if not isinstance(expr, (int, float, str, bool, type(None))):
-        return expr
-
-    # Handle common expression types if they have lhs/rhs shape
-    if hasattr(expr, "lhs") and hasattr(expr, "rhs"):
-        lhs = canonicalize_expr_for_validation_8616(getattr(expr, "lhs"), max_depth=max_depth - 1)
-        rhs = canonicalize_expr_for_validation_8616(getattr(expr, "rhs"), max_depth=max_depth - 1)
-
-        # x + 0 → x
-        if _is_zero_value(rhs) and getattr(expr, "op", "") in {"Add", "+"}:
-            return lhs
-        # 0 + x → x
-        if _is_zero_value(lhs) and getattr(expr, "op", "") in {"Add", "+"}:
-            return rhs
-        # x - 0 → x
-        if _is_zero_value(rhs) and getattr(expr, "op", "") in {"Sub", "-"}:
-            return lhs
-        # x - x → 0
-        if _same_value(lhs, rhs) and getattr(expr, "op", "") in {"Sub", "-"}:
-            return _zero_for_expr(lhs)
-
-        return _rebuild_binary(expr, lhs, rhs)
-
-    # Handle unary ops
-    if hasattr(expr, "operand"):
-        operand = canonicalize_expr_for_validation_8616(getattr(expr, "operand"), max_depth=max_depth - 1)
-        if operand is not getattr(expr, "operand"):
-            return _rebuild_unary(expr, operand)
-
-    return expr
+    return _impl()
 
 
 def equivalent_expr_8616(lhs: Any, rhs: Any, *, timeout_ms: int = 500) -> EquivalenceResult:
@@ -161,29 +164,32 @@ def _is_one_value(expr: Any) -> bool:
 
 
 def _same_value(lhs: Any, rhs: Any) -> bool:
-    """Check if two expressions represent the same value."""
-    if type(lhs) is not type(rhs):
+    def _impl():
+        """Check if two expressions represent the same value."""
+        if type(lhs) is not type(rhs):
+            return False
+        lhs_value = getattr(lhs, "value", lhs)
+        rhs_value = getattr(rhs, "value", rhs)
+        if isinstance(lhs_value, int) and isinstance(rhs_value, int):
+            return lhs_value == rhs_value
+
+        # Register-check: same reg offset
+        lhs_reg = getattr(lhs, "reg", None) or getattr(getattr(lhs, "variable", None), "reg", None)
+        rhs_reg = getattr(rhs, "reg", None) or getattr(getattr(rhs, "variable", None), "reg", None)
+        if isinstance(lhs_reg, int) and isinstance(rhs_reg, int):
+            return lhs_reg == rhs_reg
+
+        # Stack slot: same base + offset
+        lhs_var = getattr(lhs, "variable", None)
+        rhs_var = getattr(rhs, "variable", None)
+        if lhs_var is not None and rhs_var is not None:
+            return getattr(lhs_var, "offset", object()) == getattr(rhs_var, "offset", None) and getattr(
+                lhs_var, "base", object()
+            ) == getattr(rhs_var, "base", None)
+
         return False
-    lhs_value = getattr(lhs, "value", lhs)
-    rhs_value = getattr(rhs, "value", rhs)
-    if isinstance(lhs_value, int) and isinstance(rhs_value, int):
-        return lhs_value == rhs_value
 
-    # Register-check: same reg offset
-    lhs_reg = getattr(lhs, "reg", None) or getattr(getattr(lhs, "variable", None), "reg", None)
-    rhs_reg = getattr(rhs, "reg", None) or getattr(getattr(rhs, "variable", None), "reg", None)
-    if isinstance(lhs_reg, int) and isinstance(rhs_reg, int):
-        return lhs_reg == rhs_reg
-
-    # Stack slot: same base + offset
-    lhs_var = getattr(lhs, "variable", None)
-    rhs_var = getattr(rhs, "variable", None)
-    if lhs_var is not None and rhs_var is not None:
-        return getattr(lhs_var, "offset", object()) == getattr(rhs_var, "offset", None) and getattr(
-            lhs_var, "base", object()
-        ) == getattr(rhs_var, "base", None)
-
-    return False
+    return _impl()
 
 
 def _zero_for_expr(expr: Any) -> Any:
@@ -226,36 +232,39 @@ def _rebuild_unary(original: Any, operand: Any) -> Any:
 
 
 def _structural_equal(lhs: Any, rhs: Any, depth: int = 0, max_depth: int = 16) -> bool:
-    """Structural equality check with cycle detection."""
-    if depth > max_depth:
-        return True  # conservative: treat too-deep as equal
+    def _impl():
+        """Structural equality check with cycle detection."""
+        if depth > max_depth:
+            return True  # conservative: treat too-deep as equal
 
-    if type(lhs) is not type(rhs):
-        return False
-
-    if isinstance(lhs, (int, float, str, bool, type(None))):
-        return lhs == rhs
-
-    # Compare key structural attributes
-    for attr in ("op", "value", "name", "kind", "type"):
-        lhs_val = getattr(lhs, attr, _sentinel)
-        rhs_val = getattr(rhs, attr, _sentinel)
-        if lhs_val is not _sentinel and rhs_val is not _sentinel:
-            if not _structural_equal(lhs_val, rhs_val, depth + 1, max_depth):
-                return False
-
-    # Compare child nodes
-    for child_attr in ("lhs", "rhs", "operand", "expr", "variable", "index"):
-        lhs_child = getattr(lhs, child_attr, _sentinel)
-        rhs_child = getattr(rhs, child_attr, _sentinel)
-        if lhs_child is _sentinel or rhs_child is _sentinel:
-            if lhs_child is not _sentinel or rhs_child is not _sentinel:
-                return False
-            continue
-        if not _structural_equal(lhs_child, rhs_child, depth + 1, max_depth):
+        if type(lhs) is not type(rhs):
             return False
 
-    return True
+        if isinstance(lhs, (int, float, str, bool, type(None))):
+            return lhs == rhs
+
+        # Compare key structural attributes
+        for attr in ("op", "value", "name", "kind", "type"):
+            lhs_val = getattr(lhs, attr, _sentinel)
+            rhs_val = getattr(rhs, attr, _sentinel)
+            if lhs_val is not _sentinel and rhs_val is not _sentinel:
+                if not _structural_equal(lhs_val, rhs_val, depth + 1, max_depth):
+                    return False
+
+        # Compare child nodes
+        for child_attr in ("lhs", "rhs", "operand", "expr", "variable", "index"):
+            lhs_child = getattr(lhs, child_attr, _sentinel)
+            rhs_child = getattr(rhs, child_attr, _sentinel)
+            if lhs_child is _sentinel or rhs_child is _sentinel:
+                if lhs_child is not _sentinel or rhs_child is not _sentinel:
+                    return False
+                continue
+            if not _structural_equal(lhs_child, rhs_child, depth + 1, max_depth):
+                return False
+
+        return True
+
+    return _impl()
 
 
 _sentinel = object()
@@ -310,50 +319,53 @@ def _smt_equivalent(lhs: Any, rhs: Any, *, timeout_ms: int = 500) -> bool:
 
 
 def _to_z3_expr(expr: Any, _depth: int = 0) -> Any | None:
-    """Best-effort conversion of an expression to Z3."""
-    if _depth > 16:
-        return None
-    try:
-        import z3
-    except ImportError:
-        return None
-
-    if isinstance(expr, int):
-        return z3.IntVal(expr)
-    if isinstance(expr, bool):
-        return z3.BoolVal(expr)
-
-    const_val = getattr(expr, "value", None)
-    if isinstance(const_val, int):
-        return z3.IntVal(const_val)
-
-    # Named variable
-    name = getattr(expr, "name", None)
-    if isinstance(name, str) and name:
-        return z3.Int(name)
-
-    # Register-like
-    reg = getattr(expr, "reg", None) or getattr(getattr(expr, "variable", None), "reg", None)
-    if isinstance(reg, int):
-        return z3.Int(f"reg_{reg}")
-
-    # Binary op
-    if hasattr(expr, "op") and hasattr(expr, "lhs") and hasattr(expr, "rhs"):
-        lhs_z3 = _to_z3_expr(getattr(expr, "lhs"), _depth + 1)
-        rhs_z3 = _to_z3_expr(getattr(expr, "rhs"), _depth + 1)
-        if lhs_z3 is None or rhs_z3 is None:
+    def _impl():
+        """Best-effort conversion of an expression to Z3."""
+        if _depth > 16:
             return None
-        op = getattr(expr, "op", "")
-        if op in {"Add", "+"}:
-            return lhs_z3 + rhs_z3
-        if op in {"Sub", "-"}:
-            return lhs_z3 - rhs_z3
-        if op in {"Mul", "*"}:
-            return lhs_z3 * rhs_z3
-        if op in {"CmpEQ", "==", "eq"}:
-            return lhs_z3 == rhs_z3
-        if op in {"CmpNE", "!=", "ne"}:
-            return lhs_z3 != rhs_z3
+        try:
+            import z3
+        except ImportError:
+            return None
+
+        if isinstance(expr, int):
+            return z3.IntVal(expr)
+        if isinstance(expr, bool):
+            return z3.BoolVal(expr)
+
+        const_val = getattr(expr, "value", None)
+        if isinstance(const_val, int):
+            return z3.IntVal(const_val)
+
+        # Named variable
+        name = getattr(expr, "name", None)
+        if isinstance(name, str) and name:
+            return z3.Int(name)
+
+        # Register-like
+        reg = getattr(expr, "reg", None) or getattr(getattr(expr, "variable", None), "reg", None)
+        if isinstance(reg, int):
+            return z3.Int(f"reg_{reg}")
+
+        # Binary op
+        if hasattr(expr, "op") and hasattr(expr, "lhs") and hasattr(expr, "rhs"):
+            lhs_z3 = _to_z3_expr(getattr(expr, "lhs"), _depth + 1)
+            rhs_z3 = _to_z3_expr(getattr(expr, "rhs"), _depth + 1)
+            if lhs_z3 is None or rhs_z3 is None:
+                return None
+            op = getattr(expr, "op", "")
+            if op in {"Add", "+"}:
+                return lhs_z3 + rhs_z3
+            if op in {"Sub", "-"}:
+                return lhs_z3 - rhs_z3
+            if op in {"Mul", "*"}:
+                return lhs_z3 * rhs_z3
+            if op in {"CmpEQ", "==", "eq"}:
+                return lhs_z3 == rhs_z3
+            if op in {"CmpNE", "!=", "ne"}:
+                return lhs_z3 != rhs_z3
+            return None
+
         return None
 
-    return None
+    return _impl()

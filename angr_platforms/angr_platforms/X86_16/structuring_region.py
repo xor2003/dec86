@@ -220,58 +220,61 @@ class RegionGraph:
         return list(region.successors)
 
     def merge_regions(self, src: Region, dst: Region, transfer_edges: str = "both") -> None:
-        """
-        Merge src into dst, combining their statements and updating edges.
+        def _impl():
+            """
+            Merge src into dst, combining their statements and updating edges.
 
-        Args:
-            src: Source region to merge (will be removed)
-            dst: Destination region (will absorb src's statements)
-            transfer_edges: How to handle edges:
-                - "both": transfer all src's edges to dst
-                - "pred": transfer only incoming edges
-                - "succ": transfer only outgoing edges
-                - "none": don't transfer edges
-        """
-        if src == dst:
-            return
+            Args:
+                src: Source region to merge (will be removed)
+                dst: Destination region (will absorb src's statements)
+                transfer_edges: How to handle edges:
+                    - "both": transfer all src's edges to dst
+                    - "pred": transfer only incoming edges
+                    - "succ": transfer only outgoing edges
+                    - "none": don't transfer edges
+            """
+            if src == dst:
+                return
 
-        # Merge statements
-        dst.statements.extend(src.statements)
+            # Merge statements
+            dst.statements.extend(src.statements)
 
-        # Preserve structured region types (Loop, IncSwitch, Condition) over Linear
-        # If either region has a more specific type, use that
-        if src.region_type != RegionType.Linear:
-            dst.region_type = src.region_type
-        # Also merge metadata from src to dst
-        for key, value in src.metadata.items():
-            if key not in dst.metadata:
-                dst.metadata[key] = value
+            # Preserve structured region types (Loop, IncSwitch, Condition) over Linear
+            # If either region has a more specific type, use that
+            if src.region_type != RegionType.Linear:
+                dst.region_type = src.region_type
+            # Also merge metadata from src to dst
+            for key, value in src.metadata.items():
+                if key not in dst.metadata:
+                    dst.metadata[key] = value
 
-        # Transfer edges
-        if transfer_edges in ("both", "pred"):
-            for pred in list(src.predecessors):
-                pred.remove_successor(src)
-                if pred != dst:
-                    pred.add_successor(dst)
+            # Transfer edges
+            if transfer_edges in ("both", "pred"):
+                for pred in list(src.predecessors):
+                    pred.remove_successor(src)
+                    if pred != dst:
+                        pred.add_successor(dst)
 
-        if transfer_edges in ("both", "succ"):
-            for succ in list(src.successors):
-                src.remove_successor(succ)
-                if succ != dst:
-                    dst.add_successor(succ)
+            if transfer_edges in ("both", "succ"):
+                for succ in list(src.successors):
+                    src.remove_successor(succ)
+                    if succ != dst:
+                        dst.add_successor(succ)
 
-        # Remove self-referencing edges from dst (can happen when merging loop bodies)
-        if dst in dst.predecessors:
-            dst.predecessors.discard(dst)
-        if dst in dst.successors:
-            dst.successors.discard(dst)
-        if dst in self._adjacency.get(dst, set()):
-            self._adjacency[dst].discard(dst)
+            # Remove self-referencing edges from dst (can happen when merging loop bodies)
+            if dst in dst.predecessors:
+                dst.predecessors.discard(dst)
+            if dst in dst.successors:
+                dst.successors.discard(dst)
+            if dst in self._adjacency.get(dst, set()):
+                self._adjacency[dst].discard(dst)
 
-        # Remove src from graph
-        if src in self.nodes:
-            self.nodes.discard(src)
-            del self._adjacency[src]
+            # Remove src from graph
+            if src in self.nodes:
+                self.nodes.discard(src)
+                del self._adjacency[src]
+
+        return _impl()
 
     def iter_postorder(self) -> list[Region]:
         """
@@ -458,116 +461,107 @@ class RegionGraphBuilder:
 
 
 def compute_dominators(graph: RegionGraph) -> DominatorInfo:
-    """
-    Compute dominator relationships for all regions.
+    def _impl():
+        """
+        Compute dominator relationships for all regions.
 
-    Implements the iterative fixpoint algorithm:
-    - dom(entry) = {entry}
-    - dom(n) = {n} ∪ (∩ dom(predecessors of n))
+        Implements the iterative fixpoint algorithm:
+        - dom(entry) = {entry}
+        - dom(n) = {n} ∪ (∩ dom(predecessors of n))
 
-    Args:
-        graph: Region graph to analyze
+        Args:
+            graph: Region graph to analyze
 
-    Returns:
-        DominatorInfo object with cached relationships
-    """
-    if graph.entry is None:
-        return DominatorInfo()
+        Returns:
+            DominatorInfo object with cached relationships
+        """
+        if graph.entry is None:
+            return DominatorInfo()
 
-    all_regions = graph.iter_nodes()
+        all_regions = graph.iter_nodes()
+        dominators = _compute_fixpoint_dominators(graph, all_regions)
+
+        # Compute immediate dominators and strictly_dominates relationships
+        immediate_dominator: dict[Region, Region | None] = {}
+        strictly_dominates_map: dict[Region, set[Region]] = {r: set() for r in all_regions}
+
+        for region in all_regions:
+            doms = dominators[region] - {region}
+            immediate_dominator[region] = None if not doms else max(doms, key=lambda d: len(dominators[d]))
+        for region, doms in dominators.items():
+            for dom in doms:
+                if dom != region:
+                    strictly_dominates_map[dom].add(region)
+
+        # Compute post-dominators (dominators in reverse graph)
+        # Identify exit nodes (regions with no successors)
+        exit_nodes = [r for r in all_regions if not graph.successors(r)]
+
+        post_dominators = _compute_fixpoint_post_dominators(graph, all_regions, exit_nodes)
+
+        # Compute immediate post-dominators
+        immediate_post_dominator: dict[Region, Region | None] = {}
+        strictly_post_dominates_map: dict[Region, set[Region]] = {r: set() for r in all_regions}
+
+        for region in all_regions:
+            pdoms = post_dominators[region] - {region}
+            if not pdoms:
+                immediate_post_dominator[region] = None
+            else:
+                # Immediate post-dominator is the one that post-dominates the fewest nodes
+                # (closest in the post-dominator tree)
+                ipdom = min(pdoms, key=lambda pd: len(post_dominators[pd]))
+                immediate_post_dominator[region] = ipdom
+
+        for region, pdoms in post_dominators.items():
+            for pdom in pdoms:
+                if pdom != region:
+                    strictly_post_dominates_map[pdom].add(region)
+
+        return DominatorInfo(
+            dominators=dominators,
+            immediate_dominator=immediate_dominator,
+            strictly_dominates_map=strictly_dominates_map,
+            post_dominators=post_dominators,
+            immediate_post_dominator=immediate_post_dominator,
+            strictly_post_dominates_map=strictly_post_dominates_map,
+        )
+
+    return _impl()
+
+
+def _compute_fixpoint_dominators(graph: RegionGraph, all_regions: list[Region]) -> dict[Region, set[Region]]:
     dominators: dict[Region, set[Region]] = {region: set(all_regions) for region in all_regions}
     dominators[graph.entry] = {graph.entry}
-
     changed = True
     while changed:
         changed = False
         for region in all_regions:
             if region == graph.entry:
                 continue
-
             preds = graph.predecessors(region)
-            if not preds:
-                new_dom = {region}
-            else:
-                new_dom = {region} | set.intersection(*(dominators.get(p, set(all_regions)) for p in preds))
-
+            new_dom = {region} if not preds else {region} | set.intersection(*(dominators.get(p, set(all_regions)) for p in preds))
             if new_dom != dominators[region]:
                 dominators[region] = new_dom
                 changed = True
+    return dominators
 
-    # Compute immediate dominators and strictly_dominates relationships
-    immediate_dominator: dict[Region, Region | None] = {}
-    strictly_dominates_map: dict[Region, set[Region]] = {r: set() for r in all_regions}
 
-    for region in all_regions:
-        doms = dominators[region] - {region}
-        if not doms:
-            immediate_dominator[region] = None
-        else:
-            # Immediate dominator is the most recent (closest) dominator
-            idom = max(doms, key=lambda d: len(dominators[d]))
-            immediate_dominator[region] = idom
-
-    for region, doms in dominators.items():
-        for dom in doms:
-            if dom != region:
-                strictly_dominates_map[dom].add(region)
-
-    # Compute post-dominators (dominators in reverse graph)
-    # Identify exit nodes (regions with no successors)
-    exit_nodes = [r for r in all_regions if not graph.successors(r)]
-
-    # Initialize post-dominators: each node post-dominates all nodes
+def _compute_fixpoint_post_dominators(
+    graph: RegionGraph, all_regions: list[Region], exit_nodes: list[Region]
+) -> dict[Region, set[Region]]:
     post_dominators: dict[Region, set[Region]] = {region: set(all_regions) for region in all_regions}
-
-    # All exit nodes post-dominate themselves only initially
     for exit_node in exit_nodes:
         post_dominators[exit_node] = {exit_node}
-
-    # Iterative fixpoint for post-dominators
     changed = True
     while changed:
         changed = False
         for region in all_regions:
             if region in exit_nodes:
-                continue  # Exit nodes already initialized
-
+                continue
             succs = graph.successors(region)
-            if not succs:
-                # Unreachable or exit node
-                new_pdom = {region}
-            else:
-                # Post-dominator is the intersection of post-dominators of successors
-                new_pdom = {region} | set.intersection(*(post_dominators.get(s, set(all_regions)) for s in succs))
-
+            new_pdom = {region} if not succs else {region} | set.intersection(*(post_dominators.get(s, set(all_regions)) for s in succs))
             if new_pdom != post_dominators[region]:
                 post_dominators[region] = new_pdom
                 changed = True
-
-    # Compute immediate post-dominators
-    immediate_post_dominator: dict[Region, Region | None] = {}
-    strictly_post_dominates_map: dict[Region, set[Region]] = {r: set() for r in all_regions}
-
-    for region in all_regions:
-        pdoms = post_dominators[region] - {region}
-        if not pdoms:
-            immediate_post_dominator[region] = None
-        else:
-            # Immediate post-dominator is the one that post-dominates the fewest nodes
-            # (closest in the post-dominator tree)
-            ipdom = min(pdoms, key=lambda pd: len(post_dominators[pd]))
-            immediate_post_dominator[region] = ipdom
-
-    for region, pdoms in post_dominators.items():
-        for pdom in pdoms:
-            if pdom != region:
-                strictly_post_dominates_map[pdom].add(region)
-
-    return DominatorInfo(
-        dominators=dominators,
-        immediate_dominator=immediate_dominator,
-        strictly_dominates_map=strictly_dominates_map,
-        post_dominators=post_dominators,
-        immediate_post_dominator=immediate_post_dominator,
-        strictly_post_dominates_map=strictly_post_dominates_map,
-    )
+    return post_dominators

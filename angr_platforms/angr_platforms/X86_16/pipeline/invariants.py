@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from ..decompiler_postprocess_utils import _iter_c_nodes_deep_8616
+
 __all__ = [
     "InvariantStatus",
     "InvariantCheck",
@@ -124,6 +126,9 @@ def validate_before_rewrite_8616(
 
     # Check 8: Condition facts consumed (quantitative gate)
     _check_condition_facts_consumed(codegen, report)
+
+    # Check 9: Goto targets must resolve to emitted C labels
+    _check_goto_targets_resolved(codegen, report)
 
     # Determine if rewrite should be blocked
     failed = report.failed_checks
@@ -279,72 +284,75 @@ def _check_validation_not_uncollected(codegen: Any, report: InvariantReport) -> 
 
 
 def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> None:
-    """Check: all proven SS stack slots have been materialized as named variables."""
-    semantic_alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
-    if not semantic_alias_facts:
-        report.checks.append(
-            InvariantCheck(
-                name="stack_slots_materialized",
-                status=InvariantStatus.SKIPPED,
-                detail="no semantic alias facts available for verification",
+    def _impl():
+        """Check: all proven SS stack slots have been materialized as named variables."""
+        semantic_alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+        if not semantic_alias_facts:
+            report.checks.append(
+                InvariantCheck(
+                    name="stack_slots_materialized",
+                    status=InvariantStatus.SKIPPED,
+                    detail="no semantic alias facts available for verification",
+                )
             )
-        )
-        return
+            return
 
-    # Check if any AliasFailure records exist for proven SS
-    from ..alias.alias_model_impl import AliasFailure, AliasStorageFacts
+        # Check if any AliasFailure records exist for proven SS
+        from ..alias.alias_model_impl import AliasFailure, AliasStorageFacts
 
-    def _canonical_stack_offset_8616(offset):
-        if not isinstance(offset, int):
+        def _canonical_stack_offset_8616(offset):
+            if not isinstance(offset, int):
+                return offset
+            if 0x8000 <= offset <= 0xFFFF:
+                return offset - 0x10000
             return offset
-        if 0x8000 <= offset <= 0xFFFF:
-            return offset - 0x10000
-        return offset
 
-    failures: list[str] = []
-    provisional_count = 0
-    for fact in semantic_alias_facts:
-        if isinstance(fact, AliasFailure):
-            # PROVISIONAL SS addresses (push/pop/call/ret traffic) are stack
-            # activity, not stack variables.  Per AGENTS rule: stack activity
-            # may exist while stack_facts = 0 — this is valid and must not be
-            # treated as failure.
-            if "provisional" in fact.reason.lower():
-                provisional_count += 1
-                continue
-            failures.append(f"SS offset={fact.offset} reason={fact.reason}")
-        elif isinstance(fact, AliasStorageFacts):
-            if fact.identity and fact.identity[0] == "stack":
-                # Stack slot identified — check if it's been materialized
-                identity_val = fact.identity[1]
-                offset = _canonical_stack_offset_8616(getattr(identity_val, "offset", None))
-                if offset is not None:
-                    cfunc = getattr(codegen, "cfunc", None)
-                    variables = getattr(cfunc, "variables_in_use", {}) if cfunc else {}
-                    # Check if any variable matches this offset
-                    from angr.sim_variable import SimStackVariable
+        failures: list[str] = []
+        provisional_count = 0
+        for fact in semantic_alias_facts:
+            if isinstance(fact, AliasFailure):
+                # PROVISIONAL SS addresses (push/pop/call/ret traffic) are stack
+                # activity, not stack variables.  Per AGENTS rule: stack activity
+                # may exist while stack_facts = 0 — this is valid and must not be
+                # treated as failure.
+                if "provisional" in fact.reason.lower():
+                    provisional_count += 1
+                    continue
+                failures.append(f"SS offset={fact.offset} reason={fact.reason}")
+            elif isinstance(fact, AliasStorageFacts):
+                if fact.identity and fact.identity[0] == "stack":
+                    # Stack slot identified — check if it's been materialized
+                    identity_val = fact.identity[1]
+                    offset = _canonical_stack_offset_8616(getattr(identity_val, "offset", None))
+                    if offset is not None:
+                        cfunc = getattr(codegen, "cfunc", None)
+                        variables = getattr(cfunc, "variables_in_use", {}) if cfunc else {}
+                        # Check if any variable matches this offset
+                        from angr.sim_variable import SimStackVariable
 
-                    found = any(
-                        isinstance(v, SimStackVariable)
-                        and _canonical_stack_offset_8616(getattr(v, "offset", None)) == offset
-                        for v in variables
-                    )
-                    if not found:
-                        failures.append(
-                            f"stack slot offset={offset} identified but not materialized in variables_in_use"
+                        found = any(
+                            isinstance(v, SimStackVariable)
+                            and _canonical_stack_offset_8616(getattr(v, "offset", None)) == offset
+                            for v in variables
                         )
+                        if not found:
+                            failures.append(
+                                f"stack slot offset={offset} identified but not materialized in variables_in_use"
+                            )
 
-    if failures:
-        report.checks.append(
-            InvariantCheck(
-                name="stack_slots_materialized",
-                status=InvariantStatus.FAILED,
-                detail=f"{len(failures)} un-materialized stack slot(s)",
-                evidence=tuple(failures[:5]),
+        if failures:
+            report.checks.append(
+                InvariantCheck(
+                    name="stack_slots_materialized",
+                    status=InvariantStatus.FAILED,
+                    detail=f"{len(failures)} un-materialized stack slot(s)",
+                    evidence=tuple(failures[:5]),
+                )
             )
-        )
-    else:
-        report.checks.append(InvariantCheck(name="stack_slots_materialized", status=InvariantStatus.PASSED))
+        else:
+            report.checks.append(InvariantCheck(name="stack_slots_materialized", status=InvariantStatus.PASSED))
+
+    return _impl()
 
 
 def _check_stack_facts_consumed(codegen: Any, report: InvariantReport) -> None:
@@ -419,6 +427,112 @@ def _check_condition_facts_consumed(codegen: Any, report: InvariantReport) -> No
                 detail=f"condition_facts={condition_facts}, condition_materialized={materialized}",
             )
         )
+
+
+def _check_goto_targets_resolved(codegen: Any, report: InvariantReport) -> None:
+    def _impl():
+        """Check: every CGoto target resolves to an emitted C label."""
+        from angr.analyses.decompiler.structured_codegen.c import CGoto
+
+        cfunc = getattr(codegen, "cfunc", None)
+        root = _find_cfunc_root_8616(cfunc)
+        if root is None:
+            report.checks.append(
+                InvariantCheck(
+                    name="goto_targets_resolved",
+                    status=InvariantStatus.SKIPPED,
+                    detail="no cfunc body available for goto-target validation",
+                )
+            )
+            return
+
+        defined_labels = _collect_cfunc_label_names_8616(root)
+        mapped_labels = _collect_cfunc_map_addr_label_names_8616(cfunc)
+        defined_all = defined_labels | set(mapped_labels)
+        map_addr_to_label = getattr(cfunc, "map_addr_to_label", None) if cfunc is not None else None
+
+        unresolved: list[str] = []
+        for node in _iter_c_nodes_deep_8616(root):
+            if not isinstance(node, CGoto):
+                continue
+            target = getattr(node, "target", None)
+            target_idx = getattr(node, "target_idx", None)
+            if not isinstance(target, int):
+                continue
+
+            mapped_name = None
+            mapped_label = None
+            if isinstance(map_addr_to_label, dict):
+                mapped_label = map_addr_to_label.get((target, target_idx))
+                if mapped_label is None and target_idx is not None:
+                    mapped_label = map_addr_to_label.get((target, None))
+                if mapped_label is not None:
+                    mapped_name = getattr(mapped_label, "name", None)
+            if mapped_name is None:
+                mapped_name = _format_legacy_goto_label_name_8616(target)
+
+            if mapped_name not in defined_all:
+                unresolved.append(f"{mapped_name} (target={target:#x}, idx={target_idx})")
+                continue
+
+            # Mapping exists but label node may be missing from emitted statements.
+            if mapped_label is not None:
+                mapped_node_name = getattr(mapped_label, "name", None)
+                if isinstance(mapped_node_name, str) and mapped_node_name not in defined_labels:
+                    unresolved.append(f"{mapped_node_name} (mapped-only, target={target:#x}, idx={target_idx})")
+
+        if unresolved:
+            report.checks.append(
+                InvariantCheck(
+                    name="goto_targets_resolved",
+                    status=InvariantStatus.FAILED,
+                    detail=f"{len(unresolved)} unresolved goto target(s)",
+                    evidence=tuple(unresolved[:5]),
+                )
+            )
+        else:
+            report.checks.append(InvariantCheck(name="goto_targets_resolved", status=InvariantStatus.PASSED))
+
+    return _impl()
+
+
+def _find_cfunc_root_8616(cfunc: Any):
+    if cfunc is None:
+        return None
+    for attr in ("body", "statements", "stmt"):
+        value = getattr(cfunc, attr, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _collect_cfunc_label_names_8616(root) -> set[str]:
+    """Collect explicit CLabel names from an AST subtree."""
+    from angr.analyses.decompiler.structured_codegen.c import CLabel
+
+    labels: set[str] = set()
+    for node in _iter_c_nodes_deep_8616(root):
+        if isinstance(node, CLabel):
+            name = getattr(node, "name", None)
+            if isinstance(name, str) and name:
+                labels.add(name)
+    return labels
+
+
+def _collect_cfunc_map_addr_label_names_8616(codegen: Any) -> list[str]:
+    mapping = getattr(codegen, "map_addr_to_label", None) if codegen is not None else None
+    if not isinstance(mapping, dict):
+        return []
+    names: list[str] = []
+    for node in mapping.values():
+        name = getattr(node, "name", None)
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
+def _format_legacy_goto_label_name_8616(target: int) -> str:
+    return f"LABEL_{target:#x}"
 
 
 def classify_stack_blocker_8616(diag) -> str | None:
