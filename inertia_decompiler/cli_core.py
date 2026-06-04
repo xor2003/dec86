@@ -44,6 +44,7 @@ from angr_platforms.X86_16.cod_extract import (
     join_cod_entries_with_synthetic_globals,
 )
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
+from angr_platforms.X86_16.structuring.compare32_recovery import recover_32bit_compare_c_8616
 from angr_platforms.X86_16.structuring.simple_loop_recovery import recover_counted_stack_loop_c_8616
 
 from .cli_c_ast_rewrites import (
@@ -1205,10 +1206,12 @@ def _run_function_work_item(
                 partial_payload = preserved_candidate
             if status == "empty":
                 recovered_loop_payload = recover_counted_stack_loop_c_8616(decompile_project, decompile_function)
-                if isinstance(recovered_loop_payload, str) and recovered_loop_payload.strip():
+                recovered_compare_payload = recover_32bit_compare_c_8616(decompile_project, decompile_function)
+                recovered_payload = recovered_loop_payload or recovered_compare_payload
+                if isinstance(recovered_payload, str) and recovered_payload.strip():
                     recovered_acceptance = _validated_generated_c_acceptance_8616(
                         status="ok",
-                        payload=recovered_loop_payload,
+                        payload=recovered_payload,
                         tail_validation_snapshot=tail_validation_snapshot,
                         tail_validation_enabled=tail_validation_enabled,
                         expected_validation_stages=expected_validation_stages,
