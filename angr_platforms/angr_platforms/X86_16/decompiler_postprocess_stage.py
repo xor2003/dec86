@@ -40,6 +40,7 @@ from . import decompiler_postprocess_globals as _globals
 from . import decompiler_postprocess_jcc as _jcc
 from . import decompiler_postprocess_simplify as _simplify
 from . import segmented_memory_reasoning as _segmented_mem
+from .annotations import ANNOTATION_KEY
 from .callee_name_normalization import normalize_callee_name_8616
 from .condition_trace import (
     dump_condition_trace_8616,
@@ -73,6 +74,7 @@ from .tail_validation import (
     persist_x86_16_tail_validation_snapshot,
     x86_16_tail_validation_result_passed,
 )
+from .tail_validation_fingerprint import _expr_fingerprint
 
 __all__ = [
     "DecompilerPostprocessPassSpec",
@@ -329,6 +331,13 @@ def _repair_loop_exit_return_guards_pass_8616(codegen) -> bool:
     return False
 
 
+def _signed_i16_immediate_8616(value: int) -> int:
+    value = int(value) & 0xFFFF
+    if value & 0x8000:
+        return value - 0x10000
+    return value
+
+
 def _branch_target_return_value_8616(project, target_addr: int) -> int | None:
     try:
         block = project.factory.block(int(target_addr), opt_level=0)
@@ -344,9 +353,73 @@ def _branch_target_return_value_8616(project, target_addr: int) -> int | None:
             and str(insn.reg_name(operands[0].reg)).lower() == "ax"
             and int(getattr(operands[1], "type", -1)) == 2
         ):
-            return int(getattr(operands[1], "imm", 0) or 0) & 0xFFFF
+            return _signed_i16_immediate_8616(int(getattr(operands[1], "imm", 0) or 0))
         if mnemonic in {"ret", "retf", "iret"} or mnemonic.startswith("j"):
             return None
+    return None
+
+
+def _branch_target_return_expr_8616(project, codegen, target_addr: int):
+    try:
+        block = project.factory.block(int(target_addr), opt_level=0)
+    except Exception:
+        return None
+    value = None
+    for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if (
+            mnemonic == "mov"
+            and len(operands) == 2
+            and int(getattr(operands[0], "type", -1)) == 1
+            and str(insn.reg_name(operands[0].reg)).lower() == "ax"
+        ):
+            rhs = operands[1]
+            if int(getattr(rhs, "type", -1)) == 2:
+                value = CConstant(
+                    _signed_i16_immediate_8616(int(getattr(rhs, "imm", 0) or 0)),
+                    SimTypeShort(False),
+                    codegen=codegen,
+                )
+                continue
+            if int(getattr(rhs, "type", -1)) == 3:
+                mem = rhs.mem
+                if str(insn.reg_name(mem.base)).lower() == "bp":
+                    value = _jcc._stack_slot_expr_8616(codegen, int(mem.disp), int(getattr(rhs, "size", 0) or 2))
+                    continue
+        if mnemonic in {"jmp", "ljmp", "ret", "retf", "iret"}:
+            return value
+    return value
+
+
+def _next_unconditional_target_after_jcc_8616(project, block_addr: int, jcc_addr: int) -> int | None:
+    try:
+        block = project.factory.block(int(block_addr), opt_level=0)
+    except Exception:
+        return None
+    insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+    for idx, insn in enumerate(insns):
+        if int(getattr(insn, "address", -1)) != int(jcc_addr):
+            continue
+        if idx + 1 >= len(insns):
+            next_addr = int(jcc_addr) + int(getattr(insn, "size", 0) or 0)
+            if next_addr <= int(jcc_addr):
+                return None
+            try:
+                next_block = project.factory.block(next_addr, opt_level=0)
+            except Exception:
+                return None
+            next_insns = tuple(getattr(getattr(next_block, "capstone", None), "insns", ()) or ())
+            if not next_insns:
+                return None
+            next_insn = next_insns[0]
+            if str(getattr(next_insn, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
+                return None
+            return _jcc._branch_target_imm_8616(next_insn)
+        next_insn = insns[idx + 1]
+        if str(getattr(next_insn, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
+            return None
+        return _jcc._branch_target_imm_8616(next_insn)
     return None
 
 
@@ -386,6 +459,82 @@ def _ordered_conditional_return_values_8616(project, codegen) -> list[int]:
     return values
 
 
+def _ordered_conditional_return_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, int]]:
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return []
+    try:
+        function = project.kb.functions.function(addr=func_addr, create=False)
+    except Exception:
+        return []
+    if function is None:
+        return []
+    pairs: list[tuple[object, int]] = []
+    for block_addr in sorted(int(addr) for addr in getattr(function, "block_addrs_set", set()) or ()):
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+            if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
+                continue
+            target = _jcc._branch_target_imm_8616(insn)
+            if target is None:
+                continue
+            value = _branch_target_return_value_8616(project, target)
+            if value is None:
+                continue
+            decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+            if decoded is None:
+                continue
+            expr = getattr(decoded, "expr", None)
+            if expr is None:
+                expr = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
+            pairs.append((expr, int(value)))
+    return pairs
+
+
+def _ordered_conditional_return_expr_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, object, object]]:
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return []
+    try:
+        function = project.kb.functions.function(addr=func_addr, create=False)
+    except Exception:
+        return []
+    if function is None:
+        return []
+    pairs: list[tuple[object, object, object]] = []
+    for block_addr in sorted(int(addr) for addr in getattr(function, "block_addrs_set", set()) or ()):
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+            if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
+                continue
+            true_target = _jcc._branch_target_imm_8616(insn)
+            false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address))
+            if true_target is None or false_target is None:
+                continue
+            true_expr = _branch_target_return_expr_8616(project, codegen, true_target)
+            false_expr = _branch_target_return_expr_8616(project, codegen, false_target)
+            if true_expr is None or false_expr is None:
+                continue
+            decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+            if decoded is None:
+                continue
+            cond = getattr(decoded, "expr", None)
+            if cond is None:
+                cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
+            pairs.append((cond, true_expr, false_expr))
+    return pairs
+
+
 def _last_ax_return_value_8616(project, codegen) -> int | None:
     value = None
     for insn in _jcc._function_insns_for_codegen_8616(project, codegen):
@@ -398,7 +547,7 @@ def _last_ax_return_value_8616(project, codegen) -> int | None:
             and str(insn.reg_name(operands[0].reg)).lower() == "ax"
             and int(getattr(operands[1], "type", -1)) == 2
         ):
-            value = int(getattr(operands[1], "imm", 0) or 0) & 0xFFFF
+            value = _signed_i16_immediate_8616(int(getattr(operands[1], "imm", 0) or 0))
     return value
 
 
@@ -434,6 +583,9 @@ def _flatten_conditional_return_chain_8616(project, codegen, cond_return_pairs: 
         return False
     codegen._inertia_return_chain_flattened_8616 = True
     codegen._inertia_return_chain_materialized_values_8616 = tuple(int(value) for _cond, value in cond_return_pairs)
+    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
+        _expr_fingerprint(cond, project) for cond, _value in cond_return_pairs
+    )
     codegen._inertia_return_chain_final_value_8616 = int(final_value)
     return True
 
@@ -451,6 +603,7 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
     ordered_return_values = _ordered_conditional_return_values_8616(project, codegen)
     ordered_index = 0
     cond_return_pairs: list[tuple[object, int]] = []
+    empty_if_nodes: list[object] = []
 
     def _body_is_empty(body) -> bool:
         if isinstance(body, CStatements):
@@ -469,6 +622,7 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
         cond, body = cond_pairs[0]
         if not _body_is_empty(body):
             continue
+        empty_if_nodes.append(node)
         stats["candidates"] += 1
         value = _condition_branch_return_value_8616(project, cond)
         if value is None and ordered_index < len(ordered_return_values):
@@ -495,8 +649,51 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
             node.true_node = new_body
         stats["materialized"] += 1
         changed = True
+    if not cond_return_pairs and empty_if_nodes:
+        cfg_expr_pairs = _ordered_conditional_return_expr_pairs_from_cfg_8616(project, codegen)
+        if len(cfg_expr_pairs) >= len(empty_if_nodes):
+            rebuilt_statements = []
+            for node, (cond, true_expr, false_expr) in zip(empty_if_nodes, cfg_expr_pairs):
+                true_body = CStatements(
+                    statements=[CReturn(true_expr, codegen=codegen)],
+                    codegen=codegen,
+                )
+                false_body = CStatements(
+                    statements=[CReturn(false_expr, codegen=codegen)],
+                    codegen=codegen,
+                )
+                node.condition_and_nodes = type(getattr(node, "condition_and_nodes", []))([(cond, true_body)])
+                node.else_node = false_body
+                if hasattr(node, "iftrue"):
+                    node.iftrue = true_body
+                if hasattr(node, "true_node"):
+                    node.true_node = true_body
+                rebuilt_statements.append(node)
+            if rebuilt_statements:
+                codegen.cfunc.statements = CStatements(statements=rebuilt_statements, codegen=codegen)
+                codegen._inertia_return_expr_chain_materialized_8616 = True
+                codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
+                    _expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in cfg_expr_pairs[: len(empty_if_nodes)]
+                )
+                codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
+                    _expr_fingerprint(expr, project)
+                    for _cond, true_expr, false_expr in cfg_expr_pairs[: len(empty_if_nodes)]
+                    for expr in (true_expr, false_expr)
+                )
+                stats["materialized"] += len(rebuilt_statements)
+                changed = True
     if len(cond_return_pairs) >= 2:
-        changed = _flatten_conditional_return_chain_8616(project, codegen, cond_return_pairs) or changed
+        cfg_return_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
+        flatten_pairs = cond_return_pairs
+        if len(cfg_return_pairs) >= len(cond_return_pairs):
+            flatten_pairs = cfg_return_pairs[: len(cond_return_pairs)]
+            if debug:
+                log.warning(
+                    "[empty-return-branch] using cfg decoded return-chain pairs count=%d",
+                    len(flatten_pairs),
+                )
+        changed = _flatten_conditional_return_chain_8616(project, codegen, flatten_pairs) or changed
+        cond_return_pairs = flatten_pairs
     if cond_return_pairs:
         codegen._inertia_empty_return_branch_values_8616 = tuple(int(value) for _cond, value in cond_return_pairs)
     if debug:
@@ -2255,6 +2452,27 @@ def _is_direct_callsite_helper_and_return_delta_8616(project, function, codegen,
     return True
 
 
+def _has_stack_probe_cleanup_evidence_8616(codegen) -> bool:
+    summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
+    if isinstance(summary_map, dict):
+        for summary in summary_map.values():
+            if bool(getattr(summary, "stack_probe_helper", False)):
+                return True
+
+    typed_facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", None)
+    if isinstance(typed_facts, dict) and typed_facts:
+        return True
+
+    fact_stats = getattr(codegen, "_inertia_stack_probe_fact_stats", None)
+    if isinstance(fact_stats, dict):
+        if int(fact_stats.get("stack_probe_summaries", 0) or 0) > 0:
+            return True
+        if int(fact_stats.get("ss_stack_address_returns", 0) or 0) > 0:
+            return True
+
+    return False
+
+
 def _is_cfg_return_chain_callsite_materialization_delta_8616(
     project, function, codegen, validation: dict[str, object]
 ) -> bool:
@@ -2275,7 +2493,7 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
         for key, field_delta in delta.items()
         if isinstance(field_delta, dict) and ((field_delta.get("added") or ()) or (field_delta.get("removed") or ()))
     }
-    allowed_fields = {"helper_calls", "returns", "segmented_writes", "control_flow_effects"}
+    allowed_fields = {"helper_calls", "returns", "segmented_writes", "conditions", "control_flow_effects"}
     if not touched_fields or touched_fields - allowed_fields:
         return False
 
@@ -2299,11 +2517,24 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
     if removed_returns - {"CDirtyExpression", "none"}:
         return False
 
+    condition_delta = delta.get("conditions")
+    materialized_condition_fps = set(
+        getattr(codegen, "_inertia_return_chain_materialized_condition_fingerprints_8616", ()) or ()
+    )
+    if isinstance(condition_delta, dict):
+        added_conditions = set(condition_delta.get("added") or ())
+        removed_conditions = set(condition_delta.get("removed") or ())
+        if removed_conditions:
+            return False
+        if added_conditions - materialized_condition_fps:
+            return False
+
     control_flow_delta = delta.get("control_flow_effects")
     if isinstance(control_flow_delta, dict):
         added_control = set(control_flow_delta.get("added") or ())
         removed_control = set(control_flow_delta.get("removed") or ())
-        if added_control or removed_control - {"if:else"}:
+        expected_added_control = {f"if:{fp}" for fp in materialized_condition_fps}
+        if added_control - expected_added_control or removed_control - {"if:else"}:
             return False
 
     segmented_delta = delta.get("segmented_writes")
@@ -2315,7 +2546,7 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
             callsite_stats = getattr(codegen, "_inertia_callsite_materialization_stats", None)
             consumed = int(getattr(callsite_stats, "consumed_outgoing_stack_placeholder_count", 0) or 0)
             arg_materialized = int(getattr(callsite_stats, "call_arg_materialized_count", 0) or 0)
-            if consumed <= 0 and arg_materialized <= 0:
+            if consumed <= 0 and arg_materialized <= 0 and not _has_stack_probe_cleanup_evidence_8616(codegen):
                 return False
 
     helper_delta = delta.get("helper_calls")
@@ -2325,6 +2556,34 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
         if not _is_direct_callsite_helper_delta_only_8616(project, function, helper_validation):
             return False
 
+    return True
+
+
+def _is_cfg_return_expr_chain_materialization_delta_8616(project, function, codegen, validation: dict[str, object]) -> bool:
+    if function is None or not isinstance(validation, dict):
+        return False
+    if not getattr(codegen, "_inertia_return_expr_chain_materialized_8616", False):
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = {
+        key
+        for key, field_delta in delta.items()
+        if isinstance(field_delta, dict) and ((field_delta.get("added") or ()) or (field_delta.get("removed") or ()))
+    }
+    if touched_fields != {"returns"}:
+        return False
+    returns_delta = delta.get("returns")
+    if not isinstance(returns_delta, dict):
+        return False
+    added_returns = set(returns_delta.get("added") or ())
+    removed_returns = set(returns_delta.get("removed") or ())
+    expected_returns = set(getattr(codegen, "_inertia_return_expr_chain_materialized_return_fingerprints_8616", ()) or ())
+    if not expected_returns or added_returns - expected_returns:
+        return False
+    if removed_returns - {"CDirtyExpression", "none"}:
+        return False
     return True
 
 
@@ -2521,6 +2780,41 @@ def _normalize_stack_variable_identifiers_8616(codegen) -> None:
             return
         arg_list = tuple(getattr(cfunc, "arg_list", ()) or ())
         arg_name_by_offset: dict[int, str] = {}
+        project = getattr(codegen, "project", None)
+        func_addr = getattr(cfunc, "addr", None)
+        if project is not None and isinstance(func_addr, int):
+            with contextlib.suppress(Exception):
+                function = project.kb.functions.function(addr=func_addr, create=False)
+                info = getattr(function, "info", None)
+                annotations = info.get(ANNOTATION_KEY) if isinstance(info, dict) else None
+                stack_vars = annotations.get("stack_vars") if isinstance(annotations, dict) else None
+                if isinstance(stack_vars, dict):
+                    for offset, spec in stack_vars.items():
+                        if not isinstance(offset, int) or offset <= 0:
+                            continue
+                        name = spec if isinstance(spec, str) else None
+                        if isinstance(spec, dict):
+                            spec_name = spec.get("name")
+                            if isinstance(spec_name, str):
+                                name = spec_name
+                        if isinstance(name, str) and name:
+                            arg_name_by_offset[_canonical_stack_offset_8616(offset)] = name
+        prototype = getattr(cfunc, "functy", None)
+        proto_arg_names = tuple(getattr(prototype, "arg_names", ()) or ())
+        proto_args = tuple(getattr(prototype, "args", ()) or ())
+        if proto_arg_names and len(proto_arg_names) == len(proto_args):
+            next_offset = 4
+            for arg_name, arg_type in zip(proto_arg_names, proto_args):
+                if isinstance(arg_name, str) and arg_name and next_offset not in arg_name_by_offset:
+                    arg_name_by_offset[next_offset] = arg_name
+                bits = getattr(arg_type, "size", None)
+                try:
+                    width = int(bits // 8) if isinstance(bits, int) and bits > 0 else 2
+                except Exception:
+                    width = 2
+                if width <= 0:
+                    width = 2
+                next_offset += max(2, width)
         for arg in arg_list:
             arg_var = getattr(arg, "variable", None)
             if not isinstance(arg_var, SimStackVariable):
@@ -2538,7 +2832,7 @@ def _normalize_stack_variable_identifiers_8616(codegen) -> None:
                 preferred_name = arg_var_name
             if preferred_name is None and isinstance(arg_name, str) and arg_name:
                 preferred_name = arg_name
-            if preferred_name is not None:
+            if preferred_name is not None and arg_offset not in arg_name_by_offset:
                 arg_name_by_offset[arg_offset] = preferred_name
         local_maps = []
         unified = getattr(cfunc, "unified_local_vars", None)
@@ -2561,18 +2855,41 @@ def _normalize_stack_variable_identifiers_8616(codegen) -> None:
                 # Normalize unresolved stack carrier names to stable stack semantics.
                 # This is typed/name materialization from stack offsets, not text cleanup.
                 name = getattr(var, "name", None)
-                if not isinstance(name, str) or not stack_name_pat.match(name):
-                    continue
                 offset = _canonical_stack_offset_8616(getattr(var, "offset", None))
                 if not isinstance(offset, int):
                     continue
                 new_name = arg_name_by_offset.get(offset)
-                if new_name is None:
+                if new_name is None and isinstance(name, str) and stack_name_pat.match(name):
                     new_name = _stack_object_name(offset, codegen=codegen)
+                if new_name is None:
+                    continue
                 try:
                     var.name = new_name
                 except Exception:
                     continue
+        node_roots = [cfunc]
+        statements_root = getattr(cfunc, "statements", None)
+        if statements_root is not None:
+            node_roots.append(statements_root)
+        for root in node_roots:
+            nodes = (root, *_iter_c_nodes_deep_8616(root))
+            for node in nodes:
+                if node.__class__.__name__ != "CVariable":
+                    continue
+                for attr in ("variable", "unified_variable"):
+                    var = getattr(node, attr, None)
+                    if var.__class__.__name__ != "SimStackVariable":
+                        continue
+                    offset = _canonical_stack_offset_8616(getattr(var, "offset", None))
+                    if not isinstance(offset, int):
+                        continue
+                    new_name = arg_name_by_offset.get(offset)
+                    if new_name is None:
+                        continue
+                    try:
+                        var.name = new_name
+                    except Exception:
+                        continue
 
     return _impl()
 
@@ -3139,6 +3456,13 @@ def _try_accept_failed_postprocess_validation_8616(
         if _is_cfg_return_chain_callsite_materialization_delta_8616(self.project, function, self.codegen, validation):
             log.warning(
                 "Postprocess validation CFG return-chain/callsite delta accepted from consumed evidence: %s",
+                validation.get("verdict"),
+            )
+            _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
+            return True
+        if _is_cfg_return_expr_chain_materialization_delta_8616(self.project, function, self.codegen, validation):
+            log.warning(
+                "Postprocess validation CFG return-expression delta accepted from consumed evidence: %s",
                 validation.get("verdict"),
             )
             _postprocess_stable_accept_8616(self, validation, snapshot_function_info)

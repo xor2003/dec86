@@ -647,6 +647,17 @@ def _decode_block_and_jcc_index_8616(project, block_addr: int, jcc_addr: int, de
     return insns, jcc_index
 
 
+def _nearest_flag_producer_before_jcc_8616(insns: tuple, jcc_index: int):
+    for idx in range(int(jcc_index) - 1, -1, -1):
+        insn = insns[idx]
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        if mnemonic in {"cmp", "test", "inc", "dec", "add", "sub", "and", "or", "xor"}:
+            return insn
+        if mnemonic.startswith("j") or mnemonic in {"ret", "retf", "iret", "call", "lcall"}:
+            break
+    return None
+
+
 def _decode_mask_test_guard_8616(project, codegen, jcc_mnemonic: str, block_addr: int, jcc_addr: int, debug_jcc: bool):
     if jcc_mnemonic not in _JCC_COMPARE_MASK_TESTS_8616:
         return None
@@ -760,7 +771,11 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
         if insns is None or jcc_index is None:
             return None
         jcc_insn = insns[jcc_index]
-        cmp_insn = insns[jcc_index - 1]
+        cmp_insn = _nearest_flag_producer_before_jcc_8616(insns, jcc_index)
+        if cmp_insn is None:
+            if debug_jcc:
+                _log.warning("[jcc-rewrite] no flag producer block=%#x jcc=%#x", block_addr, jcc_addr)
+            return None
         jcc_mnemonic = jcc_insn.mnemonic.lower()
         mask_decoded = _decode_mask_test_guard_8616(project, codegen, jcc_mnemonic, block_addr, jcc_addr, debug_jcc)
         if mask_decoded is not None:

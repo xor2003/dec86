@@ -2576,6 +2576,20 @@ def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
                 name = match.group("name")
                 declared_names.add(name)
                 decls_by_name[name] = (idx, match.group("comment"))
+        header_re = re.compile(
+            r"^\s*[A-Za-z_][\w\s\*\[\]]*?\s+[A-Za-z_]\w*\s*\((?P<args>[^()]*)\)\s*(?:[;{])?\s*$"
+        )
+        for line in lines:
+            match = header_re.match(line)
+            if match is None:
+                continue
+            args_text = match.group("args").strip()
+            if not args_text or args_text == "void":
+                continue
+            for arg_text in args_text.split(","):
+                arg_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", arg_text.strip())
+                if arg_match is not None:
+                    declared_names.add(arg_match.group(1))
 
         rename_map: dict[str, str] = {}
         for name in declared_names:

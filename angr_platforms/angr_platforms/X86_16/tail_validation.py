@@ -1794,11 +1794,21 @@ def _looks_like_ss_segment_store_8616(lhs, project) -> bool:
 
 
 def _is_dynamic_dirty_ss_location_8616(location: str) -> bool:
-    return (
-        isinstance(location, str)
-        and location.startswith("deref:")
-        and "reg:ss" in location
-        and ("CDirtyExpression" in location or "CFakeVariable" in location)
+    if not isinstance(location, str) or not location.startswith("deref:"):
+        return False
+    if "reg:ss" in location and ("CDirtyExpression" in location or "CFakeVariable" in location):
+        return True
+    if "CDirtyExpression" not in location and "CFakeVariable" not in location:
+        return False
+    # MS C helper-focused slices can leave the internal frame-store address as
+    # (dirty_segment * 16) + dirty_offset - K instead of preserving literal SS.
+    # In live-out mode that is still a dynamic stack-frame artifact, not an
+    # observable segmented-memory write.
+    return bool(
+        re.fullmatch(
+            r"deref:Add\(Mul\((?:CDirtyExpression|CFakeVariable),const:16\),(?:CDirtyExpression|CFakeVariable),const:-[0-9]+\)",
+            location,
+        )
     )
 
 

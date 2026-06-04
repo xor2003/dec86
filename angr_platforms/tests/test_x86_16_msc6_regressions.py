@@ -72,8 +72,8 @@ def _run_decompile_addr(
     )
 
 
-def _extract_emitted_function_8616(stdout: str, function_name: str) -> str:
-    emitted = stdout
+def _extract_emitted_function_8616(output: str, function_name: str) -> str:
+    emitted = output
     if "/* == c == */" in emitted:
         emitted = emitted.split("/* == c == */", 1)[-1]
     signature = f"int {function_name}("
@@ -85,14 +85,18 @@ def _extract_emitted_function_8616(stdout: str, function_name: str) -> str:
     return function_text if end < 0 else function_text[: end + 3]
 
 
+def _combined_output_8616(result: subprocess.CompletedProcess[str]) -> str:
+    return f"{result.stderr}{result.stdout}"
+
+
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
 def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_placeholders() -> None:
     result = _run_decompile_proc("rel_i16", proc_kind="NEAR")
-    combined = f"{result.stderr}{result.stdout}"
+    combined = _combined_output_8616(result)
 
     assert result.returncode == 0, combined
 
-    emitted_body = _extract_emitted_function_8616(result.stdout, "rel_i16")
+    emitted_body = _extract_emitted_function_8616(combined, "rel_i16")
     assert emitted_body, combined
     assert "int rel_i16(int a, int b)" in emitted_body
     assert not re.search(r"\barg_[0-9]+\b", emitted_body), emitted_body
@@ -106,12 +110,12 @@ def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_pl
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
 def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
     result = _run_decompile_addr("0x101a7")
-    combined = f"{result.stderr}{result.stdout}"
+    combined = _combined_output_8616(result)
 
     assert result.returncode == 0, combined
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
-    emitted = result.stdout.split("/* == c == */", 1)[-1]
+    emitted = combined.split("/* == c == */", 1)[-1]
     emitted_without_source_comments = "\n".join(
         line for line in emitted.splitlines() if not line.lstrip().startswith("///")
     )
@@ -123,3 +127,35 @@ def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
     assert "rel_u16(" in emitted_without_source_comments
     assert "clamp_u16(" in emitted_without_source_comments
     assert "in_window_i16(" in emitted_without_source_comments
+
+
+@pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
+@pytest.mark.parametrize(
+    ("function_name", "required_fragments"),
+    [
+        ("cmp_i16", ("return -1;", "return 1;", "return 0;", "return 2;", " == ")),
+        ("rel_i16", ("return mask;",)),
+        ("rel_u16", ("return mask;",)),
+        ("clamp_u16", ("return value;", "return limit;")),
+        ("in_window_i16", ("return 0;", "return 1;")),
+    ],
+)
+def test_msc6_cmp16_all_helper_functions_pass_tail_validation_and_msc_recompile(
+    function_name: str,
+    required_fragments: tuple[str, ...],
+) -> None:
+    result = _run_decompile_proc(function_name, proc_kind="NEAR")
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+    assert "MS C 5.1 msc-dos syntax check failed" not in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, function_name)
+    assert emitted_body, combined
+    assert not re.search(r"\b[A-Za-z_]\w*_2\b", emitted_body), emitted_body
+    assert not re.search(r"\barg_[0-9]+\b", emitted_body), emitted_body
+    assert not re.search(r"\bs_[0-9A-Fa-f]+\b", emitted_body), emitted_body
+    assert "::0x" not in emitted_body
+    for fragment in required_fragments:
+        assert fragment in emitted_body, emitted_body
