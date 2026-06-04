@@ -1,46 +1,30 @@
-from __future__ import annotations
-
 # AUTO-GENERATED split from cli_runtime_shared.py
-
 from __future__ import annotations
-
-import argparse
-
-import atexit
 
 import contextlib
-
 import copy
-
 import logging
-
 import os
-
 import re
-
 import sys
-
 import threading
-
 import time
-
 from collections.abc import Mapping, Sequence
-
 from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
-
 from dataclasses import dataclass, replace
-
 from pathlib import Path
-
 from types import SimpleNamespace
 
+import angr
 from angr_platforms.X86_16.analysis_helpers import (
     collect_neighbor_call_targets,
     extend_cfg_for_far_calls,
     extend_cfg_for_neighbor_calls,
+    infer_com_region,
     patch_interrupt_service_call_sites,
     seed_calling_conventions,
 )
+from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 from inertia_decompiler.cache import (
     _function_decompilation_cache_key,
@@ -48,7 +32,33 @@ from inertia_decompiler.cache import (
     _recovery_cache_key,
     _store_cache_json,
 )
-
+from inertia_decompiler.cli_output import (
+    _RAW_PRINT,
+    _asm_fallback_pattern_note,
+    _emit_exit_marker,
+    _print_asm_fallback_text,
+    _print_diagnostic_text,
+    _timestamp_prefix,
+    _timestamped_print,
+)
+from inertia_decompiler.cli_timeout import (
+    _AdaptivePerByteTimeoutModel,
+    _default_recovery_timeout,
+    _stdout_is_interactive,
+)
+from inertia_decompiler.disassembly_helpers import (
+    _format_asm_range,
+    _format_first_block_asm,
+    _infer_linear_disassembly_window,
+    _linear_disassembly,
+    _probe_lift_break,
+)
+from inertia_decompiler.non_optimized_fallback import (
+    allows_heavy_fallbacks_for_run,
+    bounded_non_optimized_attempt_timeout,
+    describe_non_optimized_unavailable,
+    sidecar_verdict_closes_non_optimized_lane,
+)
 from inertia_decompiler.project_loading import (
     _build_project,
     _build_project_cached,
@@ -56,7 +66,6 @@ from inertia_decompiler.project_loading import (
     _describe_exception,
     _is_blob_only_input,
 )
-
 from inertia_decompiler.sidecar_metadata import (
     _exact_function_span_matches,
     _load_lst_metadata,
@@ -67,115 +76,13 @@ from inertia_decompiler.sidecar_metadata import (
     _signature_matched_code_addrs,
     _visible_code_labels,
 )
-
 from inertia_decompiler.sidecar_parsers import _parse_ida_map_metadata
-
-from inertia_decompiler.disassembly_helpers import (
-    _format_asm_range,
-    _format_first_block_asm,
-    _infer_linear_disassembly_window,
-    _probe_lift_break,
+from inertia_decompiler.slice_recovery import (
+    BoundedSliceVerdict,
+    SliceRecoveryAttemptOutcome,
+    build_default_slice_recovery_attempts,
+    run_bounded_slice_recovery,
 )
-
-from inertia_decompiler.cli_output import (
-    _RAW_PRINT,
-    _asm_fallback_pattern_note,
-    _emit_exit_marker,
-    _print_asm_fallback_text,
-    _print_diagnostic_text,
-    _timestamp_prefix,
-    _timestamped_print,
-)
-
-from inertia_decompiler.cli_timeout import (
-    _AdaptivePerByteTimeoutModel,
-    _default_recovery_timeout,
-    _stdout_is_interactive,
-)
-
-# Pseudo-callee DOS helper addresses (when materialized) live in a synthetic
-# high-address range, well above real 16-bit image code.
-DOS_SERVICE_BASE_ADDR = 0xF000_0000
-
-from inertia_decompiler import cli_access_traits as _cli_access_traits
-
-from inertia_decompiler import cli_access_object_hints as _cli_access_object_hints
-
-from inertia_decompiler import cli_access_profiles as _cli_access_profiles
-
-from inertia_decompiler import cli_access_rewrite_artifact as _cli_access_rewrite_artifact
-
-from inertia_decompiler import cli_access_trait_rewrite as _cli_access_trait_rewrite
-
-from inertia_decompiler import cli_memory_prune as _cli_memory_prune
-
-from inertia_decompiler import cli_dead_local_prune as _cli_dead_local_prune
-
-from inertia_decompiler import cli_local_prune as _cli_local_prune
-
-from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
-
-from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
-
-from inertia_decompiler import cli_cod_globals as _cli_cod_globals
-
-from inertia_decompiler import cli_cod_global_statements as _cli_cod_global_statements
-
-from inertia_decompiler import cli_helper_modeling as _cli_helper_modeling
-
-from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
-
-from inertia_decompiler import cli_far_pointer_stack as _cli_far_pointer_stack
-
-from inertia_decompiler import cli_linear_aliases as _cli_linear_aliases
-
-from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
-
-from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
-
-from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
-
-from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
-
-from inertia_decompiler import cli_stack_byte_offsets as _cli_stack_byte_offsets
-
-from inertia_decompiler import cli_stack_locals as _cli_stack_locals
-
-from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
-
-from inertia_decompiler import cli_segmented as _cli_segmented
-
-from inertia_decompiler import cli_segmented_elision as _cli_segmented_elision
-
-from inertia_decompiler import cli_segmented_compare as _cli_segmented_compare
-
-from inertia_decompiler import cli_segmented_lowering as _cli_segmented_lowering
-
-from inertia_decompiler import cli_segmented_load_coalesce as _cli_segmented_load_coalesce
-
-from inertia_decompiler import cli_segmented_store_coalesce as _cli_segmented_store_coalesce
-
-from inertia_decompiler import cli_word_loads as _cli_word_loads
-
-from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
-
-from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
-
-from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
-
-from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
-
-from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
-
-from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
-
-from inertia_decompiler.x86_16_exact_slice import (
-    function_original_addr,
-    mark_function_original_addr,
-    non_optimized_slice_codegen_policy,
-    plan_x86_16_exact_slice,
-)
-
 from inertia_decompiler.tail_validation import (
     TAIL_VALIDATION_ENABLE_ENV as _TAIL_VALIDATION_ENABLE_ENV,
     emit_tail_validation_console_summary as _emit_tail_validation_console_summary,
@@ -190,6 +97,89 @@ from inertia_decompiler.tail_validation import (
     tail_validation_snapshot_for_fallback as _tail_validation_snapshot_for_fallback,
     tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
 )
+from inertia_decompiler.x86_16_exact_slice import (
+    function_original_addr,
+    mark_function_original_addr,
+    non_optimized_slice_codegen_policy,
+    plan_x86_16_exact_slice,
+)
+
+from inertia_decompiler import cli_access_object_hints as _cli_access_object_hints
+from inertia_decompiler import cli_access_profiles as _cli_access_profiles
+from inertia_decompiler import cli_access_rewrite_artifact as _cli_access_rewrite_artifact
+from inertia_decompiler import cli_access_trait_rewrite as _cli_access_trait_rewrite
+from inertia_decompiler import cli_access_traits as _cli_access_traits
+from inertia_decompiler import cli_cod_global_statements as _cli_cod_global_statements
+from inertia_decompiler import cli_cod_globals as _cli_cod_globals
+from inertia_decompiler import cli_dead_local_prune as _cli_dead_local_prune
+from inertia_decompiler import cli_far_pointer_stack as _cli_far_pointer_stack
+from inertia_decompiler import cli_helper_modeling as _cli_helper_modeling
+from inertia_decompiler import cli_linear_aliases as _cli_linear_aliases
+from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
+from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
+from inertia_decompiler import cli_local_prune as _cli_local_prune
+from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
+from inertia_decompiler import cli_memory_prune as _cli_memory_prune
+from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
+from inertia_decompiler import cli_segmented as _cli_segmented
+from inertia_decompiler import cli_segmented_compare as _cli_segmented_compare
+from inertia_decompiler import cli_segmented_elision as _cli_segmented_elision
+from inertia_decompiler import cli_segmented_load_coalesce as _cli_segmented_load_coalesce
+from inertia_decompiler import cli_segmented_lowering as _cli_segmented_lowering
+from inertia_decompiler import cli_segmented_store_coalesce as _cli_segmented_store_coalesce
+from inertia_decompiler import cli_stack_byte_offsets as _cli_stack_byte_offsets
+from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
+from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
+from inertia_decompiler import cli_stack_locals as _cli_stack_locals
+from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
+from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
+from inertia_decompiler import cli_word_loads as _cli_word_loads
+from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
+from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
+from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
+from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
+from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
+from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
+
+# Pseudo-callee DOS helper addresses (when materialized) live in a synthetic
+# high-address range, well above real 16-bit image code.
+DOS_SERVICE_BASE_ADDR = 0xF000_0000
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 from inertia_decompiler.runtime_support import (
     AnalysisTimeout as _AnalysisTimeout,
@@ -197,8 +187,8 @@ from inertia_decompiler.runtime_support import (
     DECOMPILATION_PREP_LOCK,
     FORCE_SERIAL_FUNCTION_DECOMP_ENV as _FORCE_SERIAL_FUNCTION_DECOMP_ENV,
     JumpkindLoggingHandler,
+    PreforkJobPool,
     apply_memory_limit as _apply_memory_limit,
-    analysis_timeout as _analysis_timeout,
     capture_thread_output as _capture_thread_output,
     choose_function_parallelism as _choose_function_parallelism,
     default_exe_showcase_cap as _default_exe_showcase_cap,
@@ -213,14 +203,22 @@ from inertia_decompiler.runtime_support import (
     log_step,
     lower_process_priority as _lower_process_priority,
     memory_available_mb as _memory_available_mb,
-    PreforkJobPool,
     prefer_low_memory_path as _prefer_low_memory_path,
-    run_with_timeout_in_fork as _run_with_timeout_in_fork,
-    run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
     raise_timeout as _raise_timeout,
     should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
 )
-
+from inertia_decompiler.runtime_support import (
+    analysis_timeout as _analysis_timeout,
+)
+from inertia_decompiler.runtime_support import (
+    run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
+)
+from inertia_decompiler.runtime_support import (
+    run_with_timeout_in_fork as _run_with_timeout_in_fork,
+)
+from inertia_decompiler.tail_validation import (
+    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
+)
 from inertia_decompiler.work_items import (
     FunctionDecompileResult,
     FunctionDecompileTask,
@@ -232,20 +230,6 @@ from inertia_decompiler.work_items import (
     print_function_attempt_status as _print_function_attempt_status,
     recovery_evidence_line as _recovery_evidence_line,
     tail_validation_display_status as _tail_validation_display_status,
-)
-
-from inertia_decompiler.slice_recovery import (
-    BoundedSliceVerdict,
-    SliceRecoveryAttemptOutcome,
-    build_default_slice_recovery_attempts,
-    run_bounded_slice_recovery,
-)
-
-from inertia_decompiler.non_optimized_fallback import (
-    allows_heavy_fallbacks_for_run,
-    bounded_non_optimized_attempt_timeout,
-    describe_non_optimized_unavailable,
-    sidecar_verdict_closes_non_optimized_lane,
 )
 
 print = _timestamped_print
@@ -3235,6 +3219,35 @@ def _fallback_entry_function(
         project._inertia_decompiler_stage = "recovery"
         candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
         recovery_timeout = max(1, timeout if prefer_fast_recovery else min(timeout, 10))
+
+        def _repair_recovered_entry_function(result, regions):
+            if project.arch.name != "86_16":
+                return result
+            if not isinstance(result, tuple) or len(result) != 2:
+                return result
+            if not regions:
+                return result
+            cfg, function = result
+            region = regions[0]
+            try:
+                stitched_func, stitched = _stitch_x86_16_exact_function_8616(
+                    project,
+                    function,
+                    region,
+                )
+            except Exception as ex:  # noqa: BLE001
+                logging.getLogger(__name__).debug(
+                    "x86-16 fallback entry stitching failed for %s: %s",
+                    hex(project.entry),
+                    ex,
+                )
+                stitched_func, stitched = function, False
+            if stitched:
+                setattr(stitched_func, "_inertia_x86_16_stitched_recovery", True)
+                function = stitched_func
+            _repair_x86_16_function_graph_8616(project, function)
+            return cfg, function
+
         with _analysis_timeout(recovery_timeout):
             if prefer_fast_recovery:
                 project._inertia_decompiler_stage = "recovery:fast"
@@ -3246,12 +3259,15 @@ def _fallback_entry_function(
                             ]
                         else:
                             fast_regions = [(project.entry, project.entry + fast_window)]
-                        return _pick_function_lean(
-                            project,
-                            project.entry,
-                            regions=fast_regions,
-                            data_references=False,
-                            extend_far_calls=False,
+                        return _repair_recovered_entry_function(
+                            _pick_function_lean(
+                                project,
+                                project.entry,
+                                regions=fast_regions,
+                                data_references=False,
+                                extend_far_calls=False,
+                            ),
+                            fast_regions,
                         )
                     except (KeyError, _AnalysisTimeout):
                         continue
@@ -3271,22 +3287,28 @@ def _fallback_entry_function(
                             _infer_x86_16_linear_region(project, project.entry, window=candidate_window)
                         ]
                     else:
-                        regions = [(project.entry, project.entry + candidate_window)]
+                            regions = [(project.entry, project.entry + candidate_window)]
                     try:
-                        return _pick_function(
-                            project,
-                            project.entry,
-                            regions=regions,
-                            data_references=False,
-                            force_smart_scan=False,
+                        return _repair_recovered_entry_function(
+                            _pick_function(
+                                project,
+                                project.entry,
+                                regions=regions,
+                                data_references=False,
+                                force_smart_scan=False,
+                            ),
+                            regions,
                         )
                     except KeyError:
                         pass
-                    return _pick_function(
-                        project,
-                        project.entry,
-                        regions=regions,
-                        data_references=True if project.arch.name == "86_16" else None,
+                    return _repair_recovered_entry_function(
+                        _pick_function(
+                            project,
+                            project.entry,
+                            regions=regions,
+                            data_references=True if project.arch.name == "86_16" else None,
+                        ),
+                        regions,
                     )
                 except _AnalysisTimeout:
                     raise
@@ -3404,6 +3426,22 @@ def _try_rebased_exact_region_recovery_8616(
                 data_references=False,
                 force_smart_scan=False,
             )
+    try:
+        stitched_func, stitched = _stitch_x86_16_exact_function_8616(
+            slice_project,
+            func,
+            slice_region,
+        )
+    except Exception as ex:
+        logging.getLogger(__name__).debug(
+            "x86-16 rebased exact function stitching failed for %s: %s",
+            hex(slice_plan.slice_start),
+            ex,
+        )
+        stitched_func, stitched = func, False
+    if stitched:
+        func = stitched_func
+        setattr(func, "_inertia_x86_16_stitched_recovery", True)
     func.name = name
     mark_function_original_addr(func, exact_region[0])
     print(

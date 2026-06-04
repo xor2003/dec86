@@ -2456,6 +2456,9 @@ def _decompile_function(
             setattr(project, "_inertia_partial_codegen_text", None)
             return "ok", formatted
         setattr(project, "_inertia_rewrite_cache", {})
+        if synthetic_globals:
+            setattr(project, "_inertia_synthetic_globals", synthetic_globals)
+            setattr(dec.codegen, "_inertia_synthetic_globals", synthetic_globals)
         stack_local_candidates = {
             id(variable): (variable, cvar)
             for variable, cvar in getattr(dec.codegen.cfunc, "variables_in_use", {}).items()

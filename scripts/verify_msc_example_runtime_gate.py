@@ -161,6 +161,26 @@ int main(void)
 """
 
 
+FPTR_HARNESS_MAIN = """
+int main(void)
+{
+    if (apply_twice(inc_one, 5) != 7) {
+        return 1;
+    }
+    if (apply_twice(dec_one, 8) != 6) {
+        return 2;
+    }
+    if (select_and_apply(1, 5) != 7) {
+        return 3;
+    }
+    if (select_and_apply(0, 8) != 6) {
+        return 4;
+    }
+    return 255;
+}
+"""
+
+
 EXAMPLES: dict[str, ExampleSpec] = {
     "cmp16": ExampleSpec(
         name="cmp16",
@@ -188,6 +208,18 @@ EXAMPLES: dict[str, ExampleSpec] = {
             FunctionSpec("rel_unsigned32", proc_kind="NEAR"),
         ),
         harness_main=CMP32_HARNESS_MAIN,
+    ),
+    "fptr": ExampleSpec(
+        name="fptr",
+        exe=DEFAULT_BUILD_DIR / "FPTR.EXE",
+        output_stem="FPTRRT",
+        functions=(
+            FunctionSpec("inc_one", proc_kind="NEAR"),
+            FunctionSpec("dec_one", proc_kind="NEAR"),
+            FunctionSpec("apply_twice", proc_kind="NEAR"),
+            FunctionSpec("select_and_apply", proc_kind="NEAR"),
+        ),
+        harness_main=FPTR_HARNESS_MAIN,
     ),
 }
 
@@ -267,7 +299,7 @@ def _find_function_definition(c_text: str, function_name: str) -> str:
     emitted = c_text.split("/* == c == */", 1)[-1] if "/* == c == */" in c_text else c_text
     name_re = re.escape(function_name)
     signature_re = re.compile(
-        rf"(?m)^(?P<signature>(?:unsigned\s+)?(?:int|long|short|char|void)\s+\**{name_re}\s*\([^;{{)]*\))\s*\n+\s*\{{"
+        rf"(?m)^(?P<signature>(?:unsigned\s+)?(?:int|long|short|char|void)\s+\**{name_re}\s*\([^;{{}}]*\))\s*\n+\s*\{{"
     )
     match = signature_re.search(emitted)
     if match is None:

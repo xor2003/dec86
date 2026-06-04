@@ -1531,6 +1531,63 @@ def _prototype_for_direct_call(name: str, observed_arg_count: int | None) -> str
     return f"int {name}();"
 
 
+def _parameter_names_from_args_text_8616(args_text: str) -> set[str]:
+    names: set[str] = set()
+    if not args_text.strip() or args_text.strip() == "void":
+        return names
+    for part in _split_args_8616(args_text):
+        fnptr_match = re.search(r"\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)", part)
+        if fnptr_match is not None:
+            names.add(fnptr_match.group("name"))
+            continue
+        match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", part.strip())
+        if match is not None:
+            names.add(match.group(1))
+    return names
+
+
+def _extract_function_header_args_8616(line: str) -> str | None:
+    header = line.split("{", 1)[0].strip()
+    if not header or header.endswith(";"):
+        return None
+    close_idx = header.rfind(")")
+    if close_idx < 0:
+        return None
+    depth = 0
+    open_idx = None
+    for idx in range(close_idx, -1, -1):
+        char = header[idx]
+        if char == ")":
+            depth += 1
+        elif char == "(":
+            depth -= 1
+            if depth == 0:
+                open_idx = idx
+                break
+    if open_idx is None:
+        return None
+    prefix = header[:open_idx].strip()
+    if not re.search(r"\b[A-Za-z_]\w*$", prefix):
+        return None
+    return header[open_idx + 1 : close_idx]
+
+
+def _collect_function_parameter_names_8616(lines: list[str]) -> set[str]:
+    names: set[str] = set()
+    for idx, line in enumerate(lines):
+        candidate = line
+        lookahead = idx + 1
+        while "{" not in candidate and lookahead < len(lines) and lookahead <= idx + 2:
+            if ";" in candidate:
+                break
+            candidate = f"{candidate} {lines[lookahead].strip()}"
+            lookahead += 1
+        args_text = _extract_function_header_args_8616(candidate)
+        if args_text is not None:
+            names.update(_parameter_names_from_args_text_8616(args_text))
+    return names
+
+
 def _collect_declared_and_defined_function_names(lines: list[str]) -> set[str]:
     def _impl():
         declared = {
@@ -1572,7 +1629,35 @@ def _has_decl_or_def_in_text(c_text: str, declared: set[str], name: str) -> bool
 
 def _collect_direct_calls_and_observed_arity(lines: list[str], c_text: str, declared: set[str]) -> tuple[list[str], dict[str, int]]:
     def _impl():
-        keywords = {"if", "for", "while", "switch", "return", "sizeof"}
+        keywords = {
+            "auto",
+            "char",
+            "const",
+            "do",
+            "double",
+            "else",
+            "enum",
+            "extern",
+            "float",
+            "for",
+            "if",
+            "int",
+            "long",
+            "register",
+            "return",
+            "short",
+            "signed",
+            "sizeof",
+            "static",
+            "struct",
+            "switch",
+            "typedef",
+            "union",
+            "unsigned",
+            "void",
+            "volatile",
+            "while",
+        }
         standard_c_functions = {
             "toupper",
             "tolower",
@@ -1588,6 +1673,7 @@ def _collect_direct_calls_and_observed_arity(lines: list[str], c_text: str, decl
             "isxdigit",
         }
         runtime_helpers = {"SEG_U8", "SEG_U16", "SEG_U32", "SEG_PTR", "SEG_LINEAR", "MK_FP"}
+        parameter_names = _collect_function_parameter_names_8616(lines)
         calls: list[str] = []
         observed_args: dict[str, int] = {}
         for line in lines:
@@ -1606,6 +1692,7 @@ def _collect_direct_calls_and_observed_arity(lines: list[str], c_text: str, decl
                     name in keywords
                     or name in standard_c_functions
                     or name in runtime_helpers
+                    or name in parameter_names
                     or name in calls
                     or _has_decl_or_def_in_text(c_text, declared, name)
                 ):
@@ -4171,21 +4258,30 @@ def _prune_parameter_shadow_declarations_text(c_text: str) -> str:
         changed = False
         while idx < len(out):
             m = header_re.match(out[idx])
-            if m is None:
-                idx += 1
-                continue
+            brace_idx = idx
             arg_names: set[str] = set()
-            args_text = m.group("args").strip()
-            if args_text and args_text != "void":
-                for part in args_text.split(","):
-                    part = part.strip()
-                    mm = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", part)
-                    if mm is not None:
-                        arg_names.add(mm.group(1))
+            if m is not None:
+                args_text = m.group("args").strip()
+                arg_names = _parameter_names_from_args_text_8616(args_text)
+            else:
+                candidate = out[idx]
+                lookahead = idx + 1
+                while "{" not in candidate and lookahead < len(out) and lookahead <= idx + 2:
+                    if ";" in candidate:
+                        break
+                    candidate = f"{candidate} {out[lookahead].strip()}"
+                    lookahead += 1
+                args_text = _extract_function_header_args_8616(candidate)
+                if args_text is not None:
+                    arg_names = _parameter_names_from_args_text_8616(args_text)
+                    while brace_idx < len(out) and "{" not in out[brace_idx]:
+                        brace_idx += 1
+                else:
+                    idx += 1
+                    continue
             if not arg_names:
                 idx += 1
                 continue
-            brace_idx = idx
             while brace_idx < len(out) and "{" not in out[brace_idx]:
                 brace_idx += 1
             if brace_idx >= len(out):

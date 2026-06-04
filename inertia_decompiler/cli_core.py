@@ -1733,6 +1733,7 @@ _ORIGINAL_C_START_RE = re.compile(r"(?m)^\s*///\s*C source:\s*$")
 _ORIGINAL_C_END_RE = re.compile(r"(?m)^\s*///\s*Assembly:\s*$")
 _COD_BP_ANNOT_RE = re.compile(r"(?m)^\s*\*\s*\[bp[^\]]+\]\s*=")
 _CALL_FLOOR_SCAFFOLD_HELPERS_8616 = {"aNchkstk", "aNldiv"}
+_INDIRECT_CALL_EVIDENCE_MARKERS_8616 = {"BYTE", "WORD", "DWORD", "QWORD", "PTR"}
 _SEG_DS_ACCESS_RE_8616 = re.compile(
     r"\b(?:SEG_PTR|MK_FP|SEG_U8|SEG_U16|SEG_U32)\s*\(\s*ds\s*,\s*([^)]+?)\s*\)"
 )
@@ -1818,7 +1819,7 @@ def _missing_expected_calls_from_embedded_evidence_8616(emitted_c: str) -> list[
             if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
                 continue
             # Ignore compiler/runtime scaffolding helpers.
-            if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616:
+            if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616 or name.upper() in _INDIRECT_CALL_EVIDENCE_MARKERS_8616:
                 continue
             expected.append(name)
         if not expected:
@@ -1933,7 +1934,7 @@ def _embedded_call_evidence_names_8616(emitted_c: str) -> list[str]:
         name = token.lstrip("_")
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             continue
-        if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616:
+        if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616 or name.upper() in _INDIRECT_CALL_EVIDENCE_MARKERS_8616:
             continue
         names.append(name)
     return names
@@ -1988,7 +1989,7 @@ def _missing_expected_call_multiplicity_8616(emitted_c: str) -> list[str]:
     )
     missing: list[str] = []
     for name, needed in expected_counts.items():
-        if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616:
+        if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616 or name.upper() in _INDIRECT_CALL_EVIDENCE_MARKERS_8616:
             continue
         # Recursive call multiplicity is structurally unstable across equivalent
         # if/else lowering forms; keep presence/order gates, but do not enforce
@@ -2020,7 +2021,11 @@ def _expected_call_order_from_original_8616(emitted_c: str) -> list[str]:
     function_name = _extract_emitted_function_name_8616(emitted_c)
     order: list[str] = []
     for name in _CALL_TOKEN_RE.findall(original_c):
-        if name in {"if", "for", "while", "switch", "return"} or name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616:
+        if (
+            name in {"if", "for", "while", "switch", "return"}
+            or name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616
+            or name.upper() in _INDIRECT_CALL_EVIDENCE_MARKERS_8616
+        ):
             continue
         if isinstance(function_name, str) and name == function_name:
             continue
@@ -2141,7 +2146,11 @@ def _side_effect_floor_violation_8616(emitted_c: str) -> bool:
         return False
     raw = expected_calls.group(1)
     names = [t.strip().lstrip("_") for t in raw.split(",") if t.strip()]
-    names = [n for n in names if n and n not in _CALL_FLOOR_SCAFFOLD_HELPERS_8616]
+    names = [
+        n
+        for n in names
+        if n and n not in _CALL_FLOOR_SCAFFOLD_HELPERS_8616 and n.upper() not in _INDIRECT_CALL_EVIDENCE_MARKERS_8616
+    ]
     if len(names) < 1:
         return False
     body = _extract_function_body_text_8616(emitted_c)

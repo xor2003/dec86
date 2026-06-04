@@ -3,10 +3,10 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import asdict, dataclass, field
+from types import SimpleNamespace
 
 from .analysis_helpers import collect_neighbor_call_targets
 from .callee_name_normalization import normalize_callee_name_8616
-from types import SimpleNamespace
 
 __all__ = ["CallsiteSummary8616", "summarize_x86_16_callsite"]
 
@@ -30,6 +30,7 @@ class CallsiteSummary8616:
     helper_return_width: int | None = None
     helper_return_address_kind: str = "none"
     push_arg_sources: tuple[tuple | None, ...] = field(default=(), compare=False)
+    return_store_destination: tuple[str, int] | None = None
 
     def brief(self) -> str:
         return (
@@ -528,13 +529,117 @@ def _instruction_reads_return_reg(insn, reg_names: set[str]) -> bool:
     return False
 
 
+def _instruction_writes_return_reg(insn, reg_names: set[str]) -> bool:
+    operands = _instruction_operands(insn)
+    if not operands:
+        return False
+    mnemonic = _mnemonic(insn)
+    if mnemonic in {"cmp", "test"}:
+        return False
+    return _operand_is_reg(insn, operands[0], reg_names)
+
+
+def _transparent_return_epilogue_insn_8616(insn) -> bool:
+    mnemonic = _mnemonic(insn)
+    operands = _instruction_operands(insn)
+    if mnemonic == "add" and len(operands) == 2 and _operand_is_reg(insn, operands[0], {"sp", "esp"}):
+        return True
+    if mnemonic == "mov" and len(operands) == 2:
+        return _operand_is_reg(insn, operands[0], {"sp", "esp"}) and _operand_is_reg(insn, operands[1], {"bp", "ebp"})
+    if mnemonic == "pop" and len(operands) == 1:
+        return True
+    if mnemonic.startswith("j"):
+        return True
+    return False
+
+
+def _direct_jump_target_8616(insn) -> int | None:
+    mnemonic = _mnemonic(insn)
+    if mnemonic not in {"jmp", "jmpw", "ljmp"}:
+        return None
+    operands = _instruction_operands(insn)
+    if len(operands) != 1:
+        return None
+    return _operand_imm_value(operands[0])
+
+
+def _extend_follow_insns_through_direct_jumps_8616(function, follow_insns: list, *, limit: int = 16) -> list:
+    project = getattr(function, "project", None)
+    if project is None:
+        return follow_insns
+    expanded = list(follow_insns)
+    decoded_targets: set[int] = set()
+    idx = 0
+    while idx < len(expanded) and len(expanded) < limit:
+        target = _direct_jump_target_8616(expanded[idx])
+        idx += 1
+        if not isinstance(target, int) or target in decoded_targets:
+            continue
+        decoded_targets.add(target)
+        try:
+            block = project.factory.block(target, opt_level=0)
+        except Exception as ex:
+            log.debug("return-use jump target decode failed target=%#x: %s", target, ex)
+            continue
+        target_insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        expanded.extend(target_insns[: max(0, limit - len(expanded))])
+    return expanded
+
+
+def _operand_mem_base_disp(insn, operand) -> tuple[str | None, int | None]:
+    mem = getattr(operand, "mem", None)
+    if mem is None:
+        return None, None
+    base = getattr(mem, "base", None)
+    disp = getattr(mem, "disp", None)
+    if not isinstance(base, int):
+        return None, disp if isinstance(disp, int) else None
+    capstone_insn = _capstone_insn(insn)
+    reg_name = getattr(capstone_insn, "reg_name", None)
+    if not callable(reg_name):
+        return None, disp if isinstance(disp, int) else None
+    try:
+        name = reg_name(base)
+    except Exception as ex:
+        log.debug("capstone mem base lookup failed reg=%r: %s", base, ex)
+        name = None
+    return (name.lower() if isinstance(name, str) and name else None), disp if isinstance(disp, int) else None
+
+
+def _return_store_after_call(function, insns: tuple, idx: int, callsite_addr: int) -> tuple[str, int] | None:
+    follow_insns = list(insns[idx + 1 : idx + 4])
+    if len(follow_insns) < 3:
+        follow_insns.extend(_next_linear_block_insns(function, callsite_addr)[: 3 - len(follow_insns)])
+    for insn in follow_insns[:3]:
+        mnemonic = _mnemonic(insn)
+        operands = _instruction_operands(insn)
+        if mnemonic == "add" and len(operands) == 2 and _operand_is_reg(insn, operands[0], {"sp", "esp"}):
+            continue
+        if mnemonic != "mov" or len(operands) != 2:
+            continue
+        if not _operand_is_reg(insn, operands[1], {"ax"}):
+            continue
+        base, disp = _operand_mem_base_disp(insn, operands[0])
+        if base == "bp" and isinstance(disp, int):
+            return "bp", disp
+    return None
+
+
 def _return_use_after_call(function, insns: tuple, idx: int, callsite_addr: int) -> tuple[str | None, bool | None]:
-    follow_insns = list(insns[idx + 1 : idx + 3])
-    if len(follow_insns) < 2:
-        follow_insns.extend(_next_linear_block_insns(function, callsite_addr)[: 2 - len(follow_insns)])
-    for insn in follow_insns[:2]:
+    follow_insns = list(insns[idx + 1 : idx + 8])
+    if len(follow_insns) < 8:
+        follow_insns.extend(_next_linear_block_insns(function, callsite_addr)[: 8 - len(follow_insns)])
+    follow_insns = _extend_follow_insns_through_direct_jumps_8616(function, follow_insns, limit=16)
+    for insn in follow_insns[:16]:
         if _instruction_reads_return_reg(insn, {"ax", "al", "ah"}):
             return "ax", True
+        if _instruction_writes_return_reg(insn, {"ax", "al", "ah"}):
+            return "ax", False
+        if _mnemonic(insn) in {"ret", "retf", "retw", "iret"}:
+            return "ax", True
+        if _transparent_return_epilogue_insn_8616(insn):
+            continue
+        break
     return None, False
 
 
@@ -630,6 +735,7 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             follow_insns.extend(_next_linear_block_insns(function, callsite_addr)[: 2 - len(follow_insns)])
         has_followup_insns = bool(follow_insns)
         return_register, return_used = _return_use_after_call(function, insns, call_idx, callsite_addr)
+        return_store_destination = _return_store_after_call(function, insns, call_idx, callsite_addr)
         helper_return_state = "none"
         helper_return_space = None
         helper_return_width = None
@@ -659,6 +765,7 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             helper_return_width=helper_return_width,
             helper_return_address_kind=helper_return_address_kind,
             push_arg_sources=push_arg_sources,
+            return_store_destination=return_store_destination,
         )
 
     return _impl()
