@@ -212,7 +212,16 @@ def _compile_and_link(
     ]
     link_proc = _run(link_cmd, timeout=120)
 
-    built = (out_dir / exe_name).exists()
+    map_path = out_dir / map_name
+    map_text = ""
+    if map_path.exists():
+        try:
+            map_text = map_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            map_text = ""
+    link_diagnostics = "\n".join((link_proc.stdout, link_proc.stderr, map_text))
+    link_failed = "error L" in link_diagnostics or "unresolved external" in link_diagnostics.lower()
+    built = (out_dir / exe_name).exists() and not link_failed
     return built, compile_proc.stdout, compile_proc.stderr, link_proc.stdout, link_proc.stderr
 
 
@@ -737,6 +746,15 @@ def _decompile(
         cmd_for_candidate.append(str(exe_path))
         return cmd_for_candidate
 
+    def _candidate_run_timeout(candidate: dict[str, object]) -> int:
+        if decompile_mode != "functions":
+            return int(decompile_run_timeout)
+        count = candidate.get("value") if candidate.get("kind") == "max-functions" else decompile_max_functions
+        if not isinstance(count, int) or count <= 0:
+            count = max(1, decompile_max_functions)
+        setup_budget = 90
+        return max(int(decompile_run_timeout), int(decompile_timeout) * int(count) + setup_budget)
+
     attempts: list[dict[str, object]] = []
     start = time.perf_counter()
     last_proc: subprocess.CompletedProcess[str] | None = None
@@ -756,7 +774,7 @@ def _decompile(
             proc = _run(
                 candidate_cmd,
                 cwd=REPO_ROOT,
-                timeout=decompile_run_timeout,
+                timeout=_candidate_run_timeout(candidate),
                 env={"INERTIA_DEBUG_TIMING": "1"},
             )
             last_proc = proc
@@ -818,7 +836,7 @@ def _decompile(
             proc = _run(
                 fallback_cmd,
                 cwd=REPO_ROOT,
-                timeout=decompile_run_timeout,
+                timeout=_candidate_run_timeout(fallback_candidate),
                 env={"INERTIA_DEBUG_TIMING": "1"},
             )
             last_proc = proc

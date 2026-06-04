@@ -31,7 +31,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 from angr.sim_type import SimTypeBottom, SimTypeLong, SimTypeShort
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
 
@@ -427,6 +427,18 @@ def _branch_target_return_expr_8616(project, codegen, target_addr: int):
                 elif dst_reg == "dx":
                     dx_value = value
                 continue
+        if (
+            mnemonic in {"add", "sub", "shl"}
+            and ax_value is not None
+            and len(operands) == 2
+            and int(getattr(operands[0], "type", -1)) == 1
+            and str(insn.reg_name(operands[0].reg)).lower() == "ax"
+            and int(getattr(operands[1], "type", -1)) == 2
+        ):
+            imm = CConstant(_signed_i16_immediate_8616(int(getattr(operands[1], "imm", 0) or 0)), SimTypeShort(False), codegen=codegen)
+            op = {"add": "Add", "sub": "Sub", "shl": "Shl"}[mnemonic]
+            ax_value = CBinaryOp(op, ax_value, imm, codegen=codegen)
+            continue
         if mnemonic in {"jmp", "ljmp", "ret", "retf", "iret"}:
             return _combined_return_expr()
     return _combined_return_expr()
@@ -461,6 +473,64 @@ def _next_unconditional_target_after_jcc_8616(project, block_addr: int, jcc_addr
             return None
         return _jcc._branch_target_imm_8616(next_insn)
     return None
+
+
+def _linear_function_insns_for_codegen_8616(project, codegen) -> tuple:
+    base_insns = tuple(_jcc._function_insns_for_codegen_8616(project, codegen) or ())
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return base_insns
+    linear_insns: list[object] = []
+    addr = int(func_addr)
+    end_addr = addr + 0x800
+    while addr < end_addr:
+        try:
+            block = project.factory.block(addr, num_inst=1, opt_level=0)
+        except Exception:
+            break
+        decoded = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        if not decoded:
+            break
+        insn = decoded[0]
+        linear_insns.append(insn)
+        size = int(getattr(insn, "size", 0) or 0)
+        if str(getattr(insn, "mnemonic", "")).lower() in {"ret", "retf", "iret"}:
+            break
+        if size <= 0:
+            break
+        addr += size
+    by_addr = {int(getattr(insn, "address", 0) or 0): insn for insn in base_insns}
+    for insn in linear_insns:
+        by_addr[int(getattr(insn, "address", 0) or 0)] = insn
+    result = tuple(sorted(by_addr.values(), key=lambda item: int(getattr(item, "address", 0) or 0)))
+    if len(result) > len(base_insns):
+        try:
+            codegen._inertia_jcc_function_insns_8616 = result
+        except Exception:
+            pass
+    return result
+
+
+def _linear_jcc_block_starts_8616(project, codegen) -> tuple[tuple[int, object], ...]:
+    insns = _linear_function_insns_for_codegen_8616(project, codegen)
+    if not insns:
+        return ()
+    pairs: list[tuple[int, object]] = []
+    terminators = {"jmp", "ljmp", "ret", "retf", "iret"}
+    for index, insn in enumerate(insns):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
+            continue
+        block_start = int(getattr(insn, "address", 0) or 0)
+        for prev_index in range(index - 1, -1, -1):
+            prev = insns[prev_index]
+            prev_mnemonic = str(getattr(prev, "mnemonic", "")).lower()
+            if prev_mnemonic in terminators or prev_mnemonic.startswith("j") or prev_mnemonic in {"call", "lcall"}:
+                break
+            block_start = int(getattr(prev, "address", block_start) or block_start)
+        pairs.append((block_start, insn))
+    return tuple(pairs)
 
 
 def _condition_branch_return_value_8616(project, cond) -> int | None:
@@ -500,78 +570,59 @@ def _ordered_conditional_return_values_8616(project, codegen) -> list[int]:
 
 
 def _ordered_conditional_return_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, int]]:
-    cfunc = getattr(codegen, "cfunc", None)
-    func_addr = getattr(cfunc, "addr", None)
-    if not isinstance(func_addr, int):
-        return []
-    try:
-        function = project.kb.functions.function(addr=func_addr, create=False)
-    except Exception:
-        return []
-    if function is None:
-        return []
     pairs: list[tuple[object, int]] = []
-    for block_addr in sorted(int(addr) for addr in getattr(function, "block_addrs_set", set()) or ()):
-        try:
-            block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
+    jcc_count = 0
+    return_target_count = 0
+    decoded_count = 0
+    for block_addr, insn in _linear_jcc_block_starts_8616(project, codegen):
+        jcc_count += 1
+        target = _jcc._branch_target_imm_8616(insn)
+        if target is None:
             continue
-        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
-            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
-            if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
-                continue
-            target = _jcc._branch_target_imm_8616(insn)
-            if target is None:
-                continue
-            value = _branch_target_return_value_8616(project, target)
-            if value is None:
-                continue
-            decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
-            if decoded is None:
-                continue
-            expr = getattr(decoded, "expr", None)
-            if expr is None:
-                expr = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
-            pairs.append((expr, int(value)))
+        value = _branch_target_return_value_8616(project, target)
+        if value is None:
+            continue
+        return_target_count += 1
+        decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+        if decoded is None:
+            continue
+        decoded_count += 1
+        expr = getattr(decoded, "expr", None)
+        if expr is None:
+            expr = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
+        pairs.append((expr, int(value)))
+    if debug:
+        log.warning(
+            "[cfg-return-chain] addr=%r jcc=%d return_targets=%d decoded=%d pairs=%d",
+            getattr(getattr(codegen, "cfunc", None), "addr", None),
+            jcc_count,
+            return_target_count,
+            decoded_count,
+            len(pairs),
+        )
     return pairs
 
 
 def _ordered_conditional_return_expr_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, object, object]]:
-    cfunc = getattr(codegen, "cfunc", None)
-    func_addr = getattr(cfunc, "addr", None)
-    if not isinstance(func_addr, int):
-        return []
-    try:
-        function = project.kb.functions.function(addr=func_addr, create=False)
-    except Exception:
-        return []
-    if function is None:
-        return []
     pairs: list[tuple[object, object, object]] = []
-    for block_addr in sorted(int(addr) for addr in getattr(function, "block_addrs_set", set()) or ()):
-        try:
-            block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
+    for block_addr, insn in _linear_jcc_block_starts_8616(project, codegen):
+        true_target = _jcc._branch_target_imm_8616(insn)
+        false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address))
+        if true_target is None or false_target is None:
             continue
-        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
-            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
-            if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
-                continue
-            true_target = _jcc._branch_target_imm_8616(insn)
-            false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address))
-            if true_target is None or false_target is None:
-                continue
-            true_expr = _branch_target_return_expr_8616(project, codegen, true_target)
-            false_expr = _branch_target_return_expr_8616(project, codegen, false_target)
-            if true_expr is None or false_expr is None:
-                continue
-            decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
-            if decoded is None:
-                continue
-            cond = getattr(decoded, "expr", None)
-            if cond is None:
-                cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
-            pairs.append((cond, true_expr, false_expr))
+        true_expr = _branch_target_return_expr_8616(project, codegen, true_target)
+        false_expr = _branch_target_return_expr_8616(project, codegen, false_target)
+        if true_expr is None or false_expr is None:
+            continue
+        decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+        if decoded is None:
+            continue
+        cond = getattr(decoded, "expr", None)
+        if cond is None:
+            cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
+        pairs.append((cond, true_expr, false_expr))
     return pairs
 
 
@@ -787,6 +838,172 @@ def _ordered_32bit_selector_return_expr_pairs_from_cfg_8616(project, codegen) ->
                 continue
             pairs.append((cond, true_expr, false_expr))
     return pairs
+
+
+def _selector_stack_expr_from_ax_load_8616(project, codegen):
+    for insn in _linear_function_insns_for_codegen_8616(project, codegen):
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if (
+            str(getattr(insn, "mnemonic", "")).lower() == "mov"
+            and len(operands) == 2
+            and int(getattr(operands[0], "type", -1)) == 1
+            and str(insn.reg_name(operands[0].reg)).lower() == "ax"
+            and int(getattr(operands[1], "type", -1)) == 3
+        ):
+            mem = getattr(operands[1], "mem", None)
+            if mem is not None and mem.base and str(insn.reg_name(mem.base)).lower() == "bp":
+                return _jcc._stack_slot_expr_8616(codegen, int(mem.disp), int(getattr(operands[1], "size", 0) or 2))
+    return None
+
+
+def _next_linear_jmp_target_8616(insns: tuple, index: int) -> int | None:
+    if index + 1 >= len(insns):
+        return None
+    next_insn = insns[index + 1]
+    if str(getattr(next_insn, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
+        return None
+    return _jcc._branch_target_imm_8616(next_insn)
+
+
+def _resolve_one_hop_jmp_target_8616(project, target: int | None) -> int | None:
+    if target is None:
+        return None
+    try:
+        block = project.factory.block(int(target), opt_level=0)
+    except Exception:
+        return int(target)
+    insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+    if not insns:
+        return int(target)
+    first = insns[0]
+    if str(getattr(first, "mnemonic", "")).lower() in {"jmp", "ljmp"}:
+        resolved = _jcc._branch_target_imm_8616(first)
+        if resolved is not None:
+            return int(resolved)
+    return int(target)
+
+
+def _materialize_decrement_switch_return_chain_8616(project, codegen) -> bool:
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
+    selector = _selector_stack_expr_from_ax_load_8616(project, codegen)
+    if selector is None:
+        if debug:
+            log.warning("[cfg-selector-return] decrement-switch refused missing selector")
+        return False
+    if _selector_function_has_unsafe_effects_8616(project, codegen):
+        if debug:
+            log.warning("[cfg-selector-return] decrement-switch refused unsafe effects")
+        return False
+    insns = _linear_function_insns_for_codegen_8616(project, codegen)
+    chain: list[object] = []
+    for insn in insns:
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if mnemonic == "or" and len(operands) == 2:
+            if all(int(getattr(op, "type", -1)) == 1 and str(insn.reg_name(op.reg)).lower() == "ax" for op in operands):
+                chain.append(insn)
+                continue
+        if mnemonic == "dec" and len(operands) == 1:
+            if int(getattr(operands[0], "type", -1)) == 1 and str(insn.reg_name(operands[0].reg)).lower() == "ax":
+                chain.append(insn)
+    if len(chain) < 4:
+        if debug:
+            log.warning("[cfg-selector-return] decrement-switch refused chain_len=%d", len(chain))
+        return False
+    index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
+
+    def _following_jcc_after(insn, expected: set[str]):
+        start = index_by_addr.get(int(getattr(insn, "address", -1)))
+        if start is None:
+            return None
+        if start + 1 >= len(insns):
+            return None
+        jcc = insns[start + 1]
+        mnemonic = str(getattr(jcc, "mnemonic", "")).lower()
+        return jcc if mnemonic in expected else None
+
+    jcc0 = _following_jcc_after(chain[0], {"jne", "jnz"})
+    jcc1 = _following_jcc_after(chain[1], {"jge", "jnl"})
+    jcc2 = _following_jcc_after(chain[2], {"jg", "jnle"})
+    jcc3 = _following_jcc_after(chain[3], {"jne", "jnz"})
+    if None in {jcc0, jcc1, jcc2, jcc3}:
+        if debug:
+            log.warning("[cfg-selector-return] decrement-switch refused jcc shape=%r", [jcc0, jcc1, jcc2, jcc3])
+        return False
+    target_case0 = _resolve_one_hop_jmp_target_8616(
+        project, _next_linear_jmp_target_8616(insns, index_by_addr[int(getattr(jcc0, "address"))])
+    )
+    target_default_1 = _resolve_one_hop_jmp_target_8616(
+        project, _next_linear_jmp_target_8616(insns, index_by_addr[int(getattr(jcc1, "address"))])
+    )
+    target_case12 = _resolve_one_hop_jmp_target_8616(
+        project, _next_linear_jmp_target_8616(insns, index_by_addr[int(getattr(jcc2, "address"))])
+    )
+    target_case3 = _resolve_one_hop_jmp_target_8616(
+        project, _next_linear_jmp_target_8616(insns, index_by_addr[int(getattr(jcc3, "address"))])
+    )
+    target_default_2 = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(jcc3))
+    if None in {target_case0, target_default_1, target_case12, target_case3, target_default_2}:
+        if debug:
+            log.warning(
+                "[cfg-selector-return] decrement-switch refused targets=%r",
+                [target_case0, target_default_1, target_case12, target_case3, target_default_2],
+            )
+        return False
+    if int(target_default_1) != int(target_default_2):
+        if debug:
+            log.warning(
+                "[cfg-selector-return] decrement-switch refused default mismatch=%r/%r",
+                target_default_1,
+                target_default_2,
+            )
+        return False
+    expr_case0 = _branch_target_return_expr_8616(project, codegen, int(target_case0))
+    expr_default = _branch_target_return_expr_8616(project, codegen, int(target_default_1))
+    expr_case12 = _branch_target_return_expr_8616(project, codegen, int(target_case12))
+    expr_case3 = _branch_target_return_expr_8616(project, codegen, int(target_case3))
+    if any(expr is None for expr in (expr_case0, expr_default, expr_case12, expr_case3)):
+        if debug:
+            log.warning(
+                "[cfg-selector-return] decrement-switch refused exprs=%r",
+                [expr_case0, expr_default, expr_case12, expr_case3],
+            )
+        return False
+
+    def _cmp(op: str, value: int):
+        return CBinaryOp(
+            op,
+            selector,
+            CConstant(int(value), SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    ordered = (
+        (_cmp("CmpEQ", 0), expr_case0),
+        (_cmp("CmpLT", 1), expr_default),
+        (_cmp("CmpLE", 2), expr_case12),
+        (_cmp("CmpEQ", 3), expr_case3),
+    )
+    statements = [
+        CIfElse(
+            [(cond, CStatements(statements=[CReturn(expr, codegen=codegen)], codegen=codegen))],
+            else_node=None,
+            cstyle_ifs=True,
+            codegen=codegen,
+        )
+        for cond, expr in ordered
+    ]
+    statements.append(CReturn(expr_default, codegen=codegen))
+    codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+    codegen._inertia_decrement_switch_return_materialized_8616 = True
+    codegen._inertia_return_expr_chain_materialized_8616 = True
+    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
+        _expr_fingerprint(expr, project) for _cond, expr in ordered
+    ) + (_expr_fingerprint(expr_default, project),)
+    if debug:
+        log.warning("[cfg-selector-return] decrement-switch materialized")
+    return True
 
 
 def _ordered_32bit_conditional_return_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, int]]:
@@ -1036,6 +1253,9 @@ def _materialize_cfg_selector_return_branches_8616(project, codegen) -> bool:
     if not isinstance(stats, dict):
         stats = {"candidates": 0, "materialized": 0, "refused": 0}
         codegen._inertia_cfg_selector_return_stats_8616 = stats
+    if _materialize_decrement_switch_return_chain_8616(project, codegen):
+        stats["materialized"] += 1
+        return True
     pairs = _ordered_32bit_selector_return_expr_pairs_from_cfg_8616(project, codegen)
     stats["candidates"] += len(pairs)
     if debug:
@@ -1123,6 +1343,75 @@ def _flatten_conditional_return_chain_8616(project, codegen, cond_return_pairs: 
     if materialized_ifs != len(cond_return_pairs) or materialized_returns != len(cond_return_pairs) + 1:
         return False
     codegen._inertia_return_chain_flattened_8616 = True
+    codegen._inertia_return_chain_materialized_values_8616 = tuple(int(value) for _cond, value in cond_return_pairs)
+    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
+        _expr_fingerprint(cond, project) for cond, _value in cond_return_pairs
+    )
+    codegen._inertia_return_chain_final_value_8616 = int(final_value)
+    return True
+
+
+def _node_contains_call_8616(node) -> bool:
+    return any(isinstance(child, CFunctionCall) for child in _iter_c_nodes_deep_8616(node))
+
+
+def _is_register_call_assignment_8616(stmt) -> bool:
+    if not isinstance(stmt, CAssignment):
+        return False
+    lhs = getattr(stmt, "lhs", None)
+    if not isinstance(lhs, CVariable) or not isinstance(getattr(lhs, "variable", None), SimRegisterVariable):
+        return False
+    return _node_contains_call_8616(getattr(stmt, "rhs", None))
+
+
+def _materialize_cfg_conditional_return_suffix_8616(project, codegen, cond_return_pairs: list[tuple[object, int]]) -> bool:
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
+    if len(cond_return_pairs) < 2:
+        if debug:
+            log.warning("[cfg-return-chain] suffix refused pair_count=%d", len(cond_return_pairs))
+        return False
+    final_value = _last_ax_return_value_8616(project, codegen)
+    if final_value is None:
+        if debug:
+            log.warning("[cfg-return-chain] suffix refused missing final return")
+        return False
+    cfunc = getattr(codegen, "cfunc", None)
+    statements_node = getattr(cfunc, "statements", None)
+    statements = list(getattr(statements_node, "statements", ()) or ())
+    if not statements:
+        if debug:
+            log.warning("[cfg-return-chain] suffix refused missing statements")
+        return False
+    cut_index = next(
+        (
+            index
+            for index, stmt in enumerate(statements)
+            if isinstance(stmt, (CIfElse, CReturn, CGoto))
+        ),
+        None,
+    )
+    if cut_index is None:
+        if debug:
+            log.warning("[cfg-return-chain] suffix appending after setup statements=%d", len(statements))
+        cut_index = len(statements)
+    prefix = list(statements[:cut_index])
+    if prefix and _is_register_call_assignment_8616(prefix[-1]) and _node_contains_call_8616(cond_return_pairs[0][0]):
+        prefix.pop()
+    if not prefix:
+        if debug:
+            log.warning("[cfg-return-chain] suffix refused empty semantic prefix cut=%d", cut_index)
+        return False
+    rebuilt = list(prefix)
+    for cond, value in cond_return_pairs:
+        body = CStatements(
+            statements=[CReturn(CConstant(int(value), SimTypeShort(False), codegen=codegen), codegen=codegen)],
+            codegen=codegen,
+        )
+        rebuilt.append(CIfElse([(cond, body)], else_node=None, cstyle_ifs=True, codegen=codegen))
+    rebuilt.append(CReturn(CConstant(int(final_value), SimTypeShort(False), codegen=codegen), codegen=codegen))
+    codegen.cfunc.statements = CStatements(statements=rebuilt, codegen=codegen)
+    codegen._inertia_return_chain_suffix_materialized_8616 = True
     codegen._inertia_return_chain_materialized_values_8616 = tuple(int(value) for _cond, value in cond_return_pairs)
     codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
         _expr_fingerprint(cond, project) for cond, _value in cond_return_pairs
@@ -1240,11 +1529,178 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
         if len(cfg_return_pairs) >= 2:
             changed = _flatten_conditional_return_chain_8616(project, codegen, cfg_return_pairs) or changed
             cond_return_pairs = cfg_return_pairs
+    if not cond_return_pairs and not getattr(codegen, "_inertia_return_chain_suffix_materialized_8616", False):
+        cfg_return_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
+        if _materialize_cfg_conditional_return_suffix_8616(project, codegen, cfg_return_pairs):
+            stats["materialized"] += len(cfg_return_pairs)
+            changed = True
+            cond_return_pairs = cfg_return_pairs
+    changed = _prune_duplicate_empty_return_guard_before_cfg_suffix_8616(project, codegen) or changed
     if cond_return_pairs:
         codegen._inertia_empty_return_branch_values_8616 = tuple(int(value) for _cond, value in cond_return_pairs)
     if debug:
         log.warning("[empty-return-branch] stats=%r changed=%s", stats, changed)
     return changed
+
+
+def _single_if_return_8616(stmt) -> tuple[object, object] | None:
+    if not isinstance(stmt, CIfElse):
+        return None
+    cond_nodes = getattr(stmt, "condition_and_nodes", None) or ()
+    if len(cond_nodes) != 1:
+        return None
+    cond, body = cond_nodes[0]
+    if isinstance(body, CStatements):
+        body_statements = list(getattr(body, "statements", ()) or ())
+    elif isinstance(body, CReturn):
+        body_statements = [body]
+    else:
+        return None
+    if len(body_statements) != 1 or not isinstance(body_statements[0], CReturn):
+        return None
+    return cond, getattr(body_statements[0], "retval", None)
+
+
+def _const_return_value_8616(expr) -> int | None:
+    if not isinstance(expr, CConstant):
+        return None
+    try:
+        return int(getattr(expr, "value"))
+    except Exception:
+        return None
+
+
+def _prune_duplicate_empty_return_guard_before_cfg_suffix_8616(project, codegen) -> bool:
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
+    has_materialized_return_chain = any(
+        bool(getattr(codegen, attr, False))
+        for attr in (
+            "_inertia_return_chain_suffix_materialized_8616",
+            "_inertia_return_chain_flattened_8616",
+            "_inertia_return_expr_chain_materialized_8616",
+            "_inertia_decrement_switch_return_materialized_8616",
+        )
+    )
+    values = tuple(int(value) for value in tuple(getattr(codegen, "_inertia_return_chain_materialized_values_8616", ()) or ()))
+    if not has_materialized_return_chain:
+        cfg_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
+        final_value = _last_ax_return_value_8616(project, codegen)
+        if cfg_pairs and final_value is not None:
+            values = tuple(int(value) for _cond, value in cfg_pairs) + (int(final_value),)
+            has_materialized_return_chain = True
+        else:
+            if debug:
+                log.warning("[cfg-return-chain] duplicate-empty prune refused: return chain not materialized")
+            return False
+    if not values:
+        if debug:
+            log.warning("[cfg-return-chain] duplicate-empty prune refused: no values")
+        return False
+    cfunc = getattr(codegen, "cfunc", None)
+    statements_node = getattr(cfunc, "statements", None)
+    statements = list(getattr(statements_node, "statements", ()) or ())
+    if len(statements) <= len(values):
+        if debug:
+            log.warning(
+                "[cfg-return-chain] duplicate-empty prune refused: statements=%d values=%d",
+                len(statements),
+                len(values),
+            )
+        return False
+    for index in range(0, len(statements) - 1):
+        previous = _single_if_return_8616(statements[index])
+        following = _single_if_return_8616(statements[index + 1])
+        if previous is None or following is None:
+            continue
+        previous_cond, previous_retval = previous
+        following_cond, following_retval = following
+        following_value = _const_return_value_8616(following_retval)
+        if previous_retval is not None or following_value not in values:
+            continue
+        try:
+            previous_fp = _expr_fingerprint(previous_cond, project)
+            following_fp = _expr_fingerprint(following_cond, project)
+        except Exception:
+            continue
+        if previous_fp != following_fp:
+            continue
+        del statements[index]
+        codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+        codegen._inertia_return_chain_duplicate_empty_pruned_8616 = True
+        if debug:
+            log.warning("[cfg-return-chain] duplicate-empty pruned adjacent index=%d value=%d", index, following_value)
+        return True
+    chain_index = None
+    for index in range(0, len(statements) - len(values) + 1):
+        matched = True
+        for offset, expected_value in enumerate(values):
+            item = _single_if_return_8616(statements[index + offset])
+            if item is None or _const_return_value_8616(item[1]) != expected_value:
+                matched = False
+                break
+        if matched:
+            chain_index = index
+            break
+    if chain_index is None or chain_index <= 0:
+        if debug:
+            nearby = []
+            for index, stmt in enumerate(statements[: min(len(statements), 12)]):
+                item = _single_if_return_8616(stmt)
+                nearby.append(
+                    (
+                        index,
+                        type(stmt).__name__,
+                        None if item is None else type(item[1]).__name__,
+                        None if item is None else _const_return_value_8616(item[1]),
+                    )
+                )
+            log.warning("[cfg-return-chain] duplicate-empty prune refused: chain_index=%r nearby=%r", chain_index, nearby)
+        return False
+    previous_stmt = statements[chain_index - 1]
+    if isinstance(previous_stmt, CReturn) and getattr(previous_stmt, "retval", None) is None:
+        del statements[chain_index - 1]
+        codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+        codegen._inertia_return_chain_empty_prefix_pruned_8616 = True
+        if debug:
+            log.warning("[cfg-return-chain] empty return prefix pruned before chain index=%d", chain_index)
+        return True
+    previous = _single_if_return_8616(statements[chain_index - 1])
+    first = _single_if_return_8616(statements[chain_index])
+    if previous is None or first is None:
+        if debug:
+            log.warning(
+                "[cfg-return-chain] duplicate-empty prune refused: guard extraction previous=%s first=%s chain_index=%d",
+                previous is not None,
+                first is not None,
+                chain_index,
+            )
+        return False
+    previous_cond, previous_retval = previous
+    first_cond, _first_retval = first
+    if previous_retval is not None:
+        if debug:
+            log.warning("[cfg-return-chain] duplicate-empty prune refused: previous has retval=%r", previous_retval)
+        return False
+    try:
+        previous_fp = _expr_fingerprint(previous_cond, project)
+        first_fp = _expr_fingerprint(first_cond, project)
+        if previous_fp != first_fp:
+            if debug:
+                log.warning(
+                    "[cfg-return-chain] duplicate-empty prune refused: cond mismatch previous=%r first=%r",
+                    previous_fp,
+                    first_fp,
+                )
+            return False
+    except Exception:
+        if debug:
+            log.warning("[cfg-return-chain] duplicate-empty prune refused: cond fingerprint failed", exc_info=True)
+        return False
+    del statements[chain_index - 1]
+    codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+    codegen._inertia_return_chain_duplicate_empty_pruned_8616 = True
+    return True
 
 
 def _return_chain_counts_8616(codegen) -> tuple[int, int]:
@@ -1379,6 +1835,11 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
+            "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
+            _prune_duplicate_empty_return_guard_before_cfg_suffix_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_materialize_stdlib_call_chains_8616",
             _calls._materialize_stdlib_call_chains_8616,
             True,
@@ -1465,6 +1926,11 @@ def _build_decompiler_postprocess_passes():
             _calls._normalize_call_target_names_8616,
             False,
         ),
+        DecompilerPostprocessPassSpec(
+            "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
+            _prune_duplicate_empty_return_guard_before_cfg_suffix_8616,
+            True,
+        ),
     )
 
 
@@ -1495,6 +1961,8 @@ def _wrapper_passes_8616() -> tuple[DecompilerPostprocessPassSpec, ...]:
         "_materialize_callsite_prototypes_8616",
         "_rewrite_decoded_jcc_conditions_after_calls_8616",
         "_materialize_empty_if_return_branches_8616",
+        "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
+        "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
         "_normalize_call_target_names_8616",
         "_normalize_recovered_call_target_names_8616",
     }
