@@ -21,6 +21,8 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from inertia_decompiler import sidecar_metadata, sidecar_parsers
+from inertia_decompiler.rizin_discovery import RizinDiscoveryResult, RizinDiscoveryStatus
+from inertia_decompiler.rizin_evidence import RizinEvidence, RizinEvidenceStatus, RizinFunctionFact
 from inertia_decompiler.direct_addr_failure_family import (
     FailureFamilyState,
     advance_failure_family_state,
@@ -1942,6 +1944,132 @@ def test_rank_exe_function_seeds_uses_recovery_labels_when_visible_catalog_is_em
     assert sidecar_metadata._recovery_code_labels(metadata) == {0x1100: "sig_func"}
     assert recovery_calls["count"] == 1
     assert ranked == []
+
+
+def test_discover_ranked_binary_offsets_auto_prefers_rizin_when_no_sidecar_evidence(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    code = b"\x90" * 0x200
+    binary.write_bytes(code)
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=binary,
+                linked_base=0x1000,
+                max_addr=len(code) - 1,
+            )
+        ),
+    )
+    args = SimpleNamespace(
+        binary=binary,
+        function_discovery_backend="auto",
+        seed_engine="auto",
+        rizin_timeout=1,
+    )
+
+    monkeypatch.setattr(
+        cli_core,
+        "collect_rizin_evidence",
+        lambda *_args, **_kwargs: RizinEvidence(
+            status=RizinEvidenceStatus.OK,
+            elapsed_ms=0.1,
+            detail="ok",
+            functions=(
+                RizinFunctionFact(
+                    addr=0x1200,
+                    size=4,
+                    name="probe",
+                    n_blocks=2,
+                    n_callrefs=0,
+                ),
+            ),
+            xrefs=(),
+            strings=(),
+            symbols=(),
+            stack_vars=(),
+            calling_conventions=(),
+        ),
+    )
+    monkeypatch.setattr(
+        cli_core,
+        "discover_rizin_function_entries",
+        lambda *_args, **_kwargs: RizinDiscoveryResult(
+            RizinDiscoveryStatus.OK,
+            (0x1200,),
+            0.2,
+            "ok",
+        ),
+    )
+    rank_calls = {"count": 0}
+    monkeypatch.setattr(
+        cli_core,
+        "_rank_exe_function_seeds",
+        lambda *_args, **_kwargs: (rank_calls.__setitem__("count", rank_calls["count"] + 1) or [0x9000]),
+    )
+
+    result = cli_core._discover_ranked_binary_offsets(project, args=args)
+
+    assert result == [0x1200]
+    assert rank_calls["count"] == 0
+
+
+def test_discover_ranked_binary_offsets_auto_falls_back_to_angr_when_rizin_unavailable(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    code = b"\x90" * 0x200
+    binary.write_bytes(code)
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=binary,
+                linked_base=0x1000,
+                max_addr=len(code) - 1,
+            )
+        ),
+    )
+    args = SimpleNamespace(
+        binary=binary,
+        function_discovery_backend="auto",
+        seed_engine="auto",
+        rizin_timeout=1,
+    )
+
+    monkeypatch.setattr(
+        cli_core,
+        "collect_rizin_evidence",
+        lambda *_args, **_kwargs: RizinEvidence(
+            status=RizinEvidenceStatus.UNAVAILABLE,
+            elapsed_ms=0.1,
+            detail="unavailable",
+            functions=(),
+            xrefs=(),
+            strings=(),
+            symbols=(),
+            stack_vars=(),
+            calling_conventions=(),
+        ),
+    )
+    monkeypatch.setattr(
+        cli_core,
+        "discover_rizin_function_entries",
+        lambda *_args, **_kwargs: RizinDiscoveryResult(
+            RizinDiscoveryStatus.UNAVAILABLE,
+            (),
+            0.1,
+            "unavailable",
+        ),
+    )
+    rank_calls = {"count": 0}
+    monkeypatch.setattr(
+        cli_core,
+        "_rank_exe_function_seeds",
+        lambda *_args, **_kwargs: (rank_calls.__setitem__("count", rank_calls["count"] + 1) or [0x2000]),
+    )
+
+    result = cli_core._discover_ranked_binary_offsets(project, args=args)
+
+    assert result == [0x2000]
+    assert rank_calls["count"] == 1
 
 
 def test_rank_exe_function_seeds_prefers_bounded_metadata_spans_over_tiny_entry_targets(monkeypatch, tmp_path):
