@@ -857,6 +857,21 @@ def _lookup_callee_function_8616(project, target_addr: int, *, allow_containing:
     return None
 
 
+def _candidate_linear_target_addrs_8616(project, target_addr: int) -> tuple[int, ...]:
+    candidate_addrs = [target_addr]
+    original_delta = getattr(project, "_inertia_original_linear_delta", None)
+    if isinstance(original_delta, int):
+        candidate_addrs.append(target_addr + original_delta)
+        rebased = target_addr - original_delta
+        if rebased >= 0:
+            candidate_addrs.append(rebased)
+    ordered: list[int] = []
+    for addr in candidate_addrs:
+        if isinstance(addr, int) and addr not in ordered:
+            ordered.append(addr)
+    return tuple(ordered)
+
+
 def _sidecar_label_for_target_8616(project, target_addr: int) -> str | None:
     def _impl():
         candidates: list[str] = []
@@ -1272,6 +1287,18 @@ def _call_name_is_unknown_8616(name: str | None) -> bool:
     return name is None or name.startswith("sub_") or name == "CallReturn"
 
 
+def _callee_names_match_8616(left: str | None, right: str | None) -> bool:
+    left_norm = normalize_callee_name_8616(left)
+    right_norm = normalize_callee_name_8616(right)
+    if not isinstance(left_norm, str) or not isinstance(right_norm, str):
+        return False
+    if left_norm == right_norm:
+        return True
+    # MSC/OMF public C symbols commonly carry one leading underscore while the
+    # generated C call expression does not. Treat that decoration as equivalent.
+    return left_norm.lstrip("_") == right_norm.lstrip("_")
+
+
 def _resolve_dirty_virtual_expr_8616(node):
     def _impl():
         dirty = getattr(node, "dirty", None)
@@ -1319,8 +1346,25 @@ def _call_node_matches_summary_8616(project, node, summary) -> bool:
             if isinstance(call_name, str):
                 functions = getattr(getattr(project, "kb", None), "functions", None)
                 lookup = getattr(functions, "function", None)
+                for candidate_addr in _candidate_linear_target_addrs_8616(project, target_addr):
+                    try:
+                        target_function = lookup(addr=candidate_addr, create=False) if callable(lookup) else None
+                    except TypeError:
+                        target_function = None
+                    if _callee_names_match_8616(getattr(target_function, "name", None), call_name):
+                        return True
+                lookup_names = [call_name]
+                undecorated = call_name.lstrip("_")
+                decorated = f"_{undecorated}" if undecorated else None
+                if decorated is not None and decorated not in lookup_names:
+                    lookup_names.append(decorated)
                 try:
-                    named_function = lookup(name=call_name, create=False) if callable(lookup) else None
+                    named_function = None
+                    if callable(lookup):
+                        for lookup_name in lookup_names:
+                            named_function = lookup(name=lookup_name, create=False)
+                            if named_function is not None:
+                                break
                 except TypeError:
                     named_function = None
                 named_addr = getattr(named_function, "addr", None)
@@ -1330,7 +1374,7 @@ def _call_node_matches_summary_8616(project, node, summary) -> bool:
                 _sidecar_label_for_target_8616(project, target_addr),
                 normalize_callee_name_8616(getattr(_lookup_callee_function_8616(project, target_addr), "name", None)),
             ):
-                if isinstance(candidate_name, str) and candidate_name == call_name:
+                if _callee_names_match_8616(candidate_name, call_name):
                     return True
         return False
 
@@ -1349,7 +1393,7 @@ def _source_name_matches_target_8616(project, target_addr: int | None, expected_
         _sidecar_label_for_target_8616(project, target_addr),
         normalize_callee_name_8616(getattr(_lookup_callee_function_8616(project, target_addr), "name", None)),
     ):
-        if isinstance(candidate_name, str) and candidate_name == normalized_expected:
+        if _callee_names_match_8616(candidate_name, normalized_expected):
             return True
     functions = getattr(getattr(project, "kb", None), "functions", None)
     lookup = getattr(functions, "function", None)
@@ -2063,6 +2107,7 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
         ordered_pairs = _ordered_callsite_pairs_8616(
             project=project,
             function=function,
+            root=root,
             call_nodes=call_nodes,
             callsite_addrs=callsite_addrs,
             node_callsite_addr_resolver=_node_callsite_addr,
@@ -2144,8 +2189,80 @@ def _all_function_callsite_addrs_8616(project, function) -> tuple[int, ...]:
     return tuple(sorted(discovered))
 
 
-def _ordered_callsite_pairs_8616(*, project, function, call_nodes, callsite_addrs, node_callsite_addr_resolver):
+def _ordered_callsite_pairs_8616(*, project, function, root, call_nodes, callsite_addrs, node_callsite_addr_resolver):
     def _impl():
+        def _node_contains_target(parent, target_id: int) -> bool:
+            if id(parent) == target_id:
+                return True
+            for child in _iter_c_nodes_deep_8616(parent):
+                if id(child) == target_id:
+                    return True
+            return False
+
+        def _assignment_lhs_stack_offset(node) -> int | None:
+            lhs = getattr(node, "lhs", None)
+            while isinstance(lhs, CTypeCast):
+                lhs = lhs.expr
+            if isinstance(lhs, structured_c.CVariable):
+                variable = getattr(lhs, "variable", None)
+                if isinstance(variable, SimStackVariable):
+                    offset = getattr(variable, "offset", None)
+                    return offset if isinstance(offset, int) else None
+            return None
+
+        def _constant_int_value(node) -> int | None:
+            while isinstance(node, CTypeCast):
+                node = node.expr
+            value = getattr(node, "value", None)
+            if isinstance(value, int):
+                return value & 0xFFFF
+            return None
+
+        def _single_existing_imm_arg(node) -> int | None:
+            args = tuple(getattr(node, "args", ()) or ())
+            if len(args) != 1:
+                return None
+            return _constant_int_value(args[0])
+
+        def _single_summary_imm_arg(summary) -> int | None:
+            sources = getattr(summary, "push_arg_sources", None)
+            if not isinstance(sources, tuple) or len(sources) != 1:
+                return None
+            source = sources[0]
+            if not isinstance(source, tuple) or len(source) < 2:
+                return None
+            if source[0] != "imm" or not isinstance(source[1], int):
+                return None
+            return int(source[1]) & 0xFFFF
+
+        call_return_store_offsets: dict[int, int] = {}
+        for assignment in _iter_c_nodes_deep_8616(root):
+            if not isinstance(assignment, structured_c.CAssignment):
+                continue
+            lhs_offset = _assignment_lhs_stack_offset(assignment)
+            if not isinstance(lhs_offset, int):
+                continue
+            rhs = getattr(assignment, "rhs", None)
+            for node in call_nodes:
+                if _node_contains_target(rhs, id(node)):
+                    call_return_store_offsets[id(node)] = lhs_offset
+
+        def _target_name_for_callsite(callsite_addr: int) -> str | None:
+            try:
+                target_addr = getattr(function, "get_call_target", lambda _addr: None)(callsite_addr)
+            except Exception:
+                target_addr = None
+            if not isinstance(target_addr, int):
+                summary = summarize_x86_16_callsite(function, callsite_addr)
+                target_addr = getattr(summary, "target_addr", None) if summary is not None else None
+            if not isinstance(target_addr, int):
+                return None
+            candidate_func = _lookup_callee_function_8616(project, target_addr)
+            candidate_name = normalize_callee_name_8616(getattr(candidate_func, "name", None))
+            if isinstance(candidate_name, str) and candidate_name:
+                return candidate_name
+            return _sidecar_label_for_target_8616(project, target_addr)
+
         nodes_by_callsite: dict[int, list[CFunctionCall]] = {}
         remaining_nodes: list[CFunctionCall] = []
         for node in call_nodes:
@@ -2195,6 +2312,49 @@ def _ordered_callsite_pairs_8616(*, project, function, call_nodes, callsite_addr
                         if _call_node_matches_summary_8616(project, node, summary):
                             matched_index = idx
                             break
+                if matched_index is None and summary is not None:
+                    destination = getattr(summary, "return_store_destination", None)
+                    if (
+                        isinstance(destination, tuple)
+                        and len(destination) == 2
+                        and destination[0] == "bp"
+                        and isinstance(destination[1], int)
+                    ):
+                        target_name = _target_name_for_callsite(callsite_addr)
+                        for idx, node in enumerate(available_nodes):
+                            if call_return_store_offsets.get(id(node)) != destination[1]:
+                                continue
+                            if isinstance(target_name, str) and not _callee_names_match_8616(
+                                _call_node_name_8616(node), target_name
+                            ):
+                                continue
+                            matched_index = idx
+                            break
+                if matched_index is None:
+                    target_name = _target_name_for_callsite(callsite_addr)
+                    if isinstance(target_name, str) and target_name:
+                        summary_imm_arg = _single_summary_imm_arg(summary)
+                        if summary_imm_arg is not None:
+                            for idx, node in enumerate(available_nodes):
+                                existing_imm_arg = _single_existing_imm_arg(node)
+                                if existing_imm_arg != summary_imm_arg:
+                                    continue
+                                if _callee_names_match_8616(_call_node_name_8616(node), target_name):
+                                    matched_index = idx
+                                    break
+                        for idx, node in enumerate(available_nodes):
+                            if matched_index is not None:
+                                break
+                            existing_imm_arg = _single_existing_imm_arg(node)
+                            if (
+                                summary_imm_arg is not None
+                                and existing_imm_arg is not None
+                                and existing_imm_arg != summary_imm_arg
+                            ):
+                                continue
+                            if _callee_names_match_8616(_call_node_name_8616(node), target_name):
+                                matched_index = idx
+                                break
                 if matched_index is None:
                     still_unmatched_callsites.append(callsite_addr)
                     continue
