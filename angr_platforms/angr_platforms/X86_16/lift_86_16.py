@@ -240,8 +240,12 @@ class Instruction_ANY(Instruction):
                     return ("push_imm16", ops[0].imm & 0xFFFF)
                 if self.cs.mnemonic == "push" and mem:
                     return ("push_mem16", mem)
-            if self.cs.mnemonic == "call" and len(ops) == 1 and ops[0].type == 2:
-                return ("call", ops[0].imm)
+            if self.cs.mnemonic == "call" and len(ops) == 1:
+                if ops[0].type == 2:
+                    return ("call", ops[0].imm)
+                mem = self._bp_mem(ops[0])
+                if mem:
+                    return ("call_mem16", mem)
             if self.cs.mnemonic in {"jmp", *self._SIMPLE_JCC_8616} and len(ops) == 1 and ops[0].type == 2:
                 return (self.cs.mnemonic, ops[0].imm)
             return None
@@ -978,6 +982,15 @@ class Instruction_ANY(Instruction):
                 self.put(sp, "sp")
                 self._stack_store16(sp, ret_addr)
                 self.jump(None, self._const16(target), JumpKind.Call)
+                return
+            if kind == "call_mem16":
+                _, mem_spec = self.simple_semantics
+                target = self._load_mem16(mem_spec)
+                ret_addr = self._const16(self.addr + self.cs.size)
+                sp = self._get_reg16("sp") - self._const16(2)
+                self.put(sp, "sp")
+                self._stack_store16(sp, ret_addr)
+                self.jump(None, target, JumpKind.Call)
                 return
             if kind == "enter":
                 _, frame_size, nesting = self.simple_semantics

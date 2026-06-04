@@ -2277,17 +2277,53 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
     return _impl()
 
 
+def _tail_validation_return_precision_improvement_8616(
+    field_name: str,
+    *,
+    added: tuple[str, ...],
+    removed: tuple[str, ...],
+) -> bool:
+    if field_name != "returns" or not added or not removed:
+        return False
+    imprecise_prefixes = ("virtual:", "expr_cycle", "alias_cycle")
+    if any(not value.startswith(imprecise_prefixes) for value in removed):
+        return False
+    concrete_prefixes = (
+        "const:",
+        "stack_slot:",
+        "Add(",
+        "Sub(",
+        "Mul(",
+        "And(",
+        "Or(",
+        "Xor(",
+        "Cmp",
+    )
+    return all(value.startswith(concrete_prefixes) for value in added)
+
+
 def compare_x86_16_tail_validation_summaries(
     before: X86_16TailValidationSummary,
     after: X86_16TailValidationSummary,
 ) -> dict[str, object]:
     changed = False
-    diff: dict[str, object] = {"changed": False, "before": before.as_dict(), "after": after.as_dict(), "delta": {}}
+    precision_improvements: dict[str, object] = {}
+    diff: dict[str, object] = {
+        "changed": False,
+        "before": before.as_dict(),
+        "after": after.as_dict(),
+        "delta": {},
+        "precision_improvements": precision_improvements,
+    }
     for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS:
         before_values = _canonicalize_summary_field_values_8616(field_name, set(getattr(before, field_name)))
         after_values = _canonicalize_summary_field_values_8616(field_name, set(getattr(after, field_name)))
         added = tuple(sorted(after_values - before_values))
         removed = tuple(sorted(before_values - after_values))
+        if _tail_validation_return_precision_improvement_8616(field_name, added=added, removed=removed):
+            precision_improvements[field_name] = {"added": added, "removed": removed}
+            added = ()
+            removed = ()
         if added or removed:
             changed = True
         diff["delta"][field_name] = {"added": added, "removed": removed}

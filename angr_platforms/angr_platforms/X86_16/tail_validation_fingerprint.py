@@ -10,6 +10,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
     CFunctionCall,
     CIndexedVariable,
     CStatements,
@@ -49,7 +50,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION = 5
+TAIL_VALIDATION_FINGERPRINT_VERSION = 6
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log = logging.getLogger(__name__)
 
@@ -205,7 +206,7 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
             name_map=name_map,
             reg_map=reg_map,
         )
-        resolved_rhs = _acceptable_stack_alias_rhs_8616(rhs)
+        resolved_rhs = _acceptable_validation_expr_rhs_8616(rhs)
         if resolved_rhs is not None and resolved_rhs is not node and not _rhs_references_same_variable_8616(
             resolved_rhs, variable
         ):
@@ -214,7 +215,7 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
             reg = getattr(variable, "reg", None)
             size = getattr(variable, "size", None)
             if isinstance(reg, int) and isinstance(size, int):
-                first_rhs = _acceptable_stack_alias_rhs_8616(first_reg_map.get((reg, size)))
+                first_rhs = _acceptable_validation_expr_rhs_8616(first_reg_map.get((reg, size)))
                 if first_rhs is not None and first_rhs is not node and not _rhs_references_same_variable_8616(
                     first_rhs, variable
                 ):
@@ -224,7 +225,7 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
             # final trivial/non-stack update after their initial widened stack-slot
             # seed is established. Preserve the earliest explicit stack proof for
             # fingerprint canonicalization when the direct map is non-stack noise.
-            first_rhs = _acceptable_stack_alias_rhs_8616(first_name_map.get(name))
+            first_rhs = _acceptable_validation_expr_rhs_8616(first_name_map.get(name))
             if first_rhs is not None and first_rhs is not node and not _rhs_references_same_variable_8616(
                 first_rhs, variable
             ):
@@ -238,7 +239,7 @@ def _validation_assignment_maps_8616(codegen):
     try:
         from .lowering.real_mode_linear import _ensure_assignment_maps_8616
     except Exception as ex:
-        _v_print("assignment map import failed: %s", ex)
+        log.debug("assignment map import failed: %s", ex)
         return None
     try:
         var_id_map, name_map, reg_map, _multi_var, _multi_name, _multi_reg, first_name_map, first_reg_map = (
@@ -267,6 +268,68 @@ def _acceptable_stack_alias_rhs_8616(value):
         return value
     if isinstance(value, CUnaryOp) and value.op in {"Dereference", "Reference"}:
         return value
+    return None
+
+
+def _dirty_virtual_name_8616(node) -> str | None:
+    dirty = getattr(node, "dirty", None)
+    varid = getattr(dirty, "varid", None)
+    if isinstance(varid, int):
+        return f"vvar_{varid}"
+    tmp_idx = getattr(dirty, "tmp_idx", None)
+    if isinstance(tmp_idx, int):
+        return f"tmp_{tmp_idx}"
+    return None
+
+
+def _acceptable_validation_expr_rhs_8616(value):
+    value = _strip_validation_casts(value)
+    if isinstance(value, (CConstant, CVariable, CIndexedVariable, CDirtyExpression)):
+        return value
+    if isinstance(value, CUnaryOp):
+        if value.op in {"Dereference", "Reference"}:
+            return value
+        operand = _acceptable_validation_expr_rhs_8616(value.operand)
+        return value if operand is not None else None
+    if isinstance(value, CBinaryOp):
+        lhs = _acceptable_validation_expr_rhs_8616(value.lhs)
+        rhs = _acceptable_validation_expr_rhs_8616(value.rhs)
+        return value if lhs is not None and rhs is not None else None
+    if isinstance(value, CITE):
+        cond = _acceptable_validation_expr_rhs_8616(value.cond)
+        iftrue = _acceptable_validation_expr_rhs_8616(value.iftrue)
+        iffalse = _acceptable_validation_expr_rhs_8616(value.iffalse)
+        return value if cond is not None and iftrue is not None and iffalse is not None else None
+    return None
+
+
+def _resolve_validation_dirty_alias_expr_8616(node):
+    codegen = getattr(node, "codegen", None)
+    if codegen is None:
+        return None
+    name = _dirty_virtual_name_8616(node)
+    if not isinstance(name, str):
+        return None
+    assignment_maps = _validation_assignment_maps_8616(codegen)
+    if assignment_maps is None:
+        return None
+    _var_id_map, name_map, _reg_map, first_name_map, _first_reg_map = assignment_maps
+    rhs = name_map.get(name)
+    resolved = _acceptable_validation_expr_rhs_8616(rhs)
+    if os.environ.get("INERTIA_DEBUG_TAIL_DIRTY_ALIAS"):
+        log.warning(
+            "[tail-dirty-alias] name=%r rhs=%r resolved=%r first_rhs=%r",
+            name,
+            rhs,
+            resolved,
+            first_name_map.get(name),
+        )
+    if resolved is not None and resolved is not node:
+        return resolved
+    first_rhs = first_name_map.get(name)
+    resolved = _acceptable_validation_expr_rhs_8616(first_rhs)
+    if resolved is not None and resolved is not node:
+        return resolved
     return None
 
 
@@ -1081,6 +1144,14 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
         if bool_projection is not None:
             return bool_projection
         node = _normalize_zero_flag_comparison_8616(node)
+        if isinstance(node, CDirtyExpression):
+            resolved_dirty = _resolve_validation_dirty_alias_expr_8616(node)
+            if resolved_dirty is not None and resolved_dirty is not node:
+                return _expr_fingerprint(resolved_dirty, project, _seen)
+            dirty_name = _dirty_virtual_name_8616(node)
+            if isinstance(dirty_name, str):
+                return f"virtual:{dirty_name}"
+            return "virtual:unknown"
         if isinstance(node, CConstant):
             return f"const:{node.value!r}"
         if isinstance(node, CVariable):

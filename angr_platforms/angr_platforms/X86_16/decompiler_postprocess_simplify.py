@@ -8,6 +8,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
     CStatements,
     CTypeCast,
     CUnaryOp,
@@ -76,6 +77,228 @@ __all__ = [
 
 def describe_x86_16_projection_cleanup_rules() -> tuple[tuple[str, str], ...]:
     return PROJECTION_CLEANUP_RULES
+
+
+def _virtual_expr_key_8616(node) -> tuple[str, object] | None:
+    dirty = getattr(node, "dirty", None)
+    if isinstance(node, CDirtyExpression) and dirty is not None:
+        varid = getattr(dirty, "varid", None)
+        if isinstance(varid, int):
+            return ("dirty-varid", varid)
+        tmp_idx = getattr(dirty, "tmp_idx", None)
+        if isinstance(tmp_idx, int):
+            return ("dirty-tmp", tmp_idx)
+    if isinstance(node, CVariable):
+        variable = getattr(node, "variable", None)
+        name = getattr(node, "name", None) or getattr(variable, "name", None)
+        if isinstance(name, str) and name.startswith(("tmp_", "vvar_", "ir_")):
+            return ("virtual-name", name)
+    return None
+
+
+def _debug_c_repr_8616(node) -> str:
+    try:
+        return "".join(str(text) for text, _obj in node.c_repr_chunks(asexpr=True))
+    except Exception:
+        return repr(node)
+
+
+def _pure_virtual_inline_rhs_8616(expr) -> bool:
+    if isinstance(expr, (CConstant, CVariable, CDirtyExpression)):
+        return True
+    if isinstance(expr, CTypeCast):
+        return _pure_virtual_inline_rhs_8616(expr.expr)
+    if isinstance(expr, CUnaryOp):
+        if expr.op in {"Dereference", "Reference"}:
+            return False
+        return _pure_virtual_inline_rhs_8616(expr.operand)
+    if isinstance(expr, CBinaryOp):
+        return _pure_virtual_inline_rhs_8616(expr.lhs) and _pure_virtual_inline_rhs_8616(expr.rhs)
+    if isinstance(expr, CITE):
+        return (
+            _pure_virtual_inline_rhs_8616(expr.cond)
+            and _pure_virtual_inline_rhs_8616(expr.iftrue)
+            and _pure_virtual_inline_rhs_8616(expr.iffalse)
+        )
+    return False
+
+
+def _expr_contains_virtual_key_8616(node, target_key: tuple[str, object]) -> bool:
+    if node is None:
+        return False
+    if _virtual_expr_key_8616(node) == target_key:
+        return True
+    for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
+        child = getattr(node, attr, None)
+        if _structured_codegen_node_8616(child) and _expr_contains_virtual_key_8616(child, target_key):
+            return True
+    for attr in ("statements", "operands", "args"):
+        seq = getattr(node, attr, None)
+        if not seq:
+            continue
+        for item in seq:
+            if _structured_codegen_node_8616(item) and _expr_contains_virtual_key_8616(item, target_key):
+                return True
+            if isinstance(item, tuple):
+                for subitem in item:
+                    if _structured_codegen_node_8616(subitem) and _expr_contains_virtual_key_8616(subitem, target_key):
+                        return True
+    pairs = getattr(node, "condition_and_nodes", None)
+    if pairs:
+        for cond, body in pairs:
+            if _structured_codegen_node_8616(cond) and _expr_contains_virtual_key_8616(cond, target_key):
+                return True
+            if _structured_codegen_node_8616(body) and _expr_contains_virtual_key_8616(body, target_key):
+                return True
+    return False
+
+
+def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
+    """Inline pure SSA-like virtual definitions by structural AST evidence.
+
+    This consumes CDirtyExpression/CVariable virtual definitions that are unique
+    in the function. It does not inspect rendered C text and refuses any RHS
+    with memory/call/address side effects.
+    """
+
+    cfunc = getattr(codegen, "cfunc", None)
+    root = getattr(cfunc, "statements", None)
+    if root is None:
+        return False
+
+    def _walk(node):
+        if node is None:
+            return
+        yield node
+        for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
+            child = getattr(node, attr, None)
+            if _structured_codegen_node_8616(child):
+                yield from _walk(child)
+        for attr in ("statements", "operands", "args"):
+            seq = getattr(node, attr, None)
+            if not seq:
+                continue
+            for item in seq:
+                if _structured_codegen_node_8616(item):
+                    yield from _walk(item)
+                elif isinstance(item, tuple):
+                    for subitem in item:
+                        if _structured_codegen_node_8616(subitem):
+                            yield from _walk(subitem)
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            for cond, body in pairs:
+                if _structured_codegen_node_8616(cond):
+                    yield from _walk(cond)
+                if _structured_codegen_node_8616(body):
+                    yield from _walk(body)
+
+    definitions: dict[tuple[str, object], object | None] = {}
+    candidate_count = 0
+    refused_count = 0
+    for node in _walk(root):
+        if not isinstance(node, CAssignment):
+            continue
+        key = _virtual_expr_key_8616(getattr(node, "lhs", None))
+        if key is None:
+            continue
+        candidate_count += 1
+        rhs = getattr(node, "rhs", None)
+        if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
+            _log.warning("[virtual-inline] def key=%r lhs=%s rhs=%s", key, _debug_c_repr_8616(node.lhs), _debug_c_repr_8616(rhs))
+        if not _pure_virtual_inline_rhs_8616(rhs) or _expr_contains_virtual_key_8616(rhs, key):
+            definitions[key] = None
+            refused_count += 1
+            continue
+        if key in definitions:
+            definitions[key] = None
+            refused_count += 1
+            continue
+        definitions[key] = rhs
+
+    replacements = {key: rhs for key, rhs in definitions.items() if rhs is not None}
+    if not replacements:
+        if candidate_count:
+            codegen._inertia_virtual_inline_candidates = int(
+                getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0
+            ) + candidate_count
+            codegen._inertia_virtual_inline_refused = int(
+                getattr(codegen, "_inertia_virtual_inline_refused", 0) or 0
+            ) + refused_count
+        return False
+
+    changed = False
+
+    def _transform(node, *, assignment_lhs: bool = False):
+        nonlocal changed
+        if node is None:
+            return node
+        if not assignment_lhs:
+            key = _virtual_expr_key_8616(node)
+            replacement = replacements.get(key)
+            if replacement is not None:
+                if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
+                    _log.warning(
+                        "[virtual-inline] replace key=%r expr=%s replacement=%s",
+                        key,
+                        _debug_c_repr_8616(node),
+                        _debug_c_repr_8616(replacement),
+                    )
+                changed = True
+                return replacement
+            if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE") and key is not None:
+                _log.warning("[virtual-inline] no replacement key=%r expr=%s", key, _debug_c_repr_8616(node))
+        for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
+            child = getattr(node, attr, None)
+            if not _structured_codegen_node_8616(child):
+                continue
+            new_child = _transform(
+                child,
+                assignment_lhs=attr == "lhs" and isinstance(node, CAssignment),
+            )
+            if new_child is not child:
+                setattr(node, attr, new_child)
+        for attr in ("statements", "operands", "args"):
+            seq = getattr(node, attr, None)
+            if not seq:
+                continue
+            new_seq = []
+            seq_changed = False
+            for item in seq:
+                if _structured_codegen_node_8616(item):
+                    new_item = _transform(item)
+                    new_seq.append(new_item)
+                    seq_changed |= new_item is not item
+                else:
+                    new_seq.append(item)
+            if seq_changed:
+                setattr(node, attr, new_seq)
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            new_pairs = []
+            pair_changed = False
+            for cond, body in pairs:
+                new_cond = _transform(cond) if _structured_codegen_node_8616(cond) else cond
+                new_body = _transform(body) if _structured_codegen_node_8616(body) else body
+                pair_changed |= new_cond is not cond or new_body is not body
+                new_pairs.append((new_cond, new_body))
+            if pair_changed:
+                setattr(node, "condition_and_nodes", new_pairs)
+        return node
+
+    _transform(root)
+
+    if changed:
+        codegen._inertia_virtual_inline_candidates = int(
+            getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0
+        ) + candidate_count
+        codegen._inertia_virtual_inline_materialized = int(
+            getattr(codegen, "_inertia_virtual_inline_materialized", 0) or 0
+        ) + len(replacements)
+        codegen._inertia_virtual_inline_refused = int(
+            getattr(codegen, "_inertia_virtual_inline_refused", 0) or 0
+        ) + refused_count
+    return changed
 
 
 def _simplify_boolean_cites_8616(codegen) -> bool:
@@ -657,6 +880,10 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
     for _ in range(3):
         if not _replace_c_children_8616(root, transform):
+            break
+        changed = True
+    for _ in range(4):
+        if not _inline_single_assignment_virtual_expressions_8616(codegen):
             break
         changed = True
     if _materialize_word_or_update_statements_8616(root):

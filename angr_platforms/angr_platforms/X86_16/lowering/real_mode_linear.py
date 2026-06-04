@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Typed helpers for recognizing real-mode segment:offset linearizations.
 
 The x86-16 lifter represents a real-mode memory address as
@@ -9,6 +7,9 @@ consume a typed SS address fact instead of re-learning the arithmetic shape in
 late cleanup code.
 """
 
+from __future__ import annotations
+
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -16,12 +17,21 @@ from dataclasses import dataclass
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeInt, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
+from capstone.x86_const import X86_INS_MOV, X86_INS_POP, X86_INS_PUSH, X86_INS_RET, X86_REG_BP, X86_REG_SP
 
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
-from .stack_lowering_from_facts import _canonical_stack_offset_8616
-from .stack_lowering_from_facts import _stack_object_name
+from .stack_lowering_from_facts import _canonical_stack_offset_8616, _stack_object_name
 
 _SEGMENT_REGISTER_NAMES_8616 = {"cs", "ds", "es", "ss"}
+log = logging.getLogger(__name__)
+
+
+def _dirty_reg_offset_8616(dirty) -> int | None:
+    for attr in ("reg", "reg_offset", "parameter_reg_offset"):
+        value = getattr(dirty, attr, None)
+        if isinstance(value, int):
+            return value
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +89,7 @@ def _is_stack_base_placeholder_8616(node) -> bool:
     return isinstance(node, structured_c.CFakeVariable) and getattr(node, "name", None) == "stack_base"
 
 
-def _segment_base_name_8616(node, project) -> str | None:
+def _segment_base_name_8616(node, project, codegen=None) -> str | None:
     """Return the segment register name for ``seg << 4`` or ``seg * 16``.
 
     If the segment term is a temporary name (for example ``vvar_*``), resolve
@@ -87,7 +97,7 @@ def _segment_base_name_8616(node, project) -> str | None:
     still avoiding speculative text-driven matching.
     """
 
-    return _segment_base_name_8616_impl(node, project, None, set())
+    return _segment_base_name_8616_impl(node, project, codegen, set())
 
 
 def _segment_base_name_8616_impl(
@@ -103,6 +113,21 @@ def _segment_base_name_8616_impl(
     seen.add(node_id)
 
     if not isinstance(node, structured_c.CBinaryOp):
+        dirty = getattr(node, "dirty", None)
+        if dirty is not None:
+            reg = _dirty_reg_offset_8616(dirty)
+            if isinstance(reg, int):
+                reg_name = getattr(project.arch, "register_names", {}).get(reg)
+                if isinstance(reg_name, str) and reg_name in _SEGMENT_REGISTER_NAMES_8616:
+                    return reg_name
+            dirty_name = getattr(dirty, "name", None)
+            varid = getattr(dirty, "varid", None)
+            if isinstance(varid, int):
+                dirty_name = f"vvar_{varid}"
+            if isinstance(dirty_name, str) and dirty_name.startswith(("vvar_", "tmp_", "ir_")) and codegen is not None:
+                rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, dirty_name)
+                if rhs is not None:
+                    return _segment_base_name_8616_impl(rhs, project, codegen, seen)
         if isinstance(node, structured_c.CVariable):
             variable = getattr(node, "variable", None)
             if isinstance(variable, SimRegisterVariable):
@@ -120,9 +145,26 @@ def _segment_base_name_8616_impl(
 
     expected_scale = 4 if node.op == "Shl" else 16 if node.op == "Mul" else None
     if expected_scale is None:
+        if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+            log.warning(
+                "[ss-linear-lowering] segment-base non-scale op=%r expr=%s",
+                getattr(node, "op", None),
+                _debug_c_repr_8616(node),
+            )
         return None
     for maybe_seg, maybe_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
-        if _constant_value_8616(maybe_scale) != expected_scale:
+        scale_value = _constant_value_8616(maybe_scale)
+        if scale_value != expected_scale:
+            if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+                log.warning(
+                    "[ss-linear-lowering] segment-base scale mismatch op=%r expected=%r got=%r seg=%s scale=%s expr=%s",
+                    node.op,
+                    expected_scale,
+                    scale_value,
+                    _debug_c_repr_8616(maybe_seg),
+                    _debug_c_repr_8616(maybe_scale),
+                    _debug_c_repr_8616(node),
+                )
             continue
         maybe_seg = _strip_casts_8616(maybe_seg)
         segment_name = _segment_base_name_8616_impl(maybe_seg, project, codegen, seen)
@@ -180,7 +222,11 @@ def _flatten_signed_terms_8616(
     return _impl()
 
 
-def _decompose_linear_global_terms_8616(node, project) -> tuple[str | None, int, tuple[tuple[int, object], ...]] | None:
+def _decompose_linear_global_terms_8616(
+    node,
+    project,
+    codegen=None,
+) -> tuple[str | None, int, tuple[tuple[int, object], ...]] | None:
     segment_name: str | None = None
     displacement = 0
     residual_terms: list[tuple[int, object]] = []
@@ -189,7 +235,7 @@ def _decompose_linear_global_terms_8616(node, project) -> tuple[str | None, int,
     if terms is None:
         return None
     for sign, term in terms:
-        seg = _segment_base_name_8616(term, project)
+        seg = _segment_base_name_8616(term, project, codegen=codegen)
         if seg is not None:
             if sign != 1 or segment_name is not None:
                 return None
@@ -328,6 +374,19 @@ def _build_assignment_maps_8616(codegen):
             if not isinstance(lhs, structured_c.CVariable):
                 # CDirtyExpression lhs — record via dirty.name / dirty.varid
                 dirty_lhs = getattr(lhs, "dirty", None) if lhs is not None else None
+                if dirty_lhs is not None and os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+                    log.warning(
+                        "[ss-linear-lowering] assignment-map dirty lhs text=%s varid=%r tmp_idx=%r reg_offset=%r variable_offset=%r category=%r was_reg=%r was_tmp=%r rhs=%s",
+                        _debug_c_repr_8616(lhs),
+                        getattr(dirty_lhs, "varid", None),
+                        getattr(dirty_lhs, "tmp_idx", None),
+                        getattr(dirty_lhs, "reg_offset", None),
+                        getattr(dirty_lhs, "variable_offset", None),
+                        getattr(dirty_lhs, "category", None),
+                        getattr(dirty_lhs, "was_reg", None),
+                        getattr(dirty_lhs, "was_tmp", None),
+                        _debug_c_repr_8616(rhs),
+                    )
                 dirty_name = getattr(dirty_lhs, "name", None)
                 dirty_varid = getattr(dirty_lhs, "varid", None)
                 if isinstance(dirty_name, str):
@@ -551,7 +610,7 @@ def _stack_pointer_carrier_offset_8616(
             reg = getattr(variable, "reg", None)
             size = getattr(variable, "size", None)
         else:
-            reg = getattr(dirty, "reg", None)
+            reg = _dirty_reg_offset_8616(dirty)
             bits = getattr(dirty, "bits", None)
             size = (bits // 8) if isinstance(bits, int) else None
             varid = getattr(dirty, "varid", None)
@@ -570,6 +629,8 @@ def _stack_pointer_carrier_offset_8616(
         sp_reg, sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
         if not (isinstance(sp_reg, int) and reg == sp_reg and (size is None or size == sp_size)):
             return None
+        if getattr(codegen, "_inertia_allow_direct_sp_for_callee_save_spill", False):
+            return 0
         facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}
         if not facts:
             return None
@@ -726,7 +787,7 @@ def _resolve_stack_offset_from_dirty_8616(node, project, codegen, seen: set[int]
     carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
     if carrier_offset is not None:
         return carrier_offset
-    dirty_reg = getattr(dirty, "reg", None)
+    dirty_reg = _dirty_reg_offset_8616(dirty)
     bp_reg, _bp_size = getattr(getattr(project, "arch", None), "registers", {}).get("bp", (None, None))
     if isinstance(dirty_reg, int) and isinstance(bp_reg, int) and dirty_reg == bp_reg:
         return 0
@@ -858,8 +919,19 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
 
 def _log_refusal_8616(codegen, kind: str, /, **details: object) -> None:
     refusals = getattr(codegen, "_inertia_ss_lowering_refusal_log", None)
+    normalized = {k: str(v) for k, v in details.items()}
     if isinstance(refusals, list):
-        refusals.append({"kind": kind, **{k: str(v) for k, v in details.items()}})
+        refusals.append({"kind": kind, **normalized})
+    if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+        log.warning("[ss-linear-lowering] refusal kind=%s details=%r", kind, normalized)
+
+
+def _debug_c_repr_8616(node) -> str:
+    try:
+        chunks = node.c_repr_chunks(asexpr=True)
+        return "".join(str(text) for text, _obj in chunks)
+    except Exception:
+        return repr(node)
 
 
 def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealModeLinearStackAccess8616 | None:
@@ -878,7 +950,7 @@ def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealMode
         if terms is None:
             return None
         for sign, term in terms:
-            seg = _segment_base_name_8616(term, project)
+            seg = _segment_base_name_8616(term, project, codegen=codegen)
             if seg is not None:
                 if sign != 1 or segment_name is not None:
                     return None
@@ -900,7 +972,18 @@ def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealMode
             )
 
         if segment_name != "ss" or len(offset_terms) > 1:
-            _log_refusal_8616(codegen, "segment_or_terms", segment=segment_name, terms=len(offset_terms))
+            if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+                _log_refusal_8616(
+                    codegen,
+                    "segment_or_terms",
+                    segment=segment_name,
+                    terms=len(offset_terms),
+                    operand=repr(node.operand),
+                    offset_term_types=tuple(type(term).__name__ for term in offset_terms),
+                    offset_terms=tuple(_debug_c_repr_8616(term) for term in offset_terms),
+                )
+            else:
+                _log_refusal_8616(codegen, "segment_or_terms", segment=segment_name, terms=len(offset_terms))
             return None
 
         if len(offset_terms) == 0:
@@ -939,7 +1022,7 @@ def match_stable_ds_es_linear_global_access_8616(node, project, codegen) -> Real
         if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
             return None
 
-        decomposed = _decompose_linear_global_terms_8616(node.operand, project)
+        decomposed = _decompose_linear_global_terms_8616(node.operand, project, codegen=codegen)
         if decomposed is None:
             return None
         segment_name, displacement, residual_terms = decomposed
@@ -1005,6 +1088,301 @@ def _address_projection_term_is_safe_8616(node) -> bool:
     return True
 
 
+def _return_register_virtual_name_8616(node, project) -> str | None:
+    ax_reg, _ax_size = getattr(getattr(project, "arch", None), "registers", {}).get("ax", (None, None))
+    pending = [_strip_casts_8616(node)]
+    seen: set[int] = set()
+    while pending:
+        current = _strip_casts_8616(pending.pop())
+        if current is None:
+            continue
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+        dirty = getattr(current, "dirty", None)
+        if dirty is not None:
+            reg = _dirty_reg_offset_8616(dirty)
+            varid = getattr(dirty, "varid", None)
+            if isinstance(ax_reg, int) and reg == ax_reg and isinstance(varid, int):
+                return f"vvar_{varid}"
+        if isinstance(current, structured_c.CVariable):
+            variable = getattr(current, "variable", None)
+            if isinstance(variable, SimRegisterVariable):
+                reg = getattr(variable, "reg", None)
+                name = getattr(current, "name", None) or getattr(variable, "name", None)
+                if isinstance(ax_reg, int) and reg == ax_reg and isinstance(name, str) and name.startswith("vvar_"):
+                    return name
+        for attr in ("lhs", "rhs", "operand", "expr", "cond", "iftrue", "iffalse"):
+            child = getattr(current, attr, None)
+            if child is not None:
+                pending.append(child)
+        for attr in ("operands", "args"):
+            seq = getattr(current, attr, None)
+            if seq:
+                pending.extend(item for item in seq if item is not None)
+    return None
+
+
+def _return_rhs_is_safe_8616(expr) -> bool:
+    expr = _strip_casts_8616(expr)
+    if isinstance(expr, (structured_c.CConstant, structured_c.CVariable, structured_c.CDirtyExpression)):
+        return True
+    if isinstance(expr, structured_c.CTypeCast):
+        return _return_rhs_is_safe_8616(expr.expr)
+    if isinstance(expr, structured_c.CUnaryOp):
+        return expr.op != "Dereference" and _return_rhs_is_safe_8616(expr.operand)
+    if isinstance(expr, structured_c.CBinaryOp):
+        return _return_rhs_is_safe_8616(expr.lhs) and _return_rhs_is_safe_8616(expr.rhs)
+    return False
+
+
+def _materialize_return_register_assignments_8616(codegen, project) -> bool:
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if root is None:
+        return False
+    changed = False
+    stack = [root]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        node_id = id(node)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        if isinstance(node, structured_c.CReturn):
+            retval = getattr(node, "retval", None)
+            virtual_name = _return_register_virtual_name_8616(retval, project)
+            if virtual_name is not None:
+                rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, virtual_name)
+                if rhs is not None and _return_rhs_is_safe_8616(rhs):
+                    node.retval = rhs
+                    changed = True
+                    codegen._inertia_return_register_materialized_count = int(
+                        getattr(codegen, "_inertia_return_register_materialized_count", 0) or 0
+                    ) + 1
+                    continue
+        for attr in ("statements", "body", "else_node", "condition_and_nodes", "condition", "init", "iteration"):
+            value = getattr(node, attr, None)
+            if value is None:
+                continue
+            if isinstance(value, list | tuple):
+                for item in reversed(tuple(value)):
+                    if isinstance(item, tuple):
+                        stack.extend(reversed(item))
+                    else:
+                        stack.append(item)
+            else:
+                stack.append(value)
+    return changed
+
+
+def _op_reg_id_8616(insn, index: int) -> int | None:
+    operands = getattr(insn, "operands", None)
+    if operands is None or len(operands) <= index:
+        return None
+    operand = operands[index]
+    if getattr(operand, "type", None) != 1:
+        return None
+    reg = getattr(operand, "reg", None)
+    return int(reg) if isinstance(reg, int) else None
+
+
+def _is_mov_sp_bp_8616(insn) -> bool:
+    if getattr(insn, "id", None) != X86_INS_MOV:
+        return False
+    return _op_reg_id_8616(insn, 0) == X86_REG_SP and _op_reg_id_8616(insn, 1) == X86_REG_BP
+
+
+def _decode_function_insns_at_8616(project, function_addr: int, *, limit: int = 0x100) -> tuple:
+    try:
+        code = bytes(project.loader.memory.load(function_addr, limit))
+        capstone = project.arch.capstone
+        previous_detail = getattr(capstone, "detail", False)
+        try:
+            capstone.detail = True
+            insns = []
+            for insn in capstone.disasm(code, function_addr):
+                insns.append(insn)
+                if getattr(insn, "id", None) == X86_INS_RET:
+                    break
+            return tuple(insns) if any(getattr(insn, "id", None) == X86_INS_RET for insn in insns) else ()
+        finally:
+            capstone.detail = previous_detail
+    except Exception:
+        return ()
+
+
+def _decode_function_insns_8616(project, function_addr: int, *, limit: int = 0x100) -> tuple:
+    insns = _decode_function_insns_at_8616(project, function_addr, limit=limit)
+    if insns:
+        return insns
+    delta = getattr(project, "_inertia_original_linear_delta", None)
+    if isinstance(delta, int):
+        return _decode_function_insns_at_8616(project, function_addr + delta, limit=limit)
+    return ()
+
+
+def _callee_saved_register_names_from_frame_evidence_8616(project, function_addr: int) -> frozenset[str]:
+    insns = _decode_function_insns_8616(project, function_addr)
+    if not insns:
+        return frozenset()
+    callee_saved = {"bx", "si", "di"}
+    pushed: list[str] = []
+    for insn in insns:
+        if getattr(insn, "id", None) == X86_INS_PUSH:
+            reg_id = _op_reg_id_8616(insn, 0)
+            if isinstance(reg_id, int):
+                reg_name = insn.reg_name(reg_id)
+                if reg_name in callee_saved:
+                    pushed.append(reg_name)
+        if getattr(insn, "id", None) == X86_INS_RET:
+            break
+    if not pushed:
+        return frozenset()
+
+    ret_index = next((idx for idx, insn in enumerate(insns) if getattr(insn, "id", None) == X86_INS_RET), None)
+    if ret_index is None:
+        return frozenset()
+    restored: list[str] = []
+    scan = ret_index - 1
+    while scan >= 0:
+        insn = insns[scan]
+        insn_id = getattr(insn, "id", None)
+        if insn_id == X86_INS_POP:
+            reg_id = _op_reg_id_8616(insn, 0)
+            if reg_id == X86_REG_BP:
+                scan -= 1
+                continue
+            if isinstance(reg_id, int):
+                reg_name = insn.reg_name(reg_id)
+                if reg_name in callee_saved:
+                    restored.append(reg_name)
+                    scan -= 1
+                    continue
+        if _is_mov_sp_bp_8616(insn):
+            scan -= 1
+            continue
+        break
+    if not restored:
+        return frozenset()
+    return frozenset(set(pushed) & set(restored))
+
+
+def _expr_register_name_8616(node, project) -> str | None:
+    node = _strip_casts_8616(node)
+    dirty = getattr(node, "dirty", None)
+    reg_offset = _dirty_reg_offset_8616(dirty) if dirty is not None else None
+    if reg_offset is None and isinstance(node, structured_c.CVariable):
+        variable = getattr(node, "variable", None)
+        if isinstance(variable, SimRegisterVariable):
+            reg_offset = getattr(variable, "reg", None)
+    if not isinstance(reg_offset, int):
+        return None
+    reg_name = getattr(project.arch, "register_names", {}).get(reg_offset)
+    return reg_name.lower() if isinstance(reg_name, str) else None
+
+
+def _remove_callee_saved_stack_spills_8616(codegen, project) -> bool:
+    function_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    if not isinstance(function_addr, int):
+        return False
+    saved_regs = _callee_saved_register_names_from_frame_evidence_8616(project, function_addr)
+    if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
+        log.warning("[callee-save-prune] func=%#x saved_regs=%r", function_addr, sorted(saved_regs))
+    if not saved_regs:
+        return False
+    stats = getattr(codegen, "_inertia_callee_saved_spill_prune_stats", None)
+    if not isinstance(stats, dict):
+        stats = {"candidates": 0, "pruned": 0, "refused": 0}
+        codegen._inertia_callee_saved_spill_prune_stats = stats
+
+    def is_prunable(stmt) -> bool:
+        if not isinstance(stmt, structured_c.CAssignment):
+            return False
+        lhs = _strip_casts_8616(getattr(stmt, "lhs", None))
+        if not isinstance(lhs, structured_c.CUnaryOp) or lhs.op != "Dereference":
+            return False
+        previous_allow_sp = getattr(codegen, "_inertia_allow_direct_sp_for_callee_save_spill", False)
+        previous_offset_cache = getattr(codegen, "_inertia_stack_offset_cache", None)
+        codegen._inertia_allow_direct_sp_for_callee_save_spill = True
+        codegen._inertia_stack_offset_cache = None
+        try:
+            access = match_stable_ss_linear_stack_access_8616(lhs, project, codegen)
+        finally:
+            codegen._inertia_allow_direct_sp_for_callee_save_spill = previous_allow_sp
+            codegen._inertia_stack_offset_cache = previous_offset_cache
+        if access is None:
+            if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
+                log.warning("[callee-save-prune] refuse no-ss-access lhs=%s", _debug_c_repr_8616(lhs))
+            return False
+        if not isinstance(access.displacement, int) or access.displacement >= 0:
+            if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
+                log.warning(
+                    "[callee-save-prune] refuse displacement=%r lhs=%s",
+                    getattr(access, "displacement", None),
+                    _debug_c_repr_8616(lhs),
+                )
+            return False
+        rhs_reg = _expr_register_name_8616(getattr(stmt, "rhs", None), project)
+        if rhs_reg not in saved_regs:
+            stats["refused"] = int(stats.get("refused", 0) or 0) + 1
+            if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
+                log.warning(
+                    "[callee-save-prune] refuse rhs_reg=%r saved=%r rhs=%s",
+                    rhs_reg,
+                    sorted(saved_regs),
+                    _debug_c_repr_8616(getattr(stmt, "rhs", None)),
+                )
+            return False
+        stats["candidates"] = int(stats.get("candidates", 0) or 0) + 1
+        if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
+            log.warning(
+                "[callee-save-prune] prune displacement=%r rhs_reg=%s stmt=%s",
+                access.displacement,
+                rhs_reg,
+                _debug_c_repr_8616(stmt),
+            )
+        return True
+
+    changed = False
+
+    def rewrite_statement_list(statements: list) -> None:
+        nonlocal changed
+        kept = []
+        for stmt in statements:
+            if is_prunable(stmt):
+                stats["pruned"] = int(stats.get("pruned", 0) or 0) + 1
+                changed = True
+                continue
+            kept.append(stmt)
+        if len(kept) != len(statements):
+            statements[:] = kept
+        for stmt in tuple(kept):
+            for attr in ("statements", "body", "else_node"):
+                value = getattr(stmt, attr, None)
+                if isinstance(value, structured_c.CStatements):
+                    rewrite_statement_list(value.statements)
+                elif isinstance(value, list):
+                    rewrite_statement_list(value)
+            condition_nodes = getattr(stmt, "condition_and_nodes", None)
+            if isinstance(condition_nodes, list | tuple):
+                for item in condition_nodes:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        body = item[1]
+                        if isinstance(body, structured_c.CStatements):
+                            rewrite_statement_list(body.statements)
+
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if isinstance(root, structured_c.CStatements):
+        rewrite_statement_list(root.statements)
+    elif isinstance(root, list):
+        rewrite_statement_list(root)
+    return changed
+
+
 def match_stable_ds_es_linear_global_address_8616(node, project, codegen) -> RealModeLinearGlobalAddress8616 | None:
     """Match an address-valued ``(ds << 4) + base + projection`` expression."""
 
@@ -1012,7 +1390,7 @@ def match_stable_ds_es_linear_global_address_8616(node, project, codegen) -> Rea
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
         return None
 
-    decomposed = _decompose_linear_global_terms_8616(node, project)
+    decomposed = _decompose_linear_global_terms_8616(node, project, codegen=codegen)
     if decomposed is None:
         return None
     segment_name, displacement, residual_terms = decomposed
@@ -1207,6 +1585,10 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
 
     if replace_children(root):
         changed = True
+    if _remove_callee_saved_stack_spills_8616(codegen, project):
+        changed = True
+    if _materialize_return_register_assignments_8616(codegen, project):
+        changed = True
     return changed
 
 
@@ -1358,6 +1740,8 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
         root = new_root
         changed = True
     if replace_children(root):
+        changed = True
+    if _materialize_return_register_assignments_8616(codegen, project):
         changed = True
     return changed
 

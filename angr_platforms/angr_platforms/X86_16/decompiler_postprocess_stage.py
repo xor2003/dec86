@@ -1612,6 +1612,7 @@ def _restore_codegen_cfunc(codegen, snapshot) -> bool:
     for node in _iter_c_nodes_deep_8616(codegen.cfunc):
         with contextlib.suppress(Exception):
             setattr(node, "codegen", codegen)
+    _invalidate_tail_validation_derived_caches_8616(codegen)
     return True
 
 
@@ -1637,7 +1638,18 @@ def _deepcopy_cfunc_for_validation_8616(cfunc):
         previous = dispatch.get(_IT_COUNT_TYPE, sentinel)
         dispatch[_IT_COUNT_TYPE] = _deepcopy_count
     try:
-        return copy.deepcopy(cfunc)
+        cloned = copy.copy(cfunc)
+        with contextlib.suppress(Exception):
+            cloned.statements = copy.deepcopy(getattr(cfunc, "statements", None))
+        for attr in ("variables_in_use", "unified_local_vars", "variable_kb"):
+            value = getattr(cfunc, attr, None)
+            if isinstance(value, dict):
+                with contextlib.suppress(Exception):
+                    setattr(cloned, attr, dict(value))
+            else:
+                with contextlib.suppress(Exception):
+                    setattr(cloned, attr, value)
+        return cloned
     finally:
         if isinstance(dispatch, dict):
             if previous is sentinel:
@@ -1660,6 +1672,13 @@ def _clone_codegen_for_validation_summary_8616(codegen):
             getattr(cfunc, "addr", -1) or -1,
             ex,
         )
+        if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
+            logging.getLogger(__name__).warning(
+                "Failed to clone codegen at function=%#x stage=tail-validation-baseline: %s",
+                getattr(cfunc, "addr", -1) or -1,
+                ex,
+                exc_info=True,
+            )
         return None
     with contextlib.suppress(Exception):
         setattr(cloned_codegen.cfunc, "codegen", cloned_codegen)
@@ -1692,6 +1711,22 @@ def _clear_tail_validation_clone_caches_8616(codegen) -> None:
         "_inertia_semantic_facts_transferred",
         "_inertia_typed_conditions_transferred",
         "_inertia_tail_validation_widened_carriers",
+    ):
+        with contextlib.suppress(Exception):
+            setattr(codegen, attr, None)
+    with contextlib.suppress(Exception):
+        if hasattr(codegen, "_x86_16_tail_validation_cache"):
+            delattr(codegen, "_x86_16_tail_validation_cache")
+
+
+def _invalidate_tail_validation_derived_caches_8616(codegen) -> None:
+    # AST-mutating semantic priming and postprocess passes must not reuse
+    # fingerprint/summary/assignment-map caches from the previous AST shape.
+    for attr in (
+        "_inertia_tail_validation_summary_cache",
+        "_inertia_assignment_maps",
+        "_inertia_stack_offset_cache",
+        "_inertia_stack_pointer_aliases_for_cvars",
     ):
         with contextlib.suppress(Exception):
             setattr(codegen, attr, None)
@@ -1878,6 +1913,11 @@ def _prepare_tail_validation_baseline_clone_8616(project, codegen, *, function_a
 
         cloned_codegen = _clone_codegen_for_validation_summary_8616(codegen)
         if cloned_codegen is None:
+            if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
+                logging.getLogger(__name__).warning(
+                    "Tail-validation baseline clone unavailable at function=%#x stage=baseline-canonicalization",
+                    function_addr,
+                )
             return None
         _repair_cfunc_statements_wrapper(cloned_codegen)
         debug_stats = {
@@ -1894,6 +1934,9 @@ def _prepare_tail_validation_baseline_clone_8616(project, codegen, *, function_a
                 debug_stats["validation_clone_stack_alias_facts"] = len(alias_facts)
                 if alias_facts:
                     lower_stack_accesses_from_alias_facts_8616(cloned_codegen, alias_facts)
+            from .lowering.real_mode_linear import lower_stable_ss_linear_stack_dereferences_8616
+
+            lower_stable_ss_linear_stack_dereferences_8616(cloned_codegen, project=project)
             if _fact_backed_stack_normalize_enabled_8616():
                 _normalize_fact_backed_stack_accesses_8616(project, cloned_codegen)
             bindings = getattr(cloned_codegen, "_inertia_stack_variable_bindings", None)
@@ -2365,12 +2408,8 @@ def _repair_loop_exit_return_guards_8616(codegen) -> bool:
 
 def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project, codegen, *, mode: str):
     def _impl():
-        if os.environ.get("INERTIA_ENABLE_TV_BASELINE_CANONICALIZATION", "").strip().lower() not in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
+        canonicalization_setting = os.environ.get("INERTIA_ENABLE_TV_BASELINE_CANONICALIZATION", "1").strip().lower()
+        if canonicalization_setting in {"0", "false", "no", "off"}:
             return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
         function_addr = getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1
         # Large functions frequently time out in baseline clone canonicalization.
@@ -2472,16 +2511,21 @@ def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> 
     if getattr(codegen, "_inertia_pre_validation_stack_semantics_primed", False):
         return
     try:
+        _invalidate_tail_validation_derived_caches_8616(codegen)
         transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
         alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
         if isinstance(alias_facts, list) and alias_facts:
             lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
-        _segmented_mem._lower_stable_ss_stack_accesses_8616(codegen)
-        from .lowering.real_mode_linear import lower_stable_ds_es_linear_global_dereferences_8616
+        from .lowering.real_mode_linear import (
+            lower_stable_ds_es_linear_global_dereferences_8616,
+            lower_stable_ss_linear_stack_dereferences_8616,
+        )
 
+        lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
         lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
         if _fact_backed_stack_normalize_enabled_8616():
             _normalize_fact_backed_stack_accesses_8616(project, codegen)
+        _invalidate_tail_validation_derived_caches_8616(codegen)
     except Exception as ex:
         logging.getLogger(__name__).debug(
             "Pre-validation stack semantics priming failed at function=%#x stage=pre-validation-baseline: %s",
@@ -2537,6 +2581,7 @@ def _postprocess_runtime_config_8616(project, codegen, pass_specs) -> tuple[int 
                 pass_timeout_seconds = None
         baseline_summary = None
         if validation_enabled and not large_function_for_per_pass_tv:
+            _prime_stack_semantics_before_validation_baseline_8616(project, codegen)
             baseline_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
                 project, codegen, mode="live_out"
             )
@@ -2766,6 +2811,8 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             if getattr(codegen, "_inertia_skip_per_pass_validation_large_function", False):
                 enforce_pass_validation = False
             if validation_enabled and enforce_pass_validation and baseline_summary is not None:
+                if step_changed:
+                    _invalidate_tail_validation_derived_caches_8616(codegen)
                 current_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
                 validation = compare_x86_16_tail_validation_summaries(baseline_summary, current_summary)
                 if not x86_16_tail_validation_result_passed(validation):
@@ -3747,6 +3794,7 @@ def _decompile_8616(self):
 
         _tv_sys3.stderr.write(f"[dbg] _decompile_8616 ENTER validation path: addr={func_addr} id={id(self.codegen)}\n")
         _tv_sys3.stderr.flush()
+        _prime_stack_semantics_before_validation_baseline_8616(self.project, self.codegen)
         before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
         before_collect_started = time.perf_counter()
         before_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
@@ -3801,6 +3849,7 @@ def _decompile_8616(self):
         # postprocess equivalence contract.
         if os.environ.get("INERTIA_ENABLE_PRE_REWRITE_INVARIANT_GATE", "").strip().lower() in {"1", "true", "yes", "on"}:
             _inertia_run_pre_rewrite_invariant_gate(self.project, self.codegen, function)
+        _invalidate_tail_validation_derived_caches_8616(self.codegen)
         after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
         after_collect_started = time.perf_counter()
         after_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
