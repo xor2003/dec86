@@ -75,6 +75,7 @@ from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.pipeline.architecture_guard import assert_final_c_quality_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import build_typed_stack_probe_return_facts_8616
 from angr_platforms.X86_16.stack_probe_fact_trace import format_stack_probe_fact_stats_8616
+from angr_platforms.X86_16.structuring.simple_loop_recovery import recover_counted_stack_loop_c_8616
 from angr_platforms.X86_16.tail_validation import x86_16_tail_validation_snapshot_passed
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
@@ -1964,6 +1965,7 @@ def _decompile_function(
             binary_path,
             lst_metadata,
         )
+        counted_loop_c = recover_counted_stack_loop_c_8616(project, function)
         fast_forced = _forced_function_template(getattr(function, "name", None), binary_path, api_style)
         if getattr(function, "name", None) in {
             "_ConfigCrts",
@@ -3182,6 +3184,8 @@ def _decompile_function(
         formatted = _materialize_missing_generic_local_declarations_text(formatted)
         formatted = _hoist_c89_local_declarations_text(formatted)
         formatted = _preserve_return_chain_text_8616(project, function, dec.codegen, formatted)
+        if isinstance(counted_loop_c, str) and counted_loop_c.strip():
+            formatted = counted_loop_c
 
         _emit_c_stage_trace(
             project,

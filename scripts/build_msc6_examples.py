@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -177,6 +178,9 @@ def _compile_and_link(
     runtime_support: bool = False,
 ) -> tuple[bool, str, str, str, str]:
     _ensure_msvc6_compat_headers(out_dir)
+    for artifact_name in (obj_name, exe_name, map_name):
+        with contextlib.suppress(OSError):
+            (out_dir / artifact_name).unlink()
     compile_cmd = [
         str(kvikdos),
         f"--mount=c:{out_dir}/",
@@ -514,6 +518,7 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
     timed_out_summary_re = re.compile(r"summary: (\\d+) discovered function\\(s\\) timed out during decompilation")
     tail_validation_re = re.compile(r"\[tail-validation\] whole-tail validation (passed|failed|uncollected)", re.IGNORECASE)
     validation_state_re = re.compile(r"validation=([a-z_]+)")
+    attempt_validation_re = re.compile(r"attempt=[^*]*\bvalidation=([a-z_]+)")
     asm_fallback_re = re.compile(r"== asm fallback ==")
     severity_changed_re = re.compile(r"\[tail-validation\] severity=changed")
     severity_uncollected_re = re.compile(r"\[tail-validation\] severity=uncollected")
@@ -598,7 +603,7 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
         if asm_fallback_re.search(line) is not None:
             profile["asm_fallback"] = True
         if "failure family:" in line:
-            profile["tail_failures"] += 1
+            family_failed = "status=ok" not in line
             validation_match = validation_state_re.search(line)
             if validation_match is not None and isinstance(profile.get("validation_state"), list):
                 validation_state = validation_match.group(1).lower()
@@ -606,6 +611,18 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
                 assert isinstance(states, list)
                 if validation_state not in states:
                     states.append(validation_state)
+                if validation_state in {"failed", "changed", "uncollected"}:
+                    family_failed = True
+            if family_failed:
+                profile["tail_failures"] += 1
+            continue
+        attempt_validation_match = attempt_validation_re.search(line)
+        if attempt_validation_match is not None and isinstance(profile.get("validation_state"), list):
+            validation_state = attempt_validation_match.group(1).lower()
+            states = profile["validation_state"]
+            assert isinstance(states, list)
+            if validation_state not in states:
+                states.append(validation_state)
     return profile
 
 
@@ -823,7 +840,7 @@ def _decompile(
                 candidate_cmd,
                 cwd=REPO_ROOT,
                 timeout=_candidate_run_timeout(candidate),
-                env={"INERTIA_DEBUG_TIMING": "1"},
+                env={"INERTIA_DEBUG_TIMING": "1", "INERTIA_ENABLE_TAIL_VALIDATION": "1"},
             )
             last_proc = proc
             run_profile = _parse_decompile_profile(proc.stderr)
@@ -885,7 +902,7 @@ def _decompile(
                 fallback_cmd,
                 cwd=REPO_ROOT,
                 timeout=_candidate_run_timeout(fallback_candidate),
-                env={"INERTIA_DEBUG_TIMING": "1"},
+                env={"INERTIA_DEBUG_TIMING": "1", "INERTIA_ENABLE_TAIL_VALIDATION": "1"},
             )
             last_proc = proc
             run_profile = _parse_decompile_profile(proc.stderr)
@@ -953,6 +970,18 @@ def _decompile_and_validate(
     expected_exit_code: int,
     decompile_safe_names: tuple[str, str, str, str] | None = None,
 ) -> tuple[bool, Path, Path, bool, bool, int | None, str, str, str, str, str, str, float, int, str]:
+    def _selected_function_count(profile: dict[str, object]) -> int:
+        for key in ("attempted_total", "attempted_count", "functions_selected"):
+            value = profile.get(key)
+            if isinstance(value, int) and value >= 0:
+                return value
+        decompiled_count = profile.get("decompiled_count")
+        if isinstance(decompiled_count, dict):
+            shown = decompiled_count.get("shown")
+            if isinstance(shown, int) and shown >= 0:
+                return shown
+        return 0
+
     decompile_ok, dec_out, dec_err, decompile_elapsed, decompile_profile = _decompile(
         exe_path,
         out_dir,
@@ -964,10 +993,7 @@ def _decompile_and_validate(
         decompile_max_functions=decompile_max_functions,
     )
     if not decompile_ok:
-        selected_functions = 0
-        attempted_count = decompile_profile.get("attempted_count")
-        if isinstance(attempted_count, int):
-            selected_functions = attempted_count
+        selected_functions = _selected_function_count(decompile_profile)
         return (
             False,
             dec_out,
@@ -1036,14 +1062,7 @@ def _decompile_and_validate(
         decompile_run_stdout,
         decompile_run_stderr,
         decompile_elapsed,
-        int(
-            (
-                (decompile_profile.get("decompiled_count") if isinstance(decompile_profile.get("decompiled_count"), dict) else None)
-                or {}
-            ).get("shown", 0)
-            if isinstance(decompile_profile.get("decompiled_count"), dict)
-            else 0
-        ),
+        _selected_function_count(decompile_profile),
         json.dumps(_json_safe_profile(decompile_profile), sort_keys=True),
     )
 
@@ -1280,7 +1299,7 @@ def main() -> int:
         for item in results
     )
     if all_examples_ok:
-        return args.harvest_success_code
+        return 0
     return 1
 
 
