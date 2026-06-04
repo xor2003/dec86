@@ -1557,6 +1557,7 @@ def _validated_generated_c_acceptance_8616(
     tail_validation_enabled: bool,
     expected_validation_stages: list[str] | tuple[str, ...],
     c_target: str = "portable-flat",
+    emit_failure_diagnostics: bool = True,
 ) -> CAcceptanceResult8616:
     def _impl():
         baseline_payload = payload if isinstance(payload, str) else ""
@@ -1591,10 +1592,11 @@ def _validated_generated_c_acceptance_8616(
                 detail,
                 stage="postprocess",
             )
-            print("[tail-validation] whole-tail validation failed across 1 functions", file=sys.stderr)
-            print(f"[tail-validation] acceptance-gate detail: {detail}", file=sys.stderr)
-            _dump_validation_failed_payload(detail)
-            sys.stderr.flush()
+            if emit_failure_diagnostics:
+                print("[tail-validation] whole-tail validation failed across 1 functions", file=sys.stderr)
+                print(f"[tail-validation] acceptance-gate detail: {detail}", file=sys.stderr)
+                _dump_validation_failed_payload(detail)
+                sys.stderr.flush()
             return _acceptance_result_8616("validation_failed", detail, accepted_payload)
 
         accepted_payload = _normalize_accepted_payload_8616(accepted_payload)
@@ -3902,6 +3904,7 @@ def main(argv: list[str] | None = None) -> int:
                 tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                 expected_validation_stages=["structuring", "postprocess"],
                 c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                emit_failure_diagnostics=False,
             )
             direct_status = direct_acceptance.status
             direct_blocker = direct_acceptance.blocker
@@ -3935,6 +3938,7 @@ def main(argv: list[str] | None = None) -> int:
                     tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                     expected_validation_stages=["structuring", "postprocess"],
                     c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                    emit_failure_diagnostics=False,
                 )
                 if partial_acceptance.status == "ok" and partial_acceptance.blocker is None:
                     direct_result = replace(
@@ -3971,6 +3975,7 @@ def main(argv: list[str] | None = None) -> int:
                         tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                         expected_validation_stages=["structuring", "postprocess"],
                         c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                        emit_failure_diagnostics=False,
                     )
                     helper_status = helper_acceptance.status
                     helper_blocker = helper_acceptance.blocker
@@ -4027,12 +4032,32 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception:
                     robust_result = None
                 if robust_result is not None and getattr(robust_result, "status", None) == "ok":
-                    direct_result = replace(
-                        robust_result,
-                        index=1,
-                        function=func,
-                        function_cfg=cfg,
+                    robust_snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
+                    if not robust_snapshot and isinstance(getattr(robust_result, "tail_validation", None), dict):
+                        robust_snapshot = dict(robust_result.tail_validation)
+                    robust_acceptance = _validated_generated_c_acceptance_8616(
+                        status="ok",
+                        payload=_with_source_evidence_comments_8616(
+                            args.binary,
+                            func.name,
+                            robust_result.payload,
+                            enabled=bool(args.alternate_source_c),
+                        ),
+                        tail_validation_snapshot=robust_snapshot,
+                        tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
+                        expected_validation_stages=["structuring", "postprocess"],
+                        c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                        emit_failure_diagnostics=False,
                     )
+                    if robust_acceptance.status == "ok" and robust_acceptance.blocker is None:
+                        direct_result = replace(
+                            robust_result,
+                            index=1,
+                            function=func,
+                            function_cfg=cfg,
+                            payload=robust_acceptance.gcc_checked_payload,
+                            tail_validation=robust_snapshot,
+                        )
             direct_failure_family_snapshot = build_failure_family_snapshot(
                 status=direct_result.status,
                 failure_stage=getattr(direct_result, "failure_stage", None),
@@ -4162,6 +4187,7 @@ def main(argv: list[str] | None = None) -> int:
                                 tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                                 expected_validation_stages=["structuring", "postprocess"],
                                 c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                                emit_failure_diagnostics=False,
                             )
                             retry_checked_status = retry_acceptance.status
                             retry_blocker = retry_acceptance.blocker
@@ -4236,6 +4262,7 @@ def main(argv: list[str] | None = None) -> int:
                         tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                         expected_validation_stages=["structuring", "postprocess"],
                         c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                        emit_failure_diagnostics=False,
                     )
                     checked_status = checked_acceptance.status
                     checked_blocker = checked_acceptance.blocker
@@ -4263,6 +4290,7 @@ def main(argv: list[str] | None = None) -> int:
                             tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                             expected_validation_stages=["structuring", "postprocess"],
                             c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                            emit_failure_diagnostics=False,
                         )
                         checked_status = checked_acceptance.status
                         checked_blocker = checked_acceptance.blocker

@@ -4048,6 +4048,7 @@ def _postprocess_stable_accept_8616(self, validation, snapshot_function_info) ->
     validation["changed"] = False
     validation["status"] = "stable"
     validation["summary_text"] = "no observable whole-tail changes"
+    validation.pop("delta", None)
     validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
     persist_x86_16_tail_validation_snapshot(
         function_info=snapshot_function_info,
@@ -4057,6 +4058,12 @@ def _postprocess_stable_accept_8616(self, validation, snapshot_function_info) ->
     )
     snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
     if isinstance(snapshot, dict):
+        postprocess_entry = snapshot.get("postprocess")
+        if isinstance(postprocess_entry, dict):
+            postprocess_entry.pop("delta", None)
+            postprocess_entry["changed"] = False
+            postprocess_entry["status"] = "stable"
+            postprocess_entry["summary_text"] = "no observable whole-tail changes"
         setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
 
 
