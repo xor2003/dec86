@@ -1910,6 +1910,25 @@ def _preserve_return_chain_text_8616(project, function, codegen, formatted: str)
     )
 
 
+def _preserve_source_label_for_same_addr_function_8616(source_function, recovered_function) -> bool:
+    source_addr = function_original_addr(source_function)
+    recovered_addr = function_original_addr(recovered_function)
+    if not isinstance(source_addr, int) or not isinstance(recovered_addr, int) or source_addr != recovered_addr:
+        return False
+    source_name = getattr(source_function, "name", None)
+    recovered_name = getattr(recovered_function, "name", None)
+    if not isinstance(source_name, str) or not source_name or source_name.startswith("sub_"):
+        return False
+    if isinstance(recovered_name, str) and recovered_name and not recovered_name.startswith("sub_"):
+        return False
+    try:
+        recovered_function.name = source_name
+        mark_function_original_addr(recovered_function, source_addr)
+    except Exception:
+        return False
+    return True
+
+
 def _decompile_function(
     project: angr.Project,
     cfg,
@@ -2203,6 +2222,7 @@ def _decompile_function(
                     project_entry=project.entry,
                     region_span=max(0x180, _function_complexity(function)[1] + 0x80),
                 )
+                _preserve_source_label_for_same_addr_function_8616(function, isolated_function)
             except Exception as ex:  # noqa: BLE001
                 return ("empty", f"Optimized decompilation produced no code. Isolated retry setup failed: {_describe_exception(ex)}")
             logging.getLogger(__name__).debug(

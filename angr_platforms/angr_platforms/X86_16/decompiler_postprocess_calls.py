@@ -5968,7 +5968,6 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if (
                     isinstance(push_arg_sources, tuple)
                     and len(push_arg_sources) == expected_arg_count
-                    and not has_recent_stack_arg_store_evidence
                     and any(source is not None for source in push_arg_sources)
                 ):
                     ordered_push_sources = (
@@ -6021,7 +6020,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                             _refresh_summary_arg_shape(call, summary)
                             changed = True
                             strict_arg_shape_applied = True
-                if len(new_statements) >= expected_arg_count:
+                if not strict_arg_shape_applied and len(new_statements) >= expected_arg_count:
                     if (
                         not typed_stack_probe_materialization
                         and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)

@@ -845,6 +845,23 @@ def _prepare_ranked_binary_preview_items(
 
     return _impl()
 
+def _preserve_source_label_for_recovered_function_8616(source_function, recovered_function) -> bool:
+    source_addr = getattr(source_function, "addr", None)
+    recovered_addr = getattr(recovered_function, "addr", None)
+    if not isinstance(source_addr, int) or not isinstance(recovered_addr, int) or source_addr != recovered_addr:
+        return False
+    source_name = getattr(source_function, "name", None)
+    recovered_name = getattr(recovered_function, "name", None)
+    if not isinstance(source_name, str) or not source_name or source_name.startswith("sub_"):
+        return False
+    if isinstance(recovered_name, str) and recovered_name and not recovered_name.startswith("sub_"):
+        return False
+    try:
+        recovered_function.name = source_name
+    except Exception:
+        return False
+    return True
+
 def _supplement_function_cfg_pairs_with_ranked_preview(
     project: angr.Project,
     function_cfg_pairs: list[tuple[object, object]],
@@ -1373,6 +1390,7 @@ def _run_function_work_item(
                         project_entry=isolated_project.entry,
                         region_span=max(0x180, _function_complexity(item.function)[1] + 0x80),
                     )
+                    _preserve_source_label_for_recovered_function_8616(item.function, isolated_function)
                     decompile_project = isolated_project
                     decompile_cfg = isolated_cfg
                     decompile_function = isolated_function
@@ -5839,6 +5857,7 @@ def main(argv: list[str] | None = None) -> int:
                                     function_cfg=function_cfg,
                                     function=function,
                                 )
+                                _preserve_source_label_for_recovered_function_8616(item.function, active_item.function)
                         except (FuturesTimeoutError, TimeoutError):
                             payload = (
                                 f"Timed out while recovering {item.function.name} at {item.function.addr:#x} "

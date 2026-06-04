@@ -78,6 +78,41 @@ ILOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOD.COD"
 ILOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOT.COD"
 IMOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOT.COD"
 IMOX_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOX.COD"
+
+
+def test_preserve_source_label_for_recovered_function_keeps_non_generic_same_addr():
+    source = SimpleNamespace(addr=0x100F4, name="main")
+    recovered = SimpleNamespace(addr=0x100F4, name="sub_100f4")
+
+    assert cli_core._preserve_source_label_for_recovered_function_8616(source, recovered) is True
+    assert recovered.name == "main"
+
+
+def test_preserve_source_label_for_recovered_function_refuses_addr_or_named_conflict():
+    source = SimpleNamespace(addr=0x100F4, name="main")
+    wrong_addr = SimpleNamespace(addr=0x100F6, name="sub_100f6")
+    named = SimpleNamespace(addr=0x100F4, name="real_name")
+
+    assert cli_core._preserve_source_label_for_recovered_function_8616(source, wrong_addr) is False
+    assert wrong_addr.name == "sub_100f6"
+    assert cli_core._preserve_source_label_for_recovered_function_8616(source, named) is False
+    assert named.name == "real_name"
+
+
+def test_decompilation_preserves_source_label_for_same_addr_retry_function():
+    source = SimpleNamespace(addr=0x10054, name="sum_to")
+    recovered = SimpleNamespace(addr=0x10054, name="sub_10054")
+
+    assert cli_decompilation._preserve_source_label_for_same_addr_function_8616(source, recovered) is True
+    assert recovered.name == "sum_to"
+
+
+def test_decompilation_preserves_source_label_refuses_named_retry_conflict():
+    source = SimpleNamespace(addr=0x10054, name="sum_to")
+    recovered = SimpleNamespace(addr=0x10054, name="other_name")
+
+    assert cli_decompilation._preserve_source_label_for_same_addr_function_8616(source, recovered) is False
+    assert recovered.name == "other_name"
 LIFE_EXE = REPO_ROOT / "LIFE.EXE"
 LIFE2_EXE = REPO_ROOT / "LIFE2.EXE"
 LIFE_COD = REPO_ROOT / "LIFE.COD"

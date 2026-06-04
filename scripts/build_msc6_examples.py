@@ -174,6 +174,7 @@ def _compile_and_link(
     exe_name: str,
     map_name: str,
     cod_name: str | None = None,
+    runtime_support: bool = False,
 ) -> tuple[bool, str, str, str, str]:
     _ensure_msvc6_compat_headers(out_dir)
     compile_cmd = [
@@ -199,6 +200,42 @@ def _compile_and_link(
     compile_cmd.append(f"c:\\{source_path.name}")
     compile_proc = _run(compile_cmd, timeout=120)
 
+    runtime_obj_name = "INERTIA.OBJ"
+    runtime_compile_stdout = ""
+    runtime_compile_stderr = ""
+    runtime_link_obj = ""
+    if runtime_support:
+        runtime_src = out_dir / "INERTIA.C"
+        runtime_src.write_text(
+            "/* Generic compiler/runtime helper models for rebuilt decompiler output. */\n"
+            "void aNchkstk(void) {}\n"
+            "void __aNchkstk(void) {}\n",
+            encoding="utf-8",
+        )
+        runtime_compile_cmd = [
+            str(kvikdos),
+            f"--mount=c:{out_dir}/",
+            f"--mount=e:{msc6_root}/",
+            "--drive=c",
+            "--cwd-dos=c:\\",
+            "--path-dos=e:\\BIN",
+            "--env=INCLUDE=E:\\INCLUDE",
+            "--env=LIB=E:\\LIB",
+            "--prog=e:\\BIN\\CL.EXE",
+            "e:\\BIN\\CL.EXE",
+            "/Ic:\\",
+            "/nologo",
+            "/Od",
+            "/c",
+            f"/Foc:\\{runtime_obj_name}",
+            "c:\\INERTIA.C",
+        ]
+        runtime_compile_proc = _run(runtime_compile_cmd, timeout=120)
+        runtime_compile_stdout = runtime_compile_proc.stdout
+        runtime_compile_stderr = runtime_compile_proc.stderr
+        if (out_dir / runtime_obj_name).exists() and runtime_compile_proc.returncode == 0:
+            runtime_link_obj = f"+c:\\{runtime_obj_name}"
+
     link_cmd = [
         str(kvikdos),
         f"--mount=c:{out_dir}/",
@@ -208,7 +245,7 @@ def _compile_and_link(
         "--env=LIB=E:\\LIB",
         "--prog=e:\\BIN\\LINK.EXE",
         "e:\\BIN\\LINK.EXE",
-        f"c:\\{obj_name},c:\\{exe_name},c:\\{map_name},E:\\LIB\\SLIBCE.LIB;",
+        f"c:\\{obj_name}{runtime_link_obj},c:\\{exe_name},c:\\{map_name},E:\\LIB\\SLIBCE.LIB;",
     ]
     link_proc = _run(link_cmd, timeout=120)
 
@@ -222,7 +259,13 @@ def _compile_and_link(
     link_diagnostics = "\n".join((link_proc.stdout, link_proc.stderr, map_text))
     link_failed = "error L" in link_diagnostics or "unresolved external" in link_diagnostics.lower()
     built = (out_dir / exe_name).exists() and not link_failed
-    return built, compile_proc.stdout, compile_proc.stderr, link_proc.stdout, link_proc.stderr
+    return (
+        built,
+        "\n".join(item for item in (compile_proc.stdout, runtime_compile_stdout) if item),
+        "\n".join(item for item in (compile_proc.stderr, runtime_compile_stderr) if item),
+        link_proc.stdout,
+        link_proc.stderr,
+    )
 
 
 def _run_example(
@@ -240,7 +283,12 @@ def _run_example(
         "--prog=" + f"c:\\{exe_path.name}",
         f"c:\\{exe_path.name}",
     ]
-    proc = _run(cmd, timeout=timeout)
+    try:
+        proc = _run(cmd, timeout=timeout)
+    except subprocess.TimeoutExpired as ex:
+        stdout_data = ex.stdout.decode("utf-8", errors="replace") if isinstance(ex.stdout, bytes) else (ex.stdout or "")
+        stderr_data = ex.stderr.decode("utf-8", errors="replace") if isinstance(ex.stderr, bytes) else (ex.stderr or "")
+        return False, None, stdout_data, stderr_data + "\nruntime timeout\n"
     return proc.returncode == 0, proc.returncode, proc.stdout, proc.stderr
 
 
@@ -961,6 +1009,7 @@ def _decompile_and_validate(
         obj_name=obj_name,
         exe_name=exe_name,
         map_name=map_name,
+        runtime_support=True,
     )
     decompile_run_exit: int | None = None
     decompile_run_stdout = ""

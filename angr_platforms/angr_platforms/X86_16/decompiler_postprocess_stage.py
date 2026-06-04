@@ -1570,6 +1570,15 @@ def _const_return_value_8616(expr) -> int | None:
         return None
 
 
+def _is_empty_return_statement_8616(stmt) -> bool:
+    if isinstance(stmt, CReturn):
+        return getattr(stmt, "retval", None) is None
+    if isinstance(stmt, CStatements):
+        nested = list(getattr(stmt, "statements", ()) or ())
+        return len(nested) == 1 and _is_empty_return_statement_8616(nested[0])
+    return False
+
+
 def _prune_duplicate_empty_return_guard_before_cfg_suffix_8616(project, codegen) -> bool:
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
     log = logging.getLogger(__name__)
@@ -1658,7 +1667,7 @@ def _prune_duplicate_empty_return_guard_before_cfg_suffix_8616(project, codegen)
             log.warning("[cfg-return-chain] duplicate-empty prune refused: chain_index=%r nearby=%r", chain_index, nearby)
         return False
     previous_stmt = statements[chain_index - 1]
-    if isinstance(previous_stmt, CReturn) and getattr(previous_stmt, "retval", None) is None:
+    if _is_empty_return_statement_8616(previous_stmt):
         del statements[chain_index - 1]
         codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
         codegen._inertia_return_chain_empty_prefix_pruned_8616 = True

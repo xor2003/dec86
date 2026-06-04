@@ -3978,6 +3978,54 @@ def test_materialize_callsite_stack_arguments_prefers_bp_push_source_metadata_fo
     assert getattr(getattr(arg0, "variable", None), "name", None) == "iRow1"
 
 
+def test_materialize_callsite_stack_arguments_keeps_exact_imm_push_source_over_return_frame_store():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    frame_slot = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    call = CFunctionCall("classify", SimpleNamespace(name="classify"), [], codegen=codegen)
+
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                frame_slot,
+                structured_c.CConstant(0x012D, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x10010,
+            return_addr=0x012D,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 0xFFFC),),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    call_arg = call.args[0]
+    assert isinstance(call_arg, structured_c.CConstant)
+    assert call_arg.value == 0xFFFC
+
+
 def test_callsite_stats_count_materialized_args():
     project = _project()
     codegen = _empty_codegen(project)
