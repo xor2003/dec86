@@ -5,6 +5,10 @@ from pathlib import PureWindowsPath
 from typing import Iterable, Sequence
 
 
+def _summary_comment(text: str) -> str:
+    return f"/* summary: {text} */"
+
+
 def emit_file_decompilation_summary(
     project,
     metadata,
@@ -22,30 +26,32 @@ def emit_file_decompilation_summary(
 ) -> None:
     compiler_versions = _compiler_versions(project)
     if compiler_versions:
-        print(f"summary: probable compiler versions: {', '.join(compiler_versions[:4])}")
+        print(_summary_comment(f"probable compiler versions: {', '.join(compiler_versions[:4])}"))
     signature_sources = _signature_sources(project)
     if signature_sources:
-        print(f"summary: probable library/signature sources: {', '.join(signature_sources[:4])}")
+        print(_summary_comment(f"probable library/signature sources: {', '.join(signature_sources[:4])}"))
     signature_code_addrs = len(getattr(metadata, "signature_code_addrs", ())) if metadata is not None else 0
     if signature_code_addrs:
-        print(f"summary: signature-matched library functions: {signature_code_addrs}")
+        print(_summary_comment(f"signature-matched library functions: {signature_code_addrs}"))
     if skipped_signature_labels:
-        print(f"summary: hidden signature-matched labels: {skipped_signature_labels}")
+        print(_summary_comment(f"hidden signature-matched labels: {skipped_signature_labels}"))
     fallback_labels = ", ".join(fallback_family_labels) if fallback_family_labels else "none"
     print(
-        "summary: "
-        f"same_family_retry_stops={same_family_retry_stops} "
-        f"fallback_family_labels={fallback_labels}"
+        _summary_comment(
+            f"same_family_retry_stops={same_family_retry_stops} "
+            f"fallback_family_labels={fallback_labels}"
+        )
     )
     if any((dead_setup_candidates, dead_setup_pruned, dead_setup_refused, dead_setup_escaped)):
         print(
-            "summary: "
-            f"dead_setup_candidates={int(dead_setup_candidates)} "
-            f"dead_setup_pruned={int(dead_setup_pruned)} "
-            f"dead_setup_refused={int(dead_setup_refused)} "
-            f"dead_setup_escaped={int(dead_setup_escaped)}"
+            _summary_comment(
+                f"dead_setup_candidates={int(dead_setup_candidates)} "
+                f"dead_setup_pruned={int(dead_setup_pruned)} "
+                f"dead_setup_refused={int(dead_setup_refused)} "
+                f"dead_setup_escaped={int(dead_setup_escaped)}"
+            )
         )
-    print(f"summary: shown={shown_total} decompiled={decompiled} asm_or_detail_fallback={failed}")
+    print(_summary_comment(f"shown={shown_total} decompiled={decompiled} asm_or_detail_fallback={failed}"))
 
 
 def _compiler_versions(project) -> list[str]:

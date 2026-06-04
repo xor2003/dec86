@@ -2234,9 +2234,9 @@ def _emit_function_timing_summary(
         return
     rows.sort(key=lambda row: (-row[0], row[1]))
     shown = rows[: max(1, limit)]
-    print(f"summary: slowest function attempt(s), top {len(shown)}:")
+    print(f"/* summary: slowest function attempt(s), top {len(shown)}: */")
     for elapsed, _index, addr, name, status in shown:
-        print(f"summary:   {addr:#x} {name}: {elapsed:.2f}s status={status}")
+        print(f"/* summary:   {addr:#x} {name}: {elapsed:.2f}s status={status} */")
 
 def _helper_name(project: angr.Project, addr: int) -> str | None:
     proc = project.hooked_by(addr)
@@ -2356,7 +2356,7 @@ def _emit_function_result(
                 print(f"/* timeout delay: {float(elapsed):.2f}s */")
                 timeout_delay_printed = True
         if result.debug_output:
-            print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
+            print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n", file=sys.stderr)
         function = item.function
         print(f"\n/* == function {function.addr:#x} {function.name} == */")
         if getattr(result, "failure_stage", None):
@@ -6104,12 +6104,12 @@ def main(argv: list[str] | None = None) -> int:
             total_shown = shown_total
             _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
             summary_target = "selected functions" if args.max_functions <= 0 and args.addr is None else "shown functions"
-            print(f"\nsummary: decompiled {decompiled}/{total_shown} {summary_target}")
+            print(f"\n/* summary: decompiled {decompiled}/{total_shown} {summary_target} */")
             timed_out = sum(1 for result in result_map.values() if getattr(result, "status", None) == "timeout")
             if timed_out:
-                print(f"summary: {timed_out} discovered function(s) timed out during decompilation")
+                print(f"/* summary: {timed_out} discovered function(s) timed out during decompilation */")
             if failed:
-                print(f"summary: {failed} functions fell back to asm/details")
+                print(f"/* summary: {failed} functions fell back to asm/details */")
             same_family_retry_stops = sum(getattr(result, "same_family_retry_stops", 0) for result in result_map.values())
             fallback_family_labels = sorted(
                 {
@@ -6443,12 +6443,12 @@ def main(argv: list[str] | None = None) -> int:
         total_shown = shown_total
         _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
         summary_target = "selected functions" if args.max_functions <= 0 and args.addr is None else "shown functions"
-        print(f"\nsummary: decompiled {decompiled}/{total_shown} {summary_target}")
+        print(f"\n/* summary: decompiled {decompiled}/{total_shown} {summary_target} */")
         timed_out = sum(1 for result in result_map.values() if getattr(result, "status", None) == "timeout")
         if timed_out:
-            print(f"summary: {timed_out} discovered function(s) timed out during decompilation")
+            print(f"/* summary: {timed_out} discovered function(s) timed out during decompilation */")
         if failed:
-            print(f"summary: {failed} functions fell back to asm/details")
+            print(f"/* summary: {failed} functions fell back to asm/details */")
         same_family_retry_stops = sum(getattr(result, "same_family_retry_stops", 0) for result in result_map.values())
         fallback_family_labels = sorted(
             {

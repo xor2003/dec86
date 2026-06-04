@@ -3967,9 +3967,9 @@ def _format_sidecar_function_catalog(metadata: LSTMetadata, *, limit: int | None
         region = _lst_code_region(metadata, addr)
         if region is not None:
             size = region[1] - region[0]
-            lines.append(f"{addr:#x} {name} size={size:#x} range=[{region[0]:#x}, {region[1]:#x})")
+            lines.append(f"/* {addr:#x} {name} size={size:#x} range=[{region[0]:#x}, {region[1]:#x}) */")
         else:
-            lines.append(f"{addr:#x} {name}")
+            lines.append(f"/* {addr:#x} {name} */")
     return "\n".join(lines)
 
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):

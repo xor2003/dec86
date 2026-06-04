@@ -625,6 +625,32 @@ def _extract_profile_summary(profile: dict[str, object]) -> str:
     )
 
 
+def _json_safe_profile(value: object, seen: set[int] | None = None) -> object:
+    if seen is None:
+        seen = set()
+    if isinstance(value, dict):
+        obj_id = id(value)
+        if obj_id in seen:
+            return "<recursive>"
+        seen.add(obj_id)
+        try:
+            return {str(key): _json_safe_profile(item, seen) for key, item in value.items()}
+        finally:
+            seen.remove(obj_id)
+    if isinstance(value, (list, tuple)):
+        obj_id = id(value)
+        if obj_id in seen:
+            return "<recursive>"
+        seen.add(obj_id)
+        try:
+            return [_json_safe_profile(item, seen) for item in value]
+        finally:
+            seen.remove(obj_id)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 def _decompile(
     exe_path: Path,
     out_dir: Path,
@@ -891,7 +917,7 @@ def _decompile_and_validate(
             "",
             decompile_elapsed,
             selected_functions,
-            json.dumps(decompile_profile),
+            json.dumps(_json_safe_profile(decompile_profile), sort_keys=True),
         )
 
     if decompile_safe_names is None:
@@ -951,7 +977,7 @@ def _decompile_and_validate(
             if isinstance(decompile_profile.get("decompiled_count"), dict)
             else 0
         ),
-        json.dumps(decompile_profile),
+        json.dumps(_json_safe_profile(decompile_profile), sort_keys=True),
     )
 
 
