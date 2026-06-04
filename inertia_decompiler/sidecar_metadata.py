@@ -1,13 +1,11 @@
 from __future__ import annotations
-
-import re
 from pathlib import Path
 
 import angr
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
 from angr_platforms.X86_16.turbo_debug_tdinfo import parse_tdinfo_exe
 
-from inertia_decompiler.project_loading import _build_project, _probe_ida_base_linear
+from inertia_decompiler.project_loading import _probe_ida_base_linear
 from inertia_decompiler.sidecar_cache import (
     apply_cached_sidecar_metadata,
     emit_sidecar_metadata_debug,
@@ -28,9 +26,6 @@ from inertia_decompiler.sidecar_parsers import (
     _reconcile_cod_listing_with_codeview,
     _synthesize_code_ranges,
 )
-
-
-_TRAILING_DIGITS_RE = re.compile(r"\d+$")
 
 
 def _signature_matched_code_addrs(metadata: LSTMetadata | None) -> frozenset[int]:
@@ -70,112 +65,6 @@ def _recovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
         if name is not None:
             labels[addr] = name
     return labels
-
-
-def _peer_exe_family_candidates(binary: Path) -> tuple[Path, ...]:
-    def _impl():
-        if binary.suffix.lower() != ".exe":
-            return ()
-        family_stem = _TRAILING_DIGITS_RE.sub("", binary.stem).lower()
-        if not family_stem:
-            return ()
-        binary_suffix = binary.stem[len(family_stem) :]
-        binary_index = int(binary_suffix) if binary_suffix.isdigit() else 0
-        candidates: list[tuple[tuple[int, str], Path]] = []
-        for candidate in sorted(binary.parent.iterdir()):
-            if candidate == binary or candidate.suffix.lower() != ".exe" or not candidate.is_file():
-                continue
-            candidate_family = _TRAILING_DIGITS_RE.sub("", candidate.stem).lower()
-            if candidate_family != family_stem:
-                continue
-            suffix = candidate.stem[len(family_stem) :]
-            candidate_index = int(suffix) if suffix.isdigit() else 0
-            distance = abs(candidate_index - binary_index)
-            candidates.append(((distance, candidate.name.lower()), candidate))
-        return tuple(candidate for _meta, candidate in sorted(candidates))
-
-    return _impl()
-
-
-def _exact_function_span_matches(
-    project: angr.Project,
-    peer_project: angr.Project,
-    *,
-    start: int,
-    span: tuple[int, int],
-) -> bool:
-    end = span[1]
-    if end <= start:
-        return False
-    size = end - start
-    try:
-        current_bytes = bytes(project.loader.memory.load(start, size))
-        peer_bytes = bytes(peer_project.loader.memory.load(start, size))
-    except Exception:
-        return False
-    return bool(current_bytes) and current_bytes == peer_bytes
-
-
-def _merge_peer_function_catalog(
-    project: angr.Project,
-    peer_project: angr.Project,
-    peer_metadata: LSTMetadata,
-) -> tuple[dict[int, str], dict[int, tuple[int, int]]]:
-    imported_labels: dict[int, str] = {}
-    imported_ranges: dict[int, tuple[int, int]] = {}
-    for addr, name in sorted(_visible_code_labels(peer_metadata).items()):
-        span = _lst_code_region(peer_metadata, addr)
-        if span is None:
-            continue
-        if not _exact_function_span_matches(project, peer_project, start=addr, span=span):
-            continue
-        imported_labels[addr] = name
-        imported_ranges[addr] = span
-    return imported_labels, imported_ranges
-
-
-def _discover_peer_exe_catalog_matches(
-    binary: Path,
-    project: angr.Project,
-    *,
-    pat_backend: str | None = None,
-    signature_catalog: Path | None = None,
-) -> tuple[dict[int, str], dict[int, tuple[int, int]], tuple[str, ...]]:
-    linked_base = getattr(getattr(project.loader, "main_object", None), "linked_base", 0) or 0
-    peer_titles: list[str] = []
-    for peer_binary in _peer_exe_family_candidates(binary):
-        try:
-            peer_project = _build_project(
-                peer_binary,
-                force_blob=False,
-                base_addr=linked_base,
-                entry_point=getattr(project, "entry", 0),
-            )
-        except Exception:
-            continue
-        peer_metadata = _load_lst_metadata(
-            peer_binary,
-            peer_project,
-            pat_backend=pat_backend,
-            signature_catalog=signature_catalog,
-            allow_peer_exe=False,
-        )
-        if peer_metadata is None or not _visible_code_labels(peer_metadata):
-            continue
-        imported_labels, imported_ranges = _merge_peer_function_catalog(project, peer_project, peer_metadata)
-        if not imported_labels:
-            continue
-        peer_titles.append(peer_binary.name)
-        setattr(project, "_inertia_peer_exe_titles", tuple(peer_titles))
-        setattr(project, "_inertia_peer_exe_paths", (str(peer_binary),))
-        peer_cache = getattr(project, "_inertia_peer_sidecar_cache", None)
-        if not isinstance(peer_cache, dict):
-            peer_cache = {}
-            setattr(project, "_inertia_peer_sidecar_cache", peer_cache)
-        peer_cache[str(peer_binary)] = (peer_project, peer_metadata)
-        return imported_labels, imported_ranges, ("peer_exe",)
-    return {}, {}, ()
-
 
 def _load_ida_map_sidecar(
     binary: Path,
@@ -413,14 +302,12 @@ def _load_lst_metadata(
     *,
     pat_backend: str | None = None,
     signature_catalog: Path | None = None,
-    allow_peer_exe: bool = True,
 ) -> LSTMetadata | None:
     def _impl():
         cached_sidecar, sidecar_cache_key = load_cached_sidecar_metadata(
             binary_path=binary,
             pat_backend=pat_backend,
             signature_catalog=signature_catalog,
-            allow_peer_exe=allow_peer_exe,
         )
         if cached_sidecar is not None:
             metadata = apply_cached_sidecar_metadata(project, cached_sidecar)

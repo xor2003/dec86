@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import struct
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,13 +14,13 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00
 from angr_platforms.X86_16.codeview_nb02_nb04 import parse_codeview_nb0204_bytes
-from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
+from angr_platforms.X86_16.flair_extract import match_flair_startup_entry
 from angr_platforms.X86_16.ne_exe_parse import parse_ne_exe
+
+from inertia_decompiler.flair_paths import flair_signature_root
 
 from omf_pat import (
     CachedPatRegexSpec,
-    _pick_pat_cache_dir,
-    discover_local_pat_matches,
     load_cached_pat_regex_specs,
     match_pat_modules,
 )
@@ -376,7 +377,7 @@ def _detect_flair_metadata(
     signature_catalog: Path | None = None,
 ) -> tuple[dict[int, str], dict[int, tuple[int, int]], tuple[str, ...]]:
     def _impl():
-        flair_root = Path("/home/xor/ida77/flair77")
+        flair_root = flair_signature_root()
         if not flair_root.exists():
             return {}, {}, ()
         main_object = getattr(project.loader, "main_object", None)
@@ -410,7 +411,7 @@ def _detect_flair_metadata(
         else:
             startup_pat_labels, startup_pat_ranges, startup_pat_compiler_names = startup_pat_result
         if startup_pat_labels or startup_pat_ranges:
-            source_parts.append("flair_pat")
+            source_parts.append("startup_flair_pat")
             for compiler_name in startup_pat_compiler_names:
                 _remember_compiler(compiler_name)
             for addr, name in startup_pat_labels.items():
@@ -418,7 +419,7 @@ def _detect_flair_metadata(
             for addr, span in startup_pat_ranges.items():
                 code_ranges.setdefault(addr, span)
         elif startup_matches:
-            source_parts.append("flair_pat")
+            source_parts.append("startup_flair_pat")
             first = startup_matches[0]
             _remember_compiler(first.compiler_tag)
             for offset, name in first.public_names:
@@ -448,16 +449,6 @@ def _detect_flair_metadata(
                 source_parts.extend(catalog_matches.source_formats)
             for compiler_name in getattr(catalog_matches, "matched_compiler_names", ()):
                 _remember_compiler(compiler_name)
-        local_pat_matches = discover_local_pat_matches(binary, project, flair_root=flair_root, backend=pat_backend)
-        if local_pat_matches.code_labels or local_pat_matches.code_ranges:
-            for addr, name in local_pat_matches.code_labels.items():
-                code_labels.setdefault(addr, name)
-            for addr, span in local_pat_matches.code_ranges.items():
-                code_ranges.setdefault(addr, span)
-            source_parts.extend(local_pat_matches.source_formats)
-            setattr(project, "_inertia_flair_local_pat_sources", tuple(dict.fromkeys(local_pat_matches.source_formats)))
-        for compiler_name in getattr(local_pat_matches, "matched_compiler_names", ()):
-            _remember_compiler(compiler_name)
         if matched_compiler_names:
             setattr(project, "_inertia_signature_compiler_names", tuple(matched_compiler_names))
         return code_labels, code_ranges, tuple(source_parts)
@@ -468,7 +459,7 @@ def _detect_flair_metadata(
 @lru_cache(maxsize=1)
 def _load_flair_startup_pat_modules(flair_root: str) -> tuple[CachedPatRegexSpec, ...]:
     root = Path(flair_root)
-    cache_dir = _pick_pat_cache_dir(root / "startup")
+    cache_dir = _startup_pat_cache_dir(root / "startup")
     modules: list[CachedPatRegexSpec] = []
     for pat_path in sorted((root / "startup").rglob("*.pat")):
         try:
@@ -476,6 +467,20 @@ def _load_flair_startup_pat_modules(flair_root: str) -> tuple[CachedPatRegexSpec
         except OSError:
             continue
     return tuple(modules)
+
+
+def _startup_pat_cache_dir(pat_root: Path) -> Path:
+    preferred = pat_root / ".inertia_pat_cache"
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        probe = preferred / ".write_test"
+        probe.write_text("ok")
+        probe.unlink(missing_ok=True)
+        return preferred
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "inertia_pat_cache"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
 
 
 def _match_flair_startup_pat_functions(

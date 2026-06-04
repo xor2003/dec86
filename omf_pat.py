@@ -11,6 +11,8 @@ import tempfile
 
 from inertia_decompiler.signature_matching_policy import signature_matching_disabled
 
+from inertia_decompiler.flair_paths import flair_signature_root
+
 try:
     import hyperscan as _hyperscan
 except Exception:
@@ -503,61 +505,6 @@ def ensure_pat_from_omf_input(
         deduped_lines = list(dict.fromkeys(lines))
         out_path.write_text("".join(f"{line}\n" for line in deduped_lines) + "---\n")
         return out_path
-    return _impl()
-
-
-def discover_local_pat_matches(
-    binary_path: Path,
-    project,
-    *,
-    flair_root: Path | None = None,
-    max_candidate_inputs: int = 32,
-    max_pat_modules: int = 512,
-    backend: str | None = None,
-) -> LocalPatMatchResult:
-    def _impl():
-        if signature_matching_disabled():
-            return LocalPatMatchResult({}, {}, ())
-        candidate_inputs = _discover_candidate_pat_inputs(binary_path)[:max_candidate_inputs]
-        if not candidate_inputs:
-            return LocalPatMatchResult({}, {}, ())
-
-        selected_backend = _normalize_pat_backend_choice(backend)
-        cache_dir = _pick_pat_cache_dir(binary_path)
-        modules: list[PatModule | CachedPatRegexSpec] = []
-        used_generated = False
-        used_plain_pat = False
-        for candidate in candidate_inputs:
-            pat_path = ensure_pat_from_omf_input(candidate, cache_dir, flair_root=flair_root)
-            if pat_path is None:
-                continue
-            used_generated |= pat_path != candidate
-            used_plain_pat |= pat_path == candidate
-            modules.extend(load_cached_pat_regex_specs(pat_path, cache_dir))
-            if len(modules) >= max_pat_modules:
-                modules = modules[:max_pat_modules]
-                break
-        if not modules:
-            return LocalPatMatchResult({}, {}, ())
-
-        image = _load_project_image(project)
-        if image is None:
-            return LocalPatMatchResult({}, {}, ())
-        base_addr, image_bytes = image
-        code_labels, code_ranges, matched_compiler_names = match_pat_modules(
-            image_bytes,
-            base_addr,
-            modules,
-            backend=selected_backend,
-        )
-        source_formats: list[str] = []
-        if code_labels:
-            if used_plain_pat:
-                source_formats.append("local_pat")
-            if used_generated:
-                source_formats.append("local_omf_pat")
-            source_formats.append(f"pat_backend:{selected_backend}")
-        return LocalPatMatchResult(code_labels, code_ranges, tuple(source_formats), matched_compiler_names)
     return _impl()
 
 
@@ -1705,7 +1652,7 @@ def _segment_looks_like_code(segment: _OMFSegment) -> bool:
 
 
 def _run_local_plb(input_path: Path, out_path: Path, *, flair_root: Path | None = None) -> bool:
-    root = flair_root or Path("/home/xor/ida77/flair77")
+    root = flair_signature_root(flair_root)
     plb_path = root / "bin" / "linux" / "plb"
     if not plb_path.exists():
         return False
@@ -1733,33 +1680,6 @@ def _run_local_plb(input_path: Path, out_path: Path, *, flair_root: Path | None 
             tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
-
-
-def _discover_candidate_pat_inputs(binary_path: Path) -> list[Path]:
-    parent = binary_path.parent
-    candidates: list[Path] = []
-    for child in sorted(parent.iterdir()):
-        if not child.is_file():
-            continue
-        if child == binary_path:
-            continue
-        if child.suffix.lower() in {".pat", ".obj", ".lib"}:
-            candidates.append(child)
-    return candidates
-
-
-def _pick_pat_cache_dir(binary_path: Path) -> Path:
-    preferred = binary_path.parent / ".inertia_pat_cache"
-    try:
-        preferred.mkdir(parents=True, exist_ok=True)
-        probe = preferred / ".write_test"
-        probe.write_text("ok")
-        probe.unlink(missing_ok=True)
-        return preferred
-    except OSError:
-        fallback = Path(tempfile.gettempdir()) / "inertia_pat_cache"
-        fallback.mkdir(parents=True, exist_ok=True)
-        return fallback
 
 
 def _load_project_image(project) -> tuple[int, bytes] | None:

@@ -52,7 +52,6 @@ from inertia_decompiler.project_loading import (
 )
 
 from inertia_decompiler.sidecar_metadata import (
-    _exact_function_span_matches,
     _load_lst_metadata,
     _lst_code_label,
     _lst_code_region,
@@ -253,7 +252,17 @@ from inertia_decompiler.non_optimized_fallback import (
 from inertia_decompiler.cli_function_discovery import _pick_function, _pick_function_lean
 
 print = _timestamped_print
-__all__ = ['NonOptimizedSliceOutcome', '_non_optimized_slice_rendered', '_non_optimized_slice_failure_detail', '_try_decompile_sidecar_slice', '_try_decompile_non_optimized_slice', '_try_decompile_non_optimized_known_function', '_try_emit_trivial_sidecar_c', '_try_emit_string_intrinsic_c', '_try_emit_known_runtime_helper_c', '_try_decompile_peer_sidecar_slice', '_load_peer_sidecar_bundle']
+__all__ = [
+    "NonOptimizedSliceOutcome",
+    "_non_optimized_slice_rendered",
+    "_non_optimized_slice_failure_detail",
+    "_try_decompile_sidecar_slice",
+    "_try_decompile_non_optimized_slice",
+    "_try_decompile_non_optimized_known_function",
+    "_try_emit_trivial_sidecar_c",
+    "_try_emit_string_intrinsic_c",
+    "_try_emit_known_runtime_helper_c",
+]
 
 @dataclass(frozen=True)
 class NonOptimizedSliceOutcome:
@@ -1833,93 +1842,3 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
 
 
     return _impl()
-def _try_decompile_peer_sidecar_slice(
-    project: angr.Project,
-    lst_metadata: LSTMetadata | None,
-    addr: int,
-    name: str,
-    *,
-    timeout: int,
-    api_style: str,
-    binary_path: Path | None,
-) -> str | None:
-    def _impl():
-        if lst_metadata is None or "peer_exe" not in getattr(lst_metadata, "source_format", ""):
-            return None
-        region = _lst_code_region(lst_metadata, addr)
-        if region is None:
-            return None
-        peer_paths = tuple(
-            Path(path)
-            for path in getattr(project, "_inertia_peer_exe_paths", ())
-            if isinstance(path, (str, Path))
-        )
-        if not peer_paths:
-            return None
-        for peer_path in peer_paths:
-            peer_bundle = _load_peer_sidecar_bundle(project, peer_path)
-            if peer_bundle is None:
-                continue
-            peer_project, peer_metadata = peer_bundle
-            if peer_metadata is None:
-                continue
-            if not _exact_function_span_matches(project, peer_project, start=addr, span=region):
-                continue
-            _inherit_tail_validation_runtime_policy(peer_project, project)
-            peer_name = _lst_code_label(peer_metadata, addr, getattr(peer_project, "entry", None)) or name
-            slice_result = _try_decompile_sidecar_slice(
-                peer_project,
-                peer_metadata,
-                addr,
-                peer_name,
-                timeout=timeout,
-                api_style=api_style,
-                binary_path=peer_path,
-            )
-            if slice_result is not None:
-                status = (
-                    slice_result[0]
-                    if isinstance(slice_result, tuple)
-                    else getattr(slice_result, "status", None)
-                )
-                payload = (
-                    slice_result[1]
-                    if isinstance(slice_result, tuple)
-                    else getattr(slice_result, "payload", None)
-                )
-                peer_snapshot = getattr(peer_project, "_inertia_last_tail_validation_snapshot", None)
-                if isinstance(peer_snapshot, dict):
-                    setattr(project, "_inertia_last_tail_validation_snapshot", dict(peer_snapshot))
-                if status != "ok":
-                    continue
-                print(f"[dbg] peer sidecar fallback recovered {addr:#x} {peer_name} from {peer_path.name}", file=sys.stderr, flush=True)
-                return payload
-        return None
-
-    return _impl()
-
-def _load_peer_sidecar_bundle(
-    project: angr.Project,
-    peer_path: Path,
-) -> tuple[angr.Project, LSTMetadata | None] | None:
-    cache = getattr(project, "_inertia_peer_sidecar_cache", None)
-    if not isinstance(cache, dict):
-        cache = {}
-        setattr(project, "_inertia_peer_sidecar_cache", cache)
-    cache_key = str(peer_path)
-    if cache_key in cache:
-        return cache[cache_key]
-    linked_base = getattr(getattr(project.loader, "main_object", None), "linked_base", 0) or 0
-    try:
-        peer_project = _build_project_cached(
-            str(peer_path),
-            force_blob=False,
-            base_addr=linked_base,
-            entry_point=getattr(project, "entry", 0),
-        )
-        peer_metadata = _load_lst_metadata(peer_path, peer_project, allow_peer_exe=False)
-    except Exception:
-        cache[cache_key] = None
-        return None
-    cache[cache_key] = (peer_project, peer_metadata)
-    return cache[cache_key]

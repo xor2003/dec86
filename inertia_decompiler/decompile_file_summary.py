@@ -68,8 +68,6 @@ def _compiler_versions(project) -> list[str]:
 def _signature_sources(project) -> list[str]:
     values: list[str] = []
     values.extend(_normalize_source_names(getattr(project, "_inertia_flair_sig_titles", ())))
-    values.extend(_normalize_source_names(getattr(project, "_inertia_flair_local_pat_sources", ())))
-    values.extend(_normalize_source_names(getattr(project, "_inertia_peer_exe_titles", ())))
     return _stable_unique_sorted(values)
 
 

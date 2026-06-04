@@ -14,12 +14,41 @@ from inertia_decompiler.cache import (
 )
 
 
+_SOURCE_FORMAT_RENAMES = {
+    "flair_pat": "startup_flair_pat",
+}
+_SOURCE_FORMAT_DROP_TOKENS = {
+    "local_omf_pat",
+    "local_pat",
+    "peer_exe",
+}
+
+
+def _visible_source_format(source_format: str | None) -> str:
+    return _normalize_source_format(source_format)
+
+
+def _normalize_source_format(source_format: str | None) -> str:
+    raw = source_format or ""
+    normalized_tokens: list[str] = []
+    seen: set[str] = set()
+    for part in raw.split("+"):
+        token = part.strip()
+        if not token:
+            continue
+        if token in _SOURCE_FORMAT_DROP_TOKENS:
+            continue
+        token = _SOURCE_FORMAT_RENAMES.get(token, token)
+        if token in _SOURCE_FORMAT_DROP_TOKENS or token in seen:
+            continue
+        normalized_tokens.append(token)
+        seen.add(token)
+    return "+".join(normalized_tokens) if normalized_tokens else "sidecars"
+
+
 _PROJECT_ATTR_KEYS = (
-    "_inertia_flair_local_pat_sources",
     "_inertia_flair_sig_titles",
     "_inertia_flair_startup_matches",
-    "_inertia_peer_exe_paths",
-    "_inertia_peer_exe_titles",
     "_inertia_signature_compiler_names",
 )
 
@@ -71,11 +100,9 @@ def sidecar_metadata_cache_key(
     binary_path: Path | None,
     pat_backend: str | None,
     signature_catalog: Path | None,
-    allow_peer_exe: bool,
 ) -> dict[str, object] | None:
     extra: dict[str, object] = {
         "pat_backend": pat_backend or "",
-        "allow_peer_exe": bool(allow_peer_exe),
     }
     signature_fingerprint = _cache_file_fingerprint(signature_catalog)
     if signature_fingerprint is not None:
@@ -88,13 +115,11 @@ def load_cached_sidecar_metadata(
     binary_path: Path | None,
     pat_backend: str | None,
     signature_catalog: Path | None,
-    allow_peer_exe: bool,
 ) -> tuple[CachedSidecarMetadata | None, dict[str, object] | None]:
     cache_key = sidecar_metadata_cache_key(
         binary_path=binary_path,
         pat_backend=pat_backend,
         signature_catalog=signature_catalog,
-        allow_peer_exe=allow_peer_exe,
     )
     if cache_key is None:
         return None, None
@@ -140,7 +165,7 @@ def apply_cached_sidecar_metadata(project, cached: CachedSidecarMetadata) -> LST
 
 def emit_sidecar_metadata_debug(project, metadata: LSTMetadata) -> None:
     print(
-        f"[dbg] loaded sidecar metadata: format={metadata.source_format} "
+        f"[dbg] loaded sidecar metadata: format={_visible_source_format(metadata.source_format)} "
         f"code_labels={len(metadata.code_labels)} data_labels={len(metadata.data_labels)} structs={len(metadata.struct_names)}",
         file=sys.stderr,
         flush=True,
@@ -203,7 +228,7 @@ def _deserialize_lst_metadata(payload: dict[str, object]) -> LSTMetadata | None:
             code_ranges=code_ranges,
             signature_code_addrs=signature_code_addrs,
             absolute_addrs=bool(payload.get("absolute_addrs", False)),
-            source_format=str(payload.get("source_format", "sidecars")),
+            source_format=_normalize_source_format(str(payload.get("source_format", "sidecars"))),
             struct_names=struct_names,
             cod_path=cod_path,
             cod_proc_kinds=cod_proc_kinds,

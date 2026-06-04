@@ -254,8 +254,6 @@ from .cli_fallback_decompilation import (
     _try_emit_known_runtime_helper_c,
     _try_emit_trivial_sidecar_c,
     _try_emit_string_intrinsic_c,
-    _try_decompile_peer_sidecar_slice,
-    _load_peer_sidecar_bundle,
 )
 
 from .cli_function_discovery import (
@@ -365,7 +363,6 @@ from inertia_decompiler.project_loading import (
 )
 
 from inertia_decompiler.sidecar_metadata import (
-    _exact_function_span_matches,
     _load_lst_metadata,
     _lst_code_label,
     _lst_code_region,
@@ -2832,23 +2829,13 @@ def _emit_function_result_fallback_lanes_8616(
                 emit_timeout_delay_line=emit_timeout_delay_line,
             )
 
-        if precise_sidecar_regions:
-            peer_sidecar_c = _try_decompile_peer_sidecar_slice(
-                project, lst_metadata, function.addr, function.name, timeout=args.timeout, api_style=args.api_style, binary_path=args.binary
-            )
-            if peer_sidecar_c is not None:
-                decompiled_local += 1
-                fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index, item, allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("peer_sidecar"))
-                _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-                _emit_optional_source_sidecar_c_block(args.binary, item.function.name, peer_sidecar_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (peer sidecar fallback) -- */")
-                return decompiled_local, failed_local
-            trivial_c = _try_emit_trivial_sidecar_c(project, lst_metadata, function.addr, function.name)
-            if trivial_c is not None:
-                decompiled_local += 1
-                fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index, item, allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("trivial_sidecar"))
-                _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-                _emit_optional_source_sidecar_c_block(args.binary, item.function.name, trivial_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (trivial sidecar fallback) -- */")
-                return decompiled_local, failed_local
+        trivial_c = _try_emit_trivial_sidecar_c(project, lst_metadata, function.addr, function.name)
+        if trivial_c is not None:
+            decompiled_local += 1
+            fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index, item, allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("trivial_sidecar"))
+            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+            _emit_optional_source_sidecar_c_block(args.binary, item.function.name, trivial_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (trivial sidecar fallback) -- */")
+            return decompiled_local, failed_local
 
         if (
             result.partial_payload is None
@@ -4785,49 +4772,23 @@ def main(argv: list[str] | None = None) -> int:
                                 c_header="\n/* == c (sidecar slice fallback) == */",
                             )
                             return 0
-                if precise_sidecar_regions:
-                    peer_sidecar_c = _try_decompile_peer_sidecar_slice(
-                        project,
-                        lst_metadata,
-                        direct_display_addr,
-                        func.name,
-                        timeout=args.timeout,
-                        api_style=args.api_style,
+                trivial_c = _try_emit_trivial_sidecar_c(project, lst_metadata, direct_display_addr, func.name)
+                if trivial_c is not None:
+                    _emit_tail_validation_for_function_run_or_uncollected(
+                        direct_project,
+                        cfg,
+                        func,
+                        allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("trivial_sidecar"),
                         binary_path=args.binary,
                     )
-                    if peer_sidecar_c is not None:
-                        _emit_tail_validation_for_function_run_or_uncollected(
-                            direct_project,
-                            cfg,
-                            func,
-                            allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("peer_sidecar"),
-                            binary_path=args.binary,
-                        )
-                        _emit_optional_source_sidecar_c_block(
-                            args.binary,
-                            func.name,
-                            peer_sidecar_c,
-                            alternate_source_c=bool(args.alternate_source_c),
-                            c_header="\n/* == c (peer sidecar fallback) == */",
-                        )
-                        return 0
-                    trivial_c = _try_emit_trivial_sidecar_c(project, lst_metadata, direct_display_addr, func.name)
-                    if trivial_c is not None:
-                        _emit_tail_validation_for_function_run_or_uncollected(
-                            direct_project,
-                            cfg,
-                            func,
-                            allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("trivial_sidecar"),
-                            binary_path=args.binary,
-                        )
-                        _emit_optional_source_sidecar_c_block(
-                            args.binary,
-                            func.name,
-                            trivial_c,
-                            alternate_source_c=bool(args.alternate_source_c),
-                            c_header="\n/* == c (trivial sidecar fallback) == */",
-                        )
-                        return 0
+                    _emit_optional_source_sidecar_c_block(
+                        args.binary,
+                        func.name,
+                        trivial_c,
+                        alternate_source_c=bool(args.alternate_source_c),
+                        c_header="\n/* == c (trivial sidecar fallback) == */",
+                    )
+                    return 0
                 nonopt_result: NonOptimizedSliceOutcome | str | None = None
                 if (
                     partial_payload is None

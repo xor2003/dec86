@@ -11,6 +11,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from signature_catalog import build_signature_catalog
 
+from inertia_decompiler.flair_paths import flair_signature_root
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -31,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--flair-root",
         type=Path,
-        default=Path("/home/xor/ida77/flair77"),
+        default=flair_signature_root(),
         help="Path to the FLAIR tool root used for local plb conversion.",
     )
     parser.add_argument(

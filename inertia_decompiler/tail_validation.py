@@ -29,7 +29,7 @@ TAIL_VALIDATION_METADATA_PREFIX = "@@INERTIA_TAIL_VALIDATION@@ "
 TAIL_VALIDATION_CONSOLE_CACHE_DIR = ROOT / "angr_platforms" / ".cache" / "decompile_cli"
 TAIL_VALIDATION_DETAIL_CACHE_DIR = ROOT / "angr_platforms" / ".cache" / "tail_validation_details"
 TAIL_VALIDATION_FALLBACK_PROJECT_SNAPSHOT_KINDS = frozenset(
-    {"sidecar_slice", "peer_sidecar", "partial_timeout"}
+    {"sidecar_slice", "partial_timeout"}
 )
 TAIL_VALIDATION_ENABLE_ENV = "INERTIA_ENABLE_TAIL_VALIDATION"
 
