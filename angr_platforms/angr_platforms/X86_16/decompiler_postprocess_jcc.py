@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
-import contextlib
 from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
     CConstant,
     CFunctionCall,
     CTypeCast,
-    CITE,
     CUnaryOp,
     CVariable,
 )
@@ -1284,20 +1284,37 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             # Primary lane: flags-backed conditions.
             # Recovery lane: conditions that already collapsed to a literal constant
             # but still carry insn/block tags for a decodable cmp+jcc origin.
+            tagged_key = _condition_tags_8616(cond)
+            debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
             if not (
                 _c_expr_uses_register_8616(cond, flags_offset)
                 or _is_literal_condition_8616(cond)
                 or _is_tagged_condition_carrier_8616(cond)
+                or tagged_key == (ins_addr, block_addr)
             ):
+                if debug_jcc:
+                    _log.warning(
+                        "[jcc-rewrite] decode skip no-evidence key=%r tagged_key=%r cond_type=%s",
+                        (ins_addr, block_addr),
+                        tagged_key,
+                        type(cond).__name__,
+                    )
                 return None
 
             # Guardrail: if a condition already contains explicit non-flag
-            # comparisons, do not rewrite it via flag-decode lane.
-            if _has_nonflag_cmp_8616(cond):
+            # comparisons from another origin, do not rewrite it via the
+            # flag-decode lane. If the explicit comparison carries the same
+            # CMP/JCC tag, decoded binary evidence is the stronger source of
+            # truth and may replace stale/inverted projected comparisons.
+            if _has_nonflag_cmp_8616(cond) and tagged_key != (ins_addr, block_addr):
+                if debug_jcc:
+                    _log.warning("[jcc-rewrite] decode skip explicit-cmp key=%r", (ins_addr, block_addr))
                 return None
 
             decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
             if decoded is None:
+                if debug_jcc:
+                    _log.warning("[jcc-rewrite] decode skip no-decoded key=%r", (ins_addr, block_addr))
                 return None
 
             if getattr(decoded, "expr", None) is not None:
@@ -1307,6 +1324,13 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             lhs_fp = _safe_fingerprint_8616(decoded.lhs)
             rhs_fp = _safe_fingerprint_8616(decoded.rhs)
             if same_expr or lhs_fp == rhs_fp:
+                if debug_jcc:
+                    _log.warning(
+                        "[jcc-rewrite] decode skip same-operands key=%r lhs_fp=%r rhs_fp=%r",
+                        (ins_addr, block_addr),
+                        lhs_fp,
+                        rhs_fp,
+                    )
                 return None
 
             # Safety guard: avoid rewriting via decoded jcc when compare operands
@@ -1316,6 +1340,13 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             if _expr_uses_nonarg_bp_positive_stack_slot_8616(decoded.lhs) or _expr_uses_nonarg_bp_positive_stack_slot_8616(
                 decoded.rhs
             ):
+                if debug_jcc:
+                    _log.warning(
+                        "[jcc-rewrite] decode skip positive-stack-slot key=%r lhs_fp=%r rhs_fp=%r",
+                        (ins_addr, block_addr),
+                        lhs_fp,
+                        rhs_fp,
+                    )
                 return None
 
             return decoded
@@ -1399,6 +1430,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             return replacement
 
         def _replace_tagged_condition(node):
+            nonlocal changed
             replacement = _rewrite_condition(node)
             if replacement is not None:
                 return replacement

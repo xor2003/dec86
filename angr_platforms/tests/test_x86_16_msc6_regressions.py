@@ -11,6 +11,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CMP16_EXE = REPO_ROOT / "examples" / "build_msc6" / "CMP16.EXE"
 CLI_PATH = REPO_ROOT / "decompile.py"
+RUNTIME_GATE_PATH = REPO_ROOT / "scripts" / "verify_msc_example_runtime_gate.py"
+KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
+MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
 
 
 def _run_decompile_proc(
@@ -104,6 +107,19 @@ def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_pl
     assert not re.search(r"\b(?:sp|bp)_0\b", emitted_body), emitted_body
     assert not re.search(r"\b(ir|vvar)_[0-9A-Fa-f]+\b", emitted_body), emitted_body
     assert "return" in emitted_body and "return;" not in emitted_body
+    assert "mask * 0x100" not in emitted_body
+    assert ">> 8" not in emitted_body
+    for fragment in (
+        "if (b > a)",
+        "mask = mask | 1;",
+        "if (b >= a)",
+        "mask = mask | 2;",
+        "if (b < a)",
+        "mask = mask | 4;",
+        "if (b <= a)",
+        "mask = mask | 8;",
+    ):
+        assert fragment in emitted_body, emitted_body
     assert "return mask;" in emitted_body
 
 
@@ -134,8 +150,34 @@ def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
     ("function_name", "required_fragments"),
     [
         ("cmp_i16", ("return -1;", "return 1;", "return 0;", "return 2;", " == ")),
-        ("rel_i16", ("return mask;",)),
-        ("rel_u16", ("return mask;",)),
+        (
+            "rel_i16",
+            (
+                "if (b > a)",
+                "mask = mask | 1;",
+                "if (b >= a)",
+                "mask = mask | 2;",
+                "if (b < a)",
+                "mask = mask | 4;",
+                "if (b <= a)",
+                "mask = mask | 8;",
+                "return mask;",
+            ),
+        ),
+        (
+            "rel_u16",
+            (
+                "if (b > a)",
+                "mask = mask | 1;",
+                "if (b >= a)",
+                "mask = mask | 2;",
+                "if (b < a)",
+                "mask = mask | 4;",
+                "if (b <= a)",
+                "mask = mask | 8;",
+                "return mask;",
+            ),
+        ),
         ("clamp_u16", ("return value;", "return limit;")),
         ("in_window_i16", ("return 0;", "return 1;")),
     ],
@@ -157,5 +199,37 @@ def test_msc6_cmp16_all_helper_functions_pass_tail_validation_and_msc_recompile(
     assert not re.search(r"\barg_[0-9]+\b", emitted_body), emitted_body
     assert not re.search(r"\bs_[0-9A-Fa-f]+\b", emitted_body), emitted_body
     assert "::0x" not in emitted_body
+    assert "mask * 0x100" not in emitted_body
+    assert ">> 8" not in emitted_body
     for fragment in required_fragments:
         assert fragment in emitted_body, emitted_body
+
+
+@pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
+@pytest.mark.skipif(not KVIKDOS_PATH.is_file(), reason="kvikdos is not available in this workspace.")
+@pytest.mark.skipif(not MSC6_ROOT.is_dir(), reason="MS C 6 root is not available in this workspace.")
+def test_msc6_cmp16_full_rebuilt_executable_runs_zero(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RUNTIME_GATE_PATH),
+            "--example",
+            "cmp16",
+            "--expected-exit-code",
+            "0",
+            "--timeout",
+            "60",
+            "--out-dir",
+            str(tmp_path / "cmp16_runtime_gate"),
+            "--clean",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    combined = f"{result.stderr}\n{result.stdout}"
+    assert result.returncode == 0, combined
+    assert "status=passed" in combined
+    assert "run_exit=0" in combined

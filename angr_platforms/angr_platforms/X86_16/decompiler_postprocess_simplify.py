@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import os
+
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
     CAssignment,
@@ -28,6 +31,8 @@ from .semantics.alias_query import _storage_domain_for_expr
 from .widening_alias import join_adjacent_register_slices
 from .widening_model import prove_adjacent_storage_slices
 
+_log = logging.getLogger(__name__)
+
 PROJECTION_CLEANUP_RULES = (
     (
         "concat_fold",
@@ -48,6 +53,10 @@ PROJECTION_CLEANUP_RULES = (
     (
         "zero_compare_projection",
         "Convert zero comparisons into the underlying projection or flag source when the evidence is explicit.",
+    ),
+    (
+        "word_or_update_materialization",
+        "Materialize proven in-place word OR updates on stable locals instead of leaking byte-carrier projections.",
     ),
     (
         "sub_self_zero",
@@ -118,6 +127,11 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     def _is_c_constant_int_8616(expr, value: int) -> bool:
         return isinstance(expr, CConstant) and isinstance(expr.value, int) and expr.value == value
 
+    def _c_constant_int_value_8616(expr) -> int | None:
+        if isinstance(expr, CConstant) and isinstance(expr.value, int):
+            return int(expr.value)
+        return None
+
     def _is_power_of_two_minus_one_8616(value: int) -> bool:
         """Check if value is of form 2^n - 1 (all bits set up to position n-1)."""
         if value <= 0:
@@ -180,6 +194,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         return None
 
     def _shifted_high_byte_source_8616(expr):
+        while isinstance(expr, CTypeCast):
+            expr = getattr(expr, "expr", None)
         if not isinstance(expr, CBinaryOp):
             return None
         if expr.op == "Shl" and _is_c_constant_int_8616(expr.rhs, 8):
@@ -189,6 +205,94 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         if expr.op == "Mul" and _is_c_constant_int_8616(expr.lhs, 0x100):
             return expr.rhs
         return None
+
+    def _or_terms_8616(expr) -> list[object]:
+        if isinstance(expr, CBinaryOp) and expr.op == "Or":
+            return [*_or_terms_8616(expr.lhs), *_or_terms_8616(expr.rhs)]
+        return [expr]
+
+    def _match_word_or_carrier_expr_8616(expr, target) -> int | None:
+        terms = _or_terms_8616(expr)
+        constant_terms: list[int] = []
+        saw_target = False
+        saw_shifted_target = False
+        for term in terms:
+            const_value = _c_constant_int_value_8616(term)
+            if const_value is not None:
+                constant_terms.append(const_value)
+                continue
+            if _same_c_expression_8616(term, target):
+                saw_target = True
+                continue
+            shifted = _shifted_high_byte_source_8616(term)
+            if shifted is not None and _same_c_expression_8616(shifted, target):
+                saw_shifted_target = True
+                continue
+            return None
+        if not saw_target or not saw_shifted_target or len(constant_terms) != 1:
+            return None
+        value = constant_terms[0]
+        if value < 0 or value > 0xFF:
+            return None
+        return value
+
+    def _match_word_or_carrier_expr_pair_8616(expr, low_target, high_target) -> int | None:
+        terms = _or_terms_8616(expr)
+        constant_terms: list[int] = []
+        saw_low = False
+        saw_shifted_high = False
+        for term in terms:
+            const_value = _c_constant_int_value_8616(term)
+            if const_value is not None:
+                constant_terms.append(const_value)
+                continue
+            if _same_c_expression_8616(term, low_target):
+                saw_low = True
+                continue
+            shifted = _shifted_high_byte_source_8616(term)
+            if shifted is not None and _same_c_expression_8616(shifted, high_target):
+                saw_shifted_high = True
+                continue
+            return None
+        if not saw_low or not saw_shifted_high or len(constant_terms) != 1:
+            return None
+        value = constant_terms[0]
+        if value < 0 or value > 0xFF:
+            return None
+        return value
+
+    def _match_word_or_carrier_shift_8616(expr, target) -> int | None:
+        if not isinstance(expr, CBinaryOp) or expr.op != "Shr":
+            return None
+        if not _is_c_constant_int_8616(expr.rhs, 8):
+            return None
+        return _match_word_or_carrier_expr_8616(expr.lhs, target)
+
+    def _match_word_or_carrier_pair_shift_8616(expr, low_target, high_target) -> int | None:
+        if not isinstance(expr, CBinaryOp) or expr.op != "Shr":
+            return None
+        if not _is_c_constant_int_8616(expr.rhs, 8):
+            return None
+        return _match_word_or_carrier_expr_pair_8616(expr.lhs, low_target, high_target)
+
+    def _stack_word_contains_high_byte_8616(word_expr, high_expr) -> bool:
+        word_domain = _storage_domain_for_expr(word_expr)
+        high_domain = _storage_domain_for_expr(high_expr)
+        if getattr(word_domain, "space", None) != "stack" or getattr(high_domain, "space", None) != "stack":
+            return False
+        word_slot = getattr(word_domain, "stack_slot", None)
+        high_slot = getattr(high_domain, "stack_slot", None)
+        if word_slot is None or high_slot is None:
+            return False
+        if getattr(word_slot, "base", None) != getattr(high_slot, "base", None):
+            return False
+        if getattr(word_slot, "region", None) != getattr(high_slot, "region", None):
+            return False
+        word_offset = _canonical_stack_offset_8616(getattr(word_slot, "offset", None))
+        high_offset = _canonical_stack_offset_8616(getattr(high_slot, "offset", None))
+        if not isinstance(word_offset, int) or not isinstance(high_offset, int):
+            return False
+        return int(getattr(word_domain, "width", 0) or 0) == 2 and high_offset == word_offset + 1
 
     def _materialize_joined_word_expr_8616(low_expr, high_expr):
         low_domain = _storage_domain_for_expr(low_expr)
@@ -392,6 +496,152 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                 return CConstant(0, type_, codegen=codegen)
         return node
 
+    def _materialize_word_or_update_statements_8616(root_node) -> bool:
+        changed_local = False
+
+        def visit(node) -> None:
+            nonlocal changed_local
+            if isinstance(node, list):
+                replacement = _rewrite_statement_list_8616(node)
+                if replacement is not node:
+                    node[:] = replacement
+                return
+            if isinstance(node, CStatements):
+                new_statements = _rewrite_statement_list_8616(list(node.statements))
+                if new_statements != node.statements:
+                    node.statements = new_statements
+                return
+            pairs = getattr(node, "condition_and_nodes", None)
+            if pairs:
+                for _cond, body in pairs:
+                    if _structured_codegen_node_8616(body):
+                        visit(body)
+            for attr in ("body", "else_node", "condition", "init", "iteration"):
+                child = getattr(node, attr, None)
+                if _structured_codegen_node_8616(child):
+                    visit(child)
+
+        def _rewrite_statement_list_8616(statements: list[object]) -> list[object]:
+            nonlocal changed_local
+            new_statements = []
+            i = 0
+            while i < len(statements):
+                stmt = statements[i]
+                next_stmt = statements[i + 1] if i + 1 < len(statements) else None
+                if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                    if isinstance(stmt, CAssignment) or isinstance(next_stmt, CAssignment):
+                        same_lhs = (
+                            isinstance(stmt, CAssignment)
+                            and isinstance(next_stmt, CAssignment)
+                            and _same_c_expression_8616(stmt.lhs, next_stmt.lhs)
+                        )
+                        _log.warning(
+                            "[word-or-update] seq i=%d stmt=%s next=%s same_lhs=%s lhs=%s rhs=%s next_lhs=%s next_rhs=%s",
+                            i,
+                            type(stmt).__name__,
+                            type(next_stmt).__name__ if next_stmt is not None else None,
+                            same_lhs,
+                            type(getattr(stmt, "lhs", None)).__name__,
+                            type(getattr(stmt, "rhs", None)).__name__,
+                            type(getattr(next_stmt, "lhs", None)).__name__ if next_stmt is not None else None,
+                            type(getattr(next_stmt, "rhs", None)).__name__ if next_stmt is not None else None,
+                        )
+                if isinstance(stmt, CAssignment) and isinstance(next_stmt, CAssignment):
+                    immediate = None
+                    shifted_immediate = None
+                    replacement_lhs = None
+                    if (
+                        isinstance(stmt.lhs, CVariable)
+                        and isinstance(next_stmt.lhs, CVariable)
+                        and _same_c_expression_8616(stmt.lhs, next_stmt.lhs)
+                    ):
+                        replacement_lhs = stmt.lhs
+                        immediate = _match_word_or_carrier_expr_8616(stmt.rhs, stmt.lhs)
+                        shifted_immediate = _match_word_or_carrier_shift_8616(next_stmt.rhs, stmt.lhs)
+                    elif isinstance(stmt.lhs, CVariable) and isinstance(next_stmt.lhs, CVariable):
+                        joined_lhs = _materialize_joined_word_expr_8616(stmt.lhs, next_stmt.lhs)
+                        if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                            _log.warning(
+                                "[word-or-update] join lhs=%r next_lhs=%r joined=%s low_domain=%r high_domain=%r",
+                                stmt.lhs,
+                                next_stmt.lhs,
+                                type(joined_lhs).__name__ if joined_lhs is not None else None,
+                                _storage_domain_for_expr(stmt.lhs),
+                                _storage_domain_for_expr(next_stmt.lhs),
+                            )
+                        if isinstance(joined_lhs, CVariable):
+                            replacement_lhs = joined_lhs
+                            immediate = _match_word_or_carrier_expr_pair_8616(stmt.rhs, stmt.lhs, next_stmt.lhs)
+                            shifted_immediate = _match_word_or_carrier_pair_shift_8616(
+                                next_stmt.rhs, stmt.lhs, next_stmt.lhs
+                            )
+                        elif _stack_word_contains_high_byte_8616(stmt.lhs, next_stmt.lhs):
+                            replacement_lhs = stmt.lhs
+                            immediate = _match_word_or_carrier_expr_pair_8616(stmt.rhs, stmt.lhs, next_stmt.lhs)
+                            shifted_immediate = _match_word_or_carrier_pair_shift_8616(
+                                next_stmt.rhs, stmt.lhs, next_stmt.lhs
+                            )
+                    try:
+                        codegen._inertia_word_or_update_candidates = int(
+                            getattr(codegen, "_inertia_word_or_update_candidates", 0) or 0
+                        ) + 1
+                    except Exception:
+                        pass
+                    if replacement_lhs is not None and immediate is not None and shifted_immediate == immediate:
+                        replacement_rhs = CBinaryOp(
+                            "Or",
+                            replacement_lhs,
+                            CConstant(immediate, getattr(stmt.rhs, "type", None), codegen=codegen),
+                            codegen=codegen,
+                        )
+                        new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
+                        try:
+                            codegen._inertia_word_or_update_materialized_count = int(
+                                getattr(codegen, "_inertia_word_or_update_materialized_count", 0) or 0
+                            ) + 1
+                        except Exception:
+                            pass
+                        changed_local = True
+                        i += 2
+                        continue
+                    if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                        term_debug = []
+                        for term in _or_terms_8616(getattr(stmt, "rhs", None)):
+                            term_debug.append(
+                                (
+                                    type(term).__name__,
+                                    _c_constant_int_value_8616(term),
+                                    _same_c_expression_8616(term, getattr(stmt, "lhs", None)),
+                                    _same_c_expression_8616(term, getattr(next_stmt, "lhs", None)),
+                                    type(_shifted_high_byte_source_8616(term)).__name__
+                                    if _shifted_high_byte_source_8616(term) is not None
+                                    else None,
+                                )
+                            )
+                        _log.warning(
+                            "[word-or-update] refused lhs=%r rhs=%r next_lhs=%r next_rhs=%r immediate=%r shifted=%r terms=%r",
+                            stmt.lhs,
+                            stmt.rhs,
+                            next_stmt.lhs,
+                            next_stmt.rhs,
+                            immediate,
+                            shifted_immediate,
+                            term_debug,
+                        )
+                    try:
+                        codegen._inertia_word_or_update_refused = int(
+                            getattr(codegen, "_inertia_word_or_update_refused", 0) or 0
+                        ) + 1
+                    except Exception:
+                        pass
+                visit(stmt)
+                new_statements.append(stmt)
+                i += 1
+            return new_statements
+
+        visit(root_node)
+        return changed_local
+
     root = codegen.cfunc.statements
     new_root = transform(root)
     if new_root is not root:
@@ -408,6 +658,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     for _ in range(3):
         if not _replace_c_children_8616(root, transform):
             break
+        changed = True
+    if _materialize_word_or_update_statements_8616(root):
         changed = True
     return changed
 

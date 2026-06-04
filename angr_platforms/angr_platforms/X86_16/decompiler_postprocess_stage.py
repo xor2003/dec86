@@ -28,8 +28,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CUnaryOp,
     CWhileLoop,
 )
-from angr.sim_variable import SimStackVariable
 from angr.sim_type import SimTypeBottom, SimTypeShort
+from angr.sim_variable import SimStackVariable
 
 from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
 
@@ -52,12 +52,13 @@ from .decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
-from .lowering.stack_lowering_from_facts import _canonical_stack_offset_8616, _stack_object_name
 from .lowering.ss_bp_substitution import (
     apply_stack_variable_bindings_to_c_text,
 )
 from .lowering.stack_lowering import run_stack_lowering_pass_8616
 from .lowering.stack_lowering_from_facts import (
+    _canonical_stack_offset_8616,
+    _stack_object_name,
     lower_stack_accesses_from_alias_facts_8616,
 )
 from .pipeline.contracts import assert_pipeline_contracts_8616
@@ -798,6 +799,11 @@ def _build_decompiler_postprocess_passes():
             False,
         ),
         DecompilerPostprocessPassSpec(
+            "_simplify_structured_expressions_after_stack_lowering_8616",
+            _simplify._simplify_structured_expressions_8616,
+            False,
+        ),
+        DecompilerPostprocessPassSpec(
             "_normalize_fact_backed_stack_accesses_8616",
             _normalize_fact_backed_stack_accesses_8616,
             True,
@@ -841,6 +847,11 @@ def _build_decompiler_postprocess_passes():
             "_rerun_stack_lowering_consumers_after_calls_8616",
             _rerun_stack_lowering_consumers_after_calls_8616,
             True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_simplify_structured_expressions_after_call_stack_lowering_8616",
+            _simplify._simplify_structured_expressions_8616,
+            False,
         ),
         DecompilerPostprocessPassSpec(
             "_normalize_function_prototype_arg_names_8616",
@@ -1856,7 +1867,7 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project
                 ex,
             )
         try:
-            _repair_unresolved_function_exit_gotos_8616(project, cloned_codegen)
+            _post._repair_unresolved_function_exit_gotos_8616(project, cloned_codegen)
         except Exception as ex:
             logging.getLogger(__name__).debug(
                 "Tail-validation baseline clone unresolved-exit repair failed at function=%#x stage=baseline-canonicalization: %s",
@@ -2206,15 +2217,6 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                     summary_text = str(
                         validation.get("summary_text") or validation.get("verdict") or validation.get("status") or ""
                     )
-                    delta = validation.get("delta")
-                    control_flow_delta = delta.get("control_flow_effects") if isinstance(delta, dict) else None
-                    returns_delta = delta.get("returns") if isinstance(delta, dict) else None
-                    control_flow_added = tuple(control_flow_delta.get("added", ())) if isinstance(control_flow_delta, dict) else ()
-                    control_flow_removed = (
-                        tuple(control_flow_delta.get("removed", ())) if isinstance(control_flow_delta, dict) else ()
-                    )
-                    returns_added = tuple(returns_delta.get("added", ())) if isinstance(returns_delta, dict) else ()
-                    returns_removed = tuple(returns_delta.get("removed", ())) if isinstance(returns_delta, dict) else ()
                     is_exit_goto_repair_delta = _postprocess_exit_goto_repair_delta_8616(validation)
                     blocking_markers = (
                         "Missing source-evidenced calls",
@@ -3547,7 +3549,7 @@ def _discard_failed_postprocess_result_8616(
         delta = validation.get("delta") if isinstance(validation, dict) else None
         log.warning(
             "[postprocess-validation] final function=%#x verdict=%s stack_delta=%s before=%s after=%s",
-            function_original_addr(function) if function is not None else -1,
+            getattr(function, "addr", -1) if function is not None else -1,
             validation.get("verdict"),
             (delta or {}).get("stack_writes"),
             (validation.get("before") or {}).get("stack_writes"),
