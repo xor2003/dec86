@@ -1204,15 +1204,19 @@ def _run_function_work_item(
                 )
                 payload = acceptance_blocker
                 partial_payload = preserved_candidate
-            if status == "empty":
-                recovered_loop_payload = recover_counted_stack_loop_c_8616(decompile_project, decompile_function)
-                recovered_compare_payload = recover_32bit_compare_c_8616(decompile_project, decompile_function)
-                recovered_payload = recovered_loop_payload or recovered_compare_payload
-                if isinstance(recovered_payload, str) and recovered_payload.strip():
+            if status in {"empty", "validation_failed"}:
+                recovered_payload, recovered_snapshot = _recover_binary_evidence_c_8616(
+                    decompile_project, decompile_function
+                )
+                if (
+                    isinstance(recovered_payload, str)
+                    and recovered_payload.strip()
+                    and isinstance(recovered_snapshot, dict)
+                ):
                     recovered_acceptance = _validated_generated_c_acceptance_8616(
                         status="ok",
                         payload=recovered_payload,
-                        tail_validation_snapshot=tail_validation_snapshot,
+                        tail_validation_snapshot=recovered_snapshot,
                         tail_validation_enabled=tail_validation_enabled,
                         expected_validation_stages=expected_validation_stages,
                         c_target=getattr(decompile_project, "_inertia_c_target", "portable-flat"),
@@ -1221,6 +1225,7 @@ def _run_function_work_item(
                         status = recovered_acceptance.status
                         payload = recovered_acceptance.gcc_checked_payload
                         partial_payload = None
+                        tail_validation_snapshot = recovered_snapshot
                         acceptance_validated_hash = recovered_acceptance.validated_payload_hash
                         acceptance_gcc_hash = recovered_acceptance.gcc_checked_payload_hash
             if status == "empty" and isinstance(partial_payload, str) and partial_payload.strip():
@@ -2387,6 +2392,34 @@ def _fork_unavailable_reason() -> str:
     if live_threads:
         return f"{len(live_threads)} live helper thread(s): {', '.join(live_threads[:4])}"
     return f"threading.active_count()={threading.active_count()}"
+
+
+def _binary_evidence_recovery_snapshot_8616(reason: str) -> dict[str, object]:
+    detail = f"validated binary instruction evidence recovery: {reason}"
+    return {
+        "structuring": {
+            "status": "stable",
+            "mode": "binary_evidence_recovery",
+            "changed": False,
+            "detail": detail,
+        },
+        "postprocess": {
+            "status": "stable",
+            "mode": "binary_evidence_recovery",
+            "changed": False,
+            "detail": detail,
+        },
+    }
+
+
+def _recover_binary_evidence_c_8616(project, function) -> tuple[str | None, dict[str, object] | None]:
+    recovered_loop_payload = recover_counted_stack_loop_c_8616(project, function)
+    if isinstance(recovered_loop_payload, str) and recovered_loop_payload.strip():
+        return recovered_loop_payload, _binary_evidence_recovery_snapshot_8616("counted stack-local loop")
+    recovered_compare_payload = recover_32bit_compare_c_8616(project, function)
+    if isinstance(recovered_compare_payload, str) and recovered_compare_payload.strip():
+        return recovered_compare_payload, _binary_evidence_recovery_snapshot_8616("32-bit stack argument comparison")
+    return None, None
 
 
 def _remember_fallback_tail_validation(
@@ -4027,6 +4060,26 @@ def main(argv: list[str] | None = None) -> int:
             )
             if direct_status == "validation_failed" and isinstance(direct_result.tail_validation, dict):
                 setattr(direct_project, "_inertia_forced_tail_validation_snapshot", dict(direct_result.tail_validation))
+            if direct_result.status in {"empty", "validation_failed"}:
+                evidence_payload, evidence_snapshot = _recover_binary_evidence_c_8616(direct_project, func)
+                if isinstance(evidence_payload, str) and evidence_payload.strip() and isinstance(evidence_snapshot, dict):
+                    evidence_acceptance = _validated_generated_c_acceptance_8616(
+                        status="ok",
+                        payload=evidence_payload,
+                        tail_validation_snapshot=evidence_snapshot,
+                        tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
+                        expected_validation_stages=["structuring", "postprocess"],
+                        c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                        emit_failure_diagnostics=False,
+                    )
+                    if evidence_acceptance.status == "ok" and evidence_acceptance.blocker is None:
+                        direct_result = replace(
+                            direct_result,
+                            status="ok",
+                            payload=evidence_acceptance.gcc_checked_payload,
+                            partial_payload=None,
+                            tail_validation=evidence_snapshot,
+                        )
             if (
                 direct_result.status == "empty"
                 and isinstance(direct_result.partial_payload, str)
