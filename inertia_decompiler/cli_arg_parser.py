@@ -158,8 +158,11 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         "--seed-engine",
         choices=("auto", "angr", "rizin"),
         default="auto",
-        help="Function seed discovery engine for whole-binary runs. "
-        "'auto' tries rizin first (if available) then falls back to angr-ranked seeds.",
+        help=(
+            "Function seed discovery engine for whole-binary runs. "
+            "'auto' tries rizin first only when no local sidecar discovery hints are present and then "
+            "falls back to angr-ranked seeds."
+        ),
     )
     parser.add_argument(
         "-q",
