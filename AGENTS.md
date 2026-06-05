@@ -124,6 +124,14 @@ Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normal
 INERTIA_ENABLE_TAIL_VALIDATION=1 ./decompile.py --alternate-source-c ./SORTDEMO.EXE
 ```
 
+When decompilation is slow, turn on compact OpenTelemetry spans before profiling:
+
+```bash
+INERTIA_OTEL_SPANS=1 INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.json ./decompile.py ./SORTDEMO.EXE
+```
+
+The compact summary shows top slow spans by duration and is designed for token-efficient agent handoff. Details: `reference/telemetry.md`.
+
 Current `SORTDEMO.EXE` handoff: read `SORTDEMO_HANDOFF.md` before restarting work on ReInitBars/SwapBars/HeapSort.
 
 ## Reference files

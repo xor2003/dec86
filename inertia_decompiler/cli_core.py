@@ -494,6 +494,13 @@ from inertia_decompiler.tail_validation import (
     tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
     x86_16_tail_validation_snapshot_passed,
 )
+from inertia_decompiler.telemetry import (
+    annotate_current_span,
+    configure_telemetry_from_env,
+    emit_compact_summary,
+    span,
+    trace_function,
+)
 
 from inertia_decompiler.runtime_support import (
     AnalysisTimeout as _AnalysisTimeout,
@@ -1137,6 +1144,7 @@ def _function_work_cache_lookup(
 
     return _impl()
 
+@trace_function(name="function.work_item")
 def _run_function_work_item(
     item: FunctionWorkItem,
     *,
@@ -1315,6 +1323,10 @@ def _run_function_work_item(
             )
 
         block_estimate, _byte_estimate = _function_complexity(item.function)
+        annotate_current_span(
+            blocks=block_estimate,
+            bytes=_byte_estimate,
+        )
         complexity_timeout_bonus = max(0, int(block_estimate) - 30) * 2
         effective_timeout = _enforce_function_timeout_cap(
             max(1, min(360, int(timeout) + complexity_timeout_bonus)),
@@ -1331,6 +1343,7 @@ def _run_function_work_item(
             )
         )
         if cached_work_result is not None:
+            annotate_current_span(cache="hit", status=cached_work_result.status)
             return cached_work_result
 
         cache_key = cache_key or _function_decompilation_cache_key(
@@ -1659,6 +1672,7 @@ def _collect_recompilation_payloads_8616(accepted_payload: str) -> tuple[list[tu
     return _impl()
 
 
+@trace_function(name="validation.acceptance")
 def _validated_generated_c_acceptance_8616(
     *,
     status: str,
@@ -3116,6 +3130,13 @@ def main(argv: list[str] | None = None) -> int:
 
         parser = _build_cli_argument_parser()
         args = parser.parse_args(argv)
+        annotate_current_span(
+            binary=getattr(args.binary, "name", str(args.binary)),
+            addr=hex(args.addr) if isinstance(args.addr, int) else None,
+            max_functions=args.max_functions,
+            timeout=args.timeout,
+            backend=args.function_discovery_backend,
+        )
         raw_argv = list(argv) if argv is not None else list(sys.argv[1:])
         seed_engine_was_explicit = any(
             token == "--seed-engine" or token.startswith("--seed-engine=")
@@ -4037,17 +4058,27 @@ def main(argv: list[str] | None = None) -> int:
                     and threading.current_thread() is threading.main_thread()
                     and threading.active_count() == 1
                 )
-                if use_fork_for_direct:
-                    status, payload, partial_payload, *direct_extra = _run_with_timeout_in_fork(
-                        direct_decompile_job,
-                        timeout=direct_decompile_timeout,
-                    )
-                else:
-                    status, payload, partial_payload, *direct_extra = _run_with_timeout_in_daemon_thread(
-                        direct_decompile_job,
-                        timeout=direct_decompile_timeout,
-                        thread_name_prefix="direct-decomp",
-                    )
+                with span(
+                    "direct.decompile_job",
+                    addr=hex(getattr(func, "addr", 0)),
+                    name=getattr(func, "name", None),
+                    timeout=direct_decompile_timeout,
+                    isolated="fork" if use_fork_for_direct else "thread",
+                    blocks=_direct_blocks,
+                    bytes=_direct_bytes,
+                ):
+                    if use_fork_for_direct:
+                        status, payload, partial_payload, *direct_extra = _run_with_timeout_in_fork(
+                            direct_decompile_job,
+                            timeout=direct_decompile_timeout,
+                        )
+                    else:
+                        status, payload, partial_payload, *direct_extra = _run_with_timeout_in_daemon_thread(
+                            direct_decompile_job,
+                            timeout=direct_decompile_timeout,
+                            thread_name_prefix="direct-decomp",
+                        )
+                    annotate_current_span(status=status)
                 for extra in direct_extra:
                     if isinstance(extra, dict):
                         direct_tail_validation_snapshot = dict(extra)
@@ -4541,19 +4572,26 @@ def main(argv: list[str] | None = None) -> int:
                                 window=args.window,
                                 low_memory=low_memory_path,
                             )
-                            side_status, side_payload, *_ = _decompile_function_with_stats(
-                                project,
-                                side_cfg,
-                                side_func,
-                                max(2, min(args.timeout, 8)),
-                                args.api_style,
-                                args.binary,
-                                cod_metadata=cod_metadata,
-                                synthetic_globals=synthetic_globals,
-                                lst_metadata=lst_metadata,
-                                allow_isolated_retry=False,
-                                failure_family_state=direct_failure_family_state,
-                            )
+                            with span(
+                                "direct.sidecar_retry",
+                                addr=hex(sidecar_addr),
+                                name=code_name,
+                                timeout=max(2, min(args.timeout, 8)),
+                            ):
+                                side_status, side_payload, *_ = _decompile_function_with_stats(
+                                    project,
+                                    side_cfg,
+                                    side_func,
+                                    max(2, min(args.timeout, 8)),
+                                    args.api_style,
+                                    args.binary,
+                                    cod_metadata=cod_metadata,
+                                    synthetic_globals=synthetic_globals,
+                                    lst_metadata=lst_metadata,
+                                    allow_isolated_retry=False,
+                                    failure_family_state=direct_failure_family_state,
+                                )
+                                annotate_current_span(status=side_status)
                             direct_sidecar_verdict = side_status
                             if side_status == "ok":
                                 _emit_tail_validation_for_function_run_or_uncollected(
@@ -6710,4 +6748,9 @@ def main(argv: list[str] | None = None) -> int:
             _emit_function_timing_summary(function_tasks, result_map)
         return 0 if decompiled else 2
 
-    return _impl()
+    configure_telemetry_from_env()
+    with span("cli.main"):
+        try:
+            return _impl()
+        finally:
+            emit_compact_summary()

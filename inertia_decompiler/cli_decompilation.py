@@ -260,6 +260,7 @@ from inertia_decompiler.runtime_support import (
     should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
     timing_output_enabled as _timing_output_enabled,
 )
+from inertia_decompiler.telemetry import annotate_current_span, trace_function
 
 from inertia_decompiler.work_items import (
     FunctionDecompileResult,
@@ -1931,6 +1932,7 @@ def _preserve_source_label_for_same_addr_function_8616(source_function, recovere
     return True
 
 
+@trace_function(name="function.decompile")
 def _decompile_function(
     project: angr.Project,
     cfg,
@@ -3882,6 +3884,7 @@ def _preferred_expr_collapse_depth(
         return 24
     return 16
 
+@trace_function(name="function.decompile_with_stats")
 def _decompile_function_with_stats(
     project: angr.Project,
     cfg,
@@ -3905,6 +3908,10 @@ def _decompile_function_with_stats(
         byte_count=byte_count,
     )
     display_addr = function_original_addr(function)
+    annotate_current_span(
+        blocks=block_count,
+        bytes=byte_count,
+    )
     print(f"[dbg] function complexity for {display_addr:#x} {function.name}: blocks={block_count}, bytes={byte_count}", file=sys.stderr, flush=True)
     sys.stdout.flush()
     start = time.perf_counter()
@@ -3966,6 +3973,7 @@ def _decompile_function_with_stats(
             payload = validated_payload
     partial_payload = getattr(project, "_inertia_partial_codegen_text", None)
     elapsed = time.perf_counter() - start
+    annotate_current_span(status=status, elapsed_ms=round(elapsed * 1000.0, 1))
     advance_failure_family_state(failure_family_state)
     if _timing_output_enabled():
         print(f"[dbg] decompilation time for {display_addr:#x} {function.name}: {elapsed:.2f}s", file=sys.stderr, flush=True)

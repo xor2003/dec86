@@ -30,6 +30,8 @@ dev = [
     "keystone-engine==0.9.2",
     "monkeytype",
     "mypy",
+    "opentelemetry-api>=1.28,<2",
+    "opentelemetry-sdk>=1.28,<2",
     "ruff",
     "pyright",
     "vulture",

@@ -26,6 +26,7 @@ from inertia_decompiler.sidecar_parsers import (
     _reconcile_cod_listing_with_codeview,
     _synthesize_code_ranges,
 )
+from inertia_decompiler.telemetry import trace_function
 
 
 def _signature_matched_code_addrs(metadata: LSTMetadata | None) -> frozenset[int]:
@@ -296,6 +297,7 @@ def _load_cod_mzre_flair_sidecars(
     return _impl()
 
 
+@trace_function(name="sidecar.load_metadata")
 def _load_lst_metadata(
     binary: Path,
     project: angr.Project,

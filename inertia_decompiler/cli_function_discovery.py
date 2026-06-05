@@ -97,6 +97,7 @@ from inertia_decompiler.tail_validation import (
     tail_validation_snapshot_for_fallback as _tail_validation_snapshot_for_fallback,
     tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
 )
+from inertia_decompiler.telemetry import trace_function
 from inertia_decompiler.x86_16_exact_slice import (
     function_original_addr,
     mark_function_original_addr,
@@ -602,6 +603,7 @@ def _x86_16_fast_recovery_windows(window: int | None, *, low_memory: bool = Fals
         windows.append(effective_window)
     return tuple(windows)
 
+@trace_function(name="discovery.recover_cfg")
 def _recover_cfg(
     project: angr.Project,
     binary_path: Path,
@@ -646,6 +648,7 @@ def _recover_cfg(
     seed_calling_conventions(cfg)
     return cfg
 
+@trace_function(name="discovery.recover_partial_cfg")
 def _recover_partial_cfg(
     project: angr.Project,
     *,
@@ -1365,6 +1368,7 @@ def _mark_function_recovery_truncated(function, truncated: bool) -> None:
     if isinstance(info, dict):
         info["x86_16_recovery_truncated"] = truncated
 
+@trace_function(name="discovery.recover_candidate")
 def _recover_candidate_function_pair(
     candidate_project,
     *,
@@ -4095,6 +4099,7 @@ def _try_recover_direct_addr_from_sidecar_label(
     return _impl()
 
 
+@trace_function(name="discovery.recover_direct_addr")
 def _recover_direct_addr_function(
     project: angr.Project,
     addr: int,

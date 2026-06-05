@@ -20,6 +20,7 @@ from angr_platforms.X86_16.tail_validation import (
     format_x86_16_tail_validation_diff,
     x86_16_tail_validation_snapshot_passed,
 )
+from inertia_decompiler.telemetry import annotate_current_span, trace_function
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -282,12 +283,14 @@ def tail_validation_fallback_allows_project_snapshot(kind: str) -> bool:
     return kind in TAIL_VALIDATION_FALLBACK_PROJECT_SNAPSHOT_KINDS
 
 
+@trace_function(name="tail_validation.summary")
 def emit_tail_validation_console_summary(
     function_tasks: Sequence[Any],
     result_map: Mapping[int, Any],
     *,
     binary_path: Path | None = None,
 ) -> None:
+    annotate_current_span(functions=len(function_tasks), binary=binary_path.name if binary_path is not None else None)
     emitted_any = False
     for item in function_tasks:
         project = getattr(getattr(item, "function", None), "project", None)

@@ -12,6 +12,8 @@ from pathlib import Path
 import angr
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
+from inertia_decompiler.telemetry import trace_function
+
 
 _IDA_BASE_ADDRESS_RE = re.compile(r"Base Address:\s*([0-9A-Fa-f]+)h", re.IGNORECASE)
 
@@ -198,6 +200,7 @@ def _unpack_lzexe_image(data: bytes, *, base_addr: int) -> _UnpackedLZEXEImage:
     return _impl()
 
 
+@trace_function(name="project.build")
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
     def _impl():
         suffix = path.suffix.lower()
@@ -290,6 +293,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
 
 
 @lru_cache(maxsize=16)
+@trace_function(name="project.build_cached")
 def _build_project_cached(
     path: str,
     *,
@@ -305,6 +309,7 @@ def _build_project_cached(
     )
 
 
+@trace_function(name="project.build_from_bytes")
 def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) -> angr.Project:
     arch = Arch86_16()
     arch.bits = max(arch.bits, 32)
