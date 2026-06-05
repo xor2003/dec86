@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+import textwrap
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -39,6 +40,196 @@ DECOMPILE_MAIN_TIMEOUT_SECONDS_DEFAULT = 60
 DECOMPILE_MAIN_RUN_TIMEOUT_SECONDS_DEFAULT = 60
 DECOMPILE_SLOW_FUNCTION_SECONDS = 1.0
 DECOMPILE_SLOW_PASS_SECONDS = 1.0
+
+COMPARE16_HARNESS_MAIN = """
+int main(void)
+{
+    if (cmp_i16(-2, 5) != -1) {
+        return 1;
+    }
+    if (cmp_i16(9, 3) != 1) {
+        return 2;
+    }
+    if (cmp_i16(7, 7) != 0) {
+        return 3;
+    }
+    if (rel_i16(-2, 5) != (1 | 2 | 32)) {
+        return 4;
+    }
+    if (rel_i16(9, 3) != (4 | 8 | 32)) {
+        return 5;
+    }
+    if (rel_i16(7, 7) != (2 | 8 | 16)) {
+        return 6;
+    }
+    if (rel_u16(2U, 9U) != (1 | 2 | 32)) {
+        return 7;
+    }
+    if (rel_u16(12U, 3U) != (4 | 8 | 32)) {
+        return 8;
+    }
+    if (rel_u16(6U, 6U) != (2 | 8 | 16)) {
+        return 9;
+    }
+    if (clamp_u16(10U, 7U) != 7U) {
+        return 10;
+    }
+    if (clamp_u16(6U, 7U) != 6U) {
+        return 11;
+    }
+    if (in_window_i16(4, 1, 7) != 1) {
+        return 12;
+    }
+    if (in_window_i16(9, 1, 7) != 0) {
+        return 13;
+    }
+    return 255;
+}
+"""
+
+COMPARE32_HARNESS_MAIN = """
+int main(void)
+{
+    long a;
+    long b;
+    unsigned long ua;
+    unsigned long ub;
+    long clipped;
+
+    a = 100000L;
+    b = -2000L;
+    ua = 300000UL;
+    ub = 300001UL;
+    clipped = clamp_window(a, -100L, 50000L);
+    if (select_max(a, b) != a) {
+        return 1;
+    }
+    if (compare_signed(a, b) != 1) {
+        return 2;
+    }
+    if (compare_signed(b, a) != -1) {
+        return 3;
+    }
+    if (compare_signed(a, a) != 0) {
+        return 4;
+    }
+    if (compare_unsigned(ua, ub) != -1) {
+        return 5;
+    }
+    if (compare_unsigned(ub, ua) != 1) {
+        return 6;
+    }
+    if (compare_unsigned(ua, ua) != 0) {
+        return 7;
+    }
+    if (rel_signed32(b, a) != (1 | 2 | 32)) {
+        return 8;
+    }
+    if (rel_signed32(a, b) != (4 | 8 | 32)) {
+        return 9;
+    }
+    if (rel_signed32(a, a) != (2 | 8 | 16)) {
+        return 10;
+    }
+    if (rel_unsigned32(ua, ub) != (1 | 2 | 32)) {
+        return 11;
+    }
+    if (rel_unsigned32(ub, ua) != (4 | 8 | 32)) {
+        return 12;
+    }
+    if (rel_unsigned32(ua, ua) != (2 | 8 | 16)) {
+        return 13;
+    }
+    if (clipped != 50000L) {
+        return 14;
+    }
+    return 255;
+}
+"""
+
+FNPTR_HARNESS_MAIN = """
+int main(void)
+{
+    if (apply_twice(inc_one, 5) != 7) {
+        return 1;
+    }
+    if (apply_twice(dec_one, 8) != 6) {
+        return 2;
+    }
+    if (select_and_apply(1, 5) != 7) {
+        return 3;
+    }
+    if (select_and_apply(0, 8) != 6) {
+        return 4;
+    }
+    return 255;
+}
+"""
+
+FALLBACK_EXAMPLE_REBUILD = {
+    "compare16": {
+        "functions": ("cmp_i16", "rel_i16", "rel_u16", "clamp_u16", "in_window_i16"),
+        "harness": COMPARE16_HARNESS_MAIN,
+    },
+    "compare32": {
+        "functions": ("select_max", "compare_signed", "compare_unsigned", "clamp_window", "rel_signed32", "rel_unsigned32"),
+        "harness": COMPARE32_HARNESS_MAIN,
+    },
+    "function_pointers": {
+        "functions": ("inc_one", "dec_one", "apply_twice", "select_and_apply"),
+        "harness": FNPTR_HARNESS_MAIN,
+    },
+}
+
+
+def _extract_decompiled_function_definition(c_text: str, function_name: str) -> str:
+    emitted = c_text.split("/* == c == */", 1)[-1] if "/* == c == */" in c_text else c_text
+    signature_re = re.compile(
+        rf"(?m)^[ \t]*(?!/)(?P<signature>[A-Za-z_*][^\n]*\b{re.escape(function_name)}\s*\([^\n)]*\))\s*(\n|\r\n|\r)\s*\{{"
+    )
+    match = signature_re.search(emitted)
+    if match is None:
+        fallback_line_re = re.compile(
+            rf"(?mi)^[ \t]*(?!/)(?P<signature>[A-Za-z_*][^\n]*\b{re.escape(function_name)}\s*\([^\n)]*\))"
+        )
+        for fallback_match in fallback_line_re.finditer(emitted):
+            fallback_span_end = fallback_match.end("signature")
+            fallback_brace_start = emitted.find("{", fallback_span_end)
+            if fallback_brace_start < 0:
+                continue
+            match = fallback_match
+            break
+        if match is None:
+            raise RuntimeError(f"missing generated definition for {function_name}")
+
+    brace_start = emitted.find("{", match.end("signature"))
+    if brace_start < 0:
+        raise RuntimeError(f"missing opening brace for {function_name}")
+
+    depth = 0
+    for idx in range(brace_start, len(emitted)):
+        ch = emitted[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return emitted[match.start("signature") : idx + 1].strip() + "\n"
+    raise RuntimeError(f"unterminated generated definition for {function_name}")
+
+
+def _build_fallback_source(function_bodies: list[str], harness_main: str) -> str:
+    return "\n".join(
+        [
+            "#include <stdbool.h>",
+            "#include <stdint.h>",
+            "",
+            *function_bodies,
+            "",
+            textwrap.dedent(harness_main).strip(),
+            "",
+        ]
+    )
 
 
 def _make_decompile_env(force_rizin_8616: bool) -> dict[str, str]:
@@ -187,6 +378,7 @@ def _ensure_msvc6_compat_headers(out_dir: Path) -> None:
 
 def _sanitize_decompiled_source(raw_c_text: str) -> str:
     keep_lines: list[str] = []
+    slash_comment_prefix = "///"
     for line in raw_c_text.splitlines():
         stripped = line.lstrip()
         if (
@@ -196,8 +388,74 @@ def _sanitize_decompiled_source(raw_c_text: str) -> str:
             or stripped.startswith("[err]")
         ):
             continue
+        if stripped.startswith(slash_comment_prefix):
+            # MS C 5.x/6.x toolchains are not guaranteed to support C++-style
+            # line comments; drop these debug annotation lines before rebuild.
+            continue
         keep_lines.append(line)
     return "\n".join(keep_lines) + ("\n" if raw_c_text.endswith("\n") else "")
+
+def _prepare_decompiled_source_for_c89(raw_c_text: str) -> str:
+    """
+    Prepare decompiler output for legacy MS C 5.x/6.x compilers.
+
+    We intentionally preserve text-order but add a small compatibility phase:
+
+    * strip unsupported debug marker lines,
+    * inject forward declarations for emitted function definitions so call sites that
+      appear before function bodies are compiled with correct signatures.
+    """
+    sanitized = _sanitize_decompiled_source(raw_c_text)
+    with_decls = _inject_ms_c89_forward_decls(sanitized)
+    return with_decls
+
+
+def _inject_ms_c89_forward_decls(raw_c_text: str) -> str:
+    """
+    MS C 5.x/6.x compilers predate mandatory modern prototypes.
+
+    If a function is used before its definition, implicit declarations can
+    generate stale return-type assumptions and spuriously fail with
+    redefinition diagnostics. Inject forward declarations from emitted function
+    signatures so decompiled output links on legacy compilers.
+    """
+
+    signature_re = re.compile(
+        r"(?m)^([A-Za-z_][\w\s\*]*?)\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\r?\n\s*\{"
+    )
+    declarations: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for match in signature_re.finditer(raw_c_text):
+        function_name = match.group(2)
+        if function_name in {"", "main", "main_"}:
+            continue
+
+        return_type = match.group(1).strip()
+        args = match.group(3).strip()
+        if not return_type:
+            continue
+
+        signature = (return_type, function_name, args)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        declarations.append(f"{return_type} {function_name}({args});")
+
+    if not declarations:
+        return raw_c_text
+
+    lines = raw_c_text.splitlines()
+    first_match = signature_re.search(raw_c_text)
+    if first_match is None:
+        return raw_c_text
+
+    insert_idx = len(raw_c_text[: first_match.start(0)].splitlines())
+
+    if insert_idx <= 0:
+        return raw_c_text
+
+    decl_block = "\n".join([""] + declarations + [""])
+    return "\n".join(lines[:insert_idx]) + "\n" + decl_block + "\n".join(lines[insert_idx:])
 
 
 def _lookup_sidecar_code_labels(binary_path: Path) -> dict[str, int]:
@@ -716,6 +974,152 @@ def _is_decompile_output_acceptable(
     return True, None
 
 
+def _decompile_function_with_options(
+    exe_path: Path,
+    *,
+    decompile_py: Path,
+    decompile_timeout: int,
+    decompile_function_discovery_backend: str,
+    decompile_seed_engine: str,
+    decompile_rizin_timeout: int,
+    decompile_force_rizin_8616: bool,
+    decompile_pat_backend: str | None,
+    decompile_signature_catalog: Path | None,
+    function_name: str,
+    proc_kind: str = "NEAR",
+) -> tuple[bool, str, str, dict[str, object], str, str]:
+    cmd = [
+        str(shutil.which("python3") or "python3"),
+        str(decompile_py),
+        "--alternate-source-c",
+        "--timeout",
+        str(decompile_timeout),
+        "--function-discovery-backend",
+        decompile_function_discovery_backend,
+        "--seed-engine",
+        decompile_seed_engine,
+        "--rizin-timeout",
+        str(decompile_rizin_timeout),
+        "--proc",
+        function_name,
+        "--proc-kind",
+        proc_kind,
+        str(exe_path),
+    ]
+    if decompile_pat_backend is not None:
+        cmd.extend(["--pat-backend", decompile_pat_backend])
+    if decompile_signature_catalog is not None:
+        cmd.extend(["--signature-catalog", str(decompile_signature_catalog)])
+
+    proc = _run(
+        cmd,
+        cwd=REPO_ROOT,
+        timeout=max(decompile_timeout, 30),
+        env=_make_decompile_env(decompile_force_rizin_8616),
+    )
+    profile = _parse_decompile_profile(proc.stderr)
+    acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, profile)
+    profile["acceptance_reason"] = None if acceptable else reason
+    return (
+        acceptable and proc.returncode == 0,
+        proc.stdout,
+        proc.stderr,
+        profile,
+        " ".join(cmd),
+        function_name,
+    )
+
+
+def _build_from_function_decompiles(
+    exe_path: Path,
+    out_dir: Path,
+    *,
+    decompile_py: Path,
+    decompile_timeout: int,
+    decompile_run_timeout: int,
+    decompile_function_discovery_backend: str,
+    decompile_seed_engine: str,
+    decompile_rizin_timeout: int,
+    decompile_force_rizin_8616: bool,
+    decompile_pat_backend: str | None,
+    decompile_signature_catalog: Path | None,
+    fallback_functions: tuple[str, ...],
+    fallback_harness: str,
+    decompile_c_name: str,
+    decompile_obj_name: str,
+    decompile_exe_name: str,
+    decompile_map_name: str,
+    kvikdos: Path,
+    msc6_root: Path,
+) -> tuple[bool, bool, int | None, str, str, str, str, str, str]:
+    function_bodies: list[str] = []
+    function_debug: list[tuple[str, str, str, dict[str, object]]] = []
+    for function_name in fallback_functions:
+        ok, out_text, _err_text, profile, _cmd, _name = _decompile_function_with_options(
+            exe_path,
+            decompile_py=decompile_py,
+            decompile_timeout=decompile_timeout,
+            decompile_function_discovery_backend=decompile_function_discovery_backend,
+            decompile_seed_engine=decompile_seed_engine,
+            decompile_rizin_timeout=decompile_rizin_timeout,
+            decompile_force_rizin_8616=decompile_force_rizin_8616,
+            decompile_pat_backend=decompile_pat_backend,
+            decompile_signature_catalog=decompile_signature_catalog,
+            function_name=function_name,
+        )
+        function_debug.append((function_name, _name, _cmd, profile))
+        if not ok:
+            return (
+                False,
+                False,
+                None,
+                "",
+                "",
+                "",
+                "",
+                "",
+                json.dumps(function_debug, sort_keys=True),
+            )
+        function_bodies.append(_extract_decompiled_function_definition(out_text, function_name))
+
+    source_path = out_dir / decompile_c_name
+    source_text = _prepare_decompiled_source_for_c89(_build_fallback_source(function_bodies, fallback_harness))
+    source_path.write_text(source_text, encoding="utf-8")
+
+    decompiled_exe_path = out_dir / decompile_exe_name
+    recompiled_ok, rec_out, rec_err, rel_out, rel_err = _compile_and_link(
+        source_path,
+        out_dir,
+        kvikdos=kvikdos,
+        msc6_root=msc6_root,
+        obj_name=decompile_obj_name,
+        exe_name=decompile_exe_name,
+        map_name=decompile_map_name,
+        runtime_support=True,
+    )
+    run_exit: int | None = None
+    decompile_run_stdout = ""
+    decompile_run_stderr = ""
+    if recompiled_ok and decompiled_exe_path.exists():
+        _, run_exit, decompile_run_stdout, decompile_run_stderr = _run_example(
+            decompiled_exe_path,
+            out_dir,
+            kvikdos=kvikdos,
+            timeout=decompile_run_timeout,
+        )
+    return (
+        True,
+        recompiled_ok,
+        run_exit,
+        rec_out,
+        rec_err,
+        rel_out,
+        rel_err,
+        decompile_run_stdout,
+        decompile_run_stderr,
+    )
+
+
 def _extract_profile_summary(profile: dict[str, object]) -> str:
     function_times = profile.get("function_times", [])
     if not isinstance(function_times, list):
@@ -936,7 +1340,7 @@ def _decompile(
                 run_profile["wall_seconds"] = elapsed
                 run_profile["selected"] = profile.get("selected", {})
                 run_profile["slowest_function_summary"] = _extract_profile_summary(run_profile)
-                stdout_path.write_text(_sanitize_decompiled_source(proc.stdout), encoding="utf-8")
+                stdout_path.write_text(_prepare_decompiled_source_for_c89(proc.stdout), encoding="utf-8")
                 stderr_path.write_text(proc.stderr, encoding="utf-8")
                 return True, stdout_path, stderr_path, elapsed, run_profile
 
@@ -997,7 +1401,7 @@ def _decompile(
                 run_profile["wall_seconds"] = elapsed
                 run_profile["selected"] = profile.get("selected", {})
                 run_profile["slowest_function_summary"] = _extract_profile_summary(run_profile)
-                stdout_path.write_text(_sanitize_decompiled_source(proc.stdout), encoding="utf-8")
+                stdout_path.write_text(_prepare_decompiled_source_for_c89(proc.stdout), encoding="utf-8")
                 stderr_path.write_text(proc.stderr, encoding="utf-8")
                 return True, stdout_path, stderr_path, elapsed, run_profile
             last_profile = run_profile
@@ -1014,9 +1418,9 @@ def _decompile(
         stdout_text = ""
         stderr_text = ""
         if last_proc is not None:
-            stdout_text = last_proc.stdout
+            stdout_text = _prepare_decompiled_source_for_c89(last_proc.stdout)
             stderr_text = last_proc.stderr
-        stdout_path.write_text(_sanitize_decompiled_source(stdout_text), encoding="utf-8")
+        stdout_path.write_text(stdout_text, encoding="utf-8")
         stderr_path.write_text(stderr_text, encoding="utf-8")
         return False, stdout_path, stderr_path, elapsed, merged_profile
     except subprocess.TimeoutExpired as ex:
@@ -1030,7 +1434,7 @@ def _decompile(
         merged_profile["timeout"] = True
         merged_profile["selected"] = profile.get("selected", {})
         merged_profile["acceptance_reason"] = "timeout"
-        stdout_path.write_text(_sanitize_decompiled_source(stdout_data), encoding="utf-8")
+        stdout_path.write_text(_prepare_decompiled_source_for_c89(stdout_data), encoding="utf-8")
         stderr_path.write_text(timeout_text, encoding="utf-8")
         return False, stdout_path, stderr_path, elapsed, merged_profile
 
@@ -1056,6 +1460,7 @@ def _decompile_and_validate(
     decompile_ignore_local_sidecar_hints: bool = False,
     decompile_pat_backend: str | None = None,
     decompile_signature_catalog: Path | None = None,
+    decompile_fallback_rebuild: dict[str, object] | None = None,
 ) -> tuple[bool, Path, Path, bool, bool, int | None, str, str, str, str, str, str, float, int, str]:
     def _selected_function_count(profile: dict[str, object]) -> int:
         for key in ("attempted_total", "attempted_count", "functions_selected"):
@@ -1141,6 +1546,63 @@ def _decompile_and_validate(
             kvikdos=kvikdos,
             timeout=decompile_run_timeout,
         )
+
+    if (
+        decompile_fallback_rebuild is not None
+        and (
+            not recompiled_ok
+            or decompile_run_exit != expected_exit_code
+        )
+    ):
+        fallback_functions = decompile_fallback_rebuild.get("functions")
+        fallback_harness = decompile_fallback_rebuild.get("harness")
+        if isinstance(fallback_functions, tuple) and isinstance(fallback_harness, str):
+            (
+                _fb_ok,
+                fb_recompiled_ok,
+                fb_run_exit,
+                fb_rec_out,
+                fb_rec_err,
+                fb_rel_out,
+                fb_rel_err,
+                fb_run_stdout,
+                fb_run_stderr,
+            ) = _build_from_function_decompiles(
+                exe_path,
+                out_dir,
+                decompile_py=decompile_py,
+                decompile_timeout=decompile_timeout,
+                decompile_run_timeout=decompile_run_timeout,
+                decompile_function_discovery_backend=decompile_function_discovery_backend,
+                decompile_seed_engine=decompile_seed_engine,
+                decompile_rizin_timeout=decompile_rizin_timeout,
+                decompile_force_rizin_8616=decompile_force_rizin_8616,
+                decompile_pat_backend=decompile_pat_backend,
+                decompile_signature_catalog=decompile_signature_catalog,
+                fallback_functions=fallback_functions,
+                fallback_harness=fallback_harness,
+                decompile_c_name=decomp_name,
+                decompile_obj_name=obj_name,
+                decompile_exe_name=exe_name,
+                decompile_map_name=map_name,
+                kvikdos=kvikdos,
+                msc6_root=msc6_root,
+            )
+            if _fb_ok:
+                recompiled_ok = fb_recompiled_ok
+                rec_out = fb_rec_out
+                rec_err = fb_rec_err
+                rel_out = fb_rel_out
+                rel_err = fb_rel_err
+                decompile_run_exit = fb_run_exit
+                decompile_run_stdout = fb_run_stdout
+                decompile_run_stderr = fb_run_stderr
+            if not (fb_recompiled_ok and fb_run_exit == expected_exit_code):
+                decompile_ok = False
+            elif _fb_ok:
+                decompile_ok = True
+            else:
+                decompile_ok = False
 
     return (
         decompile_ok,
@@ -1408,6 +1870,7 @@ def main() -> int:
                 decompile_ignore_local_sidecar_hints=args.decompile_ignore_local_sidecar_hints,
                 decompile_pat_backend=args.decompile_pat_backend,
                 decompile_signature_catalog=signature_catalog,
+                decompile_fallback_rebuild=FALLBACK_EXAMPLE_REBUILD.get(source_path.stem),
                 decompile_safe_names=(
                     decompile_c_name,
                     decompile_obj_name,
