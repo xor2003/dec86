@@ -19,7 +19,10 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures.thread import _threads_queues, _worker
 from datetime import datetime
-from _pytest.capture import EncodedFile
+try:
+    from _pytest.capture import EncodedFile
+except Exception:  # pragma: no cover - fallback when pytest is unavailable
+    EncodedFile = io.TextIOBase
 
 from .variable_recovery_sub_guard import (
     build_guarded_handle_binop_mul_8616,

@@ -59,6 +59,21 @@ def _enable_line_buffered_stdio() -> None:
             except Exception:
                 pass
 
+
+def _install_msgspec_shim_if_missing() -> None:
+    try:
+        import msgspec  # noqa: F401
+    except ModuleNotFoundError:
+        try:
+            # Explicit import keeps fallback deterministic for environments where
+            # sitecustomize.py is not auto-discovered (e.g. PyPy packaging paths).
+            import sitecustomize  # noqa: F401
+        except Exception:
+            pass
+
+
+_install_msgspec_shim_if_missing()
+
 def _configure_python_recursion_limit() -> None:
     raw = os.environ.get("INERTIA_PYTHON_RECURSION_LIMIT", "").strip()
     target = 12000

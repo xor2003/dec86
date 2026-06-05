@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import types
 import sys
 
 try:
@@ -41,3 +43,49 @@ def _apply_memory_cap() -> None:
 
 
 _apply_memory_cap()
+
+
+def _install_msgspec_shim() -> None:
+    try:
+        import msgspec  # noqa: F401
+    except ModuleNotFoundError:
+        pass
+    else:
+        return
+
+    class _MsgSpecJson:
+        @staticmethod
+        def encode(obj):
+            return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+        @staticmethod
+        def decode(data):
+            if isinstance(data, memoryview):
+                data = bytes(data)
+            if isinstance(data, (bytes, bytearray)):
+                data = data.decode("utf-8")
+            if not isinstance(data, str):
+                raise TypeError(f"msgspec.json.decode expects bytes or str, got {type(data)!r}")
+            return json.loads(data)
+
+        @staticmethod
+        def dumps(obj):
+            return json.dumps(obj)
+
+        @staticmethod
+        def loads(data):
+            if isinstance(data, memoryview):
+                data = bytes(data)
+            if isinstance(data, (bytes, bytearray)):
+                data = data.decode("utf-8")
+            if not isinstance(data, str):
+                raise TypeError(f"msgspec.json.loads expects bytes or str, got {type(data)!r}")
+            return json.loads(data)
+
+    msgspec_module = types.ModuleType("msgspec")
+    msgspec_module.json = _MsgSpecJson
+    msgspec_module.__all__ = ["json"]
+    sys.modules["msgspec"] = msgspec_module
+
+
+_install_msgspec_shim()
