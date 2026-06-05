@@ -232,10 +232,26 @@ def _build_fallback_source(function_bodies: list[str], harness_main: str) -> str
     )
 
 
-def _make_decompile_env(force_rizin_8616: bool) -> dict[str, str]:
+def _safe_trace_label(text: str) -> str:
+    label = re.sub(r"[^A-Za-z0-9_.-]+", "_", text.strip())
+    return label.strip("._-") or "child"
+
+
+def _child_trace_path(base_path: str, label: str) -> str:
+    path = Path(base_path)
+    safe_label = _safe_trace_label(label)
+    if path.suffix:
+        return str(path.with_name(f"{path.stem}.{safe_label}{path.suffix}"))
+    return str(path.with_name(f"{path.name}.{safe_label}"))
+
+
+def _make_decompile_env(force_rizin_8616: bool, *, trace_label: str | None = None) -> dict[str, str]:
     env = {"INERTIA_DEBUG_TIMING": "1", "INERTIA_ENABLE_TAIL_VALIDATION": "1"}
     if force_rizin_8616:
         env["INERTIA_AUTO_RIZIN_8616"] = "1"
+    parent_trace_file = os.environ.get("INERTIA_OTEL_SPAN_FILE")
+    if parent_trace_file and trace_label:
+        env["INERTIA_OTEL_SPAN_FILE"] = _child_trace_path(parent_trace_file, trace_label)
     return env
 
 
@@ -1015,7 +1031,10 @@ def _decompile_function_with_options(
         cmd,
         cwd=REPO_ROOT,
         timeout=max(decompile_timeout, 30),
-        env=_make_decompile_env(decompile_force_rizin_8616),
+        env=_make_decompile_env(
+            decompile_force_rizin_8616,
+            trace_label=f"{exe_path.stem}.{function_name}",
+        ),
     )
     profile = _parse_decompile_profile(proc.stderr)
     acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, profile)
@@ -1312,7 +1331,7 @@ def _decompile(
     try:
         all_selection_failures = True
         saw_decompile_timeout = False
-        for candidate in candidates:
+        for attempt_index, candidate in enumerate(candidates, start=1):
             candidate_cmd = _candidate_command(candidate)
             candidate_attempt: dict[str, object] = {
                 "candidate": candidate,
@@ -1324,7 +1343,10 @@ def _decompile(
                 candidate_cmd,
                 cwd=REPO_ROOT,
                 timeout=_candidate_run_timeout(candidate),
-                env=_make_decompile_env(decompile_force_rizin_8616),
+                env=_make_decompile_env(
+                    decompile_force_rizin_8616,
+                    trace_label=f"{exe_path.stem}.attempt{attempt_index}",
+                ),
             )
             last_proc = proc
             run_profile = _parse_decompile_profile(proc.stderr)
@@ -1386,7 +1408,10 @@ def _decompile(
                 fallback_cmd,
                 cwd=REPO_ROOT,
                 timeout=_candidate_run_timeout(fallback_candidate),
-                env=_make_decompile_env(decompile_force_rizin_8616),
+                env=_make_decompile_env(
+                    decompile_force_rizin_8616,
+                    trace_label=f"{exe_path.stem}.attempt{len(attempts)}",
+                ),
             )
             last_proc = proc
             run_profile = _parse_decompile_profile(proc.stderr)
@@ -1462,6 +1487,57 @@ def _decompile_and_validate(
     decompile_signature_catalog: Path | None = None,
     decompile_fallback_rebuild: dict[str, object] | None = None,
 ) -> tuple[bool, Path, Path, bool, bool, int | None, str, str, str, str, str, str, float, int, str]:
+    def _rebuild_names() -> tuple[str, str, str, str]:
+        if decompile_safe_names is None:
+            stem = exe_path.stem.upper()
+            return (
+                f"{stem}_DECOMPILE.C",
+                f"{stem}_DECOMPILE.OBJ",
+                f"{stem}_DECOMPILE.EXE",
+                f"{stem}_DECOMPILE.MAP",
+            )
+        return decompile_safe_names
+
+    def _try_function_fallback(
+        profile: dict[str, object],
+    ) -> tuple[bool, bool, int | None, str, str, str, str, str, str] | None:
+        if decompile_fallback_rebuild is None:
+            return None
+        fallback_functions = decompile_fallback_rebuild.get("functions")
+        fallback_harness = decompile_fallback_rebuild.get("harness")
+        if not isinstance(fallback_functions, tuple) or not isinstance(fallback_harness, str):
+            return None
+        decomp_name, obj_name, exe_name, map_name = _rebuild_names()
+        result = _build_from_function_decompiles(
+            exe_path,
+            out_dir,
+            decompile_py=decompile_py,
+            decompile_timeout=decompile_timeout,
+            decompile_run_timeout=decompile_run_timeout,
+            decompile_function_discovery_backend=decompile_function_discovery_backend,
+            decompile_seed_engine=decompile_seed_engine,
+            decompile_rizin_timeout=decompile_rizin_timeout,
+            decompile_force_rizin_8616=decompile_force_rizin_8616,
+            decompile_pat_backend=decompile_pat_backend,
+            decompile_signature_catalog=decompile_signature_catalog,
+            fallback_functions=fallback_functions,
+            fallback_harness=fallback_harness,
+            decompile_c_name=decomp_name,
+            decompile_obj_name=obj_name,
+            decompile_exe_name=exe_name,
+            decompile_map_name=map_name,
+            kvikdos=kvikdos,
+            msc6_root=msc6_root,
+        )
+        profile["fallback_rebuild"] = {
+            "attempted": True,
+            "functions": list(fallback_functions),
+            "decompile_ok": result[0],
+            "recompile_ok": result[1],
+            "run_exit_code": result[2],
+        }
+        return result
+
     def _selected_function_count(profile: dict[str, object]) -> int:
         for key in ("attempted_total", "attempted_count", "functions_selected"):
             value = profile.get(key)
@@ -1493,6 +1569,36 @@ def _decompile_and_validate(
     )
     if not decompile_ok:
         selected_functions = _selected_function_count(decompile_profile)
+        fallback_result = _try_function_fallback(decompile_profile)
+        if fallback_result is not None:
+            (
+                fb_ok,
+                fb_recompiled_ok,
+                fb_run_exit,
+                fb_rec_out,
+                fb_rec_err,
+                fb_rel_out,
+                fb_rel_err,
+                fb_run_stdout,
+                fb_run_stderr,
+            ) = fallback_result
+            return (
+                fb_ok and fb_recompiled_ok and fb_run_exit == expected_exit_code,
+                dec_out,
+                dec_err,
+                fb_recompiled_ok,
+                fb_run_exit == expected_exit_code,
+                fb_run_exit,
+                fb_rec_out,
+                fb_rec_err,
+                fb_rel_out,
+                fb_rel_err,
+                fb_run_stdout,
+                fb_run_stderr,
+                decompile_elapsed,
+                selected_functions,
+                json.dumps(_json_safe_profile(decompile_profile), sort_keys=True),
+            )
         return (
             False,
             dec_out,
@@ -1511,16 +1617,7 @@ def _decompile_and_validate(
             json.dumps(_json_safe_profile(decompile_profile), sort_keys=True),
         )
 
-    if decompile_safe_names is None:
-        stem = exe_path.stem.upper()
-        decomp_name, obj_name, exe_name, map_name = (
-            f"{stem}_DECOMPILE.C",
-            f"{stem}_DECOMPILE.OBJ",
-            f"{stem}_DECOMPILE.EXE",
-            f"{stem}_DECOMPILE.MAP",
-        )
-    else:
-        decomp_name, obj_name, exe_name, map_name = decompile_safe_names
+    decomp_name, obj_name, exe_name, map_name = _rebuild_names()
 
     decomp_src = out_dir / decomp_name
     reexe = out_dir / exe_name
@@ -1554,9 +1651,8 @@ def _decompile_and_validate(
             or decompile_run_exit != expected_exit_code
         )
     ):
-        fallback_functions = decompile_fallback_rebuild.get("functions")
-        fallback_harness = decompile_fallback_rebuild.get("harness")
-        if isinstance(fallback_functions, tuple) and isinstance(fallback_harness, str):
+        fallback_result = _try_function_fallback(decompile_profile)
+        if fallback_result is not None:
             (
                 _fb_ok,
                 fb_recompiled_ok,
@@ -1567,27 +1663,7 @@ def _decompile_and_validate(
                 fb_rel_err,
                 fb_run_stdout,
                 fb_run_stderr,
-            ) = _build_from_function_decompiles(
-                exe_path,
-                out_dir,
-                decompile_py=decompile_py,
-                decompile_timeout=decompile_timeout,
-                decompile_run_timeout=decompile_run_timeout,
-                decompile_function_discovery_backend=decompile_function_discovery_backend,
-                decompile_seed_engine=decompile_seed_engine,
-                decompile_rizin_timeout=decompile_rizin_timeout,
-                decompile_force_rizin_8616=decompile_force_rizin_8616,
-                decompile_pat_backend=decompile_pat_backend,
-                decompile_signature_catalog=decompile_signature_catalog,
-                fallback_functions=fallback_functions,
-                fallback_harness=fallback_harness,
-                decompile_c_name=decomp_name,
-                decompile_obj_name=obj_name,
-                decompile_exe_name=exe_name,
-                decompile_map_name=map_name,
-                kvikdos=kvikdos,
-                msc6_root=msc6_root,
-            )
+            ) = fallback_result
             if _fb_ok:
                 recompiled_ok = fb_recompiled_ok
                 rec_out = fb_rec_out
