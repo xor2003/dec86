@@ -1439,6 +1439,11 @@ def _align_cod_call_names_8616(project, codegen) -> bool:
         if not call_nodes:
             return False
 
+        summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
+        if not isinstance(summary_map, dict):
+            return False
+        _refresh_callsite_summary_node_ids_8616(codegen, summary_map)
+
         changed = False
         cod_idx = 0
         for node in call_nodes:
@@ -1453,10 +1458,21 @@ def _align_cod_call_names_8616(project, codegen) -> bool:
                 continue
             if cod_idx >= len(cod_call_names):
                 break
-            replacement = cod_call_names[cod_idx]
-            cod_idx += 1
-            if not isinstance(replacement, str) or not replacement or replacement.startswith("sub_"):
+            summary = summary_map.get(id(node))
+            target_addr = getattr(summary, "target_addr", None) if summary is not None else None
+            matched_cod_idx = None
+            replacement = None
+            for candidate_idx in range(cod_idx, len(cod_call_names)):
+                candidate = cod_call_names[candidate_idx]
+                if not isinstance(candidate, str) or not candidate or candidate.startswith("sub_"):
+                    continue
+                if _source_name_matches_target_8616(project, target_addr, candidate):
+                    matched_cod_idx = candidate_idx
+                    replacement = candidate
+                    break
+            if matched_cod_idx is None or replacement is None:
                 continue
+            cod_idx = matched_cod_idx + 1
             expected_arity = _expected_arg_count_for_known_callee_8616(replacement)
             current_arity = len(tuple(getattr(node, "args", ()) or ()))
             # Guard against order drift: never rename an unknown call to a helper

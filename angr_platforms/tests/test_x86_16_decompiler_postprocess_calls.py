@@ -325,8 +325,20 @@ def test_attach_callsite_summaries_matches_unaddressed_calls_by_target_instead_o
     assert codegen._inertia_callsite_summaries[id(call_outp)].target_addr == 0x14A0
 
 
-def test_align_cod_call_names_rewrites_unknown_call_by_source_order(monkeypatch):
+def test_align_cod_call_names_rewrites_unknown_call_with_target_proof(monkeypatch):
     project = _project()
+    function_by_addr = {
+        0x104D: SimpleNamespace(addr=0x104D, name="InitMenu"),
+    }
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: (
+                function_by_addr.get(addr)
+                if addr is not None
+                else next((func for func in function_by_addr.values() if func.name == name), None)
+            )
+        )
+    )
     codegen = _empty_codegen(project)
     calls = [
         CFunctionCall("aNchkstk", SimpleNamespace(addr=0x1001, name="aNchkstk"), [], codegen=codegen),
@@ -344,6 +356,9 @@ def test_align_cod_call_names_rewrites_unknown_call_by_source_order(monkeypatch)
         "angr_platforms.X86_16.decompiler_postprocess_calls._cod_metadata_for_function_8616",
         lambda _project, _addr: SimpleNamespace(call_names=("aNchkstk", "InitBars", "InitMenu", "RunMenu")),
     )
+    codegen._inertia_callsite_summaries = {
+        id(calls[2]): CallsiteSummary8616(0x4020, 0x104D, 0x4023, "near", 0, (), 0, None, False),
+    }
 
     changed = _align_cod_call_names_8616(project, codegen)
 
@@ -378,6 +393,52 @@ def test_align_cod_call_names_does_not_override_known_repeated_calls_without_unk
     assert calls[2].callee_target == "DrawBar"
 
 
+def test_align_cod_call_names_does_not_consume_unproved_duplicate_unknown_call(monkeypatch):
+    project = _project()
+    function_by_addr = {
+        0x10010: SimpleNamespace(addr=0x10010, name="cmp_i16"),
+        0x1005A: SimpleNamespace(addr=0x1005A, name="rel_i16"),
+    }
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: (
+                function_by_addr.get(addr)
+                if addr is not None
+                else next((func for func in function_by_addr.values() if func.name == name), None)
+            )
+        )
+    )
+    codegen = _empty_codegen(project)
+    calls = [
+        CFunctionCall("sub_10010", SimpleNamespace(addr=0x10010, name="sub_10010"), [], codegen=codegen),
+        # Generated duplicate of the first call expression: no callsite summary, so
+        # it must not consume a COD call-name slot.
+        CFunctionCall("sub_dup", SimpleNamespace(addr=0xDEAD, name="sub_dup"), [], codegen=codegen),
+        CFunctionCall("sub_1005a", SimpleNamespace(addr=0x1005A, name="sub_1005a"), [], codegen=codegen),
+    ]
+    codegen.cfunc = SimpleNamespace(
+        addr=0x101A7,
+        statements=CStatements(calls, addr=0x101A7, codegen=codegen),
+        body=None,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(calls[0]): CallsiteSummary8616(0x101AA, 0x10010, 0x101AD, "near", 2, (2, 2), 4, "ax", True),
+        id(calls[2]): CallsiteSummary8616(0x101F7, 0x1005A, 0x101FA, "near", 2, (2, 2), 4, "ax", True),
+    }
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_metadata_for_function_8616",
+        lambda _project, _addr: SimpleNamespace(call_names=("cmp_i16", "rel_i16")),
+    )
+
+    changed = _align_cod_call_names_8616(project, codegen)
+
+    assert changed is True
+    assert calls[0].callee_target == "cmp_i16"
+    assert calls[1].callee_target == "sub_dup"
+    assert calls[2].callee_target == "rel_i16"
+
+
 def test_align_cod_call_names_uses_rebased_original_function_metadata(monkeypatch):
     project = _project()
     original_project = _project()
@@ -391,6 +452,15 @@ def test_align_cod_call_names_uses_rebased_original_function_metadata(monkeypatc
     original_project.kb = SimpleNamespace(
         functions=SimpleNamespace(
             function=lambda addr, create=False: SimpleNamespace(addr=addr, name="main") if addr == 0x10010 else None
+        )
+    )
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: (
+                SimpleNamespace(addr=0x104D, name="InitMenu")
+                if addr == 0x104D or name == "InitMenu"
+                else None
+            )
         )
     )
     codegen = _empty_codegen(project)
@@ -409,6 +479,9 @@ def test_align_cod_call_names_uses_rebased_original_function_metadata(monkeypatc
         "angr_platforms.X86_16.decompiler_postprocess_calls.extract_cod_proc_metadata",
         lambda _path, _name, _kind: SimpleNamespace(call_names=("InitBars", "InitMenu", "RunMenu")),
     )
+    codegen._inertia_callsite_summaries = {
+        id(calls[1]): CallsiteSummary8616(0x101F7, 0x104D, 0x101FA, "near", 0, (), 0, None, False),
+    }
 
     changed = _align_cod_call_names_8616(project, codegen)
 
