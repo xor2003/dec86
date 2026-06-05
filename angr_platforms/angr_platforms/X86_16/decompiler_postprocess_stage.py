@@ -107,6 +107,29 @@ _HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616 = _JCC_REWRITE_VALIDATION_PASS_NAME
     }
 )
 
+_POSTPROCESS_ROLLBACK_METADATA_EXCLUDE_8616 = frozenset(
+    {
+        "_inertia_last_postprocess_pass",
+        "_inertia_postprocess_accepted_validation_deltas",
+        "_inertia_postprocess_changed",
+        "_inertia_postprocess_passes",
+        "_inertia_postprocess_pre_validation_summary",
+        "_inertia_postprocess_rejected_passes",
+        "_inertia_postprocess_validation_failed",
+        "_inertia_postprocess_validation_failure_error",
+        "_inertia_postprocess_validation_failure_pass",
+        "_inertia_regeneration_context",
+        "_inertia_regeneration_error",
+        "_inertia_regeneration_failed",
+        "_inertia_regeneration_last_pass",
+        "_inertia_rewrite_failed",
+        "_inertia_rewrite_failure_error",
+        "_inertia_rewrite_failure_pass",
+        "_inertia_skip_per_pass_validation_large_function",
+        "_inertia_tail_validation_snapshot",
+    }
+)
+
 
 def _debug_dump_calls_8616(label: str, ctext: str, function_addr: int) -> None:
     def _impl():
@@ -2117,6 +2140,50 @@ def _restore_codegen_cfunc(codegen, snapshot) -> bool:
     return True
 
 
+def _snapshot_codegen_inertia_metadata_8616(codegen) -> dict[str, object]:
+    if codegen is None:
+        return {}
+    attrs = getattr(codegen, "__dict__", {})
+    if not isinstance(attrs, dict):
+        return {}
+    memo: dict[int, object | None] = {id(codegen): None}
+    project = getattr(codegen, "project", None)
+    if project is not None:
+        memo[id(project)] = None
+    snapshot: dict[str, object] = {}
+    for name, value in attrs.items():
+        if not isinstance(name, str) or not name.startswith("_inertia_"):
+            continue
+        if name in _POSTPROCESS_ROLLBACK_METADATA_EXCLUDE_8616:
+            continue
+        try:
+            snapshot[name] = copy.deepcopy(value, memo)
+        except Exception:
+            snapshot[name] = value
+    return snapshot
+
+
+def _restore_codegen_inertia_metadata_8616(codegen, snapshot: dict[str, object] | None) -> None:
+    if codegen is None or snapshot is None:
+        return
+    attrs = getattr(codegen, "__dict__", {})
+    if not isinstance(attrs, dict):
+        return
+    for name in tuple(attrs):
+        if (
+            isinstance(name, str)
+            and name.startswith("_inertia_")
+            and name not in _POSTPROCESS_ROLLBACK_METADATA_EXCLUDE_8616
+            and name not in snapshot
+        ):
+            with contextlib.suppress(Exception):
+                delattr(codegen, name)
+    for name, value in snapshot.items():
+        with contextlib.suppress(Exception):
+            setattr(codegen, name, value)
+    _invalidate_tail_validation_derived_caches_8616(codegen)
+
+
 _IT_COUNT_TYPE = type(itertools.count())
 
 
@@ -3295,6 +3362,14 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             return_chain_expected = _return_chain_expected_counts_8616(codegen)
             if return_chain_expected is not None and snapshot is None:
                 snapshot = _snapshot_codegen_cfunc(codegen)
+            metadata_snapshot = _snapshot_codegen_inertia_metadata_8616(codegen) if snapshot is not None else None
+
+            def _restore_step_state(*, context: str | None = None) -> None:
+                _restore_codegen_cfunc(codegen, snapshot)
+                _restore_codegen_inertia_metadata_8616(codegen, metadata_snapshot)
+                if context is not None:
+                    _regenerate_text_safely(codegen, context=context)
+
             try:
                 if isinstance(pass_timeout_seconds, int) and pass_timeout_seconds > 0:
                     with analysis_timeout(pass_timeout_seconds):
@@ -3302,8 +3377,8 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                 else:
                     step_changed = bool(step_func())
             except AnalysisTimeout as ex:
-                if per_pass_validation_enabled:
-                    _restore_codegen_cfunc(codegen, snapshot)
+                if per_pass_validation_enabled or force_pass_validation:
+                    _restore_step_state()
                 codegen._inertia_rewrite_failed = True
                 codegen._inertia_rewrite_failure_pass = pass_name
                 codegen._inertia_rewrite_failure_error = f"timeout: {ex}"
@@ -3315,12 +3390,12 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                 )
                 return False
             except PipelineHardError:
-                if per_pass_validation_enabled:
-                    _restore_codegen_cfunc(codegen, snapshot)
+                if per_pass_validation_enabled or force_pass_validation:
+                    _restore_step_state()
                 raise
             except Exception as ex:  # noqa: BLE001
-                if per_pass_validation_enabled:
-                    _restore_codegen_cfunc(codegen, snapshot)
+                if per_pass_validation_enabled or force_pass_validation:
+                    _restore_step_state()
                 codegen._inertia_rewrite_failed = True
                 codegen._inertia_rewrite_failure_pass = pass_name
                 codegen._inertia_rewrite_failure_error = str(ex)
@@ -3345,7 +3420,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                         actual_return_count,
                         expected_return_count,
                     )
-                    _restore_codegen_cfunc(codegen, snapshot)
+                    _restore_step_state()
                     rejected = list(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
                     rejected.append(pass_name)
                     codegen._inertia_postprocess_rejected_passes = tuple(rejected)
@@ -3362,8 +3437,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                         else f"postprocess:{pass_name}:validation"
                     )
                     if not _regenerate_text_safely(codegen, context=validation_context):
-                        _restore_codegen_cfunc(codegen, snapshot)
-                        _regenerate_text_safely(codegen, context=f"{validation_context}:restore")
+                        _restore_step_state(context=f"{validation_context}:restore")
                         rejected = list(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
                         rejected.append(pass_name)
                         codegen._inertia_postprocess_rejected_passes = tuple(rejected)
@@ -3454,9 +3528,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                             pass_name,
                             validation.get("summary_text") or validation.get("delta"),
                         )
-                    _restore_codegen_cfunc(codegen, snapshot)
-                    _regenerate_text_safely(
-                        codegen,
+                    _restore_step_state(
                         context=(
                             f"{trace_func_addr:#x} postprocess:{pass_name}:restore"
                             if isinstance(trace_func_addr, int)

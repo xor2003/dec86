@@ -3,6 +3,8 @@ from __future__ import annotations
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _PostprocessValidationDeltaKind8616,
     _classify_postprocess_validation_delta_8616,
+    _restore_codegen_inertia_metadata_8616,
+    _snapshot_codegen_inertia_metadata_8616,
     _snapshot_codegen_cfunc,
 )
 
@@ -97,6 +99,23 @@ def test_postprocess_validation_delta_rejects_raw_helper_and_mixed_semantic_delt
         )
         is _PostprocessValidationDeltaKind8616.BLOCKING
     )
+
+
+def test_postprocess_metadata_restore_removes_rejected_return_chain_evidence():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_return_chain_flattened_8616 = False
+    codegen._inertia_postprocess_rejected_passes = ("earlier",)
+
+    snapshot = _snapshot_codegen_inertia_metadata_8616(codegen)
+    codegen._inertia_return_chain_flattened_8616 = True
+    codegen._inertia_return_chain_materialized_values_8616 = (1, 2, 3)
+    codegen._inertia_postprocess_rejected_passes = ("earlier", "current")
+
+    _restore_codegen_inertia_metadata_8616(codegen, snapshot)
+
+    assert codegen._inertia_return_chain_flattened_8616 is False
+    assert not hasattr(codegen, "_inertia_return_chain_materialized_values_8616")
+    assert codegen._inertia_postprocess_rejected_passes == ("earlier", "current")
 
     assert (
         _classify_postprocess_validation_delta_8616(
