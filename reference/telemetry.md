@@ -6,7 +6,7 @@ Enable compact spans:
 
 ```bash
 INERTIA_OTEL_SPANS=1 \
-INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.json \
+INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.trace.txt \
 ./.venv/bin/python ./decompile.py ./SORTDEMO.EXE
 ```
 
@@ -14,6 +14,8 @@ Useful knobs:
 
 - `INERTIA_OTEL_SPANS=1` enables tracing. Default is off.
 - `INERTIA_OTEL_SPAN_FILE=path.json` writes one compact JSON summary.
+- `INERTIA_OTEL_SPAN_FORMAT=text|json|jsonl` overrides file format. Default is text except `.json`/`.jsonl` suffixes.
+- `INERTIA_OTEL_TEXT_MAX_SPANS=200` caps rows in agent-text output.
 - `INERTIA_OTEL_TOP_N=16` controls how many slow spans/aggregates are kept.
 - `INERTIA_OTEL_MIN_MS=1` hides tiny spans from the `top` list.
 - `INERTIA_OTEL_STDERR=0` suppresses the `[otel-compact]` stderr line when writing a file.
@@ -22,7 +24,15 @@ Useful knobs:
 - `INERTIA_OTEL_SERVICE_NAME=inertia-decompiler` overrides the OpenTelemetry service name.
 - `INERTIA_OTEL_FORCE_FLUSH_MS=3000` controls exporter flush timeout at process exit.
 
-OTLP export uses standard OpenTelemetry endpoint variables:
+Use text for agent handoff:
+
+```text
+summary total_ms=8562.5 spans=6 otel=off errors=0
+schema: id|parent|ms|name|attrs
+5|2|7372.118|direct.decompile_job|addr=0x1000 blocks=11 bytes=65 name=cmp_i16 status=ok timeout=73
+```
+
+Use `.json`/`.jsonl` only when a parser requires it. OTLP export uses standard OpenTelemetry endpoint variables:
 
 ```bash
 INERTIA_OTEL_SPANS=1 \
@@ -33,7 +43,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
 
 If `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is already set, OTLP export is enabled automatically unless `INERTIA_OTEL_EXPORT_OTLP=0` is set. Exporter configuration or collector failures must not fail decompilation; check `otel_export` in the compact summary for status.
 
-Output shape is intentionally compact:
+JSON output remains available for tools:
 
 ```json
 {"span_count":8,"total_ms":1907.4,"top":[["direct.decompile_job",909.7,{"addr":"0x1000","name":"_start"}]],"agg":[["direct.decompile_job",1,909.7,909.7]],"errors":[]}

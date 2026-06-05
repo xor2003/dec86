@@ -127,10 +127,10 @@ INERTIA_ENABLE_TAIL_VALIDATION=1 ./decompile.py --alternate-source-c ./SORTDEMO.
 When decompilation is slow, turn on compact OpenTelemetry spans before profiling:
 
 ```bash
-INERTIA_OTEL_SPANS=1 INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.json ./decompile.py ./SORTDEMO.EXE
+INERTIA_OTEL_SPANS=1 INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.trace.txt ./decompile.py ./SORTDEMO.EXE
 ```
 
-The compact summary shows top slow spans by duration and is designed for token-efficient agent handoff. OTLP export is optional through `INERTIA_OTEL_EXPORT_OTLP=1`; details: `reference/telemetry.md`.
+The compact text summary shows slow spans by duration and is designed for token-efficient agent handoff. Use JSON/JSONL only for parsers. OTLP export is optional through `INERTIA_OTEL_EXPORT_OTLP=1`; details: `reference/telemetry.md`.
 
 Current `SORTDEMO.EXE` handoff: read `SORTDEMO_HANDOFF.md` before restarting work on ReInitBars/SwapBars/HeapSort.
 

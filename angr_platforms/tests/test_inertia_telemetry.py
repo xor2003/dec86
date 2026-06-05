@@ -4,6 +4,7 @@ import time
 
 import inertia_decompiler.telemetry as telemetry
 from inertia_decompiler.telemetry import (
+    build_agent_trace_text,
     build_compact_summary,
     configure_telemetry_from_env,
     emit_compact_summary,
@@ -73,6 +74,56 @@ def test_trace_function_disabled_records_nothing(monkeypatch):
 
     assert _work() == 7
     assert build_compact_summary()["span_count"] == 0
+
+    reset_telemetry_for_tests()
+
+
+def test_agent_trace_text_is_compact_and_pipe_delimited(monkeypatch):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
+
+    assert configure_telemetry_from_env()
+    with span("test.parent", addr="0x1000"):
+        with span("test.child", function_label="cmp_i16", low_memory_path=False):
+            pass
+
+    text = build_agent_trace_text()
+
+    assert "summary total_ms=" in text
+    assert "schema: id|parent|ms|name|attrs" in text
+    assert "|test.parent|addr=0x1000" in text
+    assert "label=cmp_i16" in text
+    assert "lowmem=0" in text
+    assert "{" not in text
+
+    reset_telemetry_for_tests()
+
+
+def test_trace_file_defaults_to_text_unless_json_suffix(monkeypatch, tmp_path):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
+    text_path = tmp_path / "trace.agent.txt"
+
+    assert configure_telemetry_from_env(file_path=text_path)
+    with span("test.file"):
+        pass
+
+    emit_compact_summary()
+    assert text_path.read_text(encoding="utf-8").startswith("summary total_ms=")
+
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
+    json_path = tmp_path / "trace.json"
+
+    assert configure_telemetry_from_env(file_path=json_path)
+    with span("test.file_json"):
+        pass
+
+    emit_compact_summary()
+    assert json_path.read_text(encoding="utf-8").startswith("{")
 
     reset_telemetry_for_tests()
 

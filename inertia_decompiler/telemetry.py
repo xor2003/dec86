@@ -21,6 +21,8 @@ TRACE_TOP_N_ENV = "INERTIA_OTEL_TOP_N"
 TRACE_MIN_MS_ENV = "INERTIA_OTEL_MIN_MS"
 TRACE_FULL_JSONL_ENV = "INERTIA_OTEL_FULL_JSONL"
 TRACE_STDERR_ENV = "INERTIA_OTEL_STDERR"
+TRACE_FORMAT_ENV = "INERTIA_OTEL_SPAN_FORMAT"
+TRACE_TEXT_MAX_SPANS_ENV = "INERTIA_OTEL_TEXT_MAX_SPANS"
 TRACE_OTLP_ENABLE_ENV = "INERTIA_OTEL_EXPORT_OTLP"
 TRACE_SERVICE_NAME_ENV = "INERTIA_OTEL_SERVICE_NAME"
 TRACE_FORCE_FLUSH_MS_ENV = "INERTIA_OTEL_FORCE_FLUSH_MS"
@@ -104,6 +106,8 @@ class _TelemetryState:
     file_path: Path | None = None
     stderr_summary: bool = True
     full_jsonl: bool = False
+    output_format: str = "text"
+    text_max_spans: int = 200
     records: list[_SpanRecord] = field(default_factory=list)
     next_id: int = 1
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -161,6 +165,8 @@ def configure_telemetry_from_env(
         _STATE.file_path = Path(raw_file_path) if raw_file_path else None
         _STATE.stderr_summary = _env_bool(TRACE_STDERR_ENV, True)
         _STATE.full_jsonl = _env_bool(TRACE_FULL_JSONL_ENV, False)
+        _STATE.output_format = _resolve_output_format(_STATE.file_path, _STATE.full_jsonl)
+        _STATE.text_max_spans = max(1, _env_int(TRACE_TEXT_MAX_SPANS_ENV, _STATE.text_max_spans))
         if not _STATE.configured:
             _STATE.otel_tracer = _optional_otel_tracer()
             atexit.register(emit_compact_summary)
@@ -218,6 +224,27 @@ def _otlp_export_requested() -> bool:
             "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
         )
     )
+
+
+def _resolve_output_format(file_path: Path | None, full_jsonl: bool) -> str:
+    explicit = os.environ.get(TRACE_FORMAT_ENV)
+    if explicit is not None:
+        normalized = explicit.strip().lower()
+        if normalized in {"text", "agent", "agent_text", "txt"}:
+            return "text"
+        if normalized in {"jsonl", "full_jsonl"}:
+            return "jsonl"
+        if normalized in {"json", "compact_json"}:
+            return "json"
+    if full_jsonl:
+        return "jsonl"
+    if file_path is not None:
+        suffix = file_path.suffix.lower()
+        if suffix == ".jsonl":
+            return "jsonl"
+        if suffix == ".json":
+            return "json"
+    return "text"
 
 
 def _configure_otlp_exporter() -> tuple[Any | None, str]:
@@ -496,6 +523,96 @@ def build_compact_summary() -> dict[str, Any]:
     return summary
 
 
+def build_agent_trace_text() -> str:
+    with _STATE.lock:
+        records = list(_STATE.records)
+    finished = [record for record in records if record.end_ns is not None]
+    summary = build_compact_summary()
+    otel_status = summary.get("otel_export", "-")
+    if otel_status == "disabled":
+        otel_status = "off"
+    errors = summary.get("errors", [])
+    lines = [
+        (
+            f"summary total_ms={summary.get('total_ms', 0.0)} "
+            f"spans={len(finished)} otel={otel_status} errors={len(errors)}"
+        ),
+        "schema: id|parent|ms|name|attrs",
+    ]
+    ordered = sorted(finished, key=lambda record: record.span_id)
+    limit = max(1, int(_STATE.text_max_spans))
+    shown = ordered[:limit]
+    if len(ordered) > len(shown):
+        lines[0] += f" shown={len(shown)}"
+    lines.extend(_format_agent_trace_record(record) for record in shown)
+    return "\n".join(lines) + "\n"
+
+
+def _format_agent_trace_record(record: _SpanRecord) -> str:
+    parent = "-" if record.parent_id is None else str(record.parent_id)
+    attrs = _format_agent_attrs(record.attrs)
+    return f"{record.span_id}|{parent}|{round(record.duration_ms, 3)}|{record.name}|{attrs}"
+
+
+def _format_agent_attrs(attrs: dict[str, Any]) -> str:
+    if not attrs:
+        return ""
+    preferred = (
+        "binary",
+        "addr",
+        "name",
+        "function",
+        "function_label",
+        "status",
+        "stage",
+        "blocks",
+        "bytes",
+        "c_target",
+        "backend",
+        "functions",
+        "cache",
+        "timeout",
+        "window",
+        "entry",
+        "entry_point",
+        "base_addr",
+        "arch",
+        "low_memory_path",
+        "exception",
+    )
+    aliases = {
+        "function_label": "label",
+        "c_target": "target",
+        "entry_point": "entry",
+        "base_addr": "base",
+        "low_memory_path": "lowmem",
+    }
+    seen: set[str] = set()
+    parts: list[str] = []
+    for key in preferred:
+        if key in attrs:
+            parts.append(f"{aliases.get(key, key)}={_format_agent_attr_value(attrs[key])}")
+            seen.add(key)
+    for key in sorted(str(key) for key in attrs):
+        if key in seen:
+            continue
+        parts.append(f"{aliases.get(key, key)}={_format_agent_attr_value(attrs[key])}")
+    return " ".join(parts)
+
+
+def _format_agent_attr_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if value is None:
+        return "-"
+    text = str(value)
+    if not text:
+        return "-"
+    if any(ch.isspace() for ch in text):
+        text = "_".join(text.split())
+    return text.replace("|", "/")
+
+
 def _summary_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
     preferred = (
         "binary",
@@ -527,14 +644,20 @@ def emit_compact_summary() -> None:
     if summary["span_count"] == 0:
         return
 
-    encoded = json.dumps(summary, sort_keys=True, separators=(",", ":"))
+    if _STATE.output_format == "text":
+        encoded = build_agent_trace_text().rstrip("\n")
+    else:
+        encoded = json.dumps(summary, sort_keys=True, separators=(",", ":"))
     if _STATE.stderr_summary:
-        print(f"[otel-compact] {encoded}", file=sys.stderr)
+        prefix = "[otel-trace]" if _STATE.output_format == "text" else "[otel-compact]"
+        print(f"{prefix} {encoded}", file=sys.stderr)
         sys.stderr.flush()
     if _STATE.file_path is not None:
         _STATE.file_path.parent.mkdir(parents=True, exist_ok=True)
-        if _STATE.full_jsonl:
+        if _STATE.output_format == "jsonl":
             _write_full_jsonl(_STATE.file_path)
+        elif _STATE.output_format == "text":
+            _STATE.file_path.write_text(build_agent_trace_text(), encoding="utf-8")
         else:
             _STATE.file_path.write_text(encoded + "\n", encoding="utf-8")
     _flush_and_shutdown_otel()
@@ -597,6 +720,8 @@ def reset_telemetry_for_tests() -> None:
         _STATE.file_path = None
         _STATE.stderr_summary = True
         _STATE.full_jsonl = False
+        _STATE.output_format = "text"
+        _STATE.text_max_spans = 200
         _STATE.otel_tracer = None
         _STATE.otel_provider = None
         _STATE.otel_export_status = None
