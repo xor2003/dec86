@@ -209,6 +209,29 @@ def test_trace_file_defaults_to_text_even_with_json_suffix(monkeypatch, tmp_path
     reset_telemetry_for_tests()
 
 
+def test_json_file_mode_keeps_stderr_agent_text(monkeypatch, tmp_path, capsys):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
+    monkeypatch.setenv("INERTIA_OTEL_SPAN_FORMAT", "jsonl")
+    jsonl_path = tmp_path / "trace.jsonl"
+
+    assert configure_telemetry_from_env(file_path=jsonl_path)
+    with span("test.jsonl_file", binary="CMP16.EXE"):
+        pass
+
+    emit_compact_summary()
+
+    stderr = capsys.readouterr().err
+    file_text = jsonl_path.read_text(encoding="utf-8")
+    assert stderr.startswith("[otel-trace] summary total_ms=")
+    assert "schema: id|parent|ms|name|attrs" in stderr
+    assert "{" not in stderr
+    assert file_text.startswith("{")
+
+    reset_telemetry_for_tests()
+
+
 def test_span_records_error_without_swallowing_exception(monkeypatch):
     reset_telemetry_for_tests()
     monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")

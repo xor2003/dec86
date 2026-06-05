@@ -14,7 +14,7 @@ Useful knobs:
 
 - `INERTIA_OTEL_SPANS=1` enables tracing. Default is off.
 - `INERTIA_OTEL_SPAN_FILE=path` writes compact agent text by default, even for `.json` suffixes.
-- `INERTIA_OTEL_SPAN_FORMAT=text|slow|json|jsonl` overrides file format. Use `json`/`jsonl` only for parsers.
+- `INERTIA_OTEL_SPAN_FORMAT=text|slow|json|jsonl` overrides file format. Use `json`/`jsonl` only for parsers; stderr summaries stay compact agent text.
 - `INERTIA_OTEL_TEXT_MAX_SPANS=200` caps rows in agent-text output.
 - `INERTIA_OTEL_TOP_N=16` controls how many slow spans/aggregates are kept.
 - `INERTIA_OTEL_MIN_MS=1` hides tiny spans from the `top` list.
@@ -49,7 +49,7 @@ trace total=8562.5ms spans=6 otel=off errors=0
 126.63 validation.acceptance status=ok target=portable-flat
 ```
 
-Use `.json`/`.jsonl` only when a parser requires it. OTLP export uses standard OpenTelemetry endpoint variables:
+Use `.json`/`.jsonl` only when a parser requires it. Agent handoff should use `text` or `slow`; stderr is always compact text even when the trace file is JSON/JSONL. OTLP export uses standard OpenTelemetry endpoint variables:
 
 ```bash
 INERTIA_OTEL_SPANS=1 \

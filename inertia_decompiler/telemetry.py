@@ -704,12 +704,13 @@ def emit_compact_summary() -> None:
     else:
         encoded = json.dumps(summary, sort_keys=True, separators=(",", ":"))
     if _STATE.stderr_summary:
-        prefix = (
-            "[otel-trace]"
-            if _STATE.output_format in {TraceOutputFormat.TEXT, TraceOutputFormat.SLOW}
-            else "[otel-compact]"
-        )
-        print(f"{prefix} {encoded}", file=sys.stderr)
+        if _STATE.output_format == TraceOutputFormat.SLOW:
+            stderr_encoded = build_agent_slow_trace_text().rstrip("\n")
+        else:
+            # Stderr is an agent-facing surface. Keep it compact text even
+            # when the file output is JSON/JSONL for external parsers.
+            stderr_encoded = build_agent_trace_text().rstrip("\n")
+        print(f"[otel-trace] {stderr_encoded}", file=sys.stderr)
         sys.stderr.flush()
     if _STATE.file_path is not None:
         _STATE.file_path.parent.mkdir(parents=True, exist_ok=True)
