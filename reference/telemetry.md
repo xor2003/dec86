@@ -18,6 +18,20 @@ Useful knobs:
 - `INERTIA_OTEL_MIN_MS=1` hides tiny spans from the `top` list.
 - `INERTIA_OTEL_STDERR=0` suppresses the `[otel-compact]` stderr line when writing a file.
 - `INERTIA_OTEL_FULL_JSONL=1` writes summary plus every span as JSONL.
+- `INERTIA_OTEL_EXPORT_OTLP=1` also exports spans through OTLP HTTP/protobuf.
+- `INERTIA_OTEL_SERVICE_NAME=inertia-decompiler` overrides the OpenTelemetry service name.
+- `INERTIA_OTEL_FORCE_FLUSH_MS=3000` controls exporter flush timeout at process exit.
+
+OTLP export uses standard OpenTelemetry endpoint variables:
+
+```bash
+INERTIA_OTEL_SPANS=1 \
+INERTIA_OTEL_EXPORT_OTLP=1 \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+./.venv/bin/python ./decompile.py examples/build_msc6/CMP16.EXE
+```
+
+If `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is already set, OTLP export is enabled automatically unless `INERTIA_OTEL_EXPORT_OTLP=0` is set. Exporter configuration or collector failures must not fail decompilation; check `otel_export` in the compact summary for status.
 
 Output shape is intentionally compact:
 

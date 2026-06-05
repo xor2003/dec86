@@ -9,4 +9,5 @@ textual==8.2.1
 z3-solver==4.13.0.0
 jsonpickle
 opentelemetry-api>=1.28,<2
+opentelemetry-exporter-otlp-proto-http>=1.28,<2
 opentelemetry-sdk>=1.28,<2

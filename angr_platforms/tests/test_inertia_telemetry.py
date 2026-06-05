@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import time
 
+import inertia_decompiler.telemetry as telemetry
 from inertia_decompiler.telemetry import (
     build_compact_summary,
     configure_telemetry_from_env,
+    emit_compact_summary,
     reset_telemetry_for_tests,
     span,
     span_here,
@@ -94,5 +96,55 @@ def test_span_records_error_without_swallowing_exception(monkeypatch):
     assert summary["errors"]
     assert summary["errors"][0][0] == "test.error"
     assert summary["errors"][0][2]["exception"] == "ValueError"
+
+    reset_telemetry_for_tests()
+
+
+def test_otlp_export_uses_provider_without_collector(monkeypatch, tmp_path):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_EXPORT_OTLP", "1")
+    monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
+    monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
+
+    class _Provider:
+        def __init__(self):
+            self.flushed = False
+            self.shutdown_called = False
+
+        def force_flush(self, *, timeout_millis):
+            self.flushed = timeout_millis > 0
+
+        def shutdown(self):
+            self.shutdown_called = True
+
+    provider = _Provider()
+    monkeypatch.setattr(telemetry, "_configure_otlp_exporter", lambda: (provider, "configured"))
+
+    assert configure_telemetry_from_env(file_path=tmp_path / "otel.json")
+    with span("test.otlp"):
+        pass
+
+    summary = build_compact_summary()
+    assert summary["otel_export"] == "configured"
+
+    emit_compact_summary()
+    assert provider.flushed
+    assert provider.shutdown_called
+
+    reset_telemetry_for_tests()
+
+
+def test_otlp_endpoint_can_be_explicitly_disabled(monkeypatch):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_EXPORT_OTLP", "0")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+
+    assert configure_telemetry_from_env()
+    with span("test.no_otlp"):
+        pass
+
+    assert build_compact_summary()["otel_export"] == "disabled"
 
     reset_telemetry_for_tests()

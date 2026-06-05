@@ -21,6 +21,9 @@ TRACE_TOP_N_ENV = "INERTIA_OTEL_TOP_N"
 TRACE_MIN_MS_ENV = "INERTIA_OTEL_MIN_MS"
 TRACE_FULL_JSONL_ENV = "INERTIA_OTEL_FULL_JSONL"
 TRACE_STDERR_ENV = "INERTIA_OTEL_STDERR"
+TRACE_OTLP_ENABLE_ENV = "INERTIA_OTEL_EXPORT_OTLP"
+TRACE_SERVICE_NAME_ENV = "INERTIA_OTEL_SERVICE_NAME"
+TRACE_FORCE_FLUSH_MS_ENV = "INERTIA_OTEL_FORCE_FLUSH_MS"
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"0", "false", "no", "off"}
@@ -105,6 +108,9 @@ class _TelemetryState:
     next_id: int = 1
     lock: threading.Lock = field(default_factory=threading.Lock)
     otel_tracer: Any = None
+    otel_provider: Any = None
+    otel_export_status: str | None = None
+    otel_shutdown: bool = False
 
 
 _STATE = _TelemetryState()
@@ -189,6 +195,54 @@ def _optional_otel_tracer() -> Any:
         from opentelemetry import trace
     except Exception:
         return None
+    if _otlp_export_requested():
+        provider, status = _configure_otlp_exporter()
+        _STATE.otel_provider = provider
+        _STATE.otel_export_status = status
+    else:
+        _STATE.otel_export_status = "disabled"
+    try:
+        return trace.get_tracer("inertia_decompiler")
+    except Exception:
+        return None
+
+
+def _otlp_export_requested() -> bool:
+    explicit = os.environ.get(TRACE_OTLP_ENABLE_ENV)
+    if explicit is not None:
+        return _env_bool(TRACE_OTLP_ENABLE_ENV, False)
+    return any(
+        os.environ.get(name)
+        for name in (
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        )
+    )
+
+
+def _configure_otlp_exporter() -> tuple[Any | None, str]:
+    try:
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    except Exception as ex:
+        return None, f"unavailable:{type(ex).__name__}"
+
+    try:
+        resource = Resource.create(
+            {
+                "service.name": os.environ.get(TRACE_SERVICE_NAME_ENV, "inertia-decompiler"),
+                "service.namespace": "inertia",
+            }
+        )
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(provider)
+        return provider, "configured"
+    except Exception as ex:
+        return None, f"configure_failed:{type(ex).__name__}"
 
 
 def _auto_span_attrs(target: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -274,10 +328,6 @@ def _format_auto_value(name: str, value: Any) -> Any:
     if isinstance(value, int) and abs(value) > 4096:
         return hex(value)
     return value
-    try:
-        return trace.get_tracer("inertia_decompiler")
-    except Exception:
-        return None
 
 
 @contextlib.contextmanager
@@ -391,13 +441,16 @@ def build_compact_summary() -> dict[str, Any]:
         records = list(_STATE.records)
     finished = [record for record in records if record.end_ns is not None]
     if not finished:
-        return {
+        summary: dict[str, Any] = {
             "span_count": 0,
             "total_ms": 0.0,
             "top": [],
             "agg": [],
             "errors": [],
         }
+        if _STATE.otel_export_status is not None:
+            summary["otel_export"] = _STATE.otel_export_status
+        return summary
 
     first_start = min(record.start_ns for record in finished)
     last_end = max(record.end_ns or record.start_ns for record in finished)
@@ -420,7 +473,7 @@ def build_compact_summary() -> dict[str, Any]:
         reverse=True,
     )[: _STATE.top_n]
 
-    return {
+    summary = {
         "span_count": len(finished),
         "total_ms": round(total_ms, 1),
         "top": [
@@ -438,6 +491,9 @@ def build_compact_summary() -> dict[str, Any]:
             if record.status == "error"
         ][: _STATE.top_n],
     }
+    if _STATE.otel_export_status is not None:
+        summary["otel_export"] = _STATE.otel_export_status
+    return summary
 
 
 def _summary_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
@@ -481,6 +537,27 @@ def emit_compact_summary() -> None:
             _write_full_jsonl(_STATE.file_path)
         else:
             _STATE.file_path.write_text(encoded + "\n", encoding="utf-8")
+    _flush_and_shutdown_otel()
+
+
+def _flush_and_shutdown_otel() -> None:
+    provider = _STATE.otel_provider
+    if provider is None or _STATE.otel_shutdown:
+        return
+    _STATE.otel_shutdown = True
+    timeout_ms = max(1, _env_int(TRACE_FORCE_FLUSH_MS_ENV, 3000))
+    try:
+        force_flush = getattr(provider, "force_flush", None)
+        if callable(force_flush):
+            force_flush(timeout_millis=timeout_ms)
+    except Exception as ex:
+        _STATE.otel_export_status = f"flush_failed:{type(ex).__name__}"
+    try:
+        shutdown = getattr(provider, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
+    except Exception as ex:
+        _STATE.otel_export_status = f"shutdown_failed:{type(ex).__name__}"
 
 
 def _write_full_jsonl(path: Path) -> None:
@@ -521,4 +598,7 @@ def reset_telemetry_for_tests() -> None:
         _STATE.stderr_summary = True
         _STATE.full_jsonl = False
         _STATE.otel_tracer = None
+        _STATE.otel_provider = None
+        _STATE.otel_export_status = None
+        _STATE.otel_shutdown = False
     _CURRENT_SPAN_ID.set(None)

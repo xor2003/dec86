@@ -130,7 +130,7 @@ When decompilation is slow, turn on compact OpenTelemetry spans before profiling
 INERTIA_OTEL_SPANS=1 INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.json ./decompile.py ./SORTDEMO.EXE
 ```
 
-The compact summary shows top slow spans by duration and is designed for token-efficient agent handoff. Details: `reference/telemetry.md`.
+The compact summary shows top slow spans by duration and is designed for token-efficient agent handoff. OTLP export is optional through `INERTIA_OTEL_EXPORT_OTLP=1`; details: `reference/telemetry.md`.
 
 Current `SORTDEMO.EXE` handoff: read `SORTDEMO_HANDOFF.md` before restarting work on ReInitBars/SwapBars/HeapSort.
 
