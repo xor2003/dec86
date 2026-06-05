@@ -28,7 +28,13 @@ log = logging.getLogger(__name__)
 
 def _dirty_reg_offset_8616(dirty) -> int | None:
     for attr in ("reg", "reg_offset", "parameter_reg_offset"):
-        value = getattr(dirty, attr, None)
+        try:
+            value = getattr(dirty, attr, None)
+        except TypeError:
+            # AIL DirtyExpression exposes register-only properties that raise
+            # for memory/tmp-backed expressions. That is negative evidence, not
+            # a lowering failure.
+            continue
         if isinstance(value, int):
             return value
     return None

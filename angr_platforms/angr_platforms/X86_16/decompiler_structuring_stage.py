@@ -367,7 +367,7 @@ def _structuring_codegen_8616(project, codegen) -> bool:
                 codegen._inertia_structuring_failed = True
                 codegen._inertia_structuring_failure_pass = "lower_stable_ss_linear_stack_dereferences_8616"
                 codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
-                logging.getLogger(__name__).warning(
+                logging.getLogger(__name__).exception(
                     "stack lowering setup failed function=%#x stage=%s: %s: %s",
                     getattr(getattr(codegen, "cfunc", None), "addr", 0),
                     "lower_stable_ss_linear_stack_dereferences_8616",

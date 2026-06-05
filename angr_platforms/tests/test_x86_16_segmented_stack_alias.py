@@ -25,6 +25,7 @@ from angr_platforms.X86_16.decompiler_postprocess_utils import (
     _stack_bp_displacement_8616,
 )
 from angr_platforms.X86_16.lowering.real_mode_linear import (
+    _dirty_reg_offset_8616,
     lower_stable_ds_es_linear_global_addresses_8616,
     lower_stable_ds_es_linear_global_dereferences_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
@@ -88,6 +89,23 @@ def _reg(project, name: str, codegen):
 
 def _stack(offset: int, codegen, *, name: str = "local"):
     return CVariable(SimStackVariable(offset, 2, base="bp", name=name, region=0x4010), codegen=codegen)
+
+
+def test_dirty_reg_offset_treats_non_register_dirty_properties_as_no_evidence():
+    class _NonRegisterDirty:
+        @property
+        def reg(self):
+            raise TypeError("Is not a register")
+
+        @property
+        def reg_offset(self):
+            raise TypeError("Is not a register")
+
+        @property
+        def parameter_reg_offset(self):
+            raise TypeError("Is not a register")
+
+    assert _dirty_reg_offset_8616(_NonRegisterDirty()) is None
 
 
 def _ds_deref(project, linear: int, codegen, *, width: int = 16):
