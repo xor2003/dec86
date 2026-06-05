@@ -23,6 +23,7 @@ Useful knobs:
 - `INERTIA_OTEL_EXPORT_OTLP=1` also exports spans through OTLP HTTP/protobuf.
 - `INERTIA_OTEL_SERVICE_NAME=inertia-decompiler` overrides the OpenTelemetry service name.
 - `INERTIA_OTEL_FORCE_FLUSH_MS=3000` controls exporter flush timeout at process exit.
+- `INERTIA_OTEL_PROFILE_IN_PROCESS=1` disables direct-address fork isolation for profiling so nested child spans flush into the same compact trace. Use only for profiling, not default runs.
 
 Use text for agent handoff:
 

@@ -260,7 +260,7 @@ from inertia_decompiler.runtime_support import (
     should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
     timing_output_enabled as _timing_output_enabled,
 )
-from inertia_decompiler.telemetry import annotate_current_span, trace_function
+from inertia_decompiler.telemetry import annotate_current_span, span, trace_function
 
 from inertia_decompiler.work_items import (
     FunctionDecompileResult,
@@ -2013,47 +2013,48 @@ def _decompile_function(
                 )
                 setattr(project, "_inertia_partial_codegen_text", None)
                 return "ok", fast_source
-        with DECOMPILATION_PREP_LOCK:
-            pre_block_count, pre_byte_count = _function_complexity(function)
-            setattr(
-                project,
-                "_inertia_skip_normalize_for_tiny_core",
-                bool(pre_block_count <= 1 and pre_byte_count <= 0x80),
-            )
-            _apply_binary_specific_annotations(
-                project,
-                binary_path,
-                lst_metadata,
-                func_addr=function_original_addr(function),
-                cod_metadata=effective_cod_metadata,
-                synthetic_globals=synthetic_globals,
-            )
-            _prepare_function_for_decompilation(project, function, effective_cod_metadata)
-            seed_calling_conventions(cfg)
-            block_count, byte_count = _function_complexity(function)
-            profile = _function_decompilation_profile(function, block_count, byte_count)
-            function_info = getattr(function, "info", None)
-            if isinstance(function_info, dict):
-                profile_info = function_info.setdefault("x86_16_decompilation_profile", {})
-                profile_info.update(profile)
-            decompiler_options = _preferred_decompiler_options(
-                block_count,
-                byte_count,
-                wrapper_like=bool(profile.get("wrapper_like")),
-                tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
-                no_call_helper=bool(
-                    block_count <= 24
-                    and byte_count <= 0x180
-                    and int(profile.get("call_site_count", 0) or 0) == 0
-                    and int(profile.get("internal_call_count", 0) or 0) == 0
-                ),
-            )
-            expr_collapse_depth = _preferred_expr_collapse_depth(
-                block_count,
-                byte_count,
-                wrapper_like=bool(profile.get("wrapper_like")),
-                tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
-            )
+        with span("decompile.prep", addr=hex(current_func_addr), name=getattr(function, "name", None)):
+            with DECOMPILATION_PREP_LOCK:
+                pre_block_count, pre_byte_count = _function_complexity(function)
+                setattr(
+                    project,
+                    "_inertia_skip_normalize_for_tiny_core",
+                    bool(pre_block_count <= 1 and pre_byte_count <= 0x80),
+                )
+                _apply_binary_specific_annotations(
+                    project,
+                    binary_path,
+                    lst_metadata,
+                    func_addr=function_original_addr(function),
+                    cod_metadata=effective_cod_metadata,
+                    synthetic_globals=synthetic_globals,
+                )
+                _prepare_function_for_decompilation(project, function, effective_cod_metadata)
+                seed_calling_conventions(cfg)
+                block_count, byte_count = _function_complexity(function)
+                profile = _function_decompilation_profile(function, block_count, byte_count)
+                function_info = getattr(function, "info", None)
+                if isinstance(function_info, dict):
+                    profile_info = function_info.setdefault("x86_16_decompilation_profile", {})
+                    profile_info.update(profile)
+                decompiler_options = _preferred_decompiler_options(
+                    block_count,
+                    byte_count,
+                    wrapper_like=bool(profile.get("wrapper_like")),
+                    tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
+                    no_call_helper=bool(
+                        block_count <= 24
+                        and byte_count <= 0x180
+                        and int(profile.get("call_site_count", 0) or 0) == 0
+                        and int(profile.get("internal_call_count", 0) or 0) == 0
+                    ),
+                )
+                expr_collapse_depth = _preferred_expr_collapse_depth(
+                    block_count,
+                    byte_count,
+                    wrapper_like=bool(profile.get("wrapper_like")),
+                    tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
+                )
         tiny_core_guard = bool(
             profile.get("wrapper_like")
             or profile.get("tiny_single_call_helper")
@@ -2266,19 +2267,26 @@ def _decompile_function(
                                         with _guard_angr_tail_validation_collection_timing():
                                             with _guard_angr_structuring_codegen_internal_timing():
                                                 with _analysis_timeout(_remaining_timeout()):
-                                                    if decompiler_options is None:
-                                                        dec = project.analyses.Decompiler(
-                                                            function,
-                                                            cfg=cfg,
-                                                            expr_collapse_depth=expr_collapse_depth,
-                                                        )
-                                                    else:
-                                                        dec = project.analyses.Decompiler(
-                                                            function,
-                                                            cfg=cfg,
-                                                            options=decompiler_options,
-                                                            expr_collapse_depth=expr_collapse_depth,
-                                                        )
+                                                    with span(
+                                                        "decompile.angr_core",
+                                                        addr=hex(current_func_addr),
+                                                        name=getattr(function, "name", None),
+                                                        blocks=block_count,
+                                                        bytes=byte_count,
+                                                    ):
+                                                        if decompiler_options is None:
+                                                            dec = project.analyses.Decompiler(
+                                                                function,
+                                                                cfg=cfg,
+                                                                expr_collapse_depth=expr_collapse_depth,
+                                                            )
+                                                        else:
+                                                            dec = project.analyses.Decompiler(
+                                                                function,
+                                                                cfg=cfg,
+                                                                options=decompiler_options,
+                                                                expr_collapse_depth=expr_collapse_depth,
+                                                            )
                                                     if dec.codegen is None:
                                                         failure_snapshot = build_failure_family_snapshot(
                                                             status="empty",
@@ -2566,6 +2574,13 @@ def _decompile_function(
         def _run_callsite_stack_fact_pass() -> bool:
             if large_x86_16_function:
                 return False
+            if not function_has_call_evidence:
+                setattr(
+                    dec.codegen,
+                    "_inertia_callsite_stack_fact_refused_no_calls",
+                    int(getattr(dec.codegen, "_inertia_callsite_stack_fact_refused_no_calls", 0) or 0) + 1,
+                )
+                return False
             changed_local = False
             for rewrite in (
                 lambda: _attach_callsite_summaries_8616(project, dec.codegen),
@@ -2748,6 +2763,21 @@ def _decompile_function(
             )
         if getattr(dec.codegen, "_inertia_postprocess_discarded", False):
             rewrite_passes = ()
+        expected_non_prologue_calls = tuple(
+            name
+            for name in (
+                str(raw_name).lstrip("_")
+                for raw_name in tuple(dict.fromkeys(getattr(effective_cod_metadata, "call_names", ()) or ()))
+            )
+            if name and name != "aNchkstk"
+        )
+        expected_call_guard_active = bool(expected_non_prologue_calls)
+        function_has_call_evidence = bool(
+            int(profile.get("call_site_count", 0) or 0)
+            or int(profile.get("internal_call_count", 0) or 0)
+            or expected_call_guard_active
+        )
+        call_loss_guard_active = function_has_call_evidence or expected_call_guard_active
         _stack_lowering_already_attempted = False
         rewrite_pass_names = {
             id(rewrite): getattr(rewrite, "__name__", type(rewrite).__name__)
@@ -2827,14 +2857,26 @@ def _decompile_function(
                 ):
                     continue
                 pass_name = rewrite_pass_names.get(id(rewrite), getattr(rewrite, "__name__", type(rewrite).__name__))
-                before_calls = _codegen_call_expr_count()
-                before_missing = _missing_expected_calls_from_cod_metadata_8616(
-                    _snapshot_codegen_text(dec.codegen),
-                    effective_cod_metadata,
-                )
-                snapshot = _snapshot_codegen_cfunc()
-                rewrite_changed = rewrite()
-                if rewrite_changed:
+                with span(
+                    "decompile.cli_rewrite_pass",
+                    addr=hex(current_func_addr),
+                    name=getattr(function, "name", None),
+                    pass_name=pass_name,
+                    round=round_idx,
+                    index=rewrite_idx,
+                ):
+                    before_calls = _codegen_call_expr_count() if call_loss_guard_active else 0
+                    before_missing = (
+                        _missing_expected_calls_from_cod_metadata_8616(
+                            _snapshot_codegen_text(dec.codegen),
+                            effective_cod_metadata,
+                        )
+                        if expected_call_guard_active
+                        else ()
+                    )
+                    snapshot = _snapshot_codegen_cfunc() if before_calls or expected_call_guard_active else None
+                    rewrite_changed = rewrite()
+                if rewrite_changed and call_loss_guard_active:
                     after_calls = _codegen_call_expr_count()
                     if after_calls < before_calls and _restore_codegen_cfunc(snapshot):
                         logging.getLogger(__name__).warning(
@@ -2846,7 +2888,7 @@ def _decompile_function(
                             after_calls,
                         )
                         rewrite_changed = False
-                    else:
+                    elif expected_call_guard_active:
                         after_missing = _missing_expected_calls_from_cod_metadata_8616(
                             _snapshot_codegen_text(dec.codegen),
                             effective_cod_metadata,
@@ -2904,10 +2946,15 @@ def _decompile_function(
                     cached_rendered_text,
                     function_original_addr(function),
                 )
-            rendered_text, regenerated = _regenerate_codegen_text_safely(
-                dec.codegen,
-                context=f"{hex(function.addr)} {function.name}",
-            )
+            with span(
+                "decompile.regenerate_codegen",
+                addr=hex(current_func_addr),
+                name=getattr(function, "name", None),
+            ):
+                rendered_text, regenerated = _regenerate_codegen_text_safely(
+                    dec.codegen,
+                    context=f"{hex(function.addr)} {function.name}",
+                )
             if (
                 not regenerated
                 and isinstance(cached_rendered_text, str)
@@ -3179,16 +3226,21 @@ def _decompile_function(
 
         # Final canonicalization pass: late evidence-rank fallback may re-select
         # pre-clean text; enforce compile-hygiene token cleanup before gates.
-        formatted = _sanitize_mangled_autonames_text(formatted)
-        formatted = _strip_register_fragment_suffixes_text(formatted)
-        formatted = _prune_parameter_shadow_declarations_text(formatted)
-        formatted = _prune_undefined_fragment_carrier_assignments_text(formatted)
-        formatted = _normalize_scalar_gb_array_declarations_text(formatted)
-        formatted = _normalize_seg_offset_void_pointer_args_text(formatted)
-        formatted = normalize_unresolved_c_text(formatted)
-        formatted = _materialize_missing_generic_local_declarations_text(formatted)
-        formatted = _hoist_c89_local_declarations_text(formatted)
-        formatted = _preserve_return_chain_text_8616(project, function, dec.codegen, formatted)
+        with span(
+            "decompile.final_canonicalize",
+            addr=hex(current_func_addr),
+            name=getattr(function, "name", None),
+        ):
+            formatted = _sanitize_mangled_autonames_text(formatted)
+            formatted = _strip_register_fragment_suffixes_text(formatted)
+            formatted = _prune_parameter_shadow_declarations_text(formatted)
+            formatted = _prune_undefined_fragment_carrier_assignments_text(formatted)
+            formatted = _normalize_scalar_gb_array_declarations_text(formatted)
+            formatted = _normalize_seg_offset_void_pointer_args_text(formatted)
+            formatted = normalize_unresolved_c_text(formatted)
+            formatted = _materialize_missing_generic_local_declarations_text(formatted)
+            formatted = _hoist_c89_local_declarations_text(formatted)
+            formatted = _preserve_return_chain_text_8616(project, function, dec.codegen, formatted)
         if isinstance(evidence_recovered_c, str) and evidence_recovered_c.strip():
             formatted = evidence_recovered_c
 
@@ -3214,17 +3266,22 @@ def _decompile_function(
                 marker_summary += ", ..."
             return "empty", f"Decompiler produced unresolved IR-shaped C ({marker_summary})."
         _remember_tail_validation_snapshot(dec.codegen)
-        # ── PIPELINE CONTRACT GATE: enforce closed loop before C emission ──
-        try:
-            assert_pipeline_contracts_8616(dec.codegen)
-        except PipelineHardError:
-            raise  # let the caller handle it as a real failure
+        with span(
+            "decompile.final_gates",
+            addr=hex(current_func_addr),
+            name=getattr(function, "name", None),
+        ):
+            # ── PIPELINE CONTRACT GATE: enforce closed loop before C emission ──
+            try:
+                assert_pipeline_contracts_8616(dec.codegen)
+            except PipelineHardError:
+                raise  # let the caller handle it as a real failure
 
-        # ── FINAL EMISSION GATE: forbid ss << 4, stack[, etc. in final C ──
-        assert_final_c_quality_8616(
-            formatted,
-            function_addr=function_original_addr(function),
-        )
+            # ── FINAL EMISSION GATE: forbid ss << 4, stack[, etc. in final C ──
+            assert_final_c_quality_8616(
+                formatted,
+                function_addr=function_original_addr(function),
+            )
 
         setattr(project, "_inertia_last_validated_function_payload", (function_original_addr(function), formatted))
         if os.environ.get("INERTIA_DEBUG_RETURN_BRANCH"):

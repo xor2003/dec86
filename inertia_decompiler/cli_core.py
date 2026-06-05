@@ -567,6 +567,13 @@ from inertia_decompiler.direct_addr_failure_family import FailureFamilyState, bu
 print = _timestamped_print
 __all__ = ['_argument_was_explicit', '_parse_int', '_function_recovery_detail', '_bounded_non_optimized_timeout', '_direct_addr_wall_clock_budget', '_prepare_ranked_binary_preview_items', '_supplement_function_cfg_pairs_with_ranked_preview', '_supplement_function_cfg_pairs_with_seeded_recovery', '_function_work_cache_lookup', '_run_function_work_item', '_function_work_result_for_fork_ipc', '_emit_function_timing_summary', '_helper_name', '_iter_c_nodes', 'main']
 
+_TRUTHY_ENV_VALUES_8616 = frozenset({"1", "true", "yes", "on"})
+
+
+def _env_truthy_8616(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUTHY_ENV_VALUES_8616
+
+
 def _argument_was_explicit(name: str) -> bool:
     flag = name.strip()
     for token in sys.argv[1:]:
@@ -4057,6 +4064,7 @@ def main(argv: list[str] | None = None) -> int:
                     os.name == "posix"
                     and threading.current_thread() is threading.main_thread()
                     and threading.active_count() == 1
+                    and not _env_truthy_8616("INERTIA_OTEL_PROFILE_IN_PROCESS")
                 )
                 with span(
                     "direct.decompile_job",
