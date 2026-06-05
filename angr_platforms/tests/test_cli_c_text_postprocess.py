@@ -217,6 +217,24 @@ void $_nfree(void)
     assert "unsigned short vvar_2;" in rewritten
 
 
+def test_materialize_missing_generic_local_declarations_text_handles_generated_locals():
+    c_text = """
+int main(void)
+{
+    unsigned short ub;  // [bp-0x16]
+
+    local_16 = ub;
+    return local_18;
+}
+"""
+
+    rewritten = _materialize_missing_generic_local_declarations_text(c_text)
+
+    assert "unsigned short ub;" in rewritten
+    assert "unsigned short local_16;" in rewritten
+    assert "unsigned short local_18;" in rewritten
+
+
 def test_prune_weaker_conflicting_prototypes_text_downgrades_typed_proto_on_lower_observed_arity():
     c_text = """\
 void *memset(void *dst, int ch, unsigned long count);

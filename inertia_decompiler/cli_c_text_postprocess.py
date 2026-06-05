@@ -57,7 +57,6 @@ from inertia_decompiler.project_loading import (
 )
 
 from inertia_decompiler.sidecar_metadata import (
-    _exact_function_span_matches,
     _load_lst_metadata,
     _lst_code_label,
     _lst_code_region,
@@ -664,9 +663,13 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
     def _impl():
         trailing_newline = c_text.endswith("\n")
         lines = c_text.splitlines()
-        generic_name_re = re.compile(r"^(?:a\d+|v\d+|vvar_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+)$")
+        generic_name_re = re.compile(
+            r"^(?:a\d+|v\d+|vvar_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)$"
+        )
         decl_name_re = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s*;\s*$")
-        generic_use_re = re.compile(r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+)(?![A-Za-z_])")
+        generic_use_re = re.compile(
+            r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)(?![A-Za-z_])"
+        )
         arg_name_re = re.compile(r"\((?P<args>[^()]*)\)")
         header_re = re.compile(r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[$A-Za-z_][$\w]*)\s*\((?P<args>[^()]*)\)")
 

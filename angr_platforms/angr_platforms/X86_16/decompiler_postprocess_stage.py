@@ -9,6 +9,7 @@ import re
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
+from enum import Enum
 from typing import Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
@@ -86,6 +87,25 @@ __all__ = [
     "describe_x86_16_decompiler_postprocess_stage",
     "apply_x86_16_decompiler_postprocess",
 ]
+
+
+class _PostprocessValidationDeltaKind8616(Enum):
+    BLOCKING = "blocking"
+    NAME_ONLY_HELPER_ANNOTATION = "name_only_helper_annotation"
+
+
+_JCC_REWRITE_VALIDATION_PASS_NAMES_8616 = frozenset(
+    {
+        "_rewrite_decoded_jcc_conditions_8616",
+        "_rewrite_decoded_jcc_conditions_after_calls_8616",
+    }
+)
+
+_HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616 = _JCC_REWRITE_VALIDATION_PASS_NAMES_8616 | frozenset(
+    {
+        "_materialize_callsite_stack_arguments_8616",
+    }
+)
 
 
 def _debug_dump_calls_8616(label: str, ctext: str, function_addr: int) -> None:
@@ -2051,8 +2071,12 @@ def _snapshot_codegen_cfunc(codegen):
     if cfunc is None:
         return None
     try:
+        with contextlib.suppress(Exception):
+            delattr(codegen, "_inertia_postprocess_snapshot_error")
         return _deepcopy_cfunc_for_validation_8616(cfunc)
     except Exception as ex:
+        with contextlib.suppress(Exception):
+            setattr(codegen, "_inertia_postprocess_snapshot_error", f"{type(ex).__name__}: {ex}")
         logging.getLogger(__name__).debug(
             "Failed to snapshot codegen cfunc at function=%#x stage=postprocess-snapshot: %s",
             getattr(cfunc, "addr", -1) or -1,
@@ -2116,8 +2140,18 @@ def _deepcopy_cfunc_for_validation_8616(cfunc):
         dispatch[_IT_COUNT_TYPE] = _deepcopy_count
     try:
         cloned = copy.copy(cfunc)
-        with contextlib.suppress(Exception):
-            cloned.statements = copy.deepcopy(getattr(cfunc, "statements", None))
+        # A postprocess validation snapshot is only evidence if statement
+        # ownership is independent. C AST nodes carry back-pointers to the live
+        # codegen/project graph; memo those out so deepcopy only clones the
+        # statement tree and does not traverse loader/ctypes state.
+        memo: dict[int, object | None] = {}
+        codegen = getattr(cfunc, "codegen", None)
+        if codegen is not None:
+            memo[id(codegen)] = None
+            project = getattr(codegen, "project", None)
+            if project is not None:
+                memo[id(project)] = None
+        cloned.statements = copy.deepcopy(getattr(cfunc, "statements", None), memo)
         for attr in ("variables_in_use", "unified_local_vars", "variable_kb"):
             value = getattr(cfunc, attr, None)
             if isinstance(value, dict):
@@ -3057,11 +3091,15 @@ def _postprocess_runtime_config_8616(project, codegen, pass_specs) -> tuple[int 
             except ValueError:
                 pass_timeout_seconds = None
         baseline_summary = None
-        if validation_enabled and not large_function_for_per_pass_tv:
-            _prime_stack_semantics_before_validation_baseline_8616(project, codegen)
-            baseline_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
-                project, codegen, mode="live_out"
-            )
+        if validation_enabled:
+            cached_baseline = getattr(codegen, "_inertia_postprocess_pre_validation_summary", None)
+            if cached_baseline is not None:
+                baseline_summary = cached_baseline
+            else:
+                _prime_stack_semantics_before_validation_baseline_8616(project, codegen)
+                baseline_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
+                    project, codegen, mode="live_out"
+                )
         codegen._inertia_postprocess_passes = tuple(spec.name for spec in pass_specs)
         return pass_timeout_seconds, validation_enabled, per_pass_validation_enabled, skip_names, baseline_summary
 
@@ -3207,13 +3245,53 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         delta = getattr(project, "_inertia_original_linear_delta", None)
         if isinstance(trace_func_addr, int) and isinstance(delta, int):
             trace_func_addr = trace_func_addr + delta
+        validation_required_passes = {
+            "_rewrite_decoded_jcc_conditions_8616",
+            "_rewrite_decoded_jcc_conditions_after_calls_8616",
+            "_repair_loop_exit_return_guards_8616",
+            "_recover_missing_direct_calls_from_evidence_8616",
+            "_normalize_fact_backed_stack_accesses_8616",
+            "_normalize_call_target_names_8616",
+            "_normalize_recovered_call_target_names_8616",
+            "_materialize_callsite_stack_arguments_8616",
+            "_materialize_callsite_prototypes_8616",
+            "_materialize_recovered_callsite_stack_arguments_8616",
+            "_recover_missing_direct_calls_final_8616",
+            "_materialize_empty_if_return_branches_8616",
+            "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
+            "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
+        }
+        large_function_validation_required_passes = {
+            "_rewrite_decoded_jcc_conditions_8616",
+            "_rewrite_decoded_jcc_conditions_after_calls_8616",
+            "_materialize_callsite_stack_arguments_8616",
+            "_materialize_empty_if_return_branches_8616",
+            "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
+            "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
+        }
 
         def _apply_step(pass_name: str, step_func) -> bool:
             nonlocal accepted_changed, last_changed_pass
             # Repair: ensure statements is always CStatements before every pass.
             # Many transform() callbacks return plain lists, which corrupts downstream.
             _repair_cfunc_statements_wrapper(codegen)
-            snapshot = _snapshot_codegen_cfunc(codegen) if per_pass_validation_enabled else None
+            large_function_skip = bool(getattr(codegen, "_inertia_skip_per_pass_validation_large_function", False))
+            force_pass_validation = pass_name in validation_required_passes and (
+                not large_function_skip or pass_name in large_function_validation_required_passes
+            )
+            requires_snapshot = validation_enabled and (per_pass_validation_enabled or force_pass_validation)
+            snapshot = _snapshot_codegen_cfunc(codegen) if requires_snapshot else None
+            if requires_snapshot and snapshot is None:
+                rejected = list(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
+                rejected.append(pass_name)
+                codegen._inertia_postprocess_rejected_passes = tuple(rejected)
+                logging.getLogger(__name__).warning(
+                    "Skipping 86_16 postprocess pass %s at function=%#x: validation snapshot unavailable: %s",
+                    pass_name,
+                    trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                    getattr(codegen, "_inertia_postprocess_snapshot_error", None) or "unknown",
+                )
+                return True
             return_chain_expected = _return_chain_expected_counts_8616(codegen)
             if return_chain_expected is not None and snapshot is None:
                 snapshot = _snapshot_codegen_cfunc(codegen)
@@ -3272,24 +3350,24 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                     rejected.append(pass_name)
                     codegen._inertia_postprocess_rejected_passes = tuple(rejected)
                     return True
-            enforce_pass_validation = per_pass_validation_enabled or pass_name in {
-                "_rewrite_decoded_jcc_conditions_8616",
-                "_rewrite_decoded_jcc_conditions_after_calls_8616",
-                "_repair_loop_exit_return_guards_8616",
-                "_recover_missing_direct_calls_from_evidence_8616",
-                "_normalize_fact_backed_stack_accesses_8616",
-                "_normalize_call_target_names_8616",
-                "_normalize_recovered_call_target_names_8616",
-                "_materialize_callsite_stack_arguments_8616",
-                "_materialize_callsite_prototypes_8616",
-                "_materialize_recovered_callsite_stack_arguments_8616",
-                "_recover_missing_direct_calls_final_8616",
-            }
-            if getattr(codegen, "_inertia_skip_per_pass_validation_large_function", False):
+            enforce_pass_validation = per_pass_validation_enabled or force_pass_validation
+            if large_function_skip and not force_pass_validation:
                 enforce_pass_validation = False
             if validation_enabled and enforce_pass_validation and baseline_summary is not None:
                 if step_changed:
                     _invalidate_tail_validation_derived_caches_8616(codegen)
+                    validation_context = (
+                        f"{trace_func_addr:#x} postprocess:{pass_name}:validation"
+                        if isinstance(trace_func_addr, int)
+                        else f"postprocess:{pass_name}:validation"
+                    )
+                    if not _regenerate_text_safely(codegen, context=validation_context):
+                        _restore_codegen_cfunc(codegen, snapshot)
+                        _regenerate_text_safely(codegen, context=f"{validation_context}:restore")
+                        rejected = list(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
+                        rejected.append(pass_name)
+                        codegen._inertia_postprocess_rejected_passes = tuple(rejected)
+                        return True
                 current_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
                 validation = compare_x86_16_tail_validation_summaries(baseline_summary, current_summary)
                 if not x86_16_tail_validation_result_passed(validation):
@@ -3308,9 +3386,33 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                         "Source-evidenced side-effect floor not met",
                     )
                     is_blocking_delta = any(marker in summary_text for marker in blocking_markers)
-                    if pass_name in {
-                        "_rewrite_decoded_jcc_conditions_8616",
-                        "_rewrite_decoded_jcc_conditions_after_calls_8616",
+                    delta_kind = _classify_postprocess_validation_delta_8616(validation)
+                    if (
+                        pass_name in _HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616
+                        and delta_kind is _PostprocessValidationDeltaKind8616.NAME_ONLY_HELPER_ANNOTATION
+                    ):
+                        is_blocking_delta = any(marker in summary_text for marker in blocking_markers)
+                        if not is_blocking_delta:
+                            accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                            accepted.append(
+                                {
+                                    "pass": pass_name,
+                                    "kind": delta_kind.value,
+                                }
+                            )
+                            codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                            logging.getLogger(__name__).warning(
+                                "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                pass_name,
+                                delta_kind.value,
+                            )
+                    elif pass_name in _JCC_REWRITE_VALIDATION_PASS_NAMES_8616:
+                        if is_exit_goto_repair_delta:
+                            is_blocking_delta = False
+                        else:
+                            is_blocking_delta = True
+                    elif pass_name in {
                         "_recover_missing_direct_calls_from_evidence_8616",
                         "_normalize_fact_backed_stack_accesses_8616",
                         "_normalize_call_target_names_8616",
@@ -3319,6 +3421,9 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                         "_materialize_callsite_prototypes_8616",
                         "_materialize_recovered_callsite_stack_arguments_8616",
                         "_recover_missing_direct_calls_final_8616",
+                        "_materialize_empty_if_return_branches_8616",
+                        "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
+                        "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
                     }:
                         if is_exit_goto_repair_delta:
                             is_blocking_delta = False
@@ -3350,6 +3455,14 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                             validation.get("summary_text") or validation.get("delta"),
                         )
                     _restore_codegen_cfunc(codegen, snapshot)
+                    _regenerate_text_safely(
+                        codegen,
+                        context=(
+                            f"{trace_func_addr:#x} postprocess:{pass_name}:restore"
+                            if isinstance(trace_func_addr, int)
+                            else f"postprocess:{pass_name}:restore"
+                        ),
+                    )
                     # Pass-local reject: keep baseline snapshot and continue with later passes.
                     return True
 
@@ -3773,6 +3886,31 @@ def _helper_delta_touches_only_allowed_fields_8616(delta: dict[str, object]) -> 
         delta=delta,
     )
     return False
+
+
+def _classify_postprocess_validation_delta_8616(validation: dict[str, object]) -> _PostprocessValidationDeltaKind8616:
+    if not isinstance(validation, dict):
+        return _PostprocessValidationDeltaKind8616.BLOCKING
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return _PostprocessValidationDeltaKind8616.BLOCKING
+    touched_fields = {
+        key
+        for key, field_delta in delta.items()
+        if isinstance(field_delta, dict) and ((field_delta.get("added") or ()) or (field_delta.get("removed") or ()))
+    }
+    if touched_fields != {"helper_calls"}:
+        return _PostprocessValidationDeltaKind8616.BLOCKING
+    helper_delta = delta.get("helper_calls")
+    if not isinstance(helper_delta, dict):
+        return _PostprocessValidationDeltaKind8616.BLOCKING
+    added = tuple(helper_delta.get("added") or ())
+    removed = tuple(helper_delta.get("removed") or ())
+    if added or not removed:
+        return _PostprocessValidationDeltaKind8616.BLOCKING
+    if all(isinstance(token, str) and token.startswith("name:addr:") for token in removed):
+        return _PostprocessValidationDeltaKind8616.NAME_ONLY_HELPER_ANNOTATION
+    return _PostprocessValidationDeltaKind8616.BLOCKING
 
 
 def _has_recovered_source_calls_in_codegen_8616(project, codegen, function) -> bool:
@@ -4279,34 +4417,43 @@ def _decompile_8616(self):
             self.codegen,
             mode=validation_mode,
         )
+        setattr(self.codegen, "_inertia_postprocess_pre_validation_summary", before_summary)
         before_collect_elapsed = time.perf_counter() - before_collect_started
-        # Snapshot pre-postprocess codegen for semantic gate
-        skip_pre_postprocess_snapshot = _large_function_for_postprocess_snapshot_8616(self.project, func_addr)
-        pre_postprocess_cfunc_snapshot = None if skip_pre_postprocess_snapshot else _snapshot_codegen_cfunc(self.codegen)
+        # Snapshot pre-postprocess codegen for the semantic gate. In the
+        # validation-enabled path, mutating postprocess is only safe when a
+        # rejected result can be restored.
+        pre_postprocess_cfunc_snapshot = _snapshot_codegen_cfunc(self.codegen)
         postprocess_started = time.perf_counter()
         postprocess_exception: Exception | None = None
-        try:
-            changed = _postprocess_codegen_8616(self.project, self.codegen)
-        except Exception as ex:  # pragma: no cover - defensive stage-finalization path
-            postprocess_exception = ex
+        if pre_postprocess_cfunc_snapshot is None:
             changed = False
-            logging.getLogger(__name__).warning(
-                "86_16 postprocess pipeline raised; restoring pre-postprocess snapshot for function=%#x: %s",
+            setattr(self.codegen, "_inertia_postprocess_skipped_missing_snapshot", True)
+            snapshot_error = getattr(self.codegen, "_inertia_postprocess_snapshot_error", None)
+            logging.getLogger(__name__).error(
+                "86_16 validation postprocess skipped for function=%#x: pre-postprocess snapshot unavailable: %s",
                 int(func_addr) if isinstance(func_addr, int) else -1,
-                ex,
-                exc_info=True,
+                snapshot_error or "unknown",
             )
-            if pre_postprocess_cfunc_snapshot is not None:
+        else:
+            try:
+                changed = _postprocess_codegen_8616(self.project, self.codegen)
+            except Exception as ex:  # pragma: no cover - defensive stage-finalization path
+                postprocess_exception = ex
+                changed = False
+                logging.getLogger(__name__).warning(
+                    "86_16 postprocess pipeline raised; restoring pre-postprocess snapshot for function=%#x: %s",
+                    int(func_addr) if isinstance(func_addr, int) else -1,
+                    ex,
+                    exc_info=True,
+                )
                 with contextlib.suppress(Exception):
                     _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
-            elif skip_pre_postprocess_snapshot:
-                raise
-            setattr(self.codegen, "_inertia_postprocess_exception", repr(ex))
-            setattr(
-                self.codegen,
-                "_inertia_postprocess_exception_pass",
-                getattr(self.codegen, "_inertia_last_postprocess_pass", None),
-            )
+                setattr(self.codegen, "_inertia_postprocess_exception", repr(ex))
+                setattr(
+                    self.codegen,
+                    "_inertia_postprocess_exception_pass",
+                    getattr(self.codegen, "_inertia_last_postprocess_pass", None),
+                )
         postprocess_elapsed = time.perf_counter() - postprocess_started
         function = getattr(self, "function", None) or getattr(self, "func", None)
         if function is None and getattr(getattr(self, "codegen", None), "cfunc", None) is not None:
@@ -4725,19 +4872,30 @@ def _discard_failed_postprocess_result_8616(
             (validation.get("before") or {}).get("stack_writes"),
             (validation.get("after") or {}).get("stack_writes"),
         )
+    if pre_postprocess_cfunc_snapshot is None:
+        setattr(self.codegen, "_inertia_postprocess_discard_failed_no_snapshot", True)
+        log.error(
+            "Postprocess validation changed but no pre-postprocess snapshot is available; cannot discard changed C: %s "
+            "(last_pass=%s failure_pass=%s)",
+            validation["verdict"],
+            getattr(self.codegen, "_inertia_last_postprocess_pass", None),
+            getattr(self.codegen, "_inertia_postprocess_validation_failure_pass", None),
+        )
+        return
     log.warning(
         "Postprocess validation changed — discarding postprocessed C, emitting pre-postprocess C: %s (last_pass=%s failure_pass=%s)",
         validation["verdict"],
         getattr(self.codegen, "_inertia_last_postprocess_pass", None),
         getattr(self.codegen, "_inertia_postprocess_validation_failure_pass", None),
     )
-    if pre_postprocess_cfunc_snapshot is None:
-        return
     _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
-    _normalize_pointer_high_byte_shifts_8616(self.codegen)
     self.codegen._inertia_postprocess_discarded = True
     self.codegen._inertia_postprocess_discard_verdict = validation_verdict_text
-    restored_after_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
+    restored_after_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
+        self.project,
+        self.codegen,
+        mode=validation_mode,
+    )
     restored_after_fingerprint = fingerprint_x86_16_tail_validation_boundary(
         self.project,
         self.codegen,
