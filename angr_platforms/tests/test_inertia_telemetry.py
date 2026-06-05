@@ -100,7 +100,26 @@ def test_agent_trace_text_is_compact_and_pipe_delimited(monkeypatch):
     reset_telemetry_for_tests()
 
 
-def test_trace_file_defaults_to_text_unless_json_suffix(monkeypatch, tmp_path):
+def test_agent_trace_text_uses_name_dictionary_when_smaller(monkeypatch):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
+
+    assert configure_telemetry_from_env()
+    for index in range(20):
+        with span("decompiler.very_repetitive_slow_stage", addr=hex(0x1000 + index)):
+            pass
+
+    text = build_agent_trace_text()
+
+    assert "names:\n0=decompiler.very_repetitive_slow_stage" in text
+    assert "schema: id|parent|ms|n|attrs" in text
+    assert "|0|addr=0x1000" in text
+
+    reset_telemetry_for_tests()
+
+
+def test_trace_file_defaults_to_text_even_with_json_suffix(monkeypatch, tmp_path):
     reset_telemetry_for_tests()
     monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
     monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
@@ -119,7 +138,19 @@ def test_trace_file_defaults_to_text_unless_json_suffix(monkeypatch, tmp_path):
     json_path = tmp_path / "trace.json"
 
     assert configure_telemetry_from_env(file_path=json_path)
-    with span("test.file_json"):
+    with span("test.file_json_default_text"):
+        pass
+
+    emit_compact_summary()
+    assert json_path.read_text(encoding="utf-8").startswith("summary total_ms=")
+
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
+    monkeypatch.setenv("INERTIA_OTEL_SPAN_FORMAT", "json")
+
+    assert configure_telemetry_from_env(file_path=json_path)
+    with span("test.file_json_explicit"):
         pass
 
     emit_compact_summary()

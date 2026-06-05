@@ -238,12 +238,6 @@ def _resolve_output_format(file_path: Path | None, full_jsonl: bool) -> str:
             return "json"
     if full_jsonl:
         return "jsonl"
-    if file_path is not None:
-        suffix = file_path.suffix.lower()
-        if suffix == ".jsonl":
-            return "jsonl"
-        if suffix == ".json":
-            return "json"
     return "text"
 
 
@@ -544,14 +538,38 @@ def build_agent_trace_text() -> str:
     shown = ordered[:limit]
     if len(ordered) > len(shown):
         lines[0] += f" shown={len(shown)}"
-    lines.extend(_format_agent_trace_record(record) for record in shown)
+    name_ids = _agent_trace_name_dictionary(shown)
+    if name_ids:
+        lines.append("names:")
+        for name, name_id in sorted(name_ids.items(), key=lambda item: item[1]):
+            lines.append(f"{name_id}={name}")
+        lines[1] = "schema: id|parent|ms|n|attrs"
+    lines.extend(_format_agent_trace_record(record, name_ids=name_ids) for record in shown)
     return "\n".join(lines) + "\n"
 
 
-def _format_agent_trace_record(record: _SpanRecord) -> str:
+def _agent_trace_name_dictionary(records: list[_SpanRecord]) -> dict[str, int] | None:
+    if len(records) < 16:
+        return None
+    names: dict[str, int] = {}
+    for record in records:
+        if record.name not in names:
+            names[record.name] = len(names)
+    if len(names) >= len(records):
+        return None
+    raw_name_chars = sum(len(record.name) for record in records)
+    dict_name_chars = sum(len(str(name_id)) + 1 + len(name) for name, name_id in names.items())
+    row_name_chars = sum(len(str(names[record.name])) for record in records)
+    if dict_name_chars + row_name_chars + len("names:\n") + 32 >= raw_name_chars:
+        return None
+    return names
+
+
+def _format_agent_trace_record(record: _SpanRecord, *, name_ids: dict[str, int] | None = None) -> str:
     parent = "-" if record.parent_id is None else str(record.parent_id)
     attrs = _format_agent_attrs(record.attrs)
-    return f"{record.span_id}|{parent}|{round(record.duration_ms, 3)}|{record.name}|{attrs}"
+    name = str(name_ids[record.name]) if name_ids is not None else record.name
+    return f"{record.span_id}|{parent}|{round(record.duration_ms, 3)}|{name}|{attrs}"
 
 
 def _format_agent_attrs(attrs: dict[str, Any]) -> str:
