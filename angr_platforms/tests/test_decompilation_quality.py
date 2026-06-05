@@ -42,3 +42,16 @@ def test_assess_decompiled_c_text_rejects_stack_base_return_escape() -> None:
 
     assert assessment.reject_as_decompiled is True
     assert "stack-base-return-escape" in assessment.markers
+
+
+def test_assess_decompiled_c_text_rejects_stack_base_address_escape() -> None:
+    assessment = assess_decompiled_c_text(
+        "int nested_loops(int limit)\n"
+        "{\n"
+        "    unsigned short stack_base;\n"
+        "    return *((short *)(v2 * 16 + (unsigned int)(stack_base + -2)));\n"
+        "}\n"
+    )
+
+    assert assessment.reject_as_decompiled is True
+    assert "stack-base" in assessment.markers

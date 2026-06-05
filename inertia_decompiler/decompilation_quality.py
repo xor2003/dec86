@@ -33,6 +33,7 @@ _FATAL_MARKERS = frozenset(
         "missing-type",
         "ellipsis-condition",
         "unresolved-callee-namespace",
+        "stack-base",
         "stack-base-return-escape",
     }
 )
