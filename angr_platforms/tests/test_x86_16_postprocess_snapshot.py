@@ -3,6 +3,7 @@ from __future__ import annotations
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _PostprocessValidationDeltaKind8616,
     _classify_postprocess_validation_delta_8616,
+    _is_jcc_call_return_condition_rebinding_delta_8616,
     _restore_codegen_inertia_metadata_8616,
     _snapshot_codegen_inertia_metadata_8616,
     _snapshot_codegen_cfunc,
@@ -99,6 +100,43 @@ def test_postprocess_validation_delta_rejects_raw_helper_and_mixed_semantic_delt
         )
         is _PostprocessValidationDeltaKind8616.BLOCKING
     )
+
+
+def test_jcc_call_return_condition_delta_accepts_virtual_carrier_fingerprint_churn():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_jcc_call_return_register_rebindings = 3
+    validation = {
+        "delta": {
+            "conditions": {
+                "added": ("CmpNE(virtual:vvar_42,const:35)",),
+                "removed": ("CmpNE(reg:ax,const:35)",),
+            },
+            "control_flow_effects": {
+                "added": ("if:CmpNE(virtual:vvar_42,const:35)",),
+                "removed": ("if:CmpNE(reg:ax,const:35)",),
+            },
+            "segmented_writes": {
+                "added": ("deref:Add(Mul(virtual:vvar_1146,const:16),virtual:vvar_1142,const:-2)",),
+                "removed": ("deref:Add(Mul(virtual:vvar_11,const:16),virtual:vvar_6,const:-2)",),
+            },
+        }
+    }
+
+    assert _is_jcc_call_return_condition_rebinding_delta_8616(codegen, validation) is True
+
+
+def test_jcc_call_return_condition_delta_refuses_without_consumed_rebinding_evidence():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    validation = {
+        "delta": {
+            "conditions": {
+                "added": ("CmpNE(virtual:vvar_42,const:35)",),
+                "removed": ("CmpNE(reg:ax,const:35)",),
+            }
+        }
+    }
+
+    assert _is_jcc_call_return_condition_rebinding_delta_8616(codegen, validation) is False
 
 
 def test_postprocess_metadata_restore_removes_rejected_return_chain_evidence():

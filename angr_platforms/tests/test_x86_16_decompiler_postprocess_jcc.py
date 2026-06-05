@@ -4,8 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
     CConstant,
+    CFunctionCall,
     CITE,
     CIfElse,
     CStatements,
@@ -334,6 +336,28 @@ def test_rewrite_decoded_jcc_conditions_rewrites_not_cite_condition(monkeypatch)
     assert changed is True
     assert isinstance(if_stmt.condition_and_nodes[0][0], CBinaryOp)
     assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
+
+
+def test_rewrite_decoded_jcc_conditions_rebinds_adjacent_call_return_register_condition():
+    project = _project()
+    codegen = _codegen([])
+    ret_var = CVariable(SimRegisterVariable(0x120, 2, name="vret"), codegen=codegen)
+    call_assign = CAssignment(ret_var, CFunctionCall("sub_1234", None, [], codegen=codegen), codegen=codegen)
+    ax = _reg(project, "ax", codegen)
+    cond = CBinaryOp("CmpNE", ax, _const(35, codegen), codegen=codegen)
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    if_stmt.condition = cond
+    codegen.cfunc.statements = CStatements([call_assign, if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    rewritten = if_stmt.condition_and_nodes[0][0]
+    assert rewritten is cond
+    assert rewritten.lhs is ret_var
+    assert if_stmt.condition.lhs is ret_var
+    assert codegen._inertia_jcc_call_return_register_rebindings >= 1
 
 
 def test_rewrite_decoded_jcc_conditions_allows_argument_bp_positive_slots(monkeypatch):

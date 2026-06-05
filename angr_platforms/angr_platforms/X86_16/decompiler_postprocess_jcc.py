@@ -963,15 +963,16 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
         if insns is None or jcc_index is None:
             return None
         jcc_insn = insns[jcc_index]
+        jcc_mnemonic = jcc_insn.mnemonic.lower()
+        mask_decoded = _decode_mask_test_guard_8616(project, codegen, jcc_mnemonic, block_addr, jcc_addr, debug_jcc)
+        if mask_decoded is not None:
+            return mask_decoded
+
         cmp_insn = _nearest_flag_producer_before_jcc_8616(insns, jcc_index)
         if cmp_insn is None:
             if debug_jcc:
                 _log.warning("[jcc-rewrite] no flag producer block=%#x jcc=%#x", block_addr, jcc_addr)
             return None
-        jcc_mnemonic = jcc_insn.mnemonic.lower()
-        mask_decoded = _decode_mask_test_guard_8616(project, codegen, jcc_mnemonic, block_addr, jcc_addr, debug_jcc)
-        if mask_decoded is not None:
-            return mask_decoded
 
         if jcc_mnemonic not in _JCC_COMPARE_OPS_8616:
             if debug_jcc:
@@ -1325,6 +1326,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
         def _call_return_guard_sources_by_key_8616() -> dict[tuple[int, int], object]:
             sources: dict[tuple[int, int], object] = {}
             conflicts: set[tuple[int, int]] = set()
+            seen_roots: set[int] = set()
             debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
             debug_stats = {"blocks": 0, "stmts": 0, "assignments": 0, "callish": 0, "conditions_after_assign": 0}
             debug_stmt_types: dict[str, int] = {}
@@ -1342,6 +1344,10 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     sources.pop(key, None)
 
             def _walk_block(root) -> None:
+                root_id = id(root)
+                if root_id in seen_roots:
+                    return
+                seen_roots.add(root_id)
                 debug_stats["blocks"] += 1
                 last_call_lhs = None
                 for stmt in _statements_from_root_8616(root):
@@ -1388,6 +1394,81 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             if ax_offset is None:
                 return False
             return int(getattr(variable, "reg", -1)) == int(ax_offset)
+
+        def _rebind_adjacent_call_return_register_conditions_8616() -> bool:
+            local_changed = False
+            local_count = 0
+            seen_roots: set[int] = set()
+
+            def _replace_return_register_reads_8616(cond, source):
+                nonlocal local_changed, local_count
+                if cond is None or source is None:
+                    return cond
+                if _expr_is_return_register_8616(cond):
+                    local_changed = True
+                    local_count += 1
+                    return source
+                if not _structured_codegen_node_8616(cond):
+                    return cond
+
+                def _replace_child(child):
+                    nonlocal local_changed, local_count
+                    if _expr_is_return_register_8616(child):
+                        local_changed = True
+                        local_count += 1
+                        return source
+                    return child
+
+                if _replace_c_children_8616(cond, _replace_child):
+                    local_changed = True
+                return cond
+
+            def _replace_stmt_conditions_8616(stmt, source) -> bool:
+                before_count = local_count
+                cond_pairs = getattr(stmt, "condition_and_nodes", None)
+                if isinstance(cond_pairs, (list, tuple)):
+                    pair_changed = False
+                    new_pairs = []
+                    for cond, body in tuple(cond_pairs):
+                        new_cond = _replace_return_register_reads_8616(cond, source)
+                        pair_changed = pair_changed or new_cond is not cond
+                        new_pairs.append((new_cond, body))
+                    if pair_changed:
+                        stmt.condition_and_nodes = type(cond_pairs)(new_pairs)
+                if hasattr(stmt, "condition"):
+                    cond = getattr(stmt, "condition", None)
+                    new_cond = _replace_return_register_reads_8616(cond, source)
+                    if new_cond is not cond:
+                        stmt.condition = new_cond
+                return local_count != before_count
+
+            def _walk_block(root) -> None:
+                root_id = id(root)
+                if root_id in seen_roots:
+                    return
+                seen_roots.add(root_id)
+                last_call_lhs = None
+                for stmt in _statements_from_root_8616(root):
+                    if isinstance(stmt, CAssignment) and _assignment_rhs_has_real_call_8616(stmt):
+                        last_call_lhs = getattr(stmt, "lhs", None)
+                        continue
+                    if last_call_lhs is not None:
+                        _replace_stmt_conditions_8616(stmt, last_call_lhs)
+                        last_call_lhs = None
+                    for child in _child_statement_roots_8616(stmt):
+                        _walk_block(child)
+
+            _walk_block(codegen.cfunc)
+            if local_count:
+                try:
+                    codegen._inertia_jcc_call_return_register_rebindings = int(
+                        getattr(codegen, "_inertia_jcc_call_return_register_rebindings", 0) or 0
+                    ) + local_count
+                except Exception:
+                    pass
+                if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
+                    _log.warning("[jcc-rewrite] rebound adjacent call-return register reads count=%d", local_count)
+            return local_changed
 
         def _expr_is_stale_literal_8616(expr) -> bool:
             node = expr
@@ -1612,11 +1693,14 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 continue
             _collect_decoded_signature_8616(cond)
 
+        if _rebind_adjacent_call_return_register_conditions_8616():
+            changed = True
+
         def _rewrite_condition(node):
             nonlocal changed, materialized_count
             replacement = _decoded_condition_replacement(node)
             if replacement is None:
-                return node
+                return None
             changed = True
             materialized_count += 1
             return replacement

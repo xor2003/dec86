@@ -32,16 +32,20 @@ def _iter_c_statements_safe_8616(node):
 _CONST_DEFAULT_TYPE = SimTypeInt(signed=False)
 
 _CONST_PROP_BINARY_OPS = {
-    "Add": lambda a, b: CConstant(a + b, _CONST_DEFAULT_TYPE),
-    "Sub": lambda a, b: CConstant(a - b, _CONST_DEFAULT_TYPE),
-    "Mul": lambda a, b: CConstant(a * b, _CONST_DEFAULT_TYPE),
-    "And": lambda a, b: CConstant(a & b, _CONST_DEFAULT_TYPE),
-    "Or": lambda a, b: CConstant(a | b, _CONST_DEFAULT_TYPE),
-    "Xor": lambda a, b: CConstant(a ^ b, _CONST_DEFAULT_TYPE),
-    "Shl": lambda a, b: CConstant(a << b, _CONST_DEFAULT_TYPE) if 0 <= b < 16 else None,
-    "Shr": lambda a, b: CConstant(a >> b, _CONST_DEFAULT_TYPE) if 0 <= b < 16 else None,
-    "Div": lambda a, b: CConstant(a // b, _CONST_DEFAULT_TYPE) if b != 0 else None,
+    "Add": lambda a, b: a + b,
+    "Sub": lambda a, b: a - b,
+    "Mul": lambda a, b: a * b,
+    "And": lambda a, b: a & b,
+    "Or": lambda a, b: a | b,
+    "Xor": lambda a, b: a ^ b,
+    "Shl": lambda a, b: a << b if 0 <= b < 16 else None,
+    "Shr": lambda a, b: a >> b if 0 <= b < 16 else None,
+    "Div": lambda a, b: a // b if b != 0 else None,
 }
+
+
+def _folded_constant_8616(value: int, *, codegen=None) -> CConstant:
+    return CConstant(int(value), _CONST_DEFAULT_TYPE, codegen=codegen)
 
 
 def _is_const_expr(node) -> bool:
@@ -66,8 +70,7 @@ def _eval_const_expr(node) -> int | None:
             fn = _CONST_PROP_BINARY_OPS.get(node.op)
             if fn is None:
                 return None
-            result = fn(a, b)
-            return _c_constant_value_8616(result) if isinstance(result, CConstant) else None
+            return fn(a, b)
         if isinstance(node, CUnaryOp):
             operand = _eval_const_expr(node.operand)
             if operand is None:
@@ -81,10 +84,11 @@ def _eval_const_expr(node) -> int | None:
     return _impl()
 
 
-def _fold_constants_in_node(node) -> bool:
+def _fold_constants_in_node(node, *, codegen=None) -> bool:
     def _impl():
         """Fold constant sub-expressions in-place. Returns True if any folding occurred."""
         changed = False
+        node_codegen = getattr(node, "codegen", None) or codegen
 
         if isinstance(node, CBinaryOp):
             a_val = _eval_const_expr(node.lhs)
@@ -93,9 +97,9 @@ def _fold_constants_in_node(node) -> bool:
                 fn = _CONST_PROP_BINARY_OPS.get(node.op)
                 if fn is not None:
                     result = fn(a_val, b_val)
-                    if isinstance(result, CConstant):
-                        node.lhs = result
-                        node.rhs = CConstant(0, _CONST_DEFAULT_TYPE)
+                    if result is not None:
+                        node.lhs = _folded_constant_8616(result, codegen=node_codegen)
+                        node.rhs = _folded_constant_8616(0, codegen=node_codegen)
                         node.op = "Add"
                         changed = True
                         return changed
@@ -111,12 +115,12 @@ def _fold_constants_in_node(node) -> bool:
             operand_val = _eval_const_expr(node.operand)
             if operand_val is not None:
                 if node.op == "Neg":
-                    result = CConstant(-operand_val, _CONST_DEFAULT_TYPE)
+                    result = _folded_constant_8616(-operand_val, codegen=node_codegen)
                     node.operand = result
                     changed = True
                     return changed
                 if node.op == "Not":
-                    result = CConstant(int(not operand_val), _CONST_DEFAULT_TYPE)
+                    result = _folded_constant_8616(int(not operand_val), codegen=node_codegen)
                     node.operand = result
                     changed = True
                     return changed
@@ -130,6 +134,6 @@ def _constant_propagation_8616(stmts, codegen=None):
     """Fold constant sub-expressions in C statements."""
     changed = False
     for stmt in _iter_c_statements_safe_8616(stmts):
-        if _fold_constants_in_node(stmt):
+        if _fold_constants_in_node(stmt, codegen=codegen):
             changed = True
     return changed

@@ -92,6 +92,7 @@ __all__ = [
 class _PostprocessValidationDeltaKind8616(Enum):
     BLOCKING = "blocking"
     NAME_ONLY_HELPER_ANNOTATION = "name_only_helper_annotation"
+    JCC_CALL_RETURN_CONDITION_REBINDING = "jcc_call_return_condition_rebinding"
 
 
 _JCC_REWRITE_VALIDATION_PASS_NAMES_8616 = frozenset(
@@ -105,6 +106,25 @@ _HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616 = _JCC_REWRITE_VALIDATION_PASS_NAME
     {
         "_materialize_callsite_stack_arguments_8616",
     }
+)
+
+_C_AST_CHILD_ATTRS_8616 = (
+    "statements",
+    "condition",
+    "condition_and_nodes",
+    "else_node",
+    "lhs",
+    "rhs",
+    "operand",
+    "expr",
+    "variable",
+    "base",
+    "index",
+    "iftrue",
+    "iffalse",
+    "callee",
+    "args",
+    "target",
 )
 
 _POSTPROCESS_ROLLBACK_METADATA_EXCLUDE_8616 = frozenset(
@@ -3484,6 +3504,23 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                     elif pass_name in _JCC_REWRITE_VALIDATION_PASS_NAMES_8616:
                         if is_exit_goto_repair_delta:
                             is_blocking_delta = False
+                        elif _is_jcc_call_return_condition_rebinding_delta_8616(codegen, validation):
+                            delta_kind = _PostprocessValidationDeltaKind8616.JCC_CALL_RETURN_CONDITION_REBINDING
+                            is_blocking_delta = False
+                            accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                            accepted.append(
+                                {
+                                    "pass": pass_name,
+                                    "kind": delta_kind.value,
+                                }
+                            )
+                            codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                            logging.getLogger(__name__).warning(
+                                "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                pass_name,
+                                delta_kind.value,
+                            )
                         else:
                             is_blocking_delta = True
                     elif pass_name in {
@@ -3577,6 +3614,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
 
 def _regenerate_text_safely(codegen, *, context: str) -> bool:
     try:
+        _repair_missing_cnode_codegen_metadata_8616(getattr(codegen, "cfunc", None), codegen)
         _normalize_stack_variable_identifiers_8616(codegen)
         _bind_codegen_variable_types_to_arch_8616(codegen)
         codegen.regenerate_text()
@@ -3598,6 +3636,45 @@ def _regenerate_text_safely(codegen, *, context: str) -> bool:
     codegen._inertia_regeneration_context = context
     codegen._inertia_regeneration_last_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
     return True
+
+
+def _repair_missing_cnode_codegen_metadata_8616(root, codegen) -> int:
+    repaired = 0
+    seen: set[int] = set()
+
+    def _walk(node) -> None:
+        nonlocal repaired
+        if node is None or isinstance(node, (str, bytes, int, float, bool)):
+            return
+        if isinstance(node, dict):
+            for key, value in tuple(node.items()):
+                _walk(key)
+                _walk(value)
+            return
+        if isinstance(node, (list, tuple, set, frozenset)):
+            for item in tuple(node):
+                _walk(item)
+            return
+
+        node_id = id(node)
+        if node_id in seen:
+            return
+        seen.add(node_id)
+
+        if hasattr(node, "codegen") and getattr(node, "codegen", None) is None:
+            with contextlib.suppress(Exception):
+                node.codegen = codegen
+                repaired += 1
+
+        for attr in _C_AST_CHILD_ATTRS_8616:
+            if hasattr(node, attr):
+                with contextlib.suppress(Exception):
+                    _walk(getattr(node, attr))
+
+    _walk(root)
+    if repaired:
+        codegen._inertia_codegen_metadata_repaired = int(getattr(codegen, "_inertia_codegen_metadata_repaired", 0) or 0) + repaired
+    return repaired
 
 
 def _is_direct_callsite_helper_delta_only_8616(project, function, validation: dict[str, object]) -> bool:
@@ -3715,6 +3792,74 @@ def _is_direct_callsite_helper_and_return_delta_8616(project, function, codegen,
         helper_validation = dict(validation)
         helper_validation["delta"] = {"helper_calls": helper_delta}
         return _is_direct_callsite_helper_delta_only_8616(project, function, helper_validation)
+    return True
+
+
+def _validation_delta_touched_fields_8616(delta: dict[str, object]) -> set[str]:
+    return {
+        key
+        for key, field_delta in delta.items()
+        if isinstance(field_delta, dict) and ((field_delta.get("added") or ()) or (field_delta.get("removed") or ()))
+    }
+
+
+def _is_virtual_carrier_segmented_write_delta_token_8616(token: object) -> bool:
+    if not isinstance(token, str):
+        return False
+    if not token.startswith("deref:"):
+        return False
+    if "virtual:vvar_" not in token:
+        return False
+    return not any(marker in token for marker in ("reg:", "stack_slot:", "global:", "call:"))
+
+
+def _is_jcc_call_return_condition_rebinding_delta_8616(codegen, validation: dict[str, object]) -> bool:
+    if not isinstance(validation, dict):
+        return False
+    if int(getattr(codegen, "_inertia_jcc_call_return_register_rebindings", 0) or 0) <= 0:
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = _validation_delta_touched_fields_8616(delta)
+    allowed_fields = {"conditions", "control_flow_effects", "segmented_writes"}
+    if not touched_fields or touched_fields - allowed_fields:
+        return False
+
+    condition_delta = delta.get("conditions")
+    if not isinstance(condition_delta, dict):
+        return False
+    added_conditions = tuple(condition_delta.get("added") or ())
+    removed_conditions = tuple(condition_delta.get("removed") or ())
+    if not added_conditions or not removed_conditions:
+        return False
+    if not any(isinstance(item, str) and "reg:ax" in item for item in removed_conditions):
+        return False
+    if any(isinstance(item, str) and "reg:ax" in item for item in added_conditions):
+        return False
+    if any(
+        not isinstance(item, str) or ("virtual:vvar_" not in item and not item.startswith("Cmp"))
+        for item in added_conditions
+    ):
+        return False
+
+    control_delta = delta.get("control_flow_effects")
+    if isinstance(control_delta, dict):
+        added_control = tuple(control_delta.get("added") or ())
+        removed_control = tuple(control_delta.get("removed") or ())
+        expected_added = {f"if:{item}" for item in added_conditions}
+        expected_removed = {f"if:{item}" for item in removed_conditions}
+        if set(added_control) - expected_added:
+            return False
+        if set(removed_control) - expected_removed:
+            return False
+
+    segmented_delta = delta.get("segmented_writes")
+    if isinstance(segmented_delta, dict):
+        segmented_tokens = tuple(segmented_delta.get("added") or ()) + tuple(segmented_delta.get("removed") or ())
+        if segmented_tokens and not all(_is_virtual_carrier_segmented_write_delta_token_8616(tok) for tok in segmented_tokens):
+            return False
+
     return True
 
 
@@ -4856,6 +5001,16 @@ def _try_accept_failed_postprocess_validation_8616(
                 "Postprocess validation CFG mask-accumulator delta accepted from consumed evidence: %s",
                 validation.get("verdict"),
             )
+            _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
+            return True
+        if _is_jcc_call_return_condition_rebinding_delta_8616(self.codegen, validation):
+            log.warning(
+                "Postprocess validation JCC call-return condition delta accepted from consumed evidence: %s",
+                validation.get("verdict"),
+            )
+            self.codegen._inertia_jcc_call_return_condition_validation_accepts = int(
+                getattr(self.codegen, "_inertia_jcc_call_return_condition_validation_accepts", 0) or 0
+            ) + 1
             _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
             return True
         if _is_direct_callsite_helper_delta_only_8616(self.project, function, validation):
