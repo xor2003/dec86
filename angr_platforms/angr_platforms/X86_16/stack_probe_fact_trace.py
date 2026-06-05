@@ -6,6 +6,8 @@ STACK_PROBE_FACT_STAT_KEYS = (
     "summaries_attached",
     "stack_probe_summaries",
     "ss_stack_address_returns",
+    "stack_probe_calls_pruned",
+    "stack_probe_calls_refused",
     "stack_arg_materializations",
     "stable_ss_lowering_replacements",
     "stable_ss_lowering_refusals",

@@ -11,6 +11,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CMP16_EXE = REPO_ROOT / "examples" / "build_msc6" / "CMP16.EXE"
 CMP32_EXE = REPO_ROOT / "examples" / "build_msc6" / "COMP32.EXE"
+FPTR_EXE = REPO_ROOT / "examples" / "build_msc6" / "FPTR.EXE"
 CLI_PATH = REPO_ROOT / "decompile.py"
 RUNTIME_GATE_PATH = REPO_ROOT / "scripts" / "verify_msc_example_runtime_gate.py"
 KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
@@ -215,6 +216,7 @@ def test_msc6_cmp16_all_helper_functions_pass_tail_validation_and_msc_recompile(
     [
         ("cmp16", CMP16_EXE),
         ("cmp32", CMP32_EXE),
+        ("fptr", FPTR_EXE),
     ],
 )
 def test_msc6_rebuilt_comparison_executable_runs_success_sentinel(

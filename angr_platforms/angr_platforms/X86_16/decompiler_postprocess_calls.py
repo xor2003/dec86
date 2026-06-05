@@ -4881,6 +4881,26 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 return True
         return False
 
+    def _is_standalone_call_statement_8616(stmt, call) -> bool:
+        if call is None:
+            return False
+        if stmt is call:
+            return True
+        return getattr(stmt, "expr", None) is call
+
+    def _stack_probe_helper_statement_is_consumable_8616(stmt, call, summary) -> bool:
+        if not _is_standalone_call_statement_8616(stmt, call):
+            return False
+        if tuple(getattr(call, "args", ()) or ()):
+            return False
+        call_name = _call_node_name_8616(call)
+        if summary is not None and bool(getattr(summary, "stack_probe_helper", False)):
+            return (
+                int(getattr(summary, "arg_count", 0) or 0) == 0
+                and getattr(summary, "stack_cleanup", None) is None
+            )
+        return _is_stack_probe_call_name_8616(call_name)
+
     def _assignment_lhs_rhs(node):
         lhs = getattr(node, "lhs", None)
         rhs = getattr(node, "rhs", None)
@@ -5908,6 +5928,12 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     bool(helper_return_state == "stack_address")
                     and helper_return_space in {None, "ss"}
                 )
+                if _stack_probe_helper_statement_is_consumable_8616(stmt, call, summary):
+                    ensure_stack_probe_fact_stats_8616(codegen)["stack_probe_calls_pruned"] += 1
+                    changed = True
+                    i += 1
+                    continue
+                ensure_stack_probe_fact_stats_8616(codegen)["stack_probe_calls_refused"] += 1
             # A typed stack-probe fact is strong evidence for a helper-returned SS
             # address. If no typed fact exists, direct segmented SS stores before the
             # call remain valid evidence and the generic stack-arg backtracker must
