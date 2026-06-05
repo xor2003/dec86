@@ -6,6 +6,7 @@ from inertia_decompiler.cli_c_text_postprocess import (
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_generic_local_declarations_text,
     _normalize_portable_flat_main_signature_text,
+    _prune_non_lvalue_arithmetic_assignments,
     _prune_weaker_conflicting_prototypes_text,
     _source_function_prototype_decls_from_cod_source_lines,
     _prune_unused_local_declarations_text,
@@ -198,6 +199,24 @@ int main(void)
     rewritten = _prune_unused_staging_assignments(c_text)
 
     assert "s_2_2 = vvar_2;" not in rewritten
+
+
+def test_prune_non_lvalue_arithmetic_assignments_keeps_compound_updates():
+    c_text = """
+int f(int x)
+{
+    x -= 1;
+    x += 2;
+    a + b = c;
+    return x;
+}
+"""
+
+    rewritten = _prune_non_lvalue_arithmetic_assignments(c_text)
+
+    assert "x -= 1;" in rewritten
+    assert "x += 2;" in rewritten
+    assert "a + b = c;" not in rewritten
 
 
 def test_materialize_missing_generic_local_declarations_text_handles_mangled_function_names():

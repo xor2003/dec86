@@ -4382,7 +4382,9 @@ def _prune_non_lvalue_arithmetic_assignments(c_text: str) -> str:
     This is compile-hygiene cleanup only: real variable, member, index, and
     dereference assignments are preserved.
     """
-    assign_re = re.compile(r"^(?P<indent>\s*)(?P<lhs>[^=;]+?)\s*=\s*(?P<rhs>[^;]+);\s*$")
+    assign_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[^=;]+?)\s*(?<![!<>=+\-*/%&|^])=(?!=)\s*(?P<rhs>[^;]+);\s*$"
+    )
     kept: list[str] = []
     for line in c_text.splitlines():
         match = assign_re.match(line)
