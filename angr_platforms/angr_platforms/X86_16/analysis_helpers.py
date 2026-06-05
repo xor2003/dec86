@@ -1289,15 +1289,21 @@ def _canonical_code_linear_addr(project, addr: int | None) -> int | None:
         return None
     original_project = getattr(project, "_inertia_original_project", None)
     original_delta = getattr(project, "_inertia_original_linear_delta", None)
-    if original_project is None or not isinstance(original_delta, int):
+    if original_project is not None and isinstance(original_delta, int):
+        original_main = getattr(getattr(original_project, "loader", None), "main_object", None)
+        original_base = getattr(original_main, "linked_base", None)
+        if isinstance(original_base, int) and addr < original_base:
+            return addr + original_delta
         return addr
 
-    original_main = getattr(getattr(original_project, "loader", None), "main_object", None)
-    original_base = getattr(original_main, "linked_base", None)
-    if not isinstance(original_base, int):
-        return addr
-    if addr < original_base:
-        return addr + original_delta
+    main_object = getattr(getattr(project, "loader", None), "main_object", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    if isinstance(linked_base, int) and isinstance(max_addr, int) and addr < linked_base:
+        rebased = linked_base + addr
+        image_end = linked_base + max_addr + 1
+        if linked_base <= rebased < image_end:
+            return rebased
     return addr
 
 
@@ -1342,7 +1348,7 @@ def _resolve_direct_call_target_from_insn(project, insn) -> int | None:
         return _canonical_code_linear_addr(project, (seg << 4) + off)
 
     if mnemonic == "call" and len(operands) == 1 and getattr(operands[0], "type", None) == 2:
-        return _canonical_code_linear_addr(project, operands[0].imm & 0xFFFF)
+        return _canonical_code_linear_addr(project, operands[0].imm)
 
     return None
 

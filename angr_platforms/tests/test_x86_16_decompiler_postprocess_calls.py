@@ -222,6 +222,134 @@ def test_normalize_call_target_names_prefers_sidecar_label_for_sub_target_withou
     assert call.callee_target == "InitMenu"
 
 
+def test_normalize_call_target_names_refuses_unproved_source_name_for_unknown_call(monkeypatch):
+    project = _project()
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda **kwargs: (
+                SimpleNamespace(addr=0x1005A, name="rel_i16")
+                if kwargs.get("name") in {"rel_i16", "_rel_i16"}
+                else (
+                    SimpleNamespace(addr=0x1016E, name="in_window_i16")
+                    if kwargs.get("name") in {"in_window_i16", "_in_window_i16"}
+                    else None
+                )
+            )
+        ),
+        labels={},
+    )
+    codegen = _empty_codegen(project)
+    call = CFunctionCall("sub_1005a", None, [], codegen=codegen)
+    codegen.cfunc.statements = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1005A,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register="ax",
+            return_used=True,
+        )
+    }
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
+        lambda _project, _addr: ("in_window_i16",),
+    )
+
+    changed = _normalize_call_target_names_8616(codegen)
+
+    assert changed is False
+    assert call.callee_target == "sub_1005a"
+
+
+def test_normalize_call_target_names_accepts_source_proven_stack_probe_shape(monkeypatch):
+    project = _project()
+    project.kb = SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: None), labels={})
+    codegen = _empty_codegen(project)
+    call = CFunctionCall("sub_5d2", None, [], codegen=codegen)
+    codegen.cfunc.statements = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x105D2,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=None,
+            return_register=None,
+            return_used=False,
+        )
+    }
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
+        lambda _project, _addr: ("aNchkstk",),
+    )
+
+    changed = _normalize_call_target_names_8616(codegen)
+
+    assert changed is True
+    assert call.callee_target == "aNchkstk"
+
+
+def test_attach_callsite_summaries_upgrades_source_proven_stack_probe_summary(monkeypatch):
+    project = _project()
+    function = SimpleNamespace(get_call_sites=lambda: (0x4012,))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr, create=False: (
+                function
+                if addr == 0x4010
+                else SimpleNamespace(addr=addr, name=f"sub_{addr:x}")
+                if addr == 0x105D2
+                else None
+            )
+        ),
+        labels={},
+    )
+    codegen = _empty_codegen(project)
+    probe_arg = _scg.c.CConstant(375, SimTypeShort(False), codegen=codegen)
+    call = CFunctionCall("sub_105d2", SimpleNamespace(addr=0x105D2, name="sub_105d2"), [probe_arg], codegen=codegen)
+    codegen.cfunc.statements = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
+        lambda _function, _callsite_addr: CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x105D2,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=None,
+            return_register=None,
+            return_used=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
+        lambda _project, _addr: ("aNchkstk",),
+    )
+
+    changed = _attach_callsite_summaries_8616(project, codegen)
+
+    assert changed is True
+    assert call.callee_func is None
+    assert call.callee_target == "aNchkstk"
+    summary = codegen._inertia_callsite_summaries[id(call)]
+    assert summary.stack_probe_helper is True
+    assert summary.helper_return_state == "stack_address"
+    assert summary.helper_return_space == "ss"
+    assert summary.helper_return_width == 2
+    assert summary.helper_return_address_kind == "stack"
+    assert codegen._inertia_callsite_materialization_stats.source_proven_stack_probe_count == 1
+
+
 def test_attach_callsite_summaries_prefers_sidecar_labels_for_sub_targets(monkeypatch):
     project = _project()
     project._inertia_original_project = SimpleNamespace(

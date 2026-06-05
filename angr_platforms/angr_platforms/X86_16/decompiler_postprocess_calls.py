@@ -703,6 +703,7 @@ class CallsiteMaterializationStats:
     known_prototype_arg_mismatch_count: int = 0
     has_push_arg_evidence_count: int = 0
     no_push_arg_evidence_count: int = 0
+    source_proven_stack_probe_count: int = 0
     failure_count: int = 0
     known_prototype_arg_mismatches: list[dict[str, object]] = field(default_factory=list)
 
@@ -1520,11 +1521,14 @@ def _normalize_call_target_names_8616(codegen) -> bool:
             summary = summary_map.get(id(node))
             expected_source_name = None
             is_stack_probe_helper = bool(getattr(summary, "stack_probe_helper", False)) if summary is not None else False
-            if not is_stack_probe_helper and source_call_idx < len(source_call_names):
+            if summary is not None and is_stack_probe_helper and _summary_proves_stack_probe_call_8616(summary, node=node):
+                expected_source_name = "aNchkstk"
+            elif not is_stack_probe_helper and source_call_idx < len(source_call_names):
                 expected_source_name = source_call_names[source_call_idx]
                 source_call_idx += 1
             target_addr = getattr(summary, "target_addr", None) if summary is not None else None
             summary_arg_count = int(getattr(summary, "arg_count", 0) or 0) if summary is not None else 0
+            summary_stack_cleanup = getattr(summary, "stack_cleanup", None) if summary is not None else None
 
             changed |= _normalize_single_call_target_node_8616(
                 project=project,
@@ -1532,6 +1536,7 @@ def _normalize_call_target_names_8616(codegen) -> bool:
                 expected_source_name=expected_source_name,
                 target_addr=target_addr,
                 summary_arg_count=summary_arg_count,
+                summary_stack_cleanup=summary_stack_cleanup,
                 stats=stats,
                 allow_call_target_rewrites=allow_call_target_rewrites,
             )
@@ -1555,6 +1560,7 @@ def _normalize_single_call_target_node_8616(
     expected_source_name: str | None,
     target_addr: int | None,
     summary_arg_count: int,
+    summary_stack_cleanup: int | None,
     stats: CallsiteMaterializationStats,
     allow_call_target_rewrites: bool,
 ) -> bool:
@@ -1582,6 +1588,20 @@ def _normalize_single_call_target_node_8616(
                 summary_arg_count=summary_arg_count,
             )
 
+        if _source_proves_stack_probe_call_8616(
+            node=node,
+            expected_source_name=expected_source_name,
+            summary_arg_count=summary_arg_count,
+            summary_stack_cleanup=summary_stack_cleanup,
+        ):
+            if getattr(node, "callee_func", None) is not None:
+                node.callee_func = None
+                changed = True
+            normalized_probe_name = normalize_callee_name_8616(expected_source_name) or "aNchkstk"
+            if getattr(node, "callee_target", None) != normalized_probe_name:
+                node.callee_target = normalized_probe_name
+                changed = True
+
         if isinstance(target_addr, int):
             changed |= _bind_stale_probe_or_unknown_target_8616(
                 project=project,
@@ -1603,6 +1623,7 @@ def _normalize_single_call_target_node_8616(
             isinstance(expected_source_name, str)
             and expected_source_name
             and _call_name_is_unknown_8616(_call_node_name_8616(node))
+            and _source_name_matches_target_8616(project, target_addr, expected_source_name)
         ):
             if getattr(node, "callee_target", None) != expected_source_name:
                 node.callee_target = expected_source_name
@@ -1614,6 +1635,59 @@ def _normalize_single_call_target_node_8616(
         return changed
 
     return _impl()
+
+
+def _source_proves_stack_probe_call_8616(
+    *,
+    node,
+    expected_source_name: str | None,
+    summary_arg_count: int,
+    summary_stack_cleanup: int | None,
+) -> bool:
+    if not _is_stack_probe_call_name_8616(expected_source_name):
+        return False
+    if not _call_name_is_unknown_8616(_call_node_name_8616(node)):
+        return False
+    # Microsoft C stack probes are compiler helpers called before normal stack
+    # argument setup. COD/source evidence alone is not enough; require the
+    # binary callsite summary to show no pushed args and no caller cleanup.
+    return summary_arg_count == 0 and summary_stack_cleanup is None
+
+
+def _source_proven_stack_probe_summary_8616(summary, *, node, expected_source_name: str | None):
+    summary_arg_count = int(getattr(summary, "arg_count", 0) or 0)
+    summary_stack_cleanup = getattr(summary, "stack_cleanup", None)
+    if not _source_proves_stack_probe_call_8616(
+        node=node,
+        expected_source_name=expected_source_name,
+        summary_arg_count=summary_arg_count,
+        summary_stack_cleanup=summary_stack_cleanup,
+    ):
+        return summary
+    if (
+        bool(getattr(summary, "stack_probe_helper", False))
+        and getattr(summary, "helper_return_state", None) == "stack_address"
+        and getattr(summary, "helper_return_space", None) == "ss"
+        and getattr(summary, "helper_return_width", None) == 2
+        and getattr(summary, "helper_return_address_kind", None) == "stack"
+    ):
+        return summary
+    return replace(
+        summary,
+        stack_probe_helper=True,
+        helper_return_state="stack_address",
+        helper_return_space="ss",
+        helper_return_width=2,
+        helper_return_address_kind="stack",
+    )
+
+
+def _summary_proves_stack_probe_call_8616(summary, *, node) -> bool:
+    if not bool(getattr(summary, "stack_probe_helper", False)):
+        return False
+    if not _call_name_is_unknown_8616(_call_node_name_8616(node)):
+        return False
+    return int(getattr(summary, "arg_count", 0) or 0) == 0 and getattr(summary, "stack_cleanup", None) is None
 
 
 def _bind_stale_probe_or_unknown_target_8616(*, project, node, target_addr: int, stats) -> bool:
@@ -2407,11 +2481,27 @@ def _apply_callsite_summary_to_node_8616(
 ) -> bool:
     def _impl():
         changed = False
-        if summary_map.get(id(node)) != summary:
-            summary_map[id(node)] = summary
+        active_summary = summary
+        upgraded_summary = _source_proven_stack_probe_summary_8616(
+            active_summary,
+            node=node,
+            expected_source_name=expected_source_name,
+        )
+        if upgraded_summary is not active_summary:
+            active_summary = upgraded_summary
+            stats.source_proven_stack_probe_count += 1
+            normalized_probe_name = normalize_callee_name_8616(expected_source_name) or "aNchkstk"
+            if getattr(node, "callee_func", None) is not None:
+                node.callee_func = None
+                changed = True
+            if getattr(node, "callee_target", None) != normalized_probe_name:
+                node.callee_target = normalized_probe_name
+                changed = True
+        if summary_map.get(id(node)) != active_summary:
+            summary_map[id(node)] = active_summary
             changed = True
-            record_callsite_summary_fact_8616(codegen, summary, node_id=id(node), attached=True)
-        target_addr = getattr(summary, "target_addr", None)
+            record_callsite_summary_fact_8616(codegen, active_summary, node_id=id(node), attached=True)
+        target_addr = getattr(active_summary, "target_addr", None)
         if not isinstance(target_addr, int):
             return changed
         callee_func = getattr(node, "callee_func", None)

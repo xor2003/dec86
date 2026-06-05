@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.analysis_helpers import CallTargetSeed
-from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616, summarize_x86_16_callsite
+from angr_platforms.X86_16.analysis_helpers import CallTargetSeed, resolve_direct_call_target_from_block
+from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616, summarize_x86_16_callsite, _return_shape_after_call
 from angr_platforms.X86_16.callsite_summary import CallsiteReturnShape8616
 
 
@@ -32,6 +32,9 @@ class _Insn:
     ):
         self.address = address
         self.mnemonic = mnemonic
+        for operand in operands or ():
+            if not hasattr(operand, "type"):
+                operand.type = 2 if isinstance(getattr(operand, "imm", None), int) else None
         self.insn = SimpleNamespace(operands=tuple(operands or ()), reg_name=lambda reg: (reg_names or {}).get(reg, ""))
 
 
@@ -42,6 +45,26 @@ def _function_with_block(insns):
         factory=SimpleNamespace(block=lambda addr, opt_level=0: block),
     )
     return SimpleNamespace(project=project)
+
+
+def _project_with_call_insn(insn, *, linked_base: int = 0x10000, max_addr: int = 0x1000):
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(insn,)))
+    return SimpleNamespace(
+        factory=SimpleNamespace(block=lambda addr, opt_level=0: block),
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=linked_base, max_addr=max_addr)),
+    )
+
+
+def test_direct_call_target_preserves_project_linear_near_immediate():
+    project = _project_with_call_insn(_Insn(0x10016, "call", [_Operand(imm=0x105D2)]))
+
+    assert resolve_direct_call_target_from_block(project, 0x10016) == 0x105D2
+
+
+def test_direct_call_target_rebases_unbased_near_immediate_with_image_evidence():
+    project = _project_with_call_insn(_Insn(0x10016, "call", [_Operand(imm=0x05D2)]))
+
+    assert resolve_direct_call_target_from_block(project, 0x10016) == 0x105D2
 
 
 def test_callsite_summary_reports_push_args_cleanup_and_return_use(monkeypatch):
@@ -384,6 +407,23 @@ def test_callsite_summary_detects_dx_ax_return_shape(monkeypatch):
 
     assert summary is not None
     assert summary.return_shape == CallsiteReturnShape8616.DX_AX.value
+
+
+def test_callsite_summary_uses_ax_shape_without_paired_dx_ax_stores(monkeypatch):
+    insns = (
+        _Insn(0x1002, "call"),
+        _Insn(
+            0x1005,
+            "cmp",
+            [_Operand(reg=2), _Operand(reg=3)],
+            reg_names={2: "ax", 3: "dx"},
+        ),
+    )
+    function = SimpleNamespace()
+
+    shape = _return_shape_after_call(function, insns, 0, 0x1002)
+
+    assert shape == CallsiteReturnShape8616.AX
 
 
 def test_callsite_summary_does_not_claim_stack_address_when_probe_return_is_not_consumed(monkeypatch):
