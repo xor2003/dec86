@@ -13,8 +13,8 @@ INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.trace.txt \
 Useful knobs:
 
 - `INERTIA_OTEL_SPANS=1` enables tracing. Default is off.
-- `INERTIA_OTEL_SPAN_FILE=path.json` writes one compact JSON summary.
-- `INERTIA_OTEL_SPAN_FORMAT=text|json|jsonl` overrides file format. Default is text except `.json`/`.jsonl` suffixes.
+- `INERTIA_OTEL_SPAN_FILE=path` writes compact agent text by default, even for `.json` suffixes.
+- `INERTIA_OTEL_SPAN_FORMAT=text|slow|json|jsonl` overrides file format. Use `json`/`jsonl` only for parsers.
 - `INERTIA_OTEL_TEXT_MAX_SPANS=200` caps rows in agent-text output.
 - `INERTIA_OTEL_TOP_N=16` controls how many slow spans/aggregates are kept.
 - `INERTIA_OTEL_MIN_MS=1` hides tiny spans from the `top` list.
@@ -30,6 +30,23 @@ Use text for agent handoff:
 summary total_ms=8562.5 spans=6 otel=off errors=0
 schema: id|parent|ms|name|attrs
 5|2|7372.118|direct.decompile_job|addr=0x1000 blocks=11 bytes=65 name=cmp_i16 status=ok timeout=73
+```
+
+Use slow mode when only the longest spans matter:
+
+```bash
+INERTIA_OTEL_SPANS=1 \
+INERTIA_OTEL_SPAN_FORMAT=slow \
+INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.slow.txt \
+./.venv/bin/python ./decompile.py examples/build_msc6/CMP16.EXE
+```
+
+Example:
+
+```text
+trace total=8562.5ms spans=6 otel=off errors=0
+7372.118 direct.decompile_job addr=0x1000 blocks=11 bytes=65 name=cmp_i16 status=ok timeout=73
+126.63 validation.acceptance status=ok target=portable-flat
 ```
 
 Use `.json`/`.jsonl` only when a parser requires it. OTLP export uses standard OpenTelemetry endpoint variables:

@@ -4,6 +4,7 @@ import time
 
 import inertia_decompiler.telemetry as telemetry
 from inertia_decompiler.telemetry import (
+    build_agent_slow_trace_text,
     build_agent_trace_text,
     build_compact_summary,
     configure_telemetry_from_env,
@@ -115,6 +116,55 @@ def test_agent_trace_text_uses_name_dictionary_when_smaller(monkeypatch):
     assert "names:\n0=decompiler.very_repetitive_slow_stage" in text
     assert "schema: id|parent|ms|n|attrs" in text
     assert "|0|addr=0x1000" in text
+
+    reset_telemetry_for_tests()
+
+
+def test_agent_slow_trace_text_reports_top_spans_without_row_schema(monkeypatch):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
+    monkeypatch.setenv("INERTIA_OTEL_TOP_N", "2")
+
+    assert configure_telemetry_from_env()
+    with span("slow.first", status="ok"):
+        time.sleep(0.002)
+    with span("slow.second", addr="0x1000"):
+        time.sleep(0.001)
+    with span("slow.hidden"):
+        pass
+
+    text = build_agent_slow_trace_text()
+    lines = text.splitlines()
+
+    assert lines[0].startswith("trace total=")
+    assert "schema:" not in text
+    assert len(lines) == 3
+    assert "slow.first" in lines[1]
+    assert "slow.second" in lines[2]
+    assert "addr=0x1000" in lines[2]
+    assert "{" not in text
+
+    reset_telemetry_for_tests()
+
+
+def test_trace_file_slow_format_is_compact_text(monkeypatch, tmp_path):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
+    monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
+    monkeypatch.setenv("INERTIA_OTEL_SPAN_FORMAT", "slow")
+    text_path = tmp_path / "trace.json"
+
+    assert configure_telemetry_from_env(file_path=text_path)
+    with span("test.slow_file", binary="CMP16.EXE"):
+        pass
+
+    emit_compact_summary()
+    text = text_path.read_text(encoding="utf-8")
+    assert text.startswith("trace total=")
+    assert "test.slow_file binary=CMP16.EXE" in text
+    assert "{" not in text
 
     reset_telemetry_for_tests()
 

@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterator, TypeVar
 
@@ -30,6 +31,13 @@ TRACE_FORCE_FLUSH_MS_ENV = "INERTIA_OTEL_FORCE_FLUSH_MS"
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"0", "false", "no", "off"}
 _MAX_ATTR_TEXT = 96
+
+
+class TraceOutputFormat(Enum):
+    TEXT = "text"
+    SLOW = "slow"
+    JSON = "json"
+    JSONL = "jsonl"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -106,7 +114,7 @@ class _TelemetryState:
     file_path: Path | None = None
     stderr_summary: bool = True
     full_jsonl: bool = False
-    output_format: str = "text"
+    output_format: TraceOutputFormat = TraceOutputFormat.TEXT
     text_max_spans: int = 200
     records: list[_SpanRecord] = field(default_factory=list)
     next_id: int = 1
@@ -226,19 +234,21 @@ def _otlp_export_requested() -> bool:
     )
 
 
-def _resolve_output_format(file_path: Path | None, full_jsonl: bool) -> str:
+def _resolve_output_format(file_path: Path | None, full_jsonl: bool) -> TraceOutputFormat:
     explicit = os.environ.get(TRACE_FORMAT_ENV)
     if explicit is not None:
         normalized = explicit.strip().lower()
         if normalized in {"text", "agent", "agent_text", "txt"}:
-            return "text"
+            return TraceOutputFormat.TEXT
+        if normalized in {"slow", "top", "top_text", "agent_slow"}:
+            return TraceOutputFormat.SLOW
         if normalized in {"jsonl", "full_jsonl"}:
-            return "jsonl"
+            return TraceOutputFormat.JSONL
         if normalized in {"json", "compact_json"}:
-            return "json"
+            return TraceOutputFormat.JSON
     if full_jsonl:
-        return "jsonl"
-    return "text"
+        return TraceOutputFormat.JSONL
+    return TraceOutputFormat.TEXT
 
 
 def _configure_otlp_exporter() -> tuple[Any | None, str]:
@@ -548,6 +558,31 @@ def build_agent_trace_text() -> str:
     return "\n".join(lines) + "\n"
 
 
+def build_agent_slow_trace_text() -> str:
+    with _STATE.lock:
+        records = list(_STATE.records)
+    finished = [record for record in records if record.end_ns is not None]
+    summary = build_compact_summary()
+    otel_status = summary.get("otel_export", "-")
+    if otel_status == "disabled":
+        otel_status = "off"
+    errors = summary.get("errors", [])
+    lines = [
+        (
+            f"trace total={summary.get('total_ms', 0.0)}ms "
+            f"spans={len(finished)} otel={otel_status} errors={len(errors)}"
+        )
+    ]
+    visible = [record for record in finished if record.duration_ms >= _STATE.min_ms]
+    top = sorted(visible, key=lambda record: record.duration_ms, reverse=True)[: max(1, int(_STATE.top_n))]
+    for record in top:
+        attrs = _format_agent_attrs(record.attrs)
+        status = "" if record.status == "ok" else f" status={record.status}"
+        suffix = f" {attrs}" if attrs else ""
+        lines.append(f"{round(record.duration_ms, 3)} {record.name}{suffix}{status}")
+    return "\n".join(lines) + "\n"
+
+
 def _agent_trace_name_dictionary(records: list[_SpanRecord]) -> dict[str, int] | None:
     if len(records) < 16:
         return None
@@ -662,20 +697,28 @@ def emit_compact_summary() -> None:
     if summary["span_count"] == 0:
         return
 
-    if _STATE.output_format == "text":
+    if _STATE.output_format == TraceOutputFormat.TEXT:
         encoded = build_agent_trace_text().rstrip("\n")
+    elif _STATE.output_format == TraceOutputFormat.SLOW:
+        encoded = build_agent_slow_trace_text().rstrip("\n")
     else:
         encoded = json.dumps(summary, sort_keys=True, separators=(",", ":"))
     if _STATE.stderr_summary:
-        prefix = "[otel-trace]" if _STATE.output_format == "text" else "[otel-compact]"
+        prefix = (
+            "[otel-trace]"
+            if _STATE.output_format in {TraceOutputFormat.TEXT, TraceOutputFormat.SLOW}
+            else "[otel-compact]"
+        )
         print(f"{prefix} {encoded}", file=sys.stderr)
         sys.stderr.flush()
     if _STATE.file_path is not None:
         _STATE.file_path.parent.mkdir(parents=True, exist_ok=True)
-        if _STATE.output_format == "jsonl":
+        if _STATE.output_format == TraceOutputFormat.JSONL:
             _write_full_jsonl(_STATE.file_path)
-        elif _STATE.output_format == "text":
+        elif _STATE.output_format == TraceOutputFormat.TEXT:
             _STATE.file_path.write_text(build_agent_trace_text(), encoding="utf-8")
+        elif _STATE.output_format == TraceOutputFormat.SLOW:
+            _STATE.file_path.write_text(build_agent_slow_trace_text(), encoding="utf-8")
         else:
             _STATE.file_path.write_text(encoded + "\n", encoding="utf-8")
     _flush_and_shutdown_otel()
@@ -738,7 +781,7 @@ def reset_telemetry_for_tests() -> None:
         _STATE.file_path = None
         _STATE.stderr_summary = True
         _STATE.full_jsonl = False
-        _STATE.output_format = "text"
+        _STATE.output_format = TraceOutputFormat.TEXT
         _STATE.text_max_spans = 200
         _STATE.otel_tracer = None
         _STATE.otel_provider = None
