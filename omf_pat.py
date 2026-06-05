@@ -349,7 +349,8 @@ def _probe_compiler_version_for_root(root: Path) -> str:
         return ""
     rel_dos = str(rel).replace("/", "\\")
     dos_prog = f"C:\\{rel_dos}"
-    cwd_dos = f"C:\\{str(rel.parent).replace('/', '\\')}" if str(rel.parent) not in {".", ""} else "C:\\"
+    rel_parent_dos = str(rel.parent).replace("/", "\\")
+    cwd_dos = f"C:\\{rel_parent_dos}" if rel_parent_dos not in {".", ""} else "C:\\"
     banner = _run_kvikdos_capture_banner(root, dos_prog, cwd_dos)
     return _normalize_compiler_banner_label(root.name, banner)
 
