@@ -7,7 +7,7 @@ name = "vextest-x86-16"
 version = "0.1"
 description = "angr-based 16-bit x86 real-mode decompiler workspace"
 readme = "angr_platforms/README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "angr==9.2.205",
     "archinfo==9.2.205",
@@ -35,6 +35,9 @@ dev = [
     "vulture",
     "radon",
 ]
+mypyc = [
+    "mypy",
+]
 
 [project.scripts]
 decompile-x86-16 = "decompile:main"
@@ -47,7 +50,7 @@ where = ["angr_platforms"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 include = [
     "angr_platforms/angr_platforms/X86_16/*.py",
     "angr_platforms/tests/test_x86_16*.py",
@@ -68,7 +71,7 @@ ignore = [
 "angr_platforms/tests/*.py" = ["E402"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 files = [
     "angr_platforms/angr_platforms/X86_16",
     "angr_platforms/tests/test_x86_16_smoketest.py",
@@ -107,7 +110,7 @@ exclude = [
     "build",
     "dist",
 ]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 typeCheckingMode = "basic"
 
 [tool.vulture]

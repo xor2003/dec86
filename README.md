@@ -8,6 +8,19 @@ Project priorities:
 - readability second
 - recompilable output where practical
 
+## Optional native speedups (mypyc)
+
+You can compile selected pure-Python modules with `mypyc` for native extension speedups while keeping source syntax unchanged.
+
+1. Install optional dependency: `pip install ".[mypyc]"`
+2. Run a module-focused build:
+
+```bash
+python scripts/build_mypyc.py build_ext --inplace
+```
+
+3. If compilation is not available, nothing changes; Python falls back to normal `.py` execution.
+
 This repo is not aiming to be a source-shaped transpiler. When evidence is weak, it prefers explicit low-level C, visible assumptions, and honest fallback modes.
 
 ## Terminology / Glossary
@@ -298,7 +311,7 @@ Recommended local setup:
 
 ```bash
 git submodule update --init --recursive
-python3.14 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -401,4 +414,3 @@ For wider x86-16 coverage, the test suite also includes dedicated files for stru
   - keep --last (default) so it resumes the same Codex session
   - use --goal-marker-file or --goal-cmd as hard stop marker
   - use --stop-file /tmp/STOP_CODEX_LOOP as emergency manual kill switch.
-
