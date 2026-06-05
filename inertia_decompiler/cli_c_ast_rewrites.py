@@ -86,7 +86,6 @@ from inertia_decompiler.project_loading import (
 )
 
 from inertia_decompiler.sidecar_metadata import (
-    _exact_function_span_matches,
     _load_lst_metadata,
     _lst_code_label,
     _lst_code_region,
@@ -1156,6 +1155,16 @@ def _same_c_expression(lhs, rhs, seen_pairs: set[tuple[int, int]] | None = None)
             if len(lhs_args) != len(rhs_args):
                 return False
             return all(_same_c_expression(larg, rarg, seen_pairs) for larg, rarg in zip(lhs_args, rhs_args))
+
+        if type(lhs).__name__ == "CDirtyExpression":
+            lhs_dirty = getattr(lhs, "dirty", None)
+            rhs_dirty = getattr(rhs, "dirty", None)
+            for attr in ("varid", "idx", "reg_offset", "reg", "bits"):
+                lhs_value = getattr(lhs_dirty, attr, None)
+                rhs_value = getattr(rhs_dirty, attr, None)
+                if lhs_value is not None or rhs_value is not None:
+                    return lhs_value == rhs_value
+            return getattr(lhs, "idx", None) == getattr(rhs, "idx", None)
 
         if isinstance(lhs, structured_c.CVariable):
             lvar = getattr(lhs, "variable", None)
@@ -3946,11 +3955,14 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
         stack_slot_identity_can_join=_stack_slot_identity_can_join,
         canonicalize_stack_cvar_expr=_canonicalize_stack_cvar_expr,
         match_byte_store_addr_expr=_match_byte_store_addr_expr,
+        match_shift_right_8_expr=_match_shift_right_8_expr,
         addr_exprs_are_byte_pair=_addr_exprs_are_byte_pair,
         resolve_stack_cvar_from_addr_expr=_resolve_stack_cvar_from_addr_expr,
         make_word_dereference_from_addr_expr=_make_word_dereference_from_addr_expr,
         classify_segmented_addr_expr=_classify_segmented_addr_expr,
         describe_alias_storage=describe_alias_storage,
+        match_byte_load_addr_expr=_match_byte_load_addr_expr,
+        same_c_expression=_same_c_expression,
     )
 
 def _run_typed_widening_pass(project: angr.Project, codegen) -> bool:
@@ -4099,11 +4111,17 @@ def _word_from_adjacent_memory_bytes(low_unwrapped, high_unwrapped, codegen):
 
 
 def _word_from_shifted_high_expr(low_rhs, high_rhs, low_unwrapped, codegen, project: angr.Project):
+    def _safe_type_size(node) -> int | None:
+        try:
+            return getattr(getattr(node, "type", None), "size", None)
+        except ValueError:
+            return None
+
     shifted_source = _match_shift_right_8_expr(high_rhs)
     if shifted_source is None:
         return None
     shifted_source = _unwrap_c_casts(shifted_source)
-    low_bits = getattr(getattr(low_unwrapped, "type", None), "size", None)
+    low_bits = _safe_type_size(low_unwrapped)
     if (
         _same_c_expression(_unwrap_c_casts(low_rhs), shifted_source)
         and (isinstance(low_unwrapped, (structured_c.CVariable, structured_c.CConstant)) or low_bits == 16)

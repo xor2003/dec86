@@ -62,3 +62,142 @@ def test_classify_segmented_addr_expr_treats_sp_virtual_register_as_stack_anchor
     assert classified.stack_var is not None
     assert classified.stack_var.base == "sp"
     assert classified.extra_offset == -2
+
+
+def test_classify_segmented_addr_expr_treats_bp_virtual_register_as_stack_anchor():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = SimpleNamespace(
+        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False
+    )
+    ss_offset, ss_size = project.arch.registers["ss"]
+    ss_reg = structured_c.CVariable(SimRegisterVariable(ss_offset, ss_size, name="ss"), codegen=codegen)
+    bp_offset, bp_size = project.arch.registers["bp"]
+    bp_reg = structured_c.CVariable(SimRegisterVariable(bp_offset, bp_size, name="vvar_6"), codegen=codegen)
+    expr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp("Shl", ss_reg, _const(4, codegen), codegen=codegen),
+        structured_c.CBinaryOp("Sub", bp_reg, _const(2, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+
+    cache_store = {}
+
+    classified = cli_segmented._classify_segmented_addr_expr(
+        expr,
+        project,
+        project_rewrite_cache=lambda _project: cache_store,
+        flatten_c_add_terms=_flatten_add_terms,
+        unwrap_c_casts=lambda node: node.expr if isinstance(node, structured_c.CTypeCast) else node,
+        c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
+        match_stack_cvar_and_offset=lambda _node: None,
+        normalize_16bit_signed_offset=lambda value: ((value + 0x8000) & 0xFFFF) - 0x8000,
+        stack_slot_identity_for_variable=lambda _variable: None,
+    )
+
+    assert classified is not None
+    assert classified.kind == "stack"
+    assert classified.seg_name == "ss"
+    assert classified.cvar is not None
+    assert classified.stack_var is not None
+    assert classified.stack_var.base == "bp"
+    assert classified.extra_offset == -2
+
+
+def test_classify_segmented_addr_expr_treats_dirty_bp_carrier_as_stack_anchor():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = SimpleNamespace(
+        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False
+    )
+    ss_offset, _ss_size = project.arch.registers["ss"]
+    bp_offset, _bp_size = project.arch.registers["bp"]
+    ss_reg = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=10, idx=10, reg_offset=ss_offset, bits=16),
+        codegen=codegen,
+    )
+    bp_reg = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=6, idx=6, reg_offset=bp_offset, bits=16),
+        codegen=codegen,
+    )
+    expr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp("Shl", ss_reg, _const(4, codegen), codegen=codegen),
+        structured_c.CBinaryOp("Sub", bp_reg, _const(2, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+
+    cache_store = {}
+
+    classified = cli_segmented._classify_segmented_addr_expr(
+        expr,
+        project,
+        project_rewrite_cache=lambda _project: cache_store,
+        flatten_c_add_terms=_flatten_add_terms,
+        unwrap_c_casts=lambda node: node.expr if isinstance(node, structured_c.CTypeCast) else node,
+        c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
+        match_stack_cvar_and_offset=lambda _node: None,
+        normalize_16bit_signed_offset=lambda value: ((value + 0x8000) & 0xFFFF) - 0x8000,
+        stack_slot_identity_for_variable=lambda _variable: None,
+    )
+
+    assert classified is not None
+    assert classified.kind == "stack"
+    assert classified.seg_name == "ss"
+    assert classified.cvar is not None
+    assert classified.stack_var is not None
+    assert classified.stack_var.base == "bp"
+    assert classified.extra_offset == -2
+
+
+def test_classify_segmented_addr_expr_folds_constant_subterm_before_stack_anchor():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = SimpleNamespace(
+        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False
+    )
+    ss_offset, _ss_size = project.arch.registers["ss"]
+    bp_offset, _bp_size = project.arch.registers["bp"]
+    ss_reg = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=10, idx=10, reg_offset=ss_offset, bits=16),
+        codegen=codegen,
+    )
+    bp_reg = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=6, idx=6, reg_offset=bp_offset, bits=16),
+        codegen=codegen,
+    )
+    const_minus_two = structured_c.CBinaryOp(
+        "Sub",
+        _const(0, codegen),
+        _const(2, codegen),
+        codegen=codegen,
+    )
+    expr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Add",
+            structured_c.CBinaryOp("Shl", ss_reg, _const(4, codegen), codegen=codegen),
+            const_minus_two,
+            codegen=codegen,
+        ),
+        bp_reg,
+        codegen=codegen,
+    )
+
+    cache_store = {}
+
+    classified = cli_segmented._classify_segmented_addr_expr(
+        expr,
+        project,
+        project_rewrite_cache=lambda _project: cache_store,
+        flatten_c_add_terms=_flatten_add_terms,
+        unwrap_c_casts=lambda node: node.expr if isinstance(node, structured_c.CTypeCast) else node,
+        c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
+        match_stack_cvar_and_offset=lambda _node: None,
+        normalize_16bit_signed_offset=lambda value: ((value + 0x8000) & 0xFFFF) - 0x8000,
+        stack_slot_identity_for_variable=lambda _variable: None,
+    )
+
+    assert classified is not None
+    assert classified.kind == "stack"
+    assert classified.seg_name == "ss"
+    assert classified.stack_var is not None
+    assert classified.stack_var.base == "bp"
+    assert classified.extra_offset == -2

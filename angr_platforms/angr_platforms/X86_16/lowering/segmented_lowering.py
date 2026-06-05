@@ -73,16 +73,40 @@ def _segment_reg_name(node, project, *, project_rewrite_cache):
     if key in cache:
         return cache[key]
 
-    if not isinstance(node, structured_c.CVariable):
-        cache[key] = None
-        return None
-    variable = getattr(node, "variable", None)
-    if not isinstance(variable, SimRegisterVariable):
-        cache[key] = None
-        return None
-    result = project.arch.register_names.get(variable.reg)
+    result = project.arch.register_names.get(_register_offset_for_node_8616(node))
     cache[key] = result
     return result
+
+
+def _register_offset_for_node_8616(node) -> int | None:
+    if isinstance(node, structured_c.CVariable):
+        variable = getattr(node, "variable", None)
+        if isinstance(variable, SimRegisterVariable):
+            reg = getattr(variable, "reg", None)
+            return int(reg) if isinstance(reg, int) else None
+    if type(node).__name__ == "CDirtyExpression":
+        dirty = getattr(node, "dirty", None)
+        for attr in ("reg_offset", "reg"):
+            reg = getattr(dirty, attr, None)
+            if isinstance(reg, int):
+                return int(reg)
+    return None
+
+
+def _register_size_for_node_8616(node) -> int | None:
+    if isinstance(node, structured_c.CVariable):
+        variable = getattr(node, "variable", None)
+        size = getattr(variable, "size", None)
+        return int(size) if isinstance(size, int) else None
+    if type(node).__name__ == "CDirtyExpression":
+        dirty = getattr(node, "dirty", None)
+        size = getattr(dirty, "size", None)
+        if isinstance(size, int):
+            return int(size)
+        bits = getattr(dirty, "bits", None)
+        if isinstance(bits, int) and bits > 0:
+            return max(1, int(bits) // 8)
+    return None
 
 
 def _classify_segmented_addr_expr(
@@ -113,17 +137,18 @@ def _classify_segmented_addr_expr(
         resolved_term_cache: dict[int, object] = {}
 
         def _synthetic_sp_anchor(term):
-            if not isinstance(term, structured_c.CVariable):
-                return None
-            variable = getattr(term, "variable", None)
-            if not isinstance(variable, SimRegisterVariable):
-                return None
-            sp_offset = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))[0]
-            if not isinstance(sp_offset, int) or getattr(variable, "reg", None) != sp_offset:
+            reg_name = getattr(project.arch, "register_names", {}).get(_register_offset_for_node_8616(term))
+            if reg_name not in {"bp", "sp"}:
                 return None
             codegen = getattr(term, "codegen", None)
             region = getattr(getattr(codegen, "cfunc", None), "addr", None)
-            synthetic = SimStackVariable(0, getattr(variable, "size", None) or 2, base="sp", name="sp_0", region=region)
+            synthetic = SimStackVariable(
+                0,
+                _register_size_for_node_8616(term) or 2,
+                base=reg_name,
+                name=f"{reg_name}_0",
+                region=region,
+            )
             return structured_c.CVariable(synthetic, variable_type=getattr(term, "variable_type", None), codegen=codegen), 0
 
         def _synthetic_sp_match(term):
@@ -171,6 +196,19 @@ def _classify_segmented_addr_expr(
                     if local_seg is not None:
                         return local_seg
             return None
+
+        def _constant_term_value(term) -> int | None:
+            term = unwrap_c_casts(term)
+            constant = c_constant_value(term)
+            if constant is not None:
+                return constant
+            if not isinstance(term, structured_c.CBinaryOp) or term.op not in {"Add", "Sub"}:
+                return None
+            lhs = _constant_term_value(term.lhs)
+            rhs = _constant_term_value(term.rhs)
+            if lhs is None or rhs is None:
+                return None
+            return lhs + rhs if term.op == "Add" else lhs - rhs
 
         def _iter_statement_nodes(root):
             stack = [root]
@@ -289,7 +327,7 @@ def _classify_segmented_addr_expr(
             if local_seg is not None:
                 seg_name = local_seg
                 continue
-            constant = c_constant_value(inner)
+            constant = _constant_term_value(inner)
             if constant is not None:
                 const_offset += constant
                 continue

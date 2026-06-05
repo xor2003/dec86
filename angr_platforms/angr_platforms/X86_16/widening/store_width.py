@@ -57,12 +57,19 @@ def _extract_dereference_addr_expr(node):
     return operand
 
 
+def _safe_type_bits(node) -> int | None:
+    try:
+        return getattr(getattr(node, "type", None), "size", None)
+    except ValueError:
+        return None
+
+
 def _match_byte_load_addr_expr(node, *, unwrap_c_casts):
+    node = unwrap_c_casts(node)
     addr_expr = _extract_dereference_addr_expr(node)
     if addr_expr is None:
         return None
-    type_ = getattr(unwrap_c_casts(node), "type", None)
-    bits = getattr(type_, "size", None)
+    bits = _safe_type_bits(unwrap_c_casts(node))
     if bits not in {8, None}:
         return None
     return addr_expr
@@ -72,8 +79,7 @@ def _match_byte_store_addr_expr(node):
     addr_expr = _extract_dereference_addr_expr(node)
     if addr_expr is None:
         return None
-    type_ = getattr(node, "type", None)
-    bits = getattr(type_, "size", None)
+    bits = _safe_type_bits(node)
     if bits not in {8, 16, None}:
         return None
     return addr_expr
@@ -151,8 +157,7 @@ def _match_word_dereference_addr_expr(node):
     addr_expr = _extract_dereference_addr_expr(node)
     if addr_expr is None:
         return None
-    type_ = getattr(node, "type", None)
-    bits = getattr(type_, "size", None)
+    bits = _safe_type_bits(node)
     if bits != 16:
         return None
     return addr_expr
