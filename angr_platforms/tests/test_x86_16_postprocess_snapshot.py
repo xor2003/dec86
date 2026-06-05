@@ -40,6 +40,17 @@ class _StatementNodeWithCodegen:
         self.values = [1]
 
 
+class _CtypesLikeMetadata:
+    def __reduce_ex__(self, protocol):
+        raise ValueError("ctypes objects containing pointers cannot be pickled")
+
+
+class _StatementNodeWithCtypesMetadata:
+    def __init__(self, metadata):
+        self.metadata = metadata
+        self.values = [1]
+
+
 def test_postprocess_snapshot_requires_independent_statement_copy():
     snapshot = _snapshot_codegen_cfunc(_FakeCodegen(_FakeCFunc(_UncopyableStatements())))
 
@@ -56,7 +67,7 @@ def test_postprocess_snapshot_does_not_share_statement_tree():
     assert snapshot.statements == [{"value": [1]}]
 
 
-def test_postprocess_snapshot_does_not_copy_live_codegen_backpointer():
+def test_postprocess_snapshot_preserves_live_codegen_backpointer_identity():
     live_codegen = _UncopyableCodegen()
     cfunc = _FakeCFunc([_StatementNodeWithCodegen(live_codegen)])
     cfunc.codegen = live_codegen
@@ -65,8 +76,22 @@ def test_postprocess_snapshot_does_not_copy_live_codegen_backpointer():
     cfunc.statements[0].values.append(2)
 
     assert snapshot is not None
-    assert snapshot.statements[0].codegen is None
+    assert snapshot.statements[0].codegen is live_codegen
     assert snapshot.statements[0].values == [1]
+
+
+def test_postprocess_snapshot_preserves_ctypes_metadata_identity_but_clones_tree():
+    metadata = _CtypesLikeMetadata()
+    cfunc = _FakeCFunc([_StatementNodeWithCtypesMetadata(metadata)])
+
+    snapshot = _snapshot_codegen_cfunc(_FakeCodegen(cfunc))
+    cfunc.statements[0].values.append(2)
+
+    assert snapshot is not None
+    assert snapshot.statements[0] is not cfunc.statements[0]
+    assert snapshot.statements[0].metadata is metadata
+    assert snapshot.statements[0].values == [1]
+    assert snapshot._inertia_validation_snapshot_fallback == "ctypes_metadata_identity"
 
 
 def test_postprocess_validation_delta_classifies_name_only_helper_annotations():

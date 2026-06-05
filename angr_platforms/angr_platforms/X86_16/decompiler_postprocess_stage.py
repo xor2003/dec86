@@ -2120,10 +2120,12 @@ def _snapshot_codegen_cfunc(codegen):
     except Exception as ex:
         with contextlib.suppress(Exception):
             setattr(codegen, "_inertia_postprocess_snapshot_error", f"{type(ex).__name__}: {ex}")
-        logging.getLogger(__name__).debug(
+        logging.getLogger(__name__).log(
+            logging.WARNING if os.environ.get("INERTIA_DEBUG_POSTPROCESS_SNAPSHOT") else logging.DEBUG,
             "Failed to snapshot codegen cfunc at function=%#x stage=postprocess-snapshot: %s",
             getattr(cfunc, "addr", -1) or -1,
             ex,
+            exc_info=bool(os.environ.get("INERTIA_DEBUG_POSTPROCESS_SNAPSHOT")),
         )
         return None
 
@@ -2205,6 +2207,8 @@ def _restore_codegen_inertia_metadata_8616(codegen, snapshot: dict[str, object] 
 
 
 _IT_COUNT_TYPE = type(itertools.count())
+_CTYPES_POINTER_PICKLE_ERROR_8616 = "ctypes objects containing pointers cannot be pickled"
+_SNAPSHOT_IDENTITY_ATTRS_8616 = frozenset({"codegen", "project", "arch"})
 
 
 def _deepcopy_cfunc_for_validation_8616(cfunc):
@@ -2228,17 +2232,36 @@ def _deepcopy_cfunc_for_validation_8616(cfunc):
     try:
         cloned = copy.copy(cfunc)
         # A postprocess validation snapshot is only evidence if statement
-        # ownership is independent. C AST nodes carry back-pointers to the live
-        # codegen/project graph; memo those out so deepcopy only clones the
-        # statement tree and does not traverse loader/ctypes state.
+        # ownership is independent. C AST nodes still need a valid codegen
+        # back-pointer for structured-codegen invariants, so preserve that
+        # pointer by identity while preventing deepcopy from traversing the
+        # loader/project graph.
         memo: dict[int, object | None] = {}
         codegen = getattr(cfunc, "codegen", None)
         if codegen is not None:
-            memo[id(codegen)] = None
+            memo[id(codegen)] = codegen
             project = getattr(codegen, "project", None)
             if project is not None:
-                memo[id(project)] = None
-        cloned.statements = copy.deepcopy(getattr(cfunc, "statements", None), memo)
+                memo[id(project)] = project
+                arch = getattr(project, "arch", None)
+                if arch is not None:
+                    memo[id(arch)] = arch
+        statements = getattr(cfunc, "statements", None)
+        try:
+            cloned.statements = copy.deepcopy(statements, memo)
+        except ValueError as ex:
+            if _CTYPES_POINTER_PICKLE_ERROR_8616 not in str(ex):
+                raise
+            # Some angr/codegen metadata carries ctypes pointers and cannot be
+            # pickled by deepcopy. Preserve that metadata by identity while
+            # still cloning the emitted C statement tree; otherwise validation
+            # cannot safely roll back semantic postprocess regressions.
+            cloned.statements = _snapshot_c_ast_value_for_validation_8616(
+                statements,
+                _validation_snapshot_identity_memo_8616(cfunc),
+            )
+            with contextlib.suppress(Exception):
+                setattr(cloned, "_inertia_validation_snapshot_fallback", "ctypes_metadata_identity")
         for attr in ("variables_in_use", "unified_local_vars", "variable_kb"):
             value = getattr(cfunc, attr, None)
             if isinstance(value, dict):
@@ -2255,6 +2278,93 @@ def _deepcopy_cfunc_for_validation_8616(cfunc):
                     del dispatch[_IT_COUNT_TYPE]
             else:
                 dispatch[_IT_COUNT_TYPE] = previous
+
+
+def _validation_snapshot_identity_memo_8616(cfunc) -> dict[int, object]:
+    memo: dict[int, object] = {}
+    codegen = getattr(cfunc, "codegen", None)
+    if codegen is not None:
+        memo[id(codegen)] = codegen
+        project = getattr(codegen, "project", None)
+        if project is not None:
+            memo[id(project)] = project
+            arch = getattr(project, "arch", None)
+            if arch is not None:
+                memo[id(arch)] = arch
+    return memo
+
+
+def _snapshot_c_ast_value_for_validation_8616(value, memo: dict[int, object]):
+    if value is None or isinstance(value, (str, bytes, int, float, bool)):
+        return value
+
+    value_id = id(value)
+    if value_id in memo:
+        return memo[value_id]
+
+    if isinstance(value, _IT_COUNT_TYPE):
+        match = re.fullmatch(r"count\(([-+]?\d+)(?:,\s*([-+]?\d+))?\)", repr(value))
+        if match is None:
+            memo[value_id] = value
+            return value
+        start = int(match.group(1))
+        step = int(match.group(2)) if match.group(2) is not None else 1
+        cloned_count = itertools.count(start, step)
+        memo[value_id] = cloned_count
+        return cloned_count
+
+    if isinstance(value, list):
+        cloned_list: list[object] = []
+        memo[value_id] = cloned_list
+        cloned_list.extend(_snapshot_c_ast_value_for_validation_8616(item, memo) for item in value)
+        return cloned_list
+
+    if isinstance(value, tuple):
+        cloned_tuple = tuple(_snapshot_c_ast_value_for_validation_8616(item, memo) for item in value)
+        memo[value_id] = cloned_tuple
+        return cloned_tuple
+
+    if isinstance(value, dict):
+        cloned_dict: dict[object, object] = {}
+        memo[value_id] = cloned_dict
+        for key, item in value.items():
+            cloned_key = _snapshot_c_ast_value_for_validation_8616(key, memo)
+            cloned_dict[cloned_key] = _snapshot_c_ast_value_for_validation_8616(item, memo)
+        return cloned_dict
+
+    if isinstance(value, (set, frozenset)):
+        cloned_items = {_snapshot_c_ast_value_for_validation_8616(item, memo) for item in value}
+        cloned_set = frozenset(cloned_items) if isinstance(value, frozenset) else cloned_items
+        memo[value_id] = cloned_set
+        return cloned_set
+
+    try:
+        cloned = copy.copy(value)
+    except Exception:
+        memo[value_id] = value
+        return value
+    memo[value_id] = cloned
+
+    value_dict = getattr(value, "__dict__", None)
+    if isinstance(value_dict, dict):
+        for attr, attr_value in value_dict.items():
+            cloned_value = (
+                attr_value
+                if attr in _SNAPSHOT_IDENTITY_ATTRS_8616
+                else _snapshot_c_ast_value_for_validation_8616(attr_value, memo)
+            )
+            with contextlib.suppress(Exception):
+                setattr(cloned, attr, cloned_value)
+
+    for attr in _C_AST_CHILD_ATTRS_8616:
+        if isinstance(value_dict, dict) and attr in value_dict:
+            continue
+        if not hasattr(value, attr):
+            continue
+        with contextlib.suppress(Exception):
+            setattr(cloned, attr, _snapshot_c_ast_value_for_validation_8616(getattr(value, attr), memo))
+
+    return cloned
 
 
 def _clone_codegen_for_validation_summary_8616(codegen):
