@@ -7,6 +7,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
     CStatements,
     CTypeCast,
     CUnaryOp,
@@ -474,6 +475,29 @@ def _make_word_global_8616(codegen, addr: int):
 
 
 def _same_c_expression_8616(lhs, rhs) -> bool:
+    def _same_stack_variable_8616(lvar: SimStackVariable, rvar: SimStackVariable) -> bool:
+        return (
+            getattr(lvar, "offset", None) == getattr(rvar, "offset", None)
+            and getattr(lvar, "size", None) == getattr(rvar, "size", None)
+            and getattr(lvar, "base", None) == getattr(rvar, "base", None)
+            and getattr(lvar, "region", None) == getattr(rvar, "region", None)
+        )
+
+    def _dirty_identity_8616(node) -> tuple[str, object] | None:
+        dirty = getattr(node, "dirty", None)
+        if isinstance(dirty, str) and dirty:
+            return ("dirty-name", dirty)
+        varid = getattr(dirty, "varid", None)
+        if isinstance(varid, int):
+            return ("dirty-varid", varid)
+        tmp_idx = getattr(dirty, "tmp_idx", None)
+        if isinstance(tmp_idx, int):
+            return ("dirty-tmp", tmp_idx)
+        name = getattr(dirty, "name", None)
+        if isinstance(name, str) and name:
+            return ("dirty-name", name)
+        return None
+
     def _impl():
         if type(lhs) is not type(rhs):
             return False
@@ -493,6 +517,12 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
                 and _same_c_expression_8616(lhs.iftrue, rhs.iftrue)
                 and _same_c_expression_8616(lhs.iffalse, rhs.iffalse)
             )
+        if isinstance(lhs, CDirtyExpression):
+            lhs_key = _dirty_identity_8616(lhs)
+            rhs_key = _dirty_identity_8616(rhs)
+            if lhs_key is not None or rhs_key is not None:
+                return lhs_key == rhs_key
+            return getattr(lhs, "dirty", None) is getattr(rhs, "dirty", None)
         if isinstance(lhs, CVariable):
             lvar = getattr(lhs, "variable", None)
             rvar = getattr(rhs, "variable", None)
@@ -504,6 +534,8 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
                 return getattr(lvar, "addr", None) == getattr(rvar, "addr", None) and getattr(
                     lvar, "size", None
                 ) == getattr(rvar, "size", None)
+            if isinstance(lvar, SimStackVariable):
+                return _same_stack_variable_8616(lvar, rvar)
         return lhs is rhs
 
     return _impl()

@@ -79,20 +79,46 @@ def describe_x86_16_projection_cleanup_rules() -> tuple[tuple[str, str], ...]:
     return PROJECTION_CLEANUP_RULES
 
 
-def _virtual_expr_key_8616(node) -> tuple[str, object] | None:
+def _virtual_expr_keys_8616(node) -> tuple[tuple[str, object], ...]:
+    keys: list[tuple[str, object]] = []
     dirty = getattr(node, "dirty", None)
     if isinstance(node, CDirtyExpression) and dirty is not None:
+        if isinstance(dirty, str) and dirty:
+            keys.append(("dirty-name", dirty))
         varid = getattr(dirty, "varid", None)
         if isinstance(varid, int):
-            return ("dirty-varid", varid)
+            keys.append(("dirty-varid", varid))
         tmp_idx = getattr(dirty, "tmp_idx", None)
         if isinstance(tmp_idx, int):
-            return ("dirty-tmp", tmp_idx)
+            keys.append(("dirty-tmp", tmp_idx))
+        name = getattr(dirty, "name", None)
+        if isinstance(name, str) and name:
+            keys.append(("dirty-name", name))
+        reg_offset = None
+        for attr in ("reg_offset", "reg", "variable_offset"):
+            value = getattr(dirty, attr, None)
+            if isinstance(value, int):
+                reg_offset = value
+                break
+        bits = getattr(dirty, "bits", None)
+        if not isinstance(bits, int):
+            size = getattr(dirty, "size", None)
+            if isinstance(size, int):
+                bits = size * 8
+        if isinstance(reg_offset, int):
+            keys.append(("dirty-reg", (reg_offset, bits if isinstance(bits, int) else None)))
     if isinstance(node, CVariable):
         variable = getattr(node, "variable", None)
         name = getattr(node, "name", None) or getattr(variable, "name", None)
         if isinstance(name, str) and name.startswith(("tmp_", "vvar_", "ir_")):
-            return ("virtual-name", name)
+            keys.append(("virtual-name", name))
+    return tuple(dict.fromkeys(keys))
+
+
+def _virtual_expr_key_8616(node) -> tuple[str, object] | None:
+    keys = _virtual_expr_keys_8616(node)
+    if keys:
+        return keys[0]
     return None
 
 
@@ -199,22 +225,25 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     for node in _walk(root):
         if not isinstance(node, CAssignment):
             continue
-        key = _virtual_expr_key_8616(getattr(node, "lhs", None))
-        if key is None:
+        keys = _virtual_expr_keys_8616(getattr(node, "lhs", None))
+        if not keys:
             continue
         candidate_count += 1
         rhs = getattr(node, "rhs", None)
         if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
-            _log.warning("[virtual-inline] def key=%r lhs=%s rhs=%s", key, _debug_c_repr_8616(node.lhs), _debug_c_repr_8616(rhs))
-        if not _pure_virtual_inline_rhs_8616(rhs) or _expr_contains_virtual_key_8616(rhs, key):
-            definitions[key] = None
+            _log.warning("[virtual-inline] def keys=%r lhs=%s rhs=%s", keys, _debug_c_repr_8616(node.lhs), _debug_c_repr_8616(rhs))
+        if not _pure_virtual_inline_rhs_8616(rhs) or any(_expr_contains_virtual_key_8616(rhs, key) for key in keys):
+            for key in keys:
+                definitions[key] = None
             refused_count += 1
             continue
-        if key in definitions:
-            definitions[key] = None
+        if any(key in definitions for key in keys):
+            for key in keys:
+                definitions[key] = None
             refused_count += 1
             continue
-        definitions[key] = rhs
+        for key in keys:
+            definitions[key] = rhs
 
     replacements = {key: rhs for key, rhs in definitions.items() if rhs is not None}
     if not replacements:
@@ -234,7 +263,8 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
         if node is None:
             return node
         if not assignment_lhs:
-            key = _virtual_expr_key_8616(node)
+            keys = _virtual_expr_keys_8616(node)
+            key = next((candidate_key for candidate_key in keys if candidate_key in replacements), None)
             replacement = replacements.get(key)
             if replacement is not None:
                 if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
@@ -246,8 +276,8 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
                     )
                 changed = True
                 return replacement
-            if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE") and key is not None:
-                _log.warning("[virtual-inline] no replacement key=%r expr=%s", key, _debug_c_repr_8616(node))
+            if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE") and keys:
+                _log.warning("[virtual-inline] no replacement keys=%r expr=%s", keys, _debug_c_repr_8616(node))
         for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
             child = getattr(node, attr, None)
             if not _structured_codegen_node_8616(child):
@@ -288,7 +318,85 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
 
     _transform(root)
 
+    def _count_virtual_key_uses_8616(node, target_key: tuple[str, object], *, assignment_lhs: bool = False) -> int:
+        if node is None:
+            return 0
+        total = 0
+        if not assignment_lhs and target_key in _virtual_expr_keys_8616(node):
+            total += 1
+        for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
+            child = getattr(node, attr, None)
+            if _structured_codegen_node_8616(child):
+                total += _count_virtual_key_uses_8616(
+                    child,
+                    target_key,
+                    assignment_lhs=attr == "lhs" and isinstance(node, CAssignment),
+                )
+        for attr in ("statements", "operands", "args"):
+            seq = getattr(node, attr, None)
+            if not seq:
+                continue
+            for item in seq:
+                if _structured_codegen_node_8616(item):
+                    total += _count_virtual_key_uses_8616(item, target_key)
+                elif isinstance(item, tuple):
+                    for subitem in item:
+                        if _structured_codegen_node_8616(subitem):
+                            total += _count_virtual_key_uses_8616(subitem, target_key)
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            for cond, body in pairs:
+                if _structured_codegen_node_8616(cond):
+                    total += _count_virtual_key_uses_8616(cond, target_key)
+                if _structured_codegen_node_8616(body):
+                    total += _count_virtual_key_uses_8616(body, target_key)
+        return total
+
+    def _prune_consumed_virtual_definitions_8616(node) -> int:
+        pruned = 0
+        statements = getattr(node, "statements", None)
+        if isinstance(statements, list):
+            kept = []
+            for statement in statements:
+                keys = _virtual_expr_keys_8616(getattr(statement, "lhs", None)) if isinstance(statement, CAssignment) else ()
+                if (
+                    keys
+                    and any(key in replacements for key in keys)
+                    and _pure_virtual_inline_rhs_8616(getattr(statement, "rhs", None))
+                    and all(_count_virtual_key_uses_8616(root, key) == 0 for key in keys)
+                ):
+                    pruned += 1
+                    continue
+                kept.append(statement)
+            if len(kept) != len(statements):
+                node.statements = kept
+        for child in _walk(node):
+            if child is node:
+                continue
+            child_statements = getattr(child, "statements", None)
+            if isinstance(child_statements, list):
+                kept = []
+                for statement in child_statements:
+                    keys = _virtual_expr_keys_8616(getattr(statement, "lhs", None)) if isinstance(statement, CAssignment) else ()
+                    if (
+                        keys
+                        and any(key in replacements for key in keys)
+                        and _pure_virtual_inline_rhs_8616(getattr(statement, "rhs", None))
+                        and all(_count_virtual_key_uses_8616(root, key) == 0 for key in keys)
+                    ):
+                        pruned += 1
+                        continue
+                    kept.append(statement)
+                if len(kept) != len(child_statements):
+                    child.statements = kept
+        return pruned
+
     if changed:
+        pruned_defs = _prune_consumed_virtual_definitions_8616(root)
+        if pruned_defs:
+            codegen._inertia_virtual_inline_pruned_defs = int(
+                getattr(codegen, "_inertia_virtual_inline_pruned_defs", 0) or 0
+            ) + pruned_defs
         codegen._inertia_virtual_inline_candidates = int(
             getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0
         ) + candidate_count
@@ -722,6 +830,296 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     def _materialize_word_or_update_statements_8616(root_node) -> bool:
         changed_local = False
 
+        def _unwrap_expr_8616(expr):
+            while isinstance(expr, CTypeCast):
+                expr = getattr(expr, "expr", None)
+            return expr
+
+        def _virtual_assignment_key_8616(stmt) -> tuple[str, object] | None:
+            if not isinstance(stmt, CAssignment):
+                return None
+            return _virtual_expr_key_8616(getattr(stmt, "lhs", None))
+
+        def _virtual_assignment_keys_8616(stmt) -> tuple[tuple[str, object], ...]:
+            if not isinstance(stmt, CAssignment):
+                return ()
+            return _virtual_expr_keys_8616(getattr(stmt, "lhs", None))
+
+        def _copy_alias_map_8616(statements: list[object]) -> dict[tuple[str, object], object]:
+            aliases: dict[tuple[str, object], object] = {}
+            for candidate in statements:
+                if not isinstance(candidate, CAssignment):
+                    continue
+                keys = _virtual_assignment_keys_8616(candidate)
+                if not keys:
+                    continue
+                rhs = getattr(candidate, "rhs", None)
+                if not _pure_virtual_inline_rhs_8616(rhs):
+                    for key in keys:
+                        aliases.pop(key, None)
+                    continue
+                for key in keys:
+                    aliases[key] = rhs
+            return aliases
+
+        def _debug_aliases_8616(aliases: dict[tuple[str, object], object]) -> list[str]:
+            if not os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                return []
+            return [f"{key}={_debug_c_repr_8616(value)}" for key, value in sorted(aliases.items(), key=str)]
+
+        def _resolve_copy_alias_expr_8616(expr, aliases: dict[tuple[str, object], object], used: set[tuple[str, object]]):
+            expr = _unwrap_expr_8616(expr)
+            keys = _virtual_expr_keys_8616(expr)
+            if not keys:
+                return expr
+            key = next((candidate_key for candidate_key in keys if candidate_key in aliases), None)
+            if key is None:
+                return expr
+            replacement = aliases.get(key)
+            if replacement is None:
+                return expr
+            used.add(key)
+            replacement_key = _virtual_expr_key_8616(replacement)
+            if replacement_key == key:
+                return expr
+            return _resolve_copy_alias_expr_8616(replacement, aliases, used)
+
+        def _match_joined_stack_word_base_8616(
+            expr,
+            word_target,
+            high_target,
+            aliases: dict[tuple[str, object], object],
+            used: set[tuple[str, object]],
+        ):
+            expr = _unwrap_expr_8616(expr)
+            if not isinstance(expr, CBinaryOp) or expr.op != "Or":
+                return None
+            for maybe_low, maybe_high in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+                low_expr = _resolve_copy_alias_expr_8616(maybe_low, aliases, used)
+                shifted = _shifted_high_byte_source_8616(maybe_high)
+                if shifted is None:
+                    continue
+                high_expr = _resolve_copy_alias_expr_8616(shifted, aliases, used)
+                if _same_c_expression_8616(low_expr, word_target) and _same_c_expression_8616(high_expr, high_target):
+                    return word_target
+            return None
+
+        def _same_after_copy_alias_8616(
+            left,
+            right,
+            aliases: dict[tuple[str, object], object],
+            used: set[tuple[str, object]],
+        ) -> bool:
+            left_resolved = _resolve_copy_alias_expr_8616(left, aliases, used)
+            right_resolved = _resolve_copy_alias_expr_8616(right, aliases, used)
+            return _same_c_expression_8616(left_resolved, right_resolved)
+
+        def _contains_unresolved_virtual_expr_8616(expr) -> bool:
+            if expr is None:
+                return False
+            if _virtual_expr_key_8616(expr) is not None:
+                return True
+            for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval"):
+                child = getattr(expr, attr, None)
+                if _structured_codegen_node_8616(child) and _contains_unresolved_virtual_expr_8616(child):
+                    return True
+            for attr in ("operands", "args"):
+                seq = getattr(expr, attr, None)
+                if not seq:
+                    continue
+                for item in seq:
+                    if _structured_codegen_node_8616(item) and _contains_unresolved_virtual_expr_8616(item):
+                        return True
+                    if isinstance(item, tuple):
+                        for subitem in item:
+                            if _structured_codegen_node_8616(subitem) and _contains_unresolved_virtual_expr_8616(subitem):
+                                return True
+            return False
+
+        def _match_stack_word_arithmetic_update_8616(
+            low_rhs,
+            high_rhs,
+            word_target,
+            high_target,
+            aliases: dict[tuple[str, object], object],
+        ) -> tuple[str, object, set[tuple[str, object]]] | None:
+            def _refuse(reason: str) -> None:
+                if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                    _log.warning(
+                        "[word-or-update] arithmetic-pair refused reason=%s low_op=%r high_op=%r high_lhs_op=%r word_domain=%r high_domain=%r aliases=%r",
+                        reason,
+                        getattr(low_rhs, "op", None),
+                        getattr(high_rhs, "op", None),
+                        getattr(getattr(high_rhs, "lhs", None), "op", None),
+                        _storage_domain_for_expr(word_target),
+                        _storage_domain_for_expr(high_target),
+                        _debug_aliases_8616(aliases),
+                    )
+
+            used: set[tuple[str, object]] = set()
+            low_rhs = _unwrap_expr_8616(low_rhs)
+            high_rhs = _unwrap_expr_8616(high_rhs)
+            if not isinstance(high_rhs, CBinaryOp) or high_rhs.op != "Shr":
+                _refuse("high-not-shr")
+                return None
+            if not _is_c_constant_int_8616(_unwrap_expr_8616(high_rhs.rhs), 8):
+                _refuse("shift-not-8")
+                return None
+            update_expr = low_rhs
+            high_update_expr = _unwrap_expr_8616(high_rhs.lhs)
+            if not isinstance(update_expr, CBinaryOp) or update_expr.op not in {"Add", "Sub"}:
+                _refuse("update-not-add-sub")
+                return None
+            if (
+                not isinstance(high_update_expr, CBinaryOp)
+                or high_update_expr.op not in {"Add", "Sub"}
+                or high_update_expr.op != update_expr.op
+            ):
+                _refuse("high-update-not-same-op")
+                return None
+
+            def _arithmetic_candidates_8616(expr) -> list[tuple[object, object]]:
+                if not isinstance(expr, CBinaryOp):
+                    return []
+                if expr.op == "Add":
+                    return [(expr.lhs, expr.rhs), (expr.rhs, expr.lhs)]
+                if expr.op == "Sub":
+                    return [(expr.lhs, expr.rhs)]
+                return []
+
+            for maybe_base, maybe_delta in _arithmetic_candidates_8616(update_expr):
+                low_used = set(used)
+                if _match_joined_stack_word_base_8616(
+                    maybe_base,
+                    word_target,
+                    high_target,
+                    aliases,
+                    low_used,
+                ) is None:
+                    continue
+                delta = _resolve_copy_alias_expr_8616(maybe_delta, aliases, low_used)
+                matched_high = False
+                matched_used: set[tuple[str, object]] = set(low_used)
+                for high_base, high_delta in _arithmetic_candidates_8616(high_update_expr):
+                    high_used = set(low_used)
+                    if _match_joined_stack_word_base_8616(
+                        high_base,
+                        word_target,
+                        high_target,
+                        aliases,
+                        high_used,
+                    ) is None:
+                        continue
+                    resolved_high_delta = _resolve_copy_alias_expr_8616(high_delta, aliases, high_used)
+                    if not _same_c_expression_8616(delta, resolved_high_delta):
+                        continue
+                    matched_high = True
+                    matched_used = high_used
+                    break
+                if not matched_high:
+                    continue
+                if _expr_contains_virtual_key_8616(delta, _virtual_expr_key_8616(word_target) or ("", "")):
+                    _refuse("delta-contains-target")
+                    continue
+                if _contains_unresolved_virtual_expr_8616(delta):
+                    _refuse("delta-unresolved-virtual")
+                    continue
+                if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                    _log.warning(
+                        "[word-or-update] arithmetic-pair matched op=%s word=%r high=%r delta=%r used=%r",
+                        update_expr.op,
+                        word_target,
+                        high_target,
+                        delta,
+                        sorted(str(key) for key in matched_used),
+                    )
+                return update_expr.op, delta, matched_used
+            _refuse("base-not-joined-word")
+            return None
+
+        def _match_duplicate_word_arithmetic_shift_8616(
+            rhs,
+            word_target,
+            aliases: dict[tuple[str, object], object],
+        ) -> tuple[str, object, set[tuple[str, object]]] | None:
+            def _refuse(reason: str) -> None:
+                if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                    _log.warning(
+                        "[word-or-update] duplicate-shift refused reason=%s target_domain=%r rhs_op=%r rhs_lhs_op=%r rhs=%r target=%r aliases=%r",
+                        reason,
+                        _storage_domain_for_expr(word_target),
+                        getattr(rhs, "op", None),
+                        getattr(getattr(rhs, "lhs", None), "op", None),
+                        rhs,
+                        word_target,
+                        _debug_aliases_8616(aliases),
+                    )
+
+            target_domain = _storage_domain_for_expr(word_target)
+            if getattr(target_domain, "space", None) != "stack" or getattr(target_domain, "width", None) != 2:
+                _refuse("target-not-stack-word")
+                return None
+            used: set[tuple[str, object]] = set()
+            rhs = _unwrap_expr_8616(rhs)
+            if not isinstance(rhs, CBinaryOp) or rhs.op != "Shr":
+                _refuse("rhs-not-shr")
+                return None
+            if not _is_c_constant_int_8616(_unwrap_expr_8616(rhs.rhs), 8):
+                _refuse("shift-not-8")
+                return None
+            update_expr = _unwrap_expr_8616(rhs.lhs)
+            if not isinstance(update_expr, CBinaryOp) or update_expr.op not in {"Add", "Sub"}:
+                _refuse("update-not-add-sub")
+                return None
+            candidates: list[tuple[object, object]] = []
+            if update_expr.op == "Add":
+                candidates.extend(((update_expr.lhs, update_expr.rhs), (update_expr.rhs, update_expr.lhs)))
+            else:
+                candidates.append((update_expr.lhs, update_expr.rhs))
+            for maybe_base, maybe_delta in candidates:
+                candidate_used = set(used)
+                base = _unwrap_expr_8616(maybe_base)
+                if not isinstance(base, CBinaryOp) or base.op != "Or":
+                    continue
+                matched_base = False
+                for maybe_low, maybe_high in ((base.lhs, base.rhs), (base.rhs, base.lhs)):
+                    low_expr = _resolve_copy_alias_expr_8616(maybe_low, aliases, candidate_used)
+                    shifted = _shifted_high_byte_source_8616(maybe_high)
+                    if shifted is None:
+                        continue
+                    high_expr = _resolve_copy_alias_expr_8616(shifted, aliases, candidate_used)
+                    if _same_c_expression_8616(low_expr, word_target) and _same_c_expression_8616(high_expr, word_target):
+                        matched_base = True
+                        break
+                if not matched_base:
+                    continue
+                delta = _resolve_copy_alias_expr_8616(maybe_delta, aliases, candidate_used)
+                if _contains_unresolved_virtual_expr_8616(delta):
+                    _refuse("delta-unresolved-virtual")
+                    continue
+                if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                    _log.warning(
+                        "[word-or-update] duplicate-shift matched op=%s target=%r delta=%r used=%r",
+                        update_expr.op,
+                        word_target,
+                        delta,
+                        sorted(str(key) for key in candidate_used),
+                    )
+                return update_expr.op, delta, candidate_used
+            _refuse("base-not-duplicate-word")
+            return None
+
+        def _delete_tail_virtual_aliases_8616(statements: list[object], used_keys: set[tuple[str, object]]) -> None:
+            if not used_keys:
+                return
+            kept: list[object] = []
+            for statement in statements:
+                keys = _virtual_assignment_keys_8616(statement)
+                if keys and any(key in used_keys for key in keys):
+                    continue
+                kept.append(statement)
+            statements[:] = kept
+
         def visit(node) -> None:
             nonlocal changed_local
             if isinstance(node, list):
@@ -751,6 +1149,10 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             while i < len(statements):
                 stmt = statements[i]
                 next_stmt = statements[i + 1] if i + 1 < len(statements) else None
+                copy_aliases = _copy_alias_map_8616(new_statements)
+                immediate = None
+                shifted_immediate = None
+                replacement_lhs = None
                 if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
                     if isinstance(stmt, CAssignment) or isinstance(next_stmt, CAssignment):
                         same_lhs = (
@@ -770,9 +1172,6 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                             type(getattr(next_stmt, "rhs", None)).__name__ if next_stmt is not None else None,
                         )
                 if isinstance(stmt, CAssignment) and isinstance(next_stmt, CAssignment):
-                    immediate = None
-                    shifted_immediate = None
-                    replacement_lhs = None
                     if (
                         isinstance(stmt.lhs, CVariable)
                         and isinstance(next_stmt.lhs, CVariable)
@@ -804,29 +1203,99 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                             shifted_immediate = _match_word_or_carrier_pair_shift_8616(
                                 next_stmt.rhs, stmt.lhs, next_stmt.lhs
                             )
+                        try:
+                            codegen._inertia_word_or_update_candidates = int(
+                                getattr(codegen, "_inertia_word_or_update_candidates", 0) or 0
+                            ) + 1
+                        except Exception:
+                            pass
+                if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
                     try:
-                        codegen._inertia_word_or_update_candidates = int(
-                            getattr(codegen, "_inertia_word_or_update_candidates", 0) or 0
+                        codegen._inertia_word_arithmetic_shift_candidates = int(
+                            getattr(codegen, "_inertia_word_arithmetic_shift_candidates", 0) or 0
                         ) + 1
                     except Exception:
                         pass
-                    if replacement_lhs is not None and immediate is not None and shifted_immediate == immediate:
+                    duplicate_shift = _match_duplicate_word_arithmetic_shift_8616(
+                        stmt.rhs,
+                        stmt.lhs,
+                        copy_aliases,
+                    )
+                    if duplicate_shift is not None:
+                        op, delta, used_keys = duplicate_shift
+                        _delete_tail_virtual_aliases_8616(new_statements, used_keys)
                         replacement_rhs = CBinaryOp(
-                            "Or",
+                            op,
+                            stmt.lhs,
+                            delta,
+                            codegen=codegen,
+                        )
+                        new_statements.append(CAssignment(stmt.lhs, replacement_rhs, codegen=codegen))
+                        try:
+                            codegen._inertia_word_arithmetic_shift_materialized_count = int(
+                                getattr(codegen, "_inertia_word_arithmetic_shift_materialized_count", 0) or 0
+                            ) + 1
+                        except Exception:
+                            pass
+                        changed_local = True
+                        i += 1
+                        continue
+                if (
+                    replacement_lhs is not None
+                    and isinstance(next_stmt, CAssignment)
+                    and isinstance(next_stmt.lhs, CVariable)
+                    and _stack_word_contains_high_byte_8616(replacement_lhs, next_stmt.lhs)
+                ):
+                    try:
+                        codegen._inertia_word_arithmetic_update_candidates = int(
+                            getattr(codegen, "_inertia_word_arithmetic_update_candidates", 0) or 0
+                        ) + 1
+                    except Exception:
+                        pass
+                    arithmetic_update = _match_stack_word_arithmetic_update_8616(
+                        stmt.rhs,
+                        next_stmt.rhs,
+                        replacement_lhs,
+                        next_stmt.lhs,
+                        copy_aliases,
+                    )
+                    if arithmetic_update is not None:
+                        op, delta, used_keys = arithmetic_update
+                        _delete_tail_virtual_aliases_8616(new_statements, used_keys)
+                        replacement_rhs = CBinaryOp(
+                            op,
                             replacement_lhs,
-                            CConstant(immediate, getattr(stmt.rhs, "type", None), codegen=codegen),
+                            delta,
                             codegen=codegen,
                         )
                         new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
                         try:
-                            codegen._inertia_word_or_update_materialized_count = int(
-                                getattr(codegen, "_inertia_word_or_update_materialized_count", 0) or 0
+                            codegen._inertia_word_arithmetic_update_materialized_count = int(
+                                getattr(codegen, "_inertia_word_arithmetic_update_materialized_count", 0) or 0
                             ) + 1
                         except Exception:
                             pass
                         changed_local = True
                         i += 2
                         continue
+                if replacement_lhs is not None and immediate is not None and shifted_immediate == immediate:
+                    replacement_rhs = CBinaryOp(
+                        "Or",
+                        replacement_lhs,
+                        CConstant(immediate, getattr(stmt.rhs, "type", None), codegen=codegen),
+                        codegen=codegen,
+                    )
+                    new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
+                    try:
+                        codegen._inertia_word_or_update_materialized_count = int(
+                            getattr(codegen, "_inertia_word_or_update_materialized_count", 0) or 0
+                        ) + 1
+                    except Exception:
+                        pass
+                    changed_local = True
+                    i += 2
+                    continue
+                if replacement_lhs is not None and isinstance(next_stmt, CAssignment):
                     if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
                         term_debug = []
                         for term in _or_terms_8616(getattr(stmt, "rhs", None)):
