@@ -14,12 +14,13 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from signature_catalog import build_signature_catalog
-from inertia_decompiler.flair_paths import default_flair_startup_root
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from signature_catalog import build_signature_catalog
+
+from inertia_decompiler.flair_paths import default_flair_startup_root
 
 from inertia_decompiler.project_loading import _build_project  # noqa: E402
 from inertia_decompiler.sidecar_metadata import _load_lst_metadata  # noqa: E402
@@ -31,6 +32,7 @@ DEFAULT_MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6a
 DEFAULT_DECOMPILE = REPO_ROOT / "decompile.py"
 DEFAULT_DECOMPILE_SKIP = ("enum_union", "medium_structs")
 HARNESS_SUCCESS_EXIT_CODE = 255
+DECOMPILE_MAX_FUNCTIONS_DEFAULT = 0
 DEFAULT_SIGNATURE_CATALOG_NAME = "runtime_signature_catalog.pat"
 DECOMPILE_MAIN_NAMES = ("main", "MAIN", "_main", "_MAIN", "start", "_start")
 DECOMPILE_MAIN_TIMEOUT_SECONDS_DEFAULT = 60
@@ -1181,8 +1183,8 @@ def main() -> int:
     ap.add_argument(
         "--decompile-max-functions",
         type=int,
-        default=1,
-        help="Maximum number of recovered functions to decompile when mode=functions.",
+        default=DECOMPILE_MAX_FUNCTIONS_DEFAULT,
+        help="Maximum number of recovered functions to decompile when mode=functions. 0 means decompile all.",
     )
     ap.add_argument(
         "--decompile-timeout",
