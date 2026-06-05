@@ -66,6 +66,12 @@ JSON output remains available for tools:
 {"span_count":8,"total_ms":1907.4,"top":[["direct.decompile_job",909.7,{"addr":"0x1000","name":"_start"}]],"agg":[["direct.decompile_job",1,909.7,909.7]],"errors":[]}
 ```
 
+Convert existing full JSONL traces before giving them to an agent:
+
+```bash
+./.venv/bin/python scripts/compact_trace.py otlp.jsonl > trace.agent.txt
+```
+
 Implementation:
 
 - Use `@trace_function(name="...")` on normal functions. It auto-extracts common attributes from arguments: `binary`, `addr`, `function`, `project`, `timeout`, `status`, `window`, and related fields.
