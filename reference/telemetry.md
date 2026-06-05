@@ -2,6 +2,9 @@
 
 Purpose: quickly find slow decompilation stages without dumping huge logs.
 
+Default agent context is compact text, not OTLP JSON. JSON/JSONL is available
+only for tools that parse it; it repeats keys/punctuation and wastes LLM tokens.
+
 Enable compact spans:
 
 ```bash
@@ -18,14 +21,15 @@ Useful knobs:
 - `INERTIA_OTEL_TEXT_MAX_SPANS=200` caps rows in agent-text output.
 - `INERTIA_OTEL_TOP_N=16` controls how many slow spans/aggregates are kept.
 - `INERTIA_OTEL_MIN_MS=1` hides tiny spans from the `top` list.
-- `INERTIA_OTEL_STDERR=0` suppresses the `[otel-compact]` stderr line when writing a file.
+- `INERTIA_OTEL_STDERR=0` suppresses the `[otel-trace]` stderr line when writing a file.
 - `INERTIA_OTEL_FULL_JSONL=1` writes summary plus every span as JSONL.
 - `INERTIA_OTEL_EXPORT_OTLP=1` also exports spans through OTLP HTTP/protobuf.
 - `INERTIA_OTEL_SERVICE_NAME=inertia-decompiler` overrides the OpenTelemetry service name.
 - `INERTIA_OTEL_FORCE_FLUSH_MS=3000` controls exporter flush timeout at process exit.
 - `INERTIA_OTEL_PROFILE_IN_PROCESS=1` disables direct-address fork isolation for profiling so nested child spans flush into the same compact trace. Use only for profiling, not default runs.
 
-Use text for agent handoff:
+Use text for agent handoff. It intentionally avoids duplicated `top`/`agg`
+JSON sections and repeats only a short schema:
 
 ```text
 summary total_ms=8562.5 spans=6 otel=off errors=0
