@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 import os
 from pathlib import Path
 import sys
@@ -15,11 +16,72 @@ from inertia_decompiler.tail_validation import (
 )
 
 
+class WorkItemStatus(StrEnum):
+    OK = "ok"
+    VALIDATION_FAILED = "validation_failed"
+    UNKNOWN = "unknown"
+    UNCOLLECTED = "uncollected"
+    TIMEOUT = "timeout"
+    EMPTY = "empty"
+
+
+class TailValidationDisplayOutcome(StrEnum):
+    PASSED = "passed"
+    FAILED = "failed"
+    CHANGED = "changed"
+    STABLE = "stable"
+    UNKNOWN = "unknown"
+    UNCOLLECTED = "uncollected"
+
+
+def _normalize_tail_validation_status(raw_status: str | None) -> TailValidationDisplayOutcome:
+    if raw_status == "" or raw_status is None:
+        return TailValidationDisplayOutcome.UNCOLLECTED
+    try:
+        return TailValidationDisplayOutcome(raw_status)
+    except ValueError:
+        return TailValidationDisplayOutcome.UNCOLLECTED
+
+
+def _tail_validation_to_item_status(
+    raw_status: str | None,
+) -> WorkItemStatus:
+    status = _normalize_tail_validation_status(raw_status)
+    if status in (
+        TailValidationDisplayOutcome.FAILED,
+        TailValidationDisplayOutcome.CHANGED,
+    ):
+        return WorkItemStatus.VALIDATION_FAILED
+    if status in (
+        TailValidationDisplayOutcome.PASSED,
+        TailValidationDisplayOutcome.STABLE,
+    ):
+        return WorkItemStatus.OK
+    if status in (TailValidationDisplayOutcome.UNKNOWN, TailValidationDisplayOutcome.UNCOLLECTED):
+        return WorkItemStatus(status.value)
+    return WorkItemStatus.UNCOLLECTED
+
+
+def _work_item_status_display(result: "WorkItemStatus | str") -> WorkItemStatus:
+    if isinstance(result, WorkItemStatus):
+        return result
+    try:
+        return WorkItemStatus(result)
+    except (TypeError, ValueError):
+        return WorkItemStatus.UNCOLLECTED
+
+
 def _diagnostic_print(line: str) -> None:
     if "PYTEST_CURRENT_TEST" in os.environ:
         print(line)
         return
     print(f"{time.strftime('[%H:%M:%S]')} {line}", file=sys.stderr)
+
+
+def _visible_source_format(source_format: str | None) -> str:
+    raw = source_format or ""
+    parts = [part for part in raw.split("+") if part]
+    return "+".join(parts) or "sidecars"
 
 
 @dataclass(frozen=True)
@@ -82,19 +144,15 @@ def emit_tail_validation_for_function_run_or_uncollected(
         function,
         allow_project_fallback=allow_project_fallback,
     )
-    validation_status = tail_validation_display_status(snapshot)
-    if validation_status in {"failed", "changed"}:
-        result_status = "validation_failed"
-    elif validation_status == "stable":
-        result_status = "ok"
-    elif validation_status in {"unknown", "uncollected"}:
-        result_status = validation_status
-    else:
-        result_status = "uncollected"
+    result_status = (
+        WorkItemStatus.UNCOLLECTED
+        if not snapshot
+        else _tail_validation_to_item_status(tail_validation_display_status(snapshot))
+    )
     item = FunctionWorkItem(index=1, function_cfg=function_cfg, function=function)
     result = FunctionWorkResult(
         index=1,
-        status=result_status if snapshot else "uncollected",
+        status=result_status.value,
         payload="",
         debug_output="",
         function=function,
@@ -115,19 +173,15 @@ def emit_tail_validation_snapshot_or_uncollected(
     if project is not None and not tail_validation_runtime_enabled(project):
         return
     normalized_snapshot = dict(snapshot) if isinstance(snapshot, Mapping) else {}
-    validation_status = tail_validation_display_status(normalized_snapshot)
-    if validation_status in {"failed", "changed"}:
-        result_status = "validation_failed"
-    elif validation_status == "stable":
-        result_status = "ok"
-    elif validation_status in {"unknown", "uncollected"}:
-        result_status = validation_status
-    else:
-        result_status = "uncollected"
+    result_status = (
+        WorkItemStatus.UNCOLLECTED
+        if not normalized_snapshot
+        else _tail_validation_to_item_status(tail_validation_display_status(normalized_snapshot))
+    )
     item = FunctionWorkItem(index=1, function_cfg=function_cfg, function=function)
     result = FunctionWorkResult(
         index=1,
-        status=result_status if normalized_snapshot else "uncollected",
+        status=result_status.value,
         payload="",
         debug_output="",
         function=function,
@@ -138,15 +192,16 @@ def emit_tail_validation_snapshot_or_uncollected(
 
 
 def function_attempt_display_status(result: FunctionWorkResult) -> str:
-    if result.status == "ok":
+    result_status = _work_item_status_display(result.status)
+    if result_status == WorkItemStatus.OK:
         return "decompiled"
-    if result.status == "timeout":
+    if result_status == WorkItemStatus.TIMEOUT:
         return "timed_out"
-    if result.status == "empty":
+    if result_status == WorkItemStatus.EMPTY:
         return "empty"
     if result.partial_payload:
         return "fallback"
-    return result.status
+    return result_status.value
 
 
 def print_function_attempt_status(
@@ -157,7 +212,7 @@ def print_function_attempt_status(
 ) -> None:
     project = getattr(function, "project", None)
     validation_status = (
-        "uncollected"
+        TailValidationDisplayOutcome.UNCOLLECTED.value
         if project is not None and not tail_validation_runtime_enabled(project)
         else tail_validation_display_status(validation_snapshot)
     )
@@ -170,7 +225,7 @@ def print_function_attempt_status(
 def recovery_evidence_line(binary_path: Path, metadata) -> str:
     if metadata is None:
         return "/* info: recovery evidence: pure binary recovery mode (no helper metadata/debug info found) */"
-    source_format = getattr(metadata, "source_format", "") or "sidecars"
+    source_format = _visible_source_format(getattr(metadata, "source_format", None))
     source_parts = tuple(part for part in source_format.split("+") if part)
     debug_markers = ("codeview", "turbo_debug", "tdinfo", "debug")
     has_debug_info = any(any(marker in part for marker in debug_markers) for part in source_parts)
