@@ -300,6 +300,30 @@ int main(void)
 }
 """
 
+STORAGE_CLASSES_PREFIX = """
+short g_counter = 3;
+unsigned char g_table[4] = { 1, 2, 3, 4 };
+"""
+
+STORAGE_CLASSES_HARNESS_MAIN = """
+int main(void)
+{
+    int total;
+
+    total = _sum_globals();
+    if (total != 13) {
+        return 1;
+    }
+    if (bump_static() != 12) {
+        return 2;
+    }
+    if (bump_static() != 14) {
+        return 3;
+    }
+    return 255;
+}
+"""
+
 FALLBACK_EXAMPLE_REBUILD = {
     "simple_control": {
         "functions": ("classify", "sum_to", "switch_fold"),
@@ -341,6 +365,11 @@ FALLBACK_EXAMPLE_REBUILD = {
         ),
         "harness": SCALAR_TYPES_HARNESS_MAIN,
     },
+    "storage_classes": {
+        "functions": ("_sum_globals", "bump_static"),
+        "prefix": STORAGE_CLASSES_PREFIX,
+        "harness": STORAGE_CLASSES_HARNESS_MAIN,
+    },
 }
 
 
@@ -380,12 +409,15 @@ def _extract_decompiled_function_definition(c_text: str, function_name: str) -> 
     raise RuntimeError(f"unterminated generated definition for {function_name}")
 
 
-def _build_fallback_source(function_bodies: list[str], harness_main: str) -> str:
+def _build_fallback_source(function_bodies: list[str], harness_main: str, *, prefix: str = "") -> str:
+    prefix_text = textwrap.dedent(prefix).strip()
+    prefix_lines = [prefix_text, ""] if prefix_text else []
     return "\n".join(
         [
             "#include <stdbool.h>",
             "#include <stdint.h>",
             "",
+            *prefix_lines,
             *function_bodies,
             "",
             textwrap.dedent(harness_main).strip(),
@@ -1007,7 +1039,10 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
     decomp_summary_re = re.compile(r"summary: decompiled (\\d+)/(\\d+) shown functions")
     attempted_summary_re = re.compile(r"summary: decompilation attempted for (\\d+)/(\\d+) displayed function\\(s\\)")
     timed_out_summary_re = re.compile(r"summary: (\\d+) discovered function\\(s\\) timed out during decompilation")
-    tail_validation_re = re.compile(r"\[tail-validation\] whole-tail validation (passed|failed|uncollected)", re.IGNORECASE)
+    tail_validation_re = re.compile(
+        r"\[tail-validation\] whole-tail validation (passed|clean|failed|uncollected)",
+        re.IGNORECASE,
+    )
     validation_state_re = re.compile(r"validation=([a-z_]+)")
     attempt_validation_re = re.compile(r"attempt=[^*]*\bvalidation=([a-z_]+)")
     asm_fallback_re = re.compile(r"== asm fallback ==")
@@ -1135,12 +1170,14 @@ def _is_decompile_output_acceptable(
 
     validation_state = profile.get("validation_state")
     if isinstance(validation_state, list):
-        if "failed" in validation_state:
-            return False, "validation_failed"
-        if "changed" in validation_state:
-            return False, "validation_changed"
-        if "uncollected" in validation_state:
-            return False, "validation_uncollected"
+        final_tail_valid = tail_status in {"passed", "clean"}
+        if not final_tail_valid:
+            if "failed" in validation_state:
+                return False, "validation_failed"
+            if "changed" in validation_state:
+                return False, "validation_changed"
+            if "uncollected" in validation_state:
+                return False, "validation_uncollected"
 
     combined = f"{stdout_text}\n{stderr_text}".lower()
     if "== asm fallback ==" in combined:
@@ -1226,6 +1263,7 @@ def _build_from_function_decompiles(
     decompile_signature_catalog: Path | None,
     fallback_functions: tuple[str, ...],
     fallback_harness: str,
+    fallback_prefix: str,
     decompile_c_name: str,
     decompile_obj_name: str,
     decompile_exe_name: str,
@@ -1269,7 +1307,9 @@ def _build_from_function_decompiles(
         function_bodies.append(_extract_decompiled_function_definition(out_text, function_name))
 
     source_path = out_dir / decompile_c_name
-    source_text = _prepare_decompiled_source_for_c89(_build_fallback_source(function_bodies, fallback_harness))
+    source_text = _prepare_decompiled_source_for_c89(
+        _build_fallback_source(function_bodies, fallback_harness, prefix=fallback_prefix)
+    )
     source_path.write_text(source_text, encoding="utf-8")
 
     decompiled_exe_path = out_dir / decompile_exe_name
@@ -1672,7 +1712,10 @@ def _decompile_and_validate(
             return None
         fallback_functions = decompile_fallback_rebuild.get("functions")
         fallback_harness = decompile_fallback_rebuild.get("harness")
+        fallback_prefix = decompile_fallback_rebuild.get("prefix", "")
         if not isinstance(fallback_functions, tuple) or not isinstance(fallback_harness, str):
+            return None
+        if not isinstance(fallback_prefix, str):
             return None
         decomp_name, obj_name, exe_name, map_name = _rebuild_names()
         result = _build_from_function_decompiles(
@@ -1689,6 +1732,7 @@ def _decompile_and_validate(
             decompile_signature_catalog=decompile_signature_catalog,
             fallback_functions=fallback_functions,
             fallback_harness=fallback_harness,
+            fallback_prefix=fallback_prefix,
             decompile_c_name=decomp_name,
             decompile_obj_name=obj_name,
             decompile_exe_name=exe_name,

@@ -148,10 +148,12 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
                 seen_call_texts.add(call_text)
                 call_sources.append((_canonical_name(call_name), call_text))
 
+        asm_call_operand_markers = {"BYTE", "WORD", "DWORD", "QWORD", "FWORD", "PTR", "NEAR", "FAR"}
+
         def _remember_asm_calls(asm_text: str, call_re, call_names: list[str], seen_calls: set[str]) -> None:
             for call_match in call_re.finditer(asm_text):
                 callee = call_match.group(1)
-                if callee == "__chkstk" or callee.startswith("$"):
+                if callee == "__chkstk" or callee.startswith("$") or callee.upper() in asm_call_operand_markers:
                     continue
                 canonical_callee = _canonical_name(callee)
                 if canonical_callee not in seen_calls:

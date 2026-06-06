@@ -2,7 +2,9 @@ from scripts.build_msc6_examples import (
     COMPARE16_HARNESS_MAIN,
     _child_trace_path,
     _extract_decompiled_function_definition,
+    _is_decompile_output_acceptable,
     _make_decompile_env,
+    _parse_decompile_profile,
 )
 
 
@@ -46,3 +48,16 @@ def test_decompile_env_derives_child_trace_file(monkeypatch, tmp_path):
 
     assert env["INERTIA_ENABLE_TAIL_VALIDATION"] == "1"
     assert env["INERTIA_OTEL_SPAN_FILE"] == str(tmp_path / "msc.trace.CMP32.compare_unsigned.txt")
+
+
+def test_acceptance_uses_final_clean_tail_validation_over_rejected_lanes():
+    stderr = """
+[dbg] direct failure family: status=empty validation=failed
+[tail-validation] whole-tail validation clean across 1 functions
+"""
+    profile = _parse_decompile_profile(stderr)
+
+    ok, reason = _is_decompile_output_acceptable("int f(void) { return 1; }", stderr, profile)
+
+    assert ok is True
+    assert reason is None

@@ -229,6 +229,25 @@ def test_cod_extract_canonicalizes_known_object_names():
     assert "S425_rout" not in get_meta.global_names
 
 
+def test_cod_extract_does_not_treat_indirect_call_width_as_callee(tmp_path):
+    cod_path = tmp_path / "FPTR.COD"
+    cod_path.write_text(
+        "\n".join(
+            (
+                "apply_twice\tPROC NEAR",
+                "    *** 0000 FF 56 04 call WORD PTR [bp+4]",
+                "    *** 0003 E8 00 00 call _direct_helper",
+                "apply_twice\tENDP",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    metadata = extract_cod_proc_metadata(cod_path, "apply_twice")
+
+    assert metadata.call_names == ("direct_helper",)
+
+
 def test_preferred_known_helper_signature_decl_prefers_canonical_prefixed_names():
     assert decompile.preferred_known_helper_signature_decl("intdos") == "int _intdos(union REGS *in, union REGS *out);"
     assert decompile.preferred_known_helper_signature_decl("ERROR") == "int _ERROR(const char *fmt, ...);"
