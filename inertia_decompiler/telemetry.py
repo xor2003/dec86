@@ -160,6 +160,14 @@ def configure_telemetry_from_env(
     file_path: Path | str | None = None,
     top_n: int | None = None,
     min_ms: float | None = None,
+    full_jsonl: bool | None = None,
+    stderr_summary: bool | None = None,
+    output_format: str | TraceOutputFormat | None = None,
+    text_max_spans: int | None = None,
+    otlp_export: bool | None = None,
+    service_name: str | None = None,
+    force_flush_ms: int | None = None,
+    otlp_endpoint: str | None = None,
 ) -> bool:
     requested = _env_bool(TRACE_ENABLE_ENV) if enabled is None else bool(enabled)
     if not requested:
@@ -169,12 +177,37 @@ def configure_telemetry_from_env(
         _STATE.enabled = True
         _STATE.top_n = max(1, int(top_n if top_n is not None else _env_int(TRACE_TOP_N_ENV, _STATE.top_n)))
         _STATE.min_ms = max(0.0, float(min_ms if min_ms is not None else _env_float(TRACE_MIN_MS_ENV, _STATE.min_ms)))
+        resolved_full_jsonl = full_jsonl if full_jsonl is not None else _env_bool(TRACE_FULL_JSONL_ENV, False)
+        if otlp_export is not None:
+            os.environ[TRACE_OTLP_ENABLE_ENV] = "1" if bool(otlp_export) else "0"
+        if otlp_endpoint is not None:
+            if otlp_endpoint:
+                os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = otlp_endpoint
+            else:
+                os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
+        if service_name is not None:
+            if service_name:
+                os.environ[TRACE_SERVICE_NAME_ENV] = service_name
+            else:
+                os.environ.pop(TRACE_SERVICE_NAME_ENV, None)
+        if force_flush_ms is not None:
+            os.environ[TRACE_FORCE_FLUSH_MS_ENV] = str(max(1, int(force_flush_ms)))
+
         raw_file_path = file_path if file_path is not None else os.environ.get(TRACE_FILE_ENV)
         _STATE.file_path = Path(raw_file_path) if raw_file_path else None
-        _STATE.stderr_summary = _env_bool(TRACE_STDERR_ENV, True)
-        _STATE.full_jsonl = _env_bool(TRACE_FULL_JSONL_ENV, False)
-        _STATE.output_format = _resolve_output_format(_STATE.file_path, _STATE.full_jsonl)
-        _STATE.text_max_spans = max(1, _env_int(TRACE_TEXT_MAX_SPANS_ENV, _STATE.text_max_spans))
+        _STATE.stderr_summary = _env_bool(TRACE_STDERR_ENV, True) if stderr_summary is None else bool(stderr_summary)
+        _STATE.full_jsonl = resolved_full_jsonl
+        _STATE.output_format = _resolve_output_format(
+            _STATE.file_path,
+            _STATE.full_jsonl,
+            explicit_format=output_format,
+        )
+        if stderr_summary is not None:
+            _STATE.stderr_summary = bool(stderr_summary)
+        if text_max_spans is not None:
+            _STATE.text_max_spans = max(1, int(text_max_spans))
+        else:
+            _STATE.text_max_spans = max(1, _env_int(TRACE_TEXT_MAX_SPANS_ENV, _STATE.text_max_spans))
         if not _STATE.configured:
             _STATE.otel_tracer = _optional_otel_tracer()
             atexit.register(emit_compact_summary)
@@ -225,17 +258,18 @@ def _otlp_export_requested() -> bool:
     explicit = os.environ.get(TRACE_OTLP_ENABLE_ENV)
     if explicit is not None:
         return _env_bool(TRACE_OTLP_ENABLE_ENV, False)
-    return any(
-        os.environ.get(name)
-        for name in (
-            "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        )
-    )
+    return False
 
 
-def _resolve_output_format(file_path: Path | None, full_jsonl: bool) -> TraceOutputFormat:
-    explicit = os.environ.get(TRACE_FORMAT_ENV)
+def _resolve_output_format(
+    file_path: Path | None,
+    full_jsonl: bool,
+    *,
+    explicit_format: str | TraceOutputFormat | None = None,
+) -> TraceOutputFormat:
+    if isinstance(explicit_format, TraceOutputFormat):
+        return explicit_format
+    explicit = explicit_format if explicit_format is not None else os.environ.get(TRACE_FORMAT_ENV)
     if explicit is not None:
         normalized = explicit.strip().lower()
         if normalized in {"text", "agent", "agent_text", "txt"}:

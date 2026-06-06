@@ -23,10 +23,15 @@ Useful knobs:
 - `INERTIA_OTEL_MIN_MS=1` hides tiny spans from the `top` list.
 - `INERTIA_OTEL_STDERR=0` suppresses the `[otel-trace]` stderr line when writing a file.
 - `INERTIA_OTEL_FULL_JSONL=1` writes summary plus every span as JSONL.
-- `INERTIA_OTEL_EXPORT_OTLP=1` also exports spans through OTLP HTTP/protobuf.
+- `INERTIA_OTEL_EXPORT_OTLP=1` exports spans through OTLP HTTP/protobuf.
 - `INERTIA_OTEL_SERVICE_NAME=inertia-decompiler` overrides the OpenTelemetry service name.
 - `INERTIA_OTEL_FORCE_FLUSH_MS=3000` controls exporter flush timeout at process exit.
 - `INERTIA_OTEL_PROFILE_IN_PROCESS=1` disables direct-address fork isolation for profiling so nested child spans flush into the same compact trace. Use only for profiling, not default runs.
+
+CLI equivalents on `decompile.py`:
+
+- `--otel-spans` / `--otel-no-spans`
+- `--otel-span-file PATH`
 
 Use text for agent handoff. It intentionally avoids duplicated `top`/`agg`
 JSON sections and repeats only a short schema:
@@ -54,7 +59,7 @@ trace total=8562.5ms spans=6 otel=off errors=0
 126.63 validation.acceptance status=ok target=portable-flat
 ```
 
-Use `.json`/`.jsonl` only when a parser requires it. Agent handoff should use `text` or `slow`; stderr is always compact text even when the trace file is JSON/JSONL. OTLP export uses standard OpenTelemetry endpoint variables:
+Use `.json`/`.jsonl` only when a parser requires it. Agent handoff should use `text` or `slow`; stderr is always compact text even when the trace file is JSON/JSONL.
 
 ```bash
 INERTIA_OTEL_SPANS=1 \
@@ -63,7 +68,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
 ./.venv/bin/python ./decompile.py examples/build_msc6/CMP16.EXE
 ```
 
-If `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is already set, OTLP export is enabled automatically unless `INERTIA_OTEL_EXPORT_OTLP=0` is set. Exporter configuration or collector failures must not fail decompilation; check `otel_export` in the compact summary for status.
+OTLP export is only enabled when `INERTIA_OTEL_EXPORT_OTLP=1` (or equivalent CLI flag) is set. Collector endpoint variables alone do not turn export on. Exporter configuration or collector failures must not fail decompilation; check `otel_export` in the compact summary for status.
 
 JSON output remains available for tools:
 

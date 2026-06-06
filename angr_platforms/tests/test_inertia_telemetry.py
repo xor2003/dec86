@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import time
 
+import inertia_decompiler.cli_core as cli_core
 import inertia_decompiler.telemetry as telemetry
 from inertia_decompiler.telemetry import (
     build_agent_slow_trace_text,
@@ -232,6 +235,31 @@ def test_json_file_mode_keeps_stderr_agent_text(monkeypatch, tmp_path, capsys):
     reset_telemetry_for_tests()
 
 
+def test_cli_otel_args_drive_telemetry_output(monkeypatch, tmp_path):
+    reset_telemetry_for_tests()
+    trace_path = tmp_path / "trace.txt"
+    args = SimpleNamespace(
+        otel_spans=True,
+        otel_span_file=trace_path,
+    )
+
+    cli_core._configure_cli_telemetry_8616(args)
+
+    with span("cli.unit", binary="CMP16.EXE", addr="0x1000"):
+        pass
+    emit_compact_summary()
+
+    assert trace_path.exists()
+    trace_text = trace_path.read_text(encoding="utf-8")
+    assert trace_text.startswith("summary total_ms=")
+    assert "schema: id|parent|ms|name|attrs" in trace_text
+    assert "cli.unit" in trace_text
+    # output stays human-readable while still using the configured CLI mode.
+    assert "{" not in trace_text
+
+    reset_telemetry_for_tests()
+
+
 def test_span_records_error_without_swallowing_exception(monkeypatch):
     reset_telemetry_for_tests()
     monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
@@ -290,10 +318,9 @@ def test_otlp_export_uses_provider_without_collector(monkeypatch, tmp_path):
     reset_telemetry_for_tests()
 
 
-def test_otlp_endpoint_can_be_explicitly_disabled(monkeypatch):
+def test_otlp_endpoint_does_not_enable_export_implicitly(monkeypatch):
     reset_telemetry_for_tests()
     monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
-    monkeypatch.setenv("INERTIA_OTEL_EXPORT_OTLP", "0")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
 
     assert configure_telemetry_from_env()

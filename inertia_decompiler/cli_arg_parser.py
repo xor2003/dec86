@@ -172,4 +172,16 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         help="Token-efficient output: suppress timestamps, progress, diagnostic commentary. "
         "Also set via INERTIA_BRIEF=1.",
     )
+    parser.add_argument(
+        "--otel-spans",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable compact OTLP-like span output for decompilation (default: INERTIA_OTEL_SPANS).",
+    )
+    parser.add_argument(
+        "--otel-span-file",
+        type=Path,
+        default=None,
+        help="Write telemetry summary/spans to this file.",
+    )
     return parser
