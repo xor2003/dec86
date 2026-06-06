@@ -18,12 +18,14 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CBreak,
     CConstant,
+    CContinue,
     CDoWhileLoop,
     CForLoop,
     CFunctionCall,
     CGoto,
     CIfBreak,
     CIfElse,
+    CIndexedVariable,
     CReturn,
     CStatements,
     CTypeCast,
@@ -31,7 +33,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
-from angr.sim_type import SimTypeBottom, SimTypeLong, SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
@@ -68,7 +70,9 @@ from .pipeline.contracts import assert_pipeline_contracts_8616
 from .pipeline.errors import PipelineHardError
 from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
 from .postprocess.optimization.dead_setup import _count_dead_setup_escaped_8616
+from .postprocess.optimization.dce import _dead_code_elimination_8616
 from .postprocess.optimization.pass_driver import _run_optimization_passes_8616
+from .render_compat import repair_cfunctioncall_render_targets_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
@@ -89,10 +93,64 @@ __all__ = [
 ]
 
 
+class _SimTypeNearPointer16_8616(SimTypePointer):
+    """16-bit near pointer type for real-mode stack argument layout."""
+
+    @property
+    def size(self):
+        return 16
+
+    def _with_arch(self, arch):
+        pts_to = self.pts_to.with_arch(arch) if hasattr(self.pts_to, "with_arch") else self.pts_to
+        out = _SimTypeNearPointer16_8616(
+            pts_to,
+            self.label,
+            self.offset,
+            qualifier=self.qualifier,
+            disposition=self.disposition,
+        )
+        out._arch = arch
+        return out
+
+    def make(self, pts_to):
+        out = _SimTypeNearPointer16_8616(
+            pts_to,
+            self.label,
+            self.offset,
+            qualifier=self.qualifier,
+            disposition=self.disposition,
+        )
+        out._arch = self._arch
+        return out
+
+    def copy(self):
+        out = _SimTypeNearPointer16_8616(
+            self.pts_to,
+            self.label,
+            self.offset,
+            qualifier=self.qualifier,
+            disposition=self.disposition,
+        )
+        out._arch = self._arch
+        return out
+
+
 class _PostprocessValidationDeltaKind8616(Enum):
     BLOCKING = "blocking"
     NAME_ONLY_HELPER_ANNOTATION = "name_only_helper_annotation"
     JCC_CALL_RETURN_CONDITION_REBINDING = "jcc_call_return_condition_rebinding"
+    UNREACHABLE_AFTER_RETURN_PRUNE = "unreachable_after_return_prune"
+    CALLSITE_STACK_ARGUMENT_MATERIALIZATION = "callsite_stack_argument_materialization"
+    MISSING_TERMINAL_AX_RETURN = "missing_terminal_ax_return"
+    CFG_RETURN_CHAIN_MATERIALIZATION = "cfg_return_chain_materialization"
+    CFG_RETURN_EXPR_CHAIN_MATERIALIZATION = "cfg_return_expr_chain_materialization"
+
+
+_MISSING_TERMINAL_AX_RETURN_PASS_NAMES_8616 = frozenset(
+    {
+        "_materialize_missing_terminal_ax_return_8616",
+    }
+)
 
 
 _JCC_REWRITE_VALIDATION_PASS_NAMES_8616 = frozenset(
@@ -404,6 +462,93 @@ def _signed_i16_immediate_8616(value: int) -> int:
     return value
 
 
+def _clone_c_expr_8616(expr):
+    codegen = getattr(expr, "codegen", None)
+    if isinstance(expr, CVariable):
+        return CVariable(
+            getattr(expr, "variable", None),
+            unified_variable=getattr(expr, "unified_variable", None),
+            variable_type=getattr(expr, "variable_type", None),
+            vvar_id=getattr(expr, "vvar_id", None),
+            codegen=codegen,
+            tags=getattr(expr, "tags", None),
+        )
+    if isinstance(expr, CConstant):
+        return CConstant(
+            getattr(expr, "value", None),
+            getattr(expr, "type", None),
+            reference_values=getattr(expr, "reference_values", None),
+            codegen=codegen,
+            tags=getattr(expr, "tags", None),
+        )
+    if isinstance(expr, CBinaryOp):
+        return CBinaryOp(
+            getattr(expr, "op", None),
+            _clone_c_expr_8616(getattr(expr, "lhs", None)),
+            _clone_c_expr_8616(getattr(expr, "rhs", None)),
+            codegen=codegen,
+            tags=getattr(expr, "tags", None),
+        )
+    if isinstance(expr, CUnaryOp):
+        return CUnaryOp(
+            getattr(expr, "op", None),
+            _clone_c_expr_8616(getattr(expr, "operand", None)),
+            codegen=codegen,
+            tags=getattr(expr, "tags", None),
+        )
+    if isinstance(expr, CTypeCast):
+        return CTypeCast(
+            getattr(expr, "src_type", None),
+            getattr(expr, "dst_type", None),
+            _clone_c_expr_8616(getattr(expr, "expr", None)),
+            codegen=codegen,
+            tags=getattr(expr, "tags", None),
+        )
+    with contextlib.suppress(Exception):
+        return copy.copy(expr)
+    return expr
+
+
+def _terminal_stack_arg_expr_8616(project, codegen, disp: int, size: int):
+    if int(disp) <= 2:
+        return _clone_c_expr_8616(_jcc._stack_slot_expr_8616(codegen, int(disp), int(size) or 2))
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return _clone_c_expr_8616(_jcc._stack_slot_expr_8616(codegen, int(disp), int(size) or 2))
+    width = max(2, int(size) or 2)
+    arg_list = list(getattr(cfunc, "arg_list", ()) or ())
+    for arg in arg_list:
+        variable = getattr(arg, "variable", None)
+        if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) == int(disp):
+            return _clone_c_expr_8616(arg)
+    arg_type = SimTypeShort(False)
+    name = f"arg_{int(disp):x}"
+    variable = SimStackVariable(int(disp), width, base="bp", name=name, region=getattr(cfunc, "addr", None))
+    cvar = CVariable(variable, variable_type=arg_type, codegen=codegen)
+    arg_list.append(cvar)
+    arg_list.sort(key=lambda item: getattr(getattr(item, "variable", None), "offset", 0) or 0)
+    cfunc.arg_list = arg_list
+    variables_in_use = getattr(cfunc, "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        variables_in_use[variable] = cvar
+    unified = getattr(cfunc, "unified_local_vars", None)
+    if isinstance(unified, dict):
+        unified[variable] = {(cvar, arg_type)}
+    prototype = getattr(cfunc, "functy", None) or getattr(cfunc, "prototype", None)
+    return_type = getattr(prototype, "returnty", None) if prototype is not None else SimTypeShort(False)
+    arg_types = [getattr(arg, "variable_type", None) or SimTypeShort(False) for arg in arg_list]
+    arg_names = [getattr(getattr(arg, "variable", None), "name", None) or f"arg_{idx}" for idx, arg in enumerate(arg_list)]
+    new_proto = SimTypeFunction(arg_types, return_type, arg_names=arg_names).with_arch(project.arch)
+    with contextlib.suppress(Exception):
+        cfunc.functy = new_proto
+    with contextlib.suppress(Exception):
+        cfunc.prototype = new_proto
+    codegen._inertia_missing_terminal_ax_return_stack_args_materialized_8616 = (
+        int(getattr(codegen, "_inertia_missing_terminal_ax_return_stack_args_materialized_8616", 0) or 0) + 1
+    )
+    return _clone_c_expr_8616(cvar)
+
+
 def _branch_target_return_value_8616(project, target_addr: int) -> int | None:
     try:
         block = project.factory.block(int(target_addr), opt_level=0)
@@ -425,13 +570,23 @@ def _branch_target_return_value_8616(project, target_addr: int) -> int | None:
     return None
 
 
-def _branch_target_return_expr_8616(project, codegen, target_addr: int):
+def _branch_target_return_expr_8616(project, codegen, target_addr: int, *, _depth: int = 0, _seen: set[int] | None = None):
+    if _depth > 4:
+        return None
+    if _seen is None:
+        _seen = set()
+    target_addr = int(target_addr)
+    if target_addr in _seen:
+        return None
+    _seen.add(target_addr)
     try:
-        block = project.factory.block(int(target_addr), opt_level=0)
+        block = project.factory.block(target_addr, opt_level=0)
     except Exception:
         return None
     ax_value = None
     dx_value = None
+    cx_value = None
+    cl_value = None
 
     def _stack_offset(expr) -> int | None:
         if not isinstance(expr, CVariable):
@@ -502,9 +657,442 @@ def _branch_target_return_expr_8616(project, codegen, target_addr: int):
             op = {"add": "Add", "sub": "Sub", "shl": "Shl"}[mnemonic]
             ax_value = CBinaryOp(op, ax_value, imm, codegen=codegen)
             continue
-        if mnemonic in {"jmp", "ljmp", "ret", "retf", "iret"}:
+        if (
+            mnemonic in {"inc", "dec"}
+            and ax_value is not None
+            and len(operands) == 1
+            and int(getattr(operands[0], "type", -1)) == 1
+            and str(insn.reg_name(operands[0].reg)).lower() == "ax"
+        ):
+            one = CConstant(1, SimTypeShort(False), codegen=codegen)
+            op = "Add" if mnemonic == "inc" else "Sub"
+            ax_value = CBinaryOp(op, ax_value, one, codegen=codegen)
+            continue
+        if mnemonic in {"jmp", "ljmp"}:
+            combined = _combined_return_expr()
+            if combined is not None:
+                return combined
+            next_target = _jcc._branch_target_imm_8616(insn)
+            if next_target is None:
+                return None
+            return _branch_target_return_expr_8616(
+                project,
+                codegen,
+                int(next_target),
+                _depth=_depth + 1,
+                _seen=_seen,
+            )
+        if mnemonic in {"ret", "retf", "iret"}:
             return _combined_return_expr()
     return _combined_return_expr()
+
+
+def _linear_terminal_ax_return_expr_8616(project, codegen, function):
+    block_addrs = tuple(sorted(getattr(function, "block_addrs_set", ()) or ()))
+    debug = bool(os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"))
+    if debug:
+        info = getattr(function, "info", None)
+        logging.getLogger(__name__).warning(
+            "[missing-ax-return] function=%#x block_addrs=%r info_complexity=%r local_blocks=%d blocks=%d",
+            int(getattr(function, "addr", -1) or -1),
+            block_addrs,
+            (info or {}).get("_inertia_function_complexity") if isinstance(info, dict) else None,
+            len(getattr(function, "_local_blocks", {}) or {}),
+            len(tuple(getattr(function, "blocks", ()) or ())),
+        )
+    if not block_addrs:
+        return None
+    ax_value = None
+    dx_value = None
+    raw_insns = 0
+    classified = 0
+    ret_count = 0
+    conditional_branches = 0
+    prototype = getattr(getattr(codegen, "cfunc", None), "functy", None) or getattr(
+        getattr(codegen, "cfunc", None), "prototype", None
+    )
+    return_type = getattr(prototype, "returnty", None)
+    return_bits = getattr(return_type, "size", None)
+    allow_al_return = isinstance(return_type, SimTypeChar) or (isinstance(return_bits, int) and return_bits <= 8)
+
+    def _stack_offset(expr) -> int | None:
+        if not isinstance(expr, CVariable):
+            return None
+        variable = getattr(expr, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            return None
+        offset = getattr(variable, "offset", None)
+        return offset if isinstance(offset, int) else None
+
+    def _combined_return_expr():
+        if ax_value is None:
+            return None
+        if dx_value is None:
+            return ax_value
+        ax_offset = _stack_offset(ax_value)
+        dx_offset = _stack_offset(dx_value)
+        if isinstance(ax_offset, int) and isinstance(dx_offset, int) and dx_offset == ax_offset + 2:
+            wide = _jcc._stack_slot_expr_8616(codegen, ax_offset, 4)
+            if wide is not None:
+                return wide
+        if isinstance(ax_value, CConstant) and isinstance(dx_value, CConstant):
+            low = int(getattr(ax_value, "value", 0) or 0) & 0xFFFF
+            high = int(getattr(dx_value, "value", 0) or 0) & 0xFFFF
+            value = (high << 16) | low
+            if value & 0x80000000:
+                value -= 0x100000000
+            return CConstant(value, SimTypeLong(True), codegen=codegen)
+        return ax_value
+
+    def _operand_reg_name(insn, operand) -> str:
+        with contextlib.suppress(Exception):
+            return str(insn.reg_name(operand.reg)).lower()
+        return ""
+
+    def _operand_value_expr(insn, operand, *, size: int):
+        if int(getattr(operand, "type", -1)) == 2:
+            value = int(getattr(operand, "imm", 0) or 0)
+            if size == 1:
+                return CConstant(value & 0xFF, SimTypeChar(False), codegen=codegen)
+            return CConstant(_signed_i16_immediate_8616(value), SimTypeShort(False), codegen=codegen)
+        if int(getattr(operand, "type", -1)) != 3:
+            return None
+        mem = operand.mem
+        if str(insn.reg_name(mem.base)).lower() != "bp":
+            return None
+        operand_size = int(getattr(operand, "size", 0) or size or 2)
+        return _terminal_stack_arg_expr_8616(project, codegen, int(mem.disp), operand_size)
+
+    def _byte_stack_value_expr(insn, operand):
+        if int(getattr(operand, "type", -1)) != 3:
+            return None
+        mem = operand.mem
+        if str(insn.reg_name(mem.base)).lower() != "bp":
+            return None
+        disp = int(mem.disp)
+        if disp % 2:
+            word = _terminal_stack_arg_expr_8616(project, codegen, disp - 1, 2)
+            if word is None:
+                return None
+            return CBinaryOp(
+                "Shr",
+                _clone_c_expr_8616(word),
+                CConstant(8, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            )
+        word = _terminal_stack_arg_expr_8616(project, codegen, disp, 2)
+        if word is None:
+            return None
+        return CBinaryOp(
+            "And",
+            _clone_c_expr_8616(word),
+            CConstant(0xFF, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    def _is_return_epilogue_block(addr: int) -> bool:
+        try:
+            epilogue_block = project.factory.block(int(addr), opt_level=0)
+        except Exception:
+            return False
+        saw_ret = False
+        for epilogue_insn in tuple(getattr(getattr(epilogue_block, "capstone", None), "insns", ()) or ()):
+            epilogue_mnemonic = str(getattr(epilogue_insn, "mnemonic", "")).lower()
+            epilogue_operands = tuple(getattr(epilogue_insn, "operands", ()) or ())
+            if epilogue_mnemonic in {"ret", "retf", "iret"}:
+                saw_ret = True
+                break
+            if epilogue_mnemonic in {"pop", "leave", "nop"}:
+                continue
+            if (
+                epilogue_mnemonic == "mov"
+                and len(epilogue_operands) == 2
+                and int(getattr(epilogue_operands[0], "type", -1)) == 1
+                and int(getattr(epilogue_operands[1], "type", -1)) == 1
+                and _operand_reg_name(epilogue_insn, epilogue_operands[0]) == "sp"
+                and _operand_reg_name(epilogue_insn, epilogue_operands[1]) == "bp"
+            ):
+                continue
+            return False
+        return saw_ret
+
+    for block_addr in block_addrs:
+        try:
+            block = project.factory.block(int(block_addr), opt_level=0)
+        except Exception:
+            return None
+        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+            raw_insns += 1
+            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+            operands = tuple(getattr(insn, "operands", ()) or ())
+            if mnemonic.startswith("j") and mnemonic not in {"jmp", "ljmp"}:
+                conditional_branches += 1
+                continue
+            if mnemonic in {"jmp", "ljmp"}:
+                target = _jcc._branch_target_imm_8616(insn)
+                if target is None or conditional_branches or not _is_return_epilogue_block(int(target)):
+                    return None
+                result = _combined_return_expr()
+                if result is None:
+                    return None
+                codegen._inertia_missing_terminal_ax_return_raw_fact_count_8616 = raw_insns
+                codegen._inertia_missing_terminal_ax_return_classified_fact_count_8616 = classified
+                if debug:
+                    logging.getLogger(__name__).warning(
+                        "[missing-ax-return] terminal-epilogue-jump target=%#x result=%s raw=%d classified=%d",
+                        int(target),
+                        _expr_fingerprint(result, project),
+                        raw_insns,
+                        classified,
+                    )
+                return result
+            if mnemonic in {"call", "lcall"}:
+                ax_value = None
+                dx_value = None
+                cx_value = None
+                cl_value = None
+                classified += 1
+                continue
+            if (
+                not allow_al_return
+                and
+                mnemonic == "mov"
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "al"
+            ):
+                value = _byte_stack_value_expr(insn, operands[1])
+                if value is None and allow_al_return:
+                    value = _operand_value_expr(insn, operands[1], size=1)
+                if value is not None:
+                    ax_value = value
+                    dx_value = None
+                    classified += 1
+                    continue
+            if (
+                mnemonic == "sub"
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and int(getattr(operands[1], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "ah"
+                and _operand_reg_name(insn, operands[1]) == "ah"
+                and ax_value is not None
+            ):
+                classified += 1
+                continue
+            if (
+                mnemonic == "mov"
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "cl"
+                and int(getattr(operands[1], "type", -1)) == 2
+            ):
+                cl_value = CConstant(int(getattr(operands[1], "imm", 0) or 0), SimTypeChar(False), codegen=codegen)
+                classified += 1
+                continue
+            if (
+                mnemonic == "mov"
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "cx"
+            ):
+                value = _operand_value_expr(insn, operands[1], size=2)
+                if value is not None:
+                    cx_value = value
+                    classified += 1
+                    continue
+            if (
+                allow_al_return
+                and mnemonic == "mov"
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "al"
+            ):
+                value = _operand_value_expr(insn, operands[1], size=1)
+                if value is not None:
+                    ax_value = value
+                    dx_value = None
+                    classified += 1
+                    continue
+            if (
+                mnemonic == "mov"
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) in {"ax", "dx"}
+            ):
+                dst_reg = _operand_reg_name(insn, operands[0])
+                rhs = operands[1]
+                value = None
+                if int(getattr(rhs, "type", -1)) == 2:
+                    value = CConstant(
+                        _signed_i16_immediate_8616(int(getattr(rhs, "imm", 0) or 0)),
+                        SimTypeShort(False),
+                        codegen=codegen,
+                    )
+                elif int(getattr(rhs, "type", -1)) == 3:
+                    mem = rhs.mem
+                    if str(insn.reg_name(mem.base)).lower() == "bp":
+                        value = _jcc._stack_slot_expr_8616(codegen, int(mem.disp), int(getattr(rhs, "size", 0) or 2))
+                if value is not None:
+                    if dst_reg == "ax":
+                        ax_value = value
+                    elif dst_reg == "dx":
+                        dx_value = value
+                    classified += 1
+                    continue
+            if (
+                allow_al_return
+                and mnemonic in {"add", "sub", "xor"}
+                and ax_value is not None
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "al"
+            ):
+                rhs = _operand_value_expr(insn, operands[1], size=1)
+                if rhs is None:
+                    return None
+                op = {"add": "Add", "sub": "Sub", "xor": "Xor"}[mnemonic]
+                ax_value = CBinaryOp(op, _clone_c_expr_8616(ax_value), _clone_c_expr_8616(rhs), codegen=codegen)
+                classified += 1
+                continue
+            if (
+                allow_al_return
+                and mnemonic == "shl"
+                and ax_value is not None
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "al"
+                and int(getattr(operands[1], "type", -1)) == 2
+            ):
+                imm = CConstant(int(getattr(operands[1], "imm", 0) or 0), SimTypeChar(False), codegen=codegen)
+                ax_value = CBinaryOp("Shl", _clone_c_expr_8616(ax_value), imm, codegen=codegen)
+                classified += 1
+                continue
+            if (
+                mnemonic == "shr"
+                and ax_value is not None
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "ax"
+                and int(getattr(operands[1], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[1]) == "cl"
+                and cl_value is not None
+            ):
+                ax_value = CBinaryOp("Shr", _clone_c_expr_8616(ax_value), _clone_c_expr_8616(cl_value), codegen=codegen)
+                classified += 1
+                continue
+            if (
+                mnemonic == "shl"
+                and cx_value is not None
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "cx"
+                and int(getattr(operands[1], "type", -1)) == 2
+            ):
+                imm = CConstant(int(getattr(operands[1], "imm", 0) or 0), SimTypeShort(False), codegen=codegen)
+                cx_value = CBinaryOp("Shl", _clone_c_expr_8616(cx_value), imm, codegen=codegen)
+                classified += 1
+                continue
+            if (
+                mnemonic == "or"
+                and ax_value is not None
+                and cx_value is not None
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and int(getattr(operands[1], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "ax"
+                and _operand_reg_name(insn, operands[1]) == "cx"
+            ):
+                ax_value = CBinaryOp("Or", _clone_c_expr_8616(ax_value), _clone_c_expr_8616(cx_value), codegen=codegen)
+                classified += 1
+                continue
+            if (
+                mnemonic in {"add", "sub"}
+                and ax_value is not None
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "ax"
+            ):
+                rhs = _operand_value_expr(insn, operands[1], size=2)
+                if rhs is None:
+                    return None
+                op = {"add": "Add", "sub": "Sub"}[mnemonic]
+                ax_value = CBinaryOp(op, _clone_c_expr_8616(ax_value), _clone_c_expr_8616(rhs), codegen=codegen)
+                classified += 1
+                continue
+            if (
+                mnemonic in {"mul", "imul"}
+                and ax_value is not None
+                and len(operands) == 1
+            ):
+                rhs = _operand_value_expr(insn, operands[0], size=2)
+                if rhs is None:
+                    return None
+                ax_value = CBinaryOp("Mul", _clone_c_expr_8616(ax_value), _clone_c_expr_8616(rhs), codegen=codegen)
+                dx_value = None
+                classified += 1
+                continue
+            if (
+                mnemonic in {"add", "sub", "shl"}
+                and ax_value is not None
+                and len(operands) == 2
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "ax"
+                and int(getattr(operands[1], "type", -1)) == 2
+            ):
+                imm = CConstant(
+                    _signed_i16_immediate_8616(int(getattr(operands[1], "imm", 0) or 0)),
+                    SimTypeShort(False),
+                    codegen=codegen,
+                )
+                op = {"add": "Add", "sub": "Sub", "shl": "Shl"}[mnemonic]
+                ax_value = CBinaryOp(op, _clone_c_expr_8616(ax_value), imm, codegen=codegen)
+                classified += 1
+                continue
+            if (
+                mnemonic in {"inc", "dec"}
+                and ax_value is not None
+                and len(operands) == 1
+                and int(getattr(operands[0], "type", -1)) == 1
+                and _operand_reg_name(insn, operands[0]) == "ax"
+            ):
+                one = CConstant(1, SimTypeShort(False), codegen=codegen)
+                op = "Add" if mnemonic == "inc" else "Sub"
+                ax_value = CBinaryOp(op, _clone_c_expr_8616(ax_value), one, codegen=codegen)
+                classified += 1
+                continue
+            if mnemonic in {"ret", "retf", "iret"}:
+                ret_count += 1
+                if ret_count > 1 or conditional_branches:
+                    if debug:
+                        logging.getLogger(__name__).warning(
+                            "[missing-ax-return] refused ret_count=%d conditional_branches=%d raw=%d classified=%d",
+                            ret_count,
+                            conditional_branches,
+                            raw_insns,
+                            classified,
+                        )
+                    return None
+                codegen._inertia_missing_terminal_ax_return_raw_fact_count_8616 = raw_insns
+                codegen._inertia_missing_terminal_ax_return_classified_fact_count_8616 = classified
+                result = _combined_return_expr()
+                if debug:
+                    logging.getLogger(__name__).warning(
+                        "[missing-ax-return] result=%s raw=%d classified=%d",
+                        _expr_fingerprint(result, project) if result is not None else None,
+                        raw_insns,
+                        classified,
+                    )
+                return result
+    if debug:
+        logging.getLogger(__name__).warning(
+            "[missing-ax-return] refused no terminal return raw=%d classified=%d ret_count=%d conditional_branches=%d",
+            raw_insns,
+            classified,
+            ret_count,
+            conditional_branches,
+        )
+    return None
 
 
 def _next_unconditional_target_after_jcc_8616(project, block_addr: int, jcc_addr: int) -> int | None:
@@ -670,16 +1258,39 @@ def _ordered_conditional_return_pairs_from_cfg_8616(project, codegen) -> list[tu
 
 def _ordered_conditional_return_expr_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, object, object]]:
     pairs: list[tuple[object, object, object]] = []
+    debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
+    log = logging.getLogger(__name__)
     for block_addr, insn in _linear_jcc_block_starts_8616(project, codegen):
         true_target = _jcc._branch_target_imm_8616(insn)
         false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address))
+        if debug:
+            log.warning(
+                "[cfg-return-expr] jcc=%#x block=%#x true=%r false=%r",
+                int(getattr(insn, "address", 0) or 0),
+                int(block_addr),
+                true_target,
+                false_target,
+            )
         if true_target is None or false_target is None:
             continue
         true_expr = _branch_target_return_expr_8616(project, codegen, true_target)
         false_expr = _branch_target_return_expr_8616(project, codegen, false_target)
+        if debug:
+            log.warning(
+                "[cfg-return-expr] targets true_expr=%r false_expr=%r true_fp=%r false_fp=%r",
+                type(true_expr).__name__ if true_expr is not None else None,
+                type(false_expr).__name__ if false_expr is not None else None,
+                _expr_fingerprint(true_expr, project) if true_expr is not None else None,
+                _expr_fingerprint(false_expr, project) if false_expr is not None else None,
+            )
         if true_expr is None or false_expr is None:
             continue
         decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+        if debug:
+            log.warning(
+                "[cfg-return-expr] decoded=%s",
+                type(decoded).__name__ if decoded is not None else None,
+            )
         if decoded is None:
             continue
         cond = getattr(decoded, "expr", None)
@@ -946,6 +1557,60 @@ def _resolve_one_hop_jmp_target_8616(project, target: int | None) -> int | None:
     return int(target)
 
 
+def _clone_c_value_for_codegen_tree_8616(value):
+    """Clone a structured C node before inserting it into a new C tree.
+
+    The structured code renderer expects expression nodes to have a single
+    tree owner. Selector-return materialization can reuse CFG-derived
+    expressions in several branches, so clone on insertion to keep the final
+    C AST acyclic and deterministic.
+    """
+
+    def _is_c_node(obj) -> bool:
+        return hasattr(obj, "__slots__") and obj.__class__.__module__.startswith("angr.analyses.decompiler")
+
+    def _clone(obj, memo: dict[int, object]):
+        if obj is None:
+            return None
+        if isinstance(obj, (str, bytes, int, float, bool)):
+            return obj
+        if isinstance(obj, list):
+            return [_clone(item, memo) for item in obj]
+        if isinstance(obj, tuple):
+            return tuple(_clone(item, memo) for item in obj)
+        if isinstance(obj, dict):
+            return {_clone(key, memo): _clone(item, memo) for key, item in obj.items()}
+        if not _is_c_node(obj):
+            return obj
+        obj_id = id(obj)
+        if obj_id in memo:
+            return memo[obj_id]
+        cloned = copy.copy(obj)
+        memo[obj_id] = cloned
+        slot_names: list[str] = []
+        for cls in type(obj).__mro__:
+            slots = getattr(cls, "__slots__", ())
+            if isinstance(slots, str):
+                slots = (slots,)
+            slot_names.extend(str(slot) for slot in slots)
+        for attr in dict.fromkeys(slot_names):
+            if attr == "codegen" or not hasattr(obj, attr):
+                continue
+            try:
+                child = getattr(obj, attr)
+            except Exception:
+                continue
+            cloned_child = _clone(child, memo)
+            if cloned_child is not child:
+                try:
+                    setattr(cloned, attr, cloned_child)
+                except Exception:
+                    continue
+        return cloned
+
+    return _clone(value, {})
+
+
 def _materialize_decrement_switch_return_chain_8616(project, codegen) -> bool:
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
     log = logging.getLogger(__name__)
@@ -1037,7 +1702,7 @@ def _materialize_decrement_switch_return_chain_8616(project, codegen) -> bool:
     def _cmp(op: str, value: int):
         return CBinaryOp(
             op,
-            selector,
+            _clone_c_value_for_codegen_tree_8616(selector),
             CConstant(int(value), SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         )
@@ -1050,23 +1715,1254 @@ def _materialize_decrement_switch_return_chain_8616(project, codegen) -> bool:
     )
     statements = [
         CIfElse(
-            [(cond, CStatements(statements=[CReturn(expr, codegen=codegen)], codegen=codegen))],
+            [
+                (
+                    _clone_c_value_for_codegen_tree_8616(cond),
+                    CStatements(
+                        statements=[CReturn(_clone_c_value_for_codegen_tree_8616(expr), codegen=codegen)],
+                        codegen=codegen,
+                    ),
+                )
+            ],
             else_node=None,
             cstyle_ifs=True,
             codegen=codegen,
         )
         for cond, expr in ordered
     ]
-    statements.append(CReturn(expr_default, codegen=codegen))
+    statements.append(CReturn(_clone_c_value_for_codegen_tree_8616(expr_default), codegen=codegen))
     codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
     codegen._inertia_decrement_switch_return_materialized_8616 = True
     codegen._inertia_return_expr_chain_materialized_8616 = True
+    codegen._inertia_return_selector_materialized_8616 = True
     codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
         _expr_fingerprint(expr, project) for _cond, expr in ordered
     ) + (_expr_fingerprint(expr_default, project),)
     if debug:
         log.warning("[cfg-selector-return] decrement-switch materialized")
     return True
+
+
+def _stack_mem_disp_size_8616(insn, operand) -> tuple[int, int] | None:
+    if int(getattr(operand, "type", -1)) != 3:
+        return None
+    mem = getattr(operand, "mem", None)
+    if mem is None or not getattr(mem, "base", None):
+        return None
+    try:
+        if str(insn.reg_name(mem.base)).lower() != "bp":
+            return None
+    except Exception:
+        return None
+    return (_signed_i16_immediate_8616(int(mem.disp)), int(getattr(operand, "size", 0) or 0))
+
+
+def _reg_name_from_operand_8616(insn, operand) -> str | None:
+    if int(getattr(operand, "type", -1)) != 1:
+        return None
+    try:
+        return str(insn.reg_name(operand.reg)).lower()
+    except Exception:
+        return None
+
+
+def _imm_from_operand_8616(operand) -> int | None:
+    if int(getattr(operand, "type", -1)) != 2:
+        return None
+    return int(getattr(operand, "imm", 0) or 0)
+
+
+def _materialize_stack_arg_accumulator_loop_8616(project, codegen) -> bool:
+    """Recover a stack-slot accumulator loop from CFG/instruction evidence.
+
+    Pattern:
+        local = 0;
+    loop:
+        if (arg <= 0) return local;
+        local += arg;
+        --arg;
+        if (arg & mask) continue;
+        local += const;
+        goto loop;
+
+    This is a generic C89 backward-edge shape emitted by MS C for goto/while
+    accumulators. It uses only instruction, CFG, and stack-slot evidence.
+    """
+
+    if getattr(codegen, "_inertia_stack_arg_accumulator_loop_materialized_8616", False):
+        return False
+    insns = _linear_function_insns_for_codegen_8616(project, codegen)
+    if len(insns) < 10:
+        return False
+    index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
+
+    for cmp_idx, cmp_insn in enumerate(insns[:-2]):
+        if str(getattr(cmp_insn, "mnemonic", "")).lower() != "cmp":
+            continue
+        cmp_ops = tuple(getattr(cmp_insn, "operands", ()) or ())
+        if len(cmp_ops) != 2:
+            continue
+        arg_slot = _stack_mem_disp_size_8616(cmp_insn, cmp_ops[0])
+        if arg_slot is None or _imm_from_operand_8616(cmp_ops[1]) != 0:
+            continue
+        arg_disp, _arg_size = arg_slot
+        if arg_disp <= 0:
+            continue
+        if any(str(getattr(insn, "mnemonic", "")).lower() in {"call", "lcall"} for insn in insns[cmp_idx:]):
+            continue
+        jcc = insns[cmp_idx + 1]
+        if str(getattr(jcc, "mnemonic", "")).lower() not in {"jle", "jng"}:
+            continue
+        loop_start = int(getattr(cmp_insn, "address", -1))
+        exit_target = _jcc._branch_target_imm_8616(jcc)
+        body_target = _resolve_one_hop_jmp_target_8616(project, _next_linear_jmp_target_8616(insns, cmp_idx + 1))
+        if exit_target is None or body_target is None:
+            continue
+        try:
+            body_block = project.factory.block(int(body_target), opt_level=0)
+        except Exception:
+            continue
+        body_insns = tuple(getattr(getattr(body_block, "capstone", None), "insns", ()) or ())
+        if len(body_insns) < 5:
+            continue
+        mov_arg, add_arg, dec_arg, test_arg, continue_jcc = body_insns[:5]
+        if str(getattr(mov_arg, "mnemonic", "")).lower() != "mov":
+            continue
+        mov_ops = tuple(getattr(mov_arg, "operands", ()) or ())
+        if len(mov_ops) != 2 or _reg_name_from_operand_8616(mov_arg, mov_ops[0]) != "ax":
+            continue
+        mov_arg_slot = _stack_mem_disp_size_8616(mov_arg, mov_ops[1])
+        if mov_arg_slot is None or int(mov_arg_slot[0]) != int(arg_disp):
+            continue
+        if str(getattr(add_arg, "mnemonic", "")).lower() != "add":
+            continue
+        add_ops = tuple(getattr(add_arg, "operands", ()) or ())
+        if len(add_ops) != 2 or _reg_name_from_operand_8616(add_arg, add_ops[1]) != "ax":
+            continue
+        local_slot = _stack_mem_disp_size_8616(add_arg, add_ops[0])
+        if local_slot is None:
+            continue
+        local_disp, _local_size = local_slot
+        if local_disp >= 0:
+            continue
+        if str(getattr(dec_arg, "mnemonic", "")).lower() != "dec":
+            continue
+        dec_ops = tuple(getattr(dec_arg, "operands", ()) or ())
+        if len(dec_ops) != 1:
+            continue
+        dec_slot = _stack_mem_disp_size_8616(dec_arg, dec_ops[0])
+        if dec_slot is None or int(dec_slot[0]) != int(arg_disp):
+            continue
+        if str(getattr(test_arg, "mnemonic", "")).lower() != "test":
+            continue
+        test_ops = tuple(getattr(test_arg, "operands", ()) or ())
+        if len(test_ops) != 2:
+            continue
+        test_slot = _stack_mem_disp_size_8616(test_arg, test_ops[0])
+        test_mask = _imm_from_operand_8616(test_ops[1])
+        if test_slot is None or int(test_slot[0]) != int(arg_disp) or test_mask is None:
+            continue
+        if str(getattr(continue_jcc, "mnemonic", "")).lower() not in {"jne", "jnz"}:
+            continue
+        continue_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(continue_jcc))
+        if continue_target is None or int(continue_target) != loop_start:
+            continue
+        continue_idx = index_by_addr.get(int(getattr(continue_jcc, "address", -1)))
+        add_const_target = _resolve_one_hop_jmp_target_8616(project, _next_linear_jmp_target_8616(insns, continue_idx))
+        if add_const_target is None:
+            continue
+        try:
+            add_const_block = project.factory.block(int(add_const_target), opt_level=0)
+        except Exception:
+            continue
+        add_const_insns = tuple(getattr(getattr(add_const_block, "capstone", None), "insns", ()) or ())
+        if len(add_const_insns) < 2:
+            continue
+        add_const, back_jmp = add_const_insns[:2]
+        if str(getattr(add_const, "mnemonic", "")).lower() != "add":
+            continue
+        add_const_ops = tuple(getattr(add_const, "operands", ()) or ())
+        if len(add_const_ops) != 2:
+            continue
+        add_const_slot = _stack_mem_disp_size_8616(add_const, add_const_ops[0])
+        add_const_value = _imm_from_operand_8616(add_const_ops[1])
+        if add_const_slot is None or int(add_const_slot[0]) != int(local_disp) or add_const_value is None:
+            continue
+        if str(getattr(back_jmp, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
+            continue
+        back_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(back_jmp))
+        if back_target is None or int(back_target) != loop_start:
+            continue
+        initialized = False
+        for init_insn in insns[:cmp_idx]:
+            if str(getattr(init_insn, "mnemonic", "")).lower() != "mov":
+                continue
+            init_ops = tuple(getattr(init_insn, "operands", ()) or ())
+            if len(init_ops) != 2:
+                continue
+            init_slot = _stack_mem_disp_size_8616(init_insn, init_ops[0])
+            if init_slot is not None and int(init_slot[0]) == int(local_disp) and _imm_from_operand_8616(init_ops[1]) == 0:
+                initialized = True
+                break
+        if not initialized:
+            continue
+        exit_expr = _branch_target_return_expr_8616(project, codegen, int(exit_target))
+        local_expr = _jcc._stack_slot_expr_8616(codegen, int(local_disp), 2)
+        arg_expr = _jcc._stack_slot_expr_8616(codegen, int(arg_disp), 2)
+        if exit_expr is None or local_expr is None or arg_expr is None:
+            continue
+        if _expr_fingerprint(exit_expr, project) != _expr_fingerprint(local_expr, project):
+            continue
+        local0 = _clone_c_value_for_codegen_tree_8616(local_expr)
+        arg0 = _clone_c_value_for_codegen_tree_8616(arg_expr)
+        zero = CConstant(0, SimTypeShort(False), codegen=codegen)
+        one = CConstant(1, SimTypeShort(False), codegen=codegen)
+        mask = CConstant(int(test_mask), SimTypeShort(False), codegen=codegen)
+        add_value = CConstant(int(add_const_value), SimTypeShort(False), codegen=codegen)
+        loop_body = CStatements(
+            statements=[
+                CIfElse(
+                    [
+                        (
+                            CBinaryOp(
+                                "CmpLE",
+                                _clone_c_value_for_codegen_tree_8616(arg_expr),
+                                CConstant(0, SimTypeShort(False), codegen=codegen),
+                                codegen=codegen,
+                            ),
+                            CStatements(
+                                statements=[CReturn(_clone_c_value_for_codegen_tree_8616(local_expr), codegen=codegen)],
+                                codegen=codegen,
+                            ),
+                        )
+                    ],
+                    else_node=None,
+                    cstyle_ifs=True,
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _clone_c_value_for_codegen_tree_8616(local_expr),
+                    CBinaryOp(
+                        "Add",
+                        _clone_c_value_for_codegen_tree_8616(local_expr),
+                        _clone_c_value_for_codegen_tree_8616(arg_expr),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _clone_c_value_for_codegen_tree_8616(arg_expr),
+                    CBinaryOp(
+                        "Sub",
+                        _clone_c_value_for_codegen_tree_8616(arg_expr),
+                        one,
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                CIfElse(
+                    [
+                        (
+                            CBinaryOp(
+                                "CmpNE",
+                                CBinaryOp(
+                                    "And",
+                                    _clone_c_value_for_codegen_tree_8616(arg_expr),
+                                    mask,
+                                    codegen=codegen,
+                                ),
+                                CConstant(0, SimTypeShort(False), codegen=codegen),
+                                codegen=codegen,
+                            ),
+                            CStatements(statements=[CContinue(codegen=codegen)], codegen=codegen),
+                        )
+                    ],
+                    else_node=None,
+                    cstyle_ifs=True,
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _clone_c_value_for_codegen_tree_8616(local_expr),
+                    CBinaryOp(
+                        "Add",
+                        _clone_c_value_for_codegen_tree_8616(local_expr),
+                        add_value,
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        )
+        statements = [
+            CAssignment(local0, zero, codegen=codegen),
+            CWhileLoop(CConstant(1, SimTypeShort(False), codegen=codegen), loop_body, codegen=codegen),
+        ]
+        codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+        codegen._inertia_stack_arg_accumulator_loop_materialized_8616 = True
+        codegen._inertia_stack_arg_accumulator_loop_stack_slots_8616 = {
+            "arg_disp": int(arg_disp),
+            "local_disp": int(local_disp),
+            "test_mask": int(test_mask),
+            "add_const": int(add_const_value),
+        }
+        return True
+    return False
+
+
+def _block_insns_8616(project, addr: int) -> tuple:
+    try:
+        block = project.factory.block(int(addr), opt_level=0)
+    except Exception:
+        return ()
+    return tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+
+
+def _match_stack_zero_init_8616(insn) -> int | None:
+    if str(getattr(insn, "mnemonic", "")).lower() != "mov":
+        return None
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _imm_from_operand_8616(operands[1]) != 0:
+        return None
+    slot = _stack_mem_disp_size_8616(insn, operands[0])
+    return int(slot[0]) if slot is not None else None
+
+
+def _match_stack_inc_8616(insn, disp: int) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "inc":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 1:
+        return False
+    slot = _stack_mem_disp_size_8616(insn, operands[0])
+    return slot is not None and int(slot[0]) == int(disp)
+
+
+def _match_mov_ax_stack_8616(insn, disp: int) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "mov":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _reg_name_from_operand_8616(insn, operands[0]) != "ax":
+        return False
+    slot = _stack_mem_disp_size_8616(insn, operands[1])
+    return slot is not None and int(slot[0]) == int(disp)
+
+
+def _match_cmp_stack_ax_8616(insn, disp: int) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "cmp":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _reg_name_from_operand_8616(insn, operands[1]) != "ax":
+        return False
+    slot = _stack_mem_disp_size_8616(insn, operands[0])
+    return slot is not None and int(slot[0]) == int(disp)
+
+
+def _mem_base_index_size_8616(insn, operand) -> tuple[str | None, str | None, int, int] | None:
+    if int(getattr(operand, "type", -1)) != 3:
+        return None
+    mem = getattr(operand, "mem", None)
+    if mem is None:
+        return None
+    base = str(insn.reg_name(mem.base)).lower() if getattr(mem, "base", 0) else None
+    index = str(insn.reg_name(mem.index)).lower() if getattr(mem, "index", 0) else None
+    size = int(getattr(operand, "size", 0) or 0)
+    return base, index, int(getattr(mem, "disp", 0) or 0), size
+
+
+def _match_stack_mov_to_reg_8616(insn, reg_name: str, disp: int, *, size: int = 2) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "mov":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _reg_name_from_operand_8616(insn, operands[0]) != reg_name:
+        return False
+    slot = _stack_mem_disp_size_8616(insn, operands[1])
+    return slot is not None and int(slot[0]) == int(disp) and int(slot[1]) == int(size)
+
+
+def _match_indexed_reg_store_8616(insn, *, base_reg: str, index_reg: str, src_reg: str, size: int) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "mov":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _reg_name_from_operand_8616(insn, operands[1]) != src_reg:
+        return False
+    mem = _mem_base_index_size_8616(insn, operands[0])
+    if mem is None:
+        return False
+    base, index, disp, mem_size = mem
+    return disp == 0 and int(mem_size) == int(size) and {base, index} == {base_reg, index_reg}
+
+
+def _match_indexed_reg_load_8616(insn, *, dst_reg: str, base_reg: str, index_reg: str, size: int) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "mov":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _reg_name_from_operand_8616(insn, operands[0]) != dst_reg:
+        return False
+    mem = _mem_base_index_size_8616(insn, operands[1])
+    if mem is None:
+        return False
+    base, index, disp, mem_size = mem
+    return disp == 0 and int(mem_size) == int(size) and {base, index} == {base_reg, index_reg}
+
+
+def _match_reg_indirect_load_8616(insn, *, dst_reg: str, base_reg: str, size: int) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "mov":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _reg_name_from_operand_8616(insn, operands[0]) != dst_reg:
+        return False
+    mem = _mem_base_index_size_8616(insn, operands[1])
+    if mem is None:
+        return False
+    base, index, disp, mem_size = mem
+    return base == base_reg and index is None and disp == 0 and int(mem_size) == int(size)
+
+
+def _match_reg_indirect_store_8616(insn, *, base_reg: str, src_reg: str, size: int) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "mov":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _reg_name_from_operand_8616(insn, operands[1]) != src_reg:
+        return False
+    mem = _mem_base_index_size_8616(insn, operands[0])
+    if mem is None:
+        return False
+    base, index, disp, mem_size = mem
+    return base == base_reg and index is None and disp == 0 and int(mem_size) == int(size)
+
+
+def _stack_expr_8616(codegen, disp: int, size: int = 2):
+    return _jcc._stack_slot_expr_8616(codegen, int(disp), int(size) or 2)
+
+
+def _bind_type_to_project_arch_8616(project, type_):
+    arch = getattr(project, "arch", None)
+    if arch is None or type_ is None or not hasattr(type_, "with_arch"):
+        return type_
+    try:
+        return type_.with_arch(arch)
+    except Exception:
+        return type_
+
+
+def _word_type_for_project_8616(project):
+    return _bind_type_to_project_arch_8616(project, SimTypeShort(False))
+
+
+def _pointer_type_for_project_8616(project, pointee_size: int):
+    pointee = SimTypeChar(False) if int(pointee_size) == 1 else SimTypeShort(False)
+    return _bind_type_to_project_arch_8616(
+        project,
+        _SimTypeNearPointer16_8616(_bind_type_to_project_arch_8616(project, pointee)),
+    )
+
+
+def _type_size_bytes_for_stack_arg_8616(project, type_, default: int = 2) -> int:
+    if isinstance(type_, SimTypePointer) and getattr(getattr(project, "arch", None), "name", None) == "86_16":
+        return 2
+    bits = getattr(type_, "size", None)
+    if isinstance(bits, int) and bits > 0:
+        return max(1, (bits + 7) // 8)
+    return max(1, int(default) if isinstance(default, int) else 2)
+
+
+def _stack_alias_name_from_optional_cod_8616(project, codegen, disp: int) -> str | None:
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return None
+    try:
+        metadata = _calls._cod_metadata_for_function_8616(project, func_addr)
+    except Exception:
+        metadata = None
+    stack_aliases = getattr(metadata, "stack_aliases", None)
+    if not isinstance(stack_aliases, dict):
+        return None
+    alias = stack_aliases.get(int(disp))
+    if not isinstance(alias, str):
+        alias = stack_aliases.get(int(disp) + 1)
+    return alias if isinstance(alias, str) and alias else None
+
+
+def _fallback_stack_arg_name_8616(disp: int) -> str:
+    if int(disp) >= 4:
+        return f"arg_{max(((int(disp) - 4) // 2) + 1, 1)}"
+    return _stack_object_name(int(disp))
+
+
+def _iter_stack_cvars_for_cfunc_8616(cfunc):
+    yielded: set[int] = set()
+    for expr in tuple(getattr(cfunc, "arg_list", ()) or ()):
+        if isinstance(expr, CVariable) and id(expr) not in yielded:
+            yielded.add(id(expr))
+            yield expr
+    variables_in_use = getattr(cfunc, "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        for expr in variables_in_use.values():
+            if isinstance(expr, CVariable) and id(expr) not in yielded:
+                yielded.add(id(expr))
+                yield expr
+    unified = getattr(cfunc, "unified_local_vars", None)
+    if isinstance(unified, dict):
+        for entries in unified.values():
+            for item in entries or ():
+                expr = item[0] if isinstance(item, tuple) and item else None
+                if isinstance(expr, CVariable) and id(expr) not in yielded:
+                    yielded.add(id(expr))
+                    yield expr
+    root = getattr(cfunc, "statements", None)
+    if root is not None:
+        for node in _iter_c_nodes_deep_8616(root):
+            if isinstance(node, CVariable) and id(node) not in yielded:
+                yielded.add(id(node))
+                yield node
+
+
+def _canonical_stack_cvar_at_offset_8616(cfunc, offset: int):
+    best = None
+    best_score = None
+    for cvar in _iter_stack_cvars_for_cfunc_8616(cfunc):
+        variable = getattr(cvar, "variable", None)
+        if not isinstance(variable, SimStackVariable) or getattr(variable, "offset", None) != int(offset):
+            continue
+        name = getattr(variable, "name", None) or getattr(cvar, "name", None)
+        name_score = 2
+        if isinstance(name, str) and name.startswith(("stack_bp_", "s_", "arg_", "local_")):
+            name_score = 1
+        if isinstance(name, str) and name and not name.startswith(("stack_bp_", "s_")):
+            name_score += 1
+        score = (name_score, int(getattr(variable, "size", 0) or 0))
+        if best_score is None or score > best_score:
+            best = cvar
+            best_score = score
+    return best
+
+
+def _ensure_pointer_stack_arg_expr_8616(project, codegen, disp: int, *, pointee_size: int, fallback_name: str | None = None):
+    """Materialize BP-positive slots proven by register-indirect memory use as pointer args."""
+
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None or int(disp) < 4:
+        return None
+    disp = int(disp)
+    pointer_type = _pointer_type_for_project_8616(project, int(pointee_size))
+    word_type = _word_type_for_project_8616(project)
+    arg_name = (
+        _stack_alias_name_from_optional_cod_8616(project, codegen, disp)
+        or fallback_name
+        or _fallback_stack_arg_name_8616(disp)
+    )
+
+    prototype = getattr(cfunc, "functy", None) or getattr(cfunc, "prototype", None)
+    if prototype is None:
+        func_addr = getattr(cfunc, "addr", None)
+        func = project.kb.functions.function(addr=func_addr, create=False) if isinstance(func_addr, int) else None
+        prototype = getattr(func, "prototype", None) if func is not None else None
+    if prototype is None:
+        prototype = _bind_type_to_project_arch_8616(
+            project,
+            SimTypeFunction([], word_type, arg_names=(), variadic=False),
+        )
+
+    args = list(getattr(prototype, "args", ()) or ())
+    arg_names = list(getattr(prototype, "arg_names", None) or ())
+    cursor = 4
+    target_index = None
+    for idx, arg_type in enumerate(args):
+        if cursor == disp:
+            target_index = idx
+            break
+        cursor += max(2, _type_size_bytes_for_stack_arg_8616(project, arg_type))
+    while target_index is None and cursor <= disp and disp <= 0x40:
+        new_type = pointer_type if cursor == disp else word_type
+        args.append(new_type)
+        arg_names.append(arg_name if cursor == disp else _fallback_stack_arg_name_8616(cursor))
+        if cursor == disp:
+            target_index = len(args) - 1
+            break
+        cursor += max(2, _type_size_bytes_for_stack_arg_8616(project, new_type))
+    if target_index is None:
+        return None
+
+    args[target_index] = pointer_type
+    while len(arg_names) < len(args):
+        arg_names.append(_fallback_stack_arg_name_8616(4 + len(arg_names) * 2))
+    arg_names[target_index] = arg_name
+
+    desired_args: list[CVariable] = []
+    variables = getattr(cfunc, "variables_in_use", None)
+    unified = getattr(cfunc, "unified_local_vars", None)
+    func_addr = getattr(cfunc, "addr", None)
+    cursor = 4
+    target_cvar = None
+    for idx, arg_type in enumerate(args):
+        width = max(2, _type_size_bytes_for_stack_arg_8616(project, arg_type))
+        name = arg_names[idx] if idx < len(arg_names) and isinstance(arg_names[idx], str) and arg_names[idx] else None
+        if name is None:
+            name = _fallback_stack_arg_name_8616(cursor)
+        cvar = _canonical_stack_cvar_at_offset_8616(cfunc, cursor)
+        variable = getattr(cvar, "variable", None) if cvar is not None else None
+        if not isinstance(cvar, CVariable) or not isinstance(variable, SimStackVariable):
+            variable = SimStackVariable(cursor, width, base="bp", name=name, region=func_addr)
+            cvar = CVariable(variable, variable_type=arg_type, codegen=codegen)
+        else:
+            variable.name = name
+            variable.size = width
+            cvar.variable_type = arg_type
+        if isinstance(variables, dict):
+            variables[variable] = cvar
+        if isinstance(unified, dict):
+            unified[variable] = {(cvar, arg_type)}
+        desired_args.append(cvar)
+        if cursor == disp:
+            target_cvar = cvar
+        cursor += width
+
+    cfunc.arg_list = desired_args
+    normalized_arg_names = tuple(
+        name if isinstance(name, str) and name else _fallback_stack_arg_name_8616(4 + idx * 2)
+        for idx, name in enumerate(arg_names[: len(args)])
+    )
+    new_prototype = SimTypeFunction(
+        args,
+        getattr(prototype, "returnty", word_type),
+        arg_names=normalized_arg_names,
+        variadic=getattr(prototype, "variadic", False),
+    )
+    new_prototype = _bind_type_to_project_arch_8616(project, new_prototype)
+    cfunc.functy = new_prototype
+    with contextlib.suppress(Exception):
+        cfunc.prototype = new_prototype
+    func_addr = getattr(cfunc, "addr", None)
+    func = project.kb.functions.function(addr=func_addr, create=False) if isinstance(func_addr, int) else None
+    if func is not None:
+        func.prototype = new_prototype
+        func.is_prototype_guessed = False
+
+    desired_ids = {id(arg) for arg in desired_args}
+    arg_offsets = {getattr(getattr(arg, "variable", None), "offset", None) for arg in desired_args}
+    if isinstance(variables, dict):
+        for variable, cvar in tuple(variables.items()):
+            if not isinstance(variable, SimStackVariable):
+                continue
+            if getattr(variable, "offset", None) in arg_offsets and id(cvar) not in desired_ids:
+                del variables[variable]
+    if isinstance(unified, dict):
+        for variable, entries in tuple(unified.items()):
+            if not isinstance(variable, SimStackVariable) or getattr(variable, "offset", None) not in arg_offsets:
+                continue
+            kept = {(expr, typ) for expr, typ in (entries or ()) if id(expr) in desired_ids}
+            if kept:
+                unified[variable] = kept
+            else:
+                del unified[variable]
+
+    refresh = getattr(cfunc, "refresh", None)
+    if callable(refresh):
+        with contextlib.suppress(Exception):
+            refresh()
+    return target_cvar
+
+
+def _named_stack_expr_from_evidence_8616(project, codegen, disp: int, size: int = 2):
+    expr = _stack_expr_8616(codegen, int(disp), int(size) or 2)
+    alias_name = _stack_alias_name_from_optional_cod_8616(project, codegen, int(disp))
+    variable = getattr(expr, "variable", None)
+    if isinstance(alias_name, str) and isinstance(variable, SimStackVariable):
+        variable.name = alias_name
+    if isinstance(expr, CVariable):
+        if getattr(expr, "variable_type", None) is None:
+            expr.variable_type = _word_type_for_project_8616(project)
+        cfunc = getattr(codegen, "cfunc", None)
+        variables = getattr(cfunc, "variables_in_use", None)
+        if isinstance(variables, dict) and isinstance(variable, SimStackVariable):
+            variables[variable] = expr
+    return expr
+
+
+def _inc_assignment_8616(expr, codegen):
+    return CAssignment(
+        _clone_c_value_for_codegen_tree_8616(expr),
+        CBinaryOp(
+            "Add",
+            _clone_c_value_for_codegen_tree_8616(expr),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+
+def _deref_expr_8616(expr, codegen):
+    project = getattr(codegen, "project", None)
+    word_type = _word_type_for_project_8616(project)
+    return CIndexedVariable(
+        _clone_c_value_for_codegen_tree_8616(expr),
+        CConstant(0, word_type, codegen=codegen),
+        variable_type=word_type,
+        codegen=codegen,
+    )
+
+
+def _materialize_byte_pointer_fill_loop_8616(project, codegen, insns: tuple, index_by_addr: dict[int, int]) -> bool:
+    for init_idx in range(len(insns) - 10):
+        i_disp = _match_stack_zero_init_8616(insns[init_idx])
+        if i_disp is None or i_disp >= 0:
+            continue
+        first_jmp = insns[init_idx + 1]
+        if str(getattr(first_jmp, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
+            continue
+        inc_addr = int(getattr(insns[init_idx + 2], "address", -1))
+        if not _match_stack_inc_8616(insns[init_idx + 2], i_disp):
+            continue
+        cond_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(first_jmp))
+        if cond_target is None or int(cond_target) != int(getattr(insns[init_idx + 3], "address", -1)):
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[init_idx + 3], "ax", 8):
+            continue
+        if not _match_cmp_stack_ax_8616(insns[init_idx + 4], i_disp):
+            continue
+        jcc = insns[init_idx + 5]
+        if str(getattr(jcc, "mnemonic", "")).lower() not in {"jl", "jnge"}:
+            continue
+        body_target = _jcc._branch_target_imm_8616(jcc)
+        exit_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(jcc, "address", -1)), -1)),
+        )
+        if body_target is None or exit_target is None:
+            continue
+        body = _block_insns_8616(project, int(body_target))
+        if len(body) < 5:
+            continue
+        if not _match_stack_mov_to_reg_8616(body[0], "al", 6, size=1):
+            continue
+        if not _match_stack_mov_to_reg_8616(body[1], "bx", i_disp):
+            continue
+        if not _match_stack_mov_to_reg_8616(body[2], "si", 4):
+            continue
+        if not _match_indexed_reg_store_8616(body[3], base_reg="bx", index_reg="si", src_reg="al", size=1):
+            continue
+        if _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(body[4])) != inc_addr:
+            continue
+        dst_expr = _ensure_pointer_stack_arg_expr_8616(
+            project,
+            codegen,
+            4,
+            pointee_size=1,
+            fallback_name="dst",
+        ) or _stack_expr_8616(codegen, 4, 2)
+        value_expr = _stack_expr_8616(codegen, 6, 1)
+        count_expr = _stack_expr_8616(codegen, 8, 2)
+        i_expr = _stack_expr_8616(codegen, int(i_disp), 2)
+        if any(expr is None for expr in (dst_expr, value_expr, count_expr, i_expr)):
+            continue
+        indexed = CIndexedVariable(
+            _clone_c_value_for_codegen_tree_8616(dst_expr),
+            _clone_c_value_for_codegen_tree_8616(i_expr),
+            codegen=codegen,
+        )
+        body_node = CStatements(
+            statements=[
+                CAssignment(indexed, _clone_c_value_for_codegen_tree_8616(value_expr), codegen=codegen),
+                _inc_assignment_8616(i_expr, codegen),
+            ],
+            codegen=codegen,
+        )
+        codegen.cfunc.statements = CStatements(
+            statements=[
+                CAssignment(
+                    _clone_c_value_for_codegen_tree_8616(i_expr),
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CWhileLoop(
+                    CBinaryOp(
+                        "CmpLT",
+                        _clone_c_value_for_codegen_tree_8616(i_expr),
+                        _clone_c_value_for_codegen_tree_8616(count_expr),
+                        codegen=codegen,
+                    ),
+                    body_node,
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        )
+        codegen._inertia_pointer_memory_materialized_8616 = "byte_fill_loop"
+        return True
+    return False
+
+
+def _materialize_word_pointer_sum_loop_8616(project, codegen, insns: tuple, index_by_addr: dict[int, int]) -> bool:
+    for init_idx in range(len(insns) - 14):
+        total_disp = _match_stack_zero_init_8616(insns[init_idx])
+        i_disp = _match_stack_zero_init_8616(insns[init_idx + 1])
+        if total_disp is None or i_disp is None or total_disp >= 0 or i_disp >= 0 or total_disp == i_disp:
+            continue
+        first_jmp = insns[init_idx + 2]
+        if str(getattr(first_jmp, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
+            continue
+        inc_addr = int(getattr(insns[init_idx + 3], "address", -1))
+        if not _match_stack_inc_8616(insns[init_idx + 3], i_disp):
+            continue
+        cond_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(first_jmp))
+        if cond_target is None or int(cond_target) != int(getattr(insns[init_idx + 4], "address", -1)):
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[init_idx + 4], "ax", 6):
+            continue
+        if not _match_cmp_stack_ax_8616(insns[init_idx + 5], i_disp):
+            continue
+        jcc = insns[init_idx + 6]
+        if str(getattr(jcc, "mnemonic", "")).lower() not in {"jl", "jnge"}:
+            continue
+        body_target = _jcc._branch_target_imm_8616(jcc)
+        exit_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(jcc, "address", -1)), -1)),
+        )
+        if body_target is None or exit_target is None:
+            continue
+        exit_expr = _branch_target_return_expr_8616(project, codegen, int(exit_target))
+        total_expr = _stack_expr_8616(codegen, int(total_disp), 2)
+        if exit_expr is None or total_expr is None or _expr_fingerprint(exit_expr, project) != _expr_fingerprint(total_expr, project):
+            continue
+        body = _block_insns_8616(project, int(body_target))
+        if len(body) < 6:
+            continue
+        if not _match_stack_mov_to_reg_8616(body[0], "bx", i_disp):
+            continue
+        if str(getattr(body[1], "mnemonic", "")).lower() != "shl":
+            continue
+        shl_ops = tuple(getattr(body[1], "operands", ()) or ())
+        if len(shl_ops) != 2 or _reg_name_from_operand_8616(body[1], shl_ops[0]) != "bx" or _imm_from_operand_8616(shl_ops[1]) != 1:
+            continue
+        if not _match_stack_mov_to_reg_8616(body[2], "si", 4):
+            continue
+        if not _match_indexed_reg_load_8616(body[3], dst_reg="ax", base_reg="bx", index_reg="si", size=2):
+            continue
+        if str(getattr(body[4], "mnemonic", "")).lower() != "add":
+            continue
+        add_ops = tuple(getattr(body[4], "operands", ()) or ())
+        add_slot = _stack_mem_disp_size_8616(body[4], add_ops[0]) if len(add_ops) == 2 else None
+        if add_slot is None or int(add_slot[0]) != int(total_disp) or _reg_name_from_operand_8616(body[4], add_ops[1]) != "ax":
+            continue
+        if _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(body[5])) != inc_addr:
+            continue
+        src_expr = _ensure_pointer_stack_arg_expr_8616(
+            project,
+            codegen,
+            4,
+            pointee_size=2,
+            fallback_name="src",
+        ) or _stack_expr_8616(codegen, 4, 2)
+        count_expr = _stack_expr_8616(codegen, 6, 2)
+        i_expr = _stack_expr_8616(codegen, int(i_disp), 2)
+        if any(expr is None for expr in (src_expr, count_expr, i_expr)):
+            continue
+        indexed = CIndexedVariable(
+            _clone_c_value_for_codegen_tree_8616(src_expr),
+            _clone_c_value_for_codegen_tree_8616(i_expr),
+            codegen=codegen,
+        )
+        body_node = CStatements(
+            statements=[
+                CAssignment(
+                    _clone_c_value_for_codegen_tree_8616(total_expr),
+                    CBinaryOp(
+                        "Add",
+                        _clone_c_value_for_codegen_tree_8616(total_expr),
+                        indexed,
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                _inc_assignment_8616(i_expr, codegen),
+            ],
+            codegen=codegen,
+        )
+        codegen.cfunc.statements = CStatements(
+            statements=[
+                CAssignment(
+                    _clone_c_value_for_codegen_tree_8616(total_expr),
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _clone_c_value_for_codegen_tree_8616(i_expr),
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CWhileLoop(
+                    CBinaryOp(
+                        "CmpLT",
+                        _clone_c_value_for_codegen_tree_8616(i_expr),
+                        _clone_c_value_for_codegen_tree_8616(count_expr),
+                        codegen=codegen,
+                    ),
+                    body_node,
+                    codegen=codegen,
+                ),
+                CReturn(_clone_c_value_for_codegen_tree_8616(total_expr), codegen=codegen),
+            ],
+            codegen=codegen,
+        )
+        codegen._inertia_pointer_memory_materialized_8616 = "word_sum_loop"
+        return True
+    return False
+
+
+def _materialize_pointer_swap_8616(project, codegen, insns: tuple, _index_by_addr: dict[int, int]) -> bool:
+    for idx in range(max(0, len(insns) - 9)):
+        if not _match_stack_mov_to_reg_8616(insns[idx], "bx", 4):
+            continue
+        if not _match_reg_indirect_load_8616(insns[idx + 1], dst_reg="ax", base_reg="bx", size=2):
+            continue
+        tmp_slot = _stack_mem_disp_size_8616(insns[idx + 2], tuple(getattr(insns[idx + 2], "operands", ()) or ())[0])
+        if str(getattr(insns[idx + 2], "mnemonic", "")).lower() != "mov" or tmp_slot is None:
+            continue
+        tmp_disp = int(tmp_slot[0])
+        if tmp_disp >= 0:
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 3], "bx", 6):
+            continue
+        if not _match_reg_indirect_load_8616(insns[idx + 4], dst_reg="ax", base_reg="bx", size=2):
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 5], "bx", 4):
+            continue
+        if not _match_reg_indirect_store_8616(insns[idx + 6], base_reg="bx", src_reg="ax", size=2):
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 7], "ax", tmp_disp):
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 8], "bx", 6):
+            continue
+        if not _match_reg_indirect_store_8616(insns[idx + 9], base_reg="bx", src_reg="ax", size=2):
+            continue
+        left_expr = _ensure_pointer_stack_arg_expr_8616(
+            project,
+            codegen,
+            4,
+            pointee_size=2,
+            fallback_name="left",
+        ) or _stack_expr_8616(codegen, 4, 2)
+        right_expr = _ensure_pointer_stack_arg_expr_8616(
+            project,
+            codegen,
+            6,
+            pointee_size=2,
+            fallback_name="right",
+        ) or _stack_expr_8616(codegen, 6, 2)
+        tmp_expr = _named_stack_expr_from_evidence_8616(project, codegen, int(tmp_disp), 2)
+        if any(expr is None for expr in (left_expr, right_expr, tmp_expr)):
+            continue
+        codegen.cfunc.statements = CStatements(
+            statements=[
+                CAssignment(
+                    _clone_c_value_for_codegen_tree_8616(tmp_expr),
+                    _deref_expr_8616(left_expr, codegen),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _deref_expr_8616(left_expr, codegen),
+                    _deref_expr_8616(right_expr, codegen),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _deref_expr_8616(right_expr, codegen),
+                    _clone_c_value_for_codegen_tree_8616(tmp_expr),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        )
+        codegen._inertia_pointer_memory_materialized_8616 = "pointer_swap"
+        return True
+    return False
+
+
+def _materialize_pointer_memory_idioms_8616(project, codegen) -> bool:
+    """Recover near-pointer C memory idioms from instruction and stack-slot evidence."""
+
+    if getattr(codegen, "_inertia_pointer_memory_materialized_8616", None):
+        return False
+    insns = _linear_function_insns_for_codegen_8616(project, codegen)
+    if not insns:
+        return False
+    index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
+    return (
+        _materialize_byte_pointer_fill_loop_8616(project, codegen, insns, index_by_addr)
+        or _materialize_word_pointer_sum_loop_8616(project, codegen, insns, index_by_addr)
+        or _materialize_pointer_swap_8616(project, codegen, insns, index_by_addr)
+    )
+
+
+def _materialize_nested_stack_counter_accumulator_loop_8616(project, codegen) -> bool:
+    """Recover nested counter loops with stack-slot locals and threshold breaks."""
+
+    if getattr(codegen, "_inertia_nested_stack_counter_loop_materialized_8616", False):
+        return False
+    insns = _linear_function_insns_for_codegen_8616(project, codegen)
+    if len(insns) < 20:
+        return False
+    index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
+    for init_idx in range(len(insns) - 5):
+        total_disp = _match_stack_zero_init_8616(insns[init_idx])
+        i_disp = _match_stack_zero_init_8616(insns[init_idx + 1])
+        if total_disp is None or i_disp is None or total_disp >= 0 or i_disp >= 0 or total_disp == i_disp:
+            continue
+        outer_start = int(getattr(insns[init_idx + 2], "address", -1))
+        if not _match_mov_ax_stack_8616(insns[init_idx + 2], 4):
+            continue
+        if not _match_cmp_stack_ax_8616(insns[init_idx + 3], i_disp):
+            continue
+        outer_jl = insns[init_idx + 4]
+        if str(getattr(outer_jl, "mnemonic", "")).lower() not in {"jl", "jnge"}:
+            continue
+        inner_init_target = _jcc._branch_target_imm_8616(outer_jl)
+        return_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(outer_jl, "address", -1)), -1)),
+        )
+        if inner_init_target is None or return_target is None:
+            continue
+        inner_init = _block_insns_8616(project, int(inner_init_target))
+        if len(inner_init) < 4:
+            continue
+        j_disp = _match_stack_zero_init_8616(inner_init[0])
+        if j_disp is None or j_disp >= 0 or j_disp in {total_disp, i_disp}:
+            continue
+        inner_start = int(getattr(inner_init[1], "address", -1))
+        if not _match_mov_ax_stack_8616(inner_init[1], i_disp):
+            continue
+        if not _match_cmp_stack_ax_8616(inner_init[2], j_disp):
+            continue
+        j_eq = inner_init[3]
+        if str(getattr(j_eq, "mnemonic", "")).lower() not in {"je", "jz"}:
+            continue
+        continue_inc_target = _jcc._branch_target_imm_8616(j_eq)
+        body_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(j_eq, "address", -1)), -1)),
+        )
+        if continue_inc_target is None or body_target is None:
+            continue
+        continue_inc = _block_insns_8616(project, int(continue_inc_target))
+        if len(continue_inc) < 2 or not _match_stack_inc_8616(continue_inc[0], j_disp):
+            continue
+        inner_cond_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(continue_inc[1]))
+        if inner_cond_target is None:
+            continue
+        body = _block_insns_8616(project, int(body_target))
+        if len(body) < 5:
+            continue
+        if not _match_mov_ax_stack_8616(body[0], j_disp):
+            continue
+        if str(getattr(body[1], "mnemonic", "")).lower() != "add":
+            continue
+        body_add_ops = tuple(getattr(body[1], "operands", ()) or ())
+        if len(body_add_ops) != 2 or _reg_name_from_operand_8616(body[1], body_add_ops[0]) != "ax":
+            continue
+        add_i_slot = _stack_mem_disp_size_8616(body[1], body_add_ops[1])
+        if add_i_slot is None or int(add_i_slot[0]) != int(i_disp):
+            continue
+        if str(getattr(body[2], "mnemonic", "")).lower() != "add":
+            continue
+        body_total_add_ops = tuple(getattr(body[2], "operands", ()) or ())
+        if len(body_total_add_ops) != 2 or _reg_name_from_operand_8616(body[2], body_total_add_ops[1]) != "ax":
+            continue
+        body_total_slot = _stack_mem_disp_size_8616(body[2], body_total_add_ops[0])
+        if body_total_slot is None or int(body_total_slot[0]) != int(total_disp):
+            continue
+        if str(getattr(body[3], "mnemonic", "")).lower() != "cmp":
+            continue
+        threshold_ops = tuple(getattr(body[3], "operands", ()) or ())
+        if len(threshold_ops) != 2:
+            continue
+        threshold_slot = _stack_mem_disp_size_8616(body[3], threshold_ops[0])
+        threshold = _imm_from_operand_8616(threshold_ops[1])
+        if threshold_slot is None or int(threshold_slot[0]) != int(total_disp) or threshold is None:
+            continue
+        inner_break_jcc = body[4]
+        if str(getattr(inner_break_jcc, "mnemonic", "")).lower() not in {"jg", "jnle"}:
+            continue
+        inner_done_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(inner_break_jcc))
+        post_body_inc_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(inner_break_jcc, "address", -1)), -1)),
+        )
+        if inner_done_target is None or post_body_inc_target is None:
+            continue
+        post_body = _block_insns_8616(project, int(post_body_inc_target))
+        if len(post_body) < 4 or not _match_stack_inc_8616(post_body[0], j_disp):
+            continue
+        if int(getattr(post_body[1], "address", -1)) != int(inner_cond_target):
+            continue
+        if not _match_mov_ax_stack_8616(post_body[1], 4) or not _match_cmp_stack_ax_8616(post_body[2], j_disp):
+            continue
+        inner_cond_jcc = post_body[3]
+        if str(getattr(inner_cond_jcc, "mnemonic", "")).lower() not in {"jge", "jnl"}:
+            continue
+        if _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(inner_cond_jcc)) != int(inner_done_target):
+            continue
+        inner_back = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(inner_cond_jcc, "address", -1)), -1)),
+        )
+        if inner_back is None or int(inner_back) != int(inner_start):
+            continue
+        outer_done = _block_insns_8616(project, int(inner_done_target))
+        if len(outer_done) < 2:
+            continue
+        if str(getattr(outer_done[0], "mnemonic", "")).lower() != "cmp":
+            continue
+        outer_done_ops = tuple(getattr(outer_done[0], "operands", ()) or ())
+        if len(outer_done_ops) != 2:
+            continue
+        outer_threshold_slot = _stack_mem_disp_size_8616(outer_done[0], outer_done_ops[0])
+        outer_threshold = _imm_from_operand_8616(outer_done_ops[1])
+        if (
+            outer_threshold_slot is None
+            or int(outer_threshold_slot[0]) != int(total_disp)
+            or int(outer_threshold or -1) != int(threshold)
+        ):
+            continue
+        outer_break_jcc = outer_done[1]
+        if str(getattr(outer_break_jcc, "mnemonic", "")).lower() not in {"jg", "jnle"}:
+            continue
+        outer_break_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(outer_break_jcc))
+        inc_i_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(outer_break_jcc, "address", -1)), -1)),
+        )
+        if outer_break_target is None or inc_i_target is None:
+            continue
+        if int(outer_break_target) != int(return_target):
+            continue
+        inc_i = _block_insns_8616(project, int(inc_i_target))
+        if len(inc_i) < 2 or not _match_stack_inc_8616(inc_i[0], i_disp):
+            continue
+        if _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(inc_i[1])) != int(outer_start):
+            continue
+        total_expr = _jcc._stack_slot_expr_8616(codegen, int(total_disp), 2)
+        i_expr = _jcc._stack_slot_expr_8616(codegen, int(i_disp), 2)
+        j_expr = _jcc._stack_slot_expr_8616(codegen, int(j_disp), 2)
+        limit_expr = _jcc._stack_slot_expr_8616(codegen, 4, 2)
+        exit_expr = _branch_target_return_expr_8616(project, codegen, int(return_target))
+        if any(expr is None for expr in (total_expr, i_expr, j_expr, limit_expr, exit_expr)):
+            continue
+        if _expr_fingerprint(exit_expr, project) != _expr_fingerprint(total_expr, project):
+            continue
+
+        def _var(expr):
+            return _clone_c_value_for_codegen_tree_8616(expr)
+
+        def _const(value: int):
+            return CConstant(int(value), SimTypeShort(False), codegen=codegen)
+
+        total_gt_threshold = lambda: CBinaryOp("CmpGT", _var(total_expr), _const(int(threshold)), codegen=codegen)
+        inner_body = CStatements(
+            statements=[
+                CIfElse(
+                    [
+                        (
+                            CBinaryOp("CmpEQ", _var(j_expr), _var(i_expr), codegen=codegen),
+                            CStatements(
+                                statements=[
+                                    CAssignment(
+                                        _var(j_expr),
+                                        CBinaryOp("Add", _var(j_expr), _const(1), codegen=codegen),
+                                        codegen=codegen,
+                                    ),
+                                    CContinue(codegen=codegen),
+                                ],
+                                codegen=codegen,
+                            ),
+                        )
+                    ],
+                    else_node=None,
+                    cstyle_ifs=True,
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _var(total_expr),
+                    CBinaryOp(
+                        "Add",
+                        _var(total_expr),
+                        CBinaryOp("Add", _var(i_expr), _var(j_expr), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                CIfElse(
+                    [
+                        (
+                            total_gt_threshold(),
+                            CStatements(statements=[CBreak(codegen=codegen)], codegen=codegen),
+                        )
+                    ],
+                    else_node=None,
+                    cstyle_ifs=True,
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _var(j_expr),
+                    CBinaryOp("Add", _var(j_expr), _const(1), codegen=codegen),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        )
+        outer_body = CStatements(
+            statements=[
+                CAssignment(_var(j_expr), _const(0), codegen=codegen),
+                CDoWhileLoop(
+                    CBinaryOp("CmpLT", _var(j_expr), _var(limit_expr), codegen=codegen),
+                    inner_body,
+                    codegen=codegen,
+                ),
+                CIfElse(
+                    [
+                        (
+                            total_gt_threshold(),
+                            CStatements(statements=[CBreak(codegen=codegen)], codegen=codegen),
+                        )
+                    ],
+                    else_node=None,
+                    cstyle_ifs=True,
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _var(i_expr),
+                    CBinaryOp("Add", _var(i_expr), _const(1), codegen=codegen),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        )
+        codegen.cfunc.statements = CStatements(
+            statements=[
+                CAssignment(_var(total_expr), _const(0), codegen=codegen),
+                CAssignment(_var(i_expr), _const(0), codegen=codegen),
+                CWhileLoop(
+                    CBinaryOp("CmpLT", _var(i_expr), _var(limit_expr), codegen=codegen),
+                    outer_body,
+                    codegen=codegen,
+                ),
+                CReturn(_var(total_expr), codegen=codegen),
+            ],
+            codegen=codegen,
+        )
+        codegen._inertia_nested_stack_counter_loop_materialized_8616 = True
+        codegen._inertia_nested_stack_counter_loop_stack_slots_8616 = {
+            "total_disp": int(total_disp),
+            "i_disp": int(i_disp),
+            "j_disp": int(j_disp),
+            "limit_disp": 4,
+            "threshold": int(threshold),
+        }
+        return True
+    return False
 
 
 def _ordered_32bit_conditional_return_pairs_from_cfg_8616(project, codegen) -> list[tuple[object, int]]:
@@ -1225,6 +3121,10 @@ def _ordered_32bit_mask_update_pairs_from_cfg_8616(project, codegen, slot_offset
             if target is None:
                 target = _inequality_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
             if target is None:
+                branch_target = _jcc._branch_target_imm_8616(insn)
+                if branch_target is not None and _or_stack_update_imm_8616(project, int(branch_target), slot_offset) is not None:
+                    target = int(branch_target)
+            if target is None:
                 false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address))
                 if false_target is not None and _or_stack_update_imm_8616(project, false_target, slot_offset) is not None:
                     target = int(false_target)
@@ -1310,6 +3210,8 @@ def _materialize_cfg_mask_accumulator_8616(project, codegen) -> bool:
 def _materialize_cfg_selector_return_branches_8616(project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
+    if getattr(codegen, "_inertia_return_selector_materialized_8616", False):
+        return False
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
     log = logging.getLogger(__name__)
     stats = getattr(codegen, "_inertia_cfg_selector_return_stats_8616", None)
@@ -1320,9 +3222,13 @@ def _materialize_cfg_selector_return_branches_8616(project, codegen) -> bool:
         stats["materialized"] += 1
         return True
     pairs = _ordered_32bit_selector_return_expr_pairs_from_cfg_8616(project, codegen)
+    pair_source = "32bit"
+    if not pairs:
+        pairs = _ordered_conditional_return_expr_pairs_from_cfg_8616(project, codegen)
+        pair_source = "jcc"
     stats["candidates"] += len(pairs)
     if debug:
-        log.warning("[cfg-selector-return] candidates=%d stats=%r", len(pairs), stats)
+        log.warning("[cfg-selector-return] candidates=%d source=%s stats=%r", len(pairs), pair_source, stats)
     if not pairs:
         return False
     if len(pairs) > 1:
@@ -1342,11 +3248,21 @@ def _materialize_cfg_selector_return_branches_8616(project, codegen) -> bool:
     statements = []
     return_fingerprints = []
     for cond, true_expr, _false_expr in pairs:
-        true_body = CStatements(statements=[CReturn(true_expr, codegen=codegen)], codegen=codegen)
-        statements.append(CIfElse([(cond, true_body)], else_node=None, cstyle_ifs=True, codegen=codegen))
+        true_body = CStatements(
+            statements=[CReturn(_clone_c_value_for_codegen_tree_8616(true_expr), codegen=codegen)],
+            codegen=codegen,
+        )
+        statements.append(
+            CIfElse(
+                [(_clone_c_value_for_codegen_tree_8616(cond), true_body)],
+                else_node=None,
+                cstyle_ifs=True,
+                codegen=codegen,
+            )
+        )
         return_fingerprints.append(_expr_fingerprint(true_expr, project))
     final_expr = pairs[-1][2]
-    statements.append(CReturn(final_expr, codegen=codegen))
+    statements.append(CReturn(_clone_c_value_for_codegen_tree_8616(final_expr), codegen=codegen))
     return_fingerprints.append(_expr_fingerprint(final_expr, project))
     codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
     stats["materialized"] += len(pairs)
@@ -1503,20 +3419,93 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
             return not tuple(getattr(body, "statements", ()) or ())
         return body is None
 
+    def _body_is_cfg_return_setup_only(body) -> bool:
+        if _body_is_empty(body):
+            return True
+        if not isinstance(body, CStatements):
+            return False
+        statements = tuple(getattr(body, "statements", ()) or ())
+        if not statements:
+            return True
+        for stmt in statements:
+            if not isinstance(stmt, CAssignment):
+                return False
+            nodes = (stmt, *_iter_c_nodes_deep_8616(stmt))
+            if any(isinstance(node, CFunctionCall) for node in nodes):
+                return False
+            if any(isinstance(node, (CIfElse, CReturn, CGoto, CBreak, CWhileLoop, CDoWhileLoop, CForLoop)) for node in nodes):
+                return False
+        return True
+
     def _return_stmt(value: int):
         return CReturn(CConstant(int(value), SimTypeShort(False), codegen=codegen), codegen=codegen)
 
+    if debug:
+        with contextlib.suppress(Exception):
+            nodes = tuple(_iter_c_nodes_deep_8616(getattr(codegen.cfunc, "statements", None)))
+            if_nodes = tuple(node for node in nodes if isinstance(node, CIfElse))
+            log.warning(
+                "[empty-return-branch] scan nodes=%d ifs=%d root_type=%s",
+                len(nodes),
+                len(if_nodes),
+                type(getattr(codegen.cfunc, "statements", None)).__name__,
+            )
     for node in _iter_c_nodes_deep_8616(getattr(codegen.cfunc, "statements", None)):
         if not isinstance(node, CIfElse):
             continue
         cond_pairs = getattr(node, "condition_and_nodes", None)
         if not isinstance(cond_pairs, (list, tuple)) or not cond_pairs:
+            if debug:
+                log.warning(
+                    "[empty-return-branch] refused no-cond-pairs type=%s cond_pairs_type=%s",
+                    type(node).__name__,
+                    type(cond_pairs).__name__,
+                )
             continue
         cond, body = cond_pairs[0]
+        else_body = getattr(node, "else_node", None)
+        cfg_return_setup_candidate = _body_is_cfg_return_setup_only(body) and _body_is_cfg_return_setup_only(else_body)
         if not _body_is_empty(body):
-            continue
+            if debug:
+                body_statements = getattr(body, "statements", None)
+                if isinstance(body_statements, CStatements):
+                    body_count = len(tuple(getattr(body_statements, "statements", ()) or ()))
+                elif isinstance(body_statements, (list, tuple)):
+                    body_count = len(body_statements)
+                else:
+                    body_count = -1
+                child_types: tuple[str, ...] = ()
+                if isinstance(body_statements, CStatements):
+                    child_items = tuple(getattr(body_statements, "statements", ()) or ())
+                    child_types = tuple(type(child).__name__ for child in child_items)
+                elif isinstance(body_statements, (list, tuple)):
+                    child_items = tuple(body_statements)
+                    child_types = tuple(type(child).__name__ for child in child_items)
+                else:
+                    child_items = ()
+                assignment_fps = []
+                for child in child_items:
+                    if isinstance(child, CAssignment):
+                        assignment_fps.append(
+                            (
+                                _expr_fingerprint(getattr(child, "lhs", None), project),
+                                _expr_fingerprint(getattr(child, "rhs", None), project),
+                            )
+                        )
+                log.warning(
+                    "[empty-return-branch] refused nonempty body_type=%s body_count=%d child_types=%r assignment_fps=%r cond_key=%r",
+                    type(body).__name__,
+                    body_count,
+                    child_types,
+                    tuple(assignment_fps),
+                    _jcc._condition_tags_8616(cond),
+                )
+            if not cfg_return_setup_candidate:
+                continue
         empty_if_nodes.append(node)
         stats["candidates"] += 1
+        if not _body_is_empty(body):
+            continue
         value = _condition_branch_return_value_8616(project, cond)
         if value is None and ordered_index < len(ordered_return_values):
             value = ordered_return_values[ordered_index]
@@ -1543,38 +3532,64 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
         stats["materialized"] += 1
         changed = True
     if not cond_return_pairs and empty_if_nodes:
-        cfg_expr_pairs = _ordered_conditional_return_expr_pairs_from_cfg_8616(project, codegen)
-        if len(cfg_expr_pairs) >= len(empty_if_nodes):
-            rebuilt_statements = []
-            for node, (cond, true_expr, false_expr) in zip(empty_if_nodes, cfg_expr_pairs):
-                true_body = CStatements(
-                    statements=[CReturn(true_expr, codegen=codegen)],
-                    codegen=codegen,
+        total_if_nodes = sum(
+            1
+            for current in _iter_c_nodes_deep_8616(getattr(codegen.cfunc, "statements", None))
+            if isinstance(current, CIfElse)
+        )
+        if len(empty_if_nodes) != 1 or total_if_nodes != 1:
+            stats["refused"] += len(empty_if_nodes)
+            if debug:
+                log.warning(
+                    "[empty-return-branch] cfg expr rebuild refused: candidates=%d total_ifs=%d",
+                    len(empty_if_nodes),
+                    total_if_nodes,
                 )
-                false_body = CStatements(
-                    statements=[CReturn(false_expr, codegen=codegen)],
-                    codegen=codegen,
-                )
-                node.condition_and_nodes = type(getattr(node, "condition_and_nodes", []))([(cond, true_body)])
-                node.else_node = false_body
-                if hasattr(node, "iftrue"):
-                    node.iftrue = true_body
-                if hasattr(node, "true_node"):
-                    node.true_node = true_body
-                rebuilt_statements.append(node)
-            if rebuilt_statements:
-                codegen.cfunc.statements = CStatements(statements=rebuilt_statements, codegen=codegen)
-                codegen._inertia_return_expr_chain_materialized_8616 = True
-                codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
-                    _expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in cfg_expr_pairs[: len(empty_if_nodes)]
-                )
-                codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
-                    _expr_fingerprint(expr, project)
-                    for _cond, true_expr, false_expr in cfg_expr_pairs[: len(empty_if_nodes)]
-                    for expr in (true_expr, false_expr)
-                )
-                stats["materialized"] += len(rebuilt_statements)
-                changed = True
+        elif _selector_function_has_unsafe_effects_8616(project, codegen):
+            stats["refused"] += len(empty_if_nodes)
+            if debug:
+                log.warning("[empty-return-branch] cfg expr rebuild refused: unsafe function effects")
+        else:
+            cfg_expr_pairs = _ordered_conditional_return_expr_pairs_from_cfg_8616(project, codegen)
+            if len(cfg_expr_pairs) >= len(empty_if_nodes):
+                rebuilt_statements = []
+                for node, (cond, true_expr, false_expr) in zip(empty_if_nodes, cfg_expr_pairs):
+                    true_body = CStatements(
+                        statements=[CReturn(true_expr, codegen=codegen)],
+                        codegen=codegen,
+                    )
+                    false_body = CStatements(
+                        statements=[CReturn(false_expr, codegen=codegen)],
+                        codegen=codegen,
+                    )
+                    node.condition_and_nodes = type(getattr(node, "condition_and_nodes", []))([(cond, true_body)])
+                    node.else_node = false_body
+                    if hasattr(node, "iftrue"):
+                        node.iftrue = true_body
+                    if hasattr(node, "true_node"):
+                        node.true_node = true_body
+                    rebuilt_statements.append(node)
+                if rebuilt_statements:
+                    codegen.cfunc.statements = CStatements(statements=rebuilt_statements, codegen=codegen)
+                    codegen._inertia_return_expr_chain_materialized_8616 = True
+                    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
+                        _expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in cfg_expr_pairs[: len(empty_if_nodes)]
+                    )
+                    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
+                        _expr_fingerprint(expr, project)
+                        for _cond, true_expr, false_expr in cfg_expr_pairs[: len(empty_if_nodes)]
+                        for expr in (true_expr, false_expr)
+                    )
+                    stats["materialized"] += len(rebuilt_statements)
+                    changed = True
+            else:
+                stats["refused"] += len(empty_if_nodes)
+                if debug:
+                    log.warning(
+                        "[empty-return-branch] cfg expr rebuild refused: pairs=%d candidates=%d",
+                        len(cfg_expr_pairs),
+                        len(empty_if_nodes),
+                    )
     if len(cond_return_pairs) >= 2:
         cfg_return_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
         flatten_pairs = cond_return_pairs
@@ -1592,6 +3607,19 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
         if len(cfg_return_pairs) >= 2:
             changed = _flatten_conditional_return_chain_8616(project, codegen, cfg_return_pairs) or changed
             cond_return_pairs = cfg_return_pairs
+    if not cond_return_pairs:
+        cfg_return_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
+        if len(cfg_return_pairs) >= 2:
+            if _selector_function_has_unsafe_effects_8616(project, codegen):
+                stats["refused"] += len(cfg_return_pairs)
+                if debug:
+                    log.warning(
+                        "[cfg-return-chain] full flatten refused unsafe effects pairs=%d",
+                        len(cfg_return_pairs),
+                    )
+            else:
+                changed = _flatten_conditional_return_chain_8616(project, codegen, cfg_return_pairs) or changed
+                cond_return_pairs = cfg_return_pairs
     if not cond_return_pairs and not getattr(codegen, "_inertia_return_chain_suffix_materialized_8616", False):
         cfg_return_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
         if _materialize_cfg_conditional_return_suffix_8616(project, codegen, cfg_return_pairs):
@@ -1809,6 +3837,329 @@ class DecompilerPostprocessPassSpec:
     needs_project: bool
 
 
+def _dead_code_elimination_after_flag_prune_8616(codegen) -> bool:
+    had_attr = hasattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616")
+    previous = getattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616", None)
+    codegen._inertia_dce_allow_storage_free_dirty_8616 = True
+    try:
+        return _dead_code_elimination_8616(codegen)
+    finally:
+        if had_attr:
+            codegen._inertia_dce_allow_storage_free_dirty_8616 = previous
+        else:
+            with contextlib.suppress(Exception):
+                delattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616")
+
+
+def _prune_unreachable_after_return_8616(project, codegen) -> bool:  # noqa: ARG001
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return False
+    root = getattr(cfunc, "statements", None)
+    if root is None:
+        return False
+
+    def _statement_ends_in_return(stmt) -> bool:
+        if isinstance(stmt, CReturn):
+            return True
+        if not isinstance(stmt, CStatements):
+            return False
+        nested = list(getattr(stmt, "statements", ()) or ())
+        while nested and isinstance(nested[-1], CStatements):
+            nested = list(getattr(nested[-1], "statements", ()) or ())
+        return bool(nested and isinstance(nested[-1], CReturn))
+
+    changed = False
+    removed = 0
+    scanned_blocks = 0
+    seen: set[int] = set()
+    blocks = [node for node in (root, *_iter_c_nodes_deep_8616(root)) if isinstance(node, CStatements)]
+    for node in reversed(blocks):
+        if not isinstance(node, CStatements):
+            continue
+        node_id = id(node)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        scanned_blocks += 1
+        statements = list(getattr(node, "statements", ()) or ())
+        if not statements:
+            continue
+        kept = []
+        terminated = False
+        for stmt in statements:
+            if terminated:
+                removed += 1
+                continue
+            kept.append(stmt)
+            if _statement_ends_in_return(stmt):
+                terminated = True
+        if len(kept) != len(statements):
+            node.statements = kept
+            changed = True
+
+    if removed:
+        codegen._inertia_unreachable_after_return_pruned_8616 = int(
+            getattr(codegen, "_inertia_unreachable_after_return_pruned_8616", 0) or 0
+        ) + removed
+    if os.environ.get("INERTIA_DEBUG_UNREACHABLE_PRUNE"):
+        top_types = ()
+        with contextlib.suppress(Exception):
+            top_types = tuple(type(stmt).__name__ for stmt in tuple(getattr(root, "statements", ()) or ()))
+        logging.getLogger(__name__).warning(
+            "[unreachable-prune] blocks=%d removed=%d changed=%s root_type=%s top=%r",
+            scanned_blocks,
+            removed,
+            changed,
+            type(root).__name__,
+            top_types,
+        )
+    return changed
+
+
+def _materialize_missing_terminal_ax_return_8616(project, codegen) -> bool:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return False
+    root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None)
+    statements = getattr(root, "statements", None)
+    if not isinstance(statements, (list, tuple)):
+        return False
+    return_nodes = [node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CReturn)]
+    if os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"):
+        logging.getLogger(__name__).warning(
+            "[missing-ax-return] pass-entry func=%#x return_nodes=%d root=%s",
+            getattr(cfunc, "addr", -1) or -1,
+            len(return_nodes),
+            type(root).__name__,
+        )
+    replace_artifact_return = False
+    artifact_return = None
+    if return_nodes:
+        artifact_returns = [
+            node
+            for node in return_nodes
+            if _return_expr_has_insert_artifact_8616(getattr(node, "retval", None))
+            or _return_depends_on_insert_artifact_8616(root, node)
+        ]
+        if len(artifact_returns) != 1:
+            if os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"):
+                logging.getLogger(__name__).warning(
+                    "[missing-ax-return] refused artifact_count=%d return_nodes=%d",
+                    len(artifact_returns),
+                    len(return_nodes),
+                )
+            return False
+        artifact_return = artifact_returns[0]
+        replace_artifact_return = True
+    prototype = getattr(cfunc, "functy", None) or getattr(cfunc, "prototype", None)
+    func_addr = getattr(cfunc, "addr", None)
+    function = getattr(codegen, "_inertia_current_function_8616", None)
+    if isinstance(func_addr, int):
+        if function is None:
+            with contextlib.suppress(Exception):
+                function = project.kb.functions.function(addr=func_addr, create=False)
+    if prototype is None and function is not None:
+        prototype = getattr(function, "prototype", None)
+    return_type = getattr(prototype, "returnty", None)
+    if return_type is None or type(return_type) is SimTypeBottom:
+        return False
+    if not isinstance(func_addr, int):
+        return False
+    if function is not None:
+        retval = _linear_terminal_ax_return_expr_8616(project, codegen, function)
+    else:
+        retval = _branch_target_return_expr_8616(project, codegen, func_addr)
+    if retval is None:
+        if os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"):
+            logging.getLogger(__name__).warning(
+                "[missing-ax-return] refused no terminal AX proof func=%#x function=%r",
+                func_addr,
+                function,
+            )
+        codegen._inertia_missing_terminal_ax_return_refused_8616 = (
+            int(getattr(codegen, "_inertia_missing_terminal_ax_return_refused_8616", 0) or 0) + 1
+        )
+        return False
+    replaced_fingerprint = None
+    replaced_return_keys = frozenset()
+    if replace_artifact_return:
+        replaced_return_keys = _c_variables_read_by_expr_8616(getattr(artifact_return, "retval", None))
+        with contextlib.suppress(Exception):
+            replaced_fingerprint = _expr_fingerprint(getattr(artifact_return, "retval", None), project)
+        artifact_return.retval = retval
+        root.statements = [artifact_return] if isinstance(statements, list) else (artifact_return,)
+        cfunc.statements = root
+        if hasattr(cfunc, "body"):
+            cfunc.body = root
+        _prune_replaced_insert_artifact_assignments_8616(root, replaced_return_keys, codegen)
+    else:
+        updated = list(statements)
+        updated.append(CReturn(retval, codegen=codegen))
+        root.statements = updated if isinstance(statements, list) else tuple(updated)
+        cfunc.statements = root
+        if hasattr(cfunc, "body"):
+            cfunc.body = root
+    fingerprint = None
+    with contextlib.suppress(Exception):
+        fingerprint = _expr_fingerprint(retval, project)
+    codegen._inertia_missing_terminal_ax_return_materialized_8616 = (
+        int(getattr(codegen, "_inertia_missing_terminal_ax_return_materialized_8616", 0) or 0) + 1
+    )
+    if fingerprint is not None:
+        codegen._inertia_missing_terminal_ax_return_fingerprints_8616 = (
+            *tuple(getattr(codegen, "_inertia_missing_terminal_ax_return_fingerprints_8616", ()) or ()),
+            fingerprint,
+        )
+    if replaced_fingerprint is not None:
+        codegen._inertia_missing_terminal_ax_return_replaced_fingerprints_8616 = (
+            *tuple(getattr(codegen, "_inertia_missing_terminal_ax_return_replaced_fingerprints_8616", ()) or ()),
+            replaced_fingerprint,
+        )
+    return True
+
+
+def _return_expr_has_insert_artifact_8616(expr) -> bool:
+    if expr is None:
+        return False
+    debug = bool(os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"))
+    for node in _iter_c_nodes_deep_8616(expr):
+        if not isinstance(node, CFunctionCall):
+            continue
+        callee = getattr(node, "callee_target", None)
+        if callee is None:
+            callee = getattr(node, "callee", None)
+        if debug:
+            logging.getLogger(__name__).warning(
+                "[missing-ax-return] return-call-artifact candidate callee_target=%r callee=%r attrs=%r",
+                getattr(node, "callee_target", None),
+                getattr(node, "callee", None),
+                tuple(sorted(k for k in getattr(node, "__dict__", {}) if "callee" in k or "target" in k or "name" in k)),
+            )
+        text = str(callee or "")
+        if text in {"_INSERT", "__INSERT"} or text.endswith("._INSERT"):
+            return True
+    return False
+
+
+def _c_variable_key_8616(expr) -> tuple | None:
+    if not isinstance(expr, CVariable):
+        return None
+    variable = getattr(expr, "variable", None)
+    if variable is not None:
+        return (
+            type(variable).__name__,
+            getattr(variable, "name", None),
+            getattr(variable, "offset", None),
+            getattr(variable, "reg", None),
+            getattr(variable, "size", None),
+        )
+    name = getattr(expr, "name", None)
+    return ("CVariable", name) if name is not None else None
+
+
+def _c_variables_read_by_expr_8616(expr) -> frozenset[tuple]:
+    keys: set[tuple] = set()
+    if expr is None:
+        return frozenset()
+    for node in _iter_c_nodes_deep_8616(expr):
+        key = _c_variable_key_8616(node)
+        if key is not None:
+            keys.add(key)
+    return frozenset(keys)
+
+
+def _iter_structured_children_for_reads_8616(node):
+    for attr in _C_AST_CHILD_ATTRS_8616:
+        value = None
+        with contextlib.suppress(Exception):
+            value = getattr(node, attr)
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            yield from value.values()
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            yield from value
+        else:
+            yield value
+
+
+def _c_variables_read_by_tree_8616(root) -> frozenset[tuple]:
+    keys: set[tuple] = set()
+    seen: set[int] = set()
+
+    def _walk(node) -> None:
+        if node is None:
+            return
+        if isinstance(node, (list, tuple, set, frozenset)):
+            for item in node:
+                _walk(item)
+            return
+        node_id = id(node)
+        if node_id in seen:
+            return
+        seen.add(node_id)
+        if isinstance(node, CVariable):
+            key = _c_variable_key_8616(node)
+            if key is not None:
+                keys.add(key)
+            return
+        if isinstance(node, CAssignment):
+            _walk(getattr(node, "rhs", None))
+            return
+        for child in _iter_structured_children_for_reads_8616(node):
+            _walk(child)
+
+    _walk(root)
+    return frozenset(keys)
+
+
+def _return_depends_on_insert_artifact_8616(root, return_node: CReturn) -> bool:
+    read_keys = _c_variables_read_by_expr_8616(getattr(return_node, "retval", None))
+    if not read_keys:
+        return False
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CAssignment):
+            continue
+        lhs_key = _c_variable_key_8616(getattr(node, "lhs", None))
+        if lhs_key is None or lhs_key not in read_keys:
+            continue
+        if _return_expr_has_insert_artifact_8616(getattr(node, "rhs", None)):
+            return True
+    return False
+
+
+def _prune_replaced_insert_artifact_assignments_8616(root, replaced_return_keys: frozenset[tuple], codegen) -> int:
+    remaining_reads = _c_variables_read_by_tree_8616(root)
+    pruned = 0
+    for block in tuple(node for node in (root, *_iter_c_nodes_deep_8616(root)) if isinstance(node, CStatements)):
+        statements = getattr(block, "statements", None)
+        if not isinstance(statements, (list, tuple)):
+            continue
+        updated = []
+        changed = False
+        for stmt in statements:
+            if isinstance(stmt, CAssignment):
+                lhs_key = _c_variable_key_8616(getattr(stmt, "lhs", None))
+                if (
+                    lhs_key is not None
+                    and lhs_key not in remaining_reads
+                    and _return_expr_has_insert_artifact_8616(getattr(stmt, "rhs", None))
+                ):
+                    pruned += 1
+                    changed = True
+                    continue
+            updated.append(stmt)
+        if changed:
+            block.statements = updated if isinstance(statements, list) else tuple(updated)
+    if pruned:
+        codegen._inertia_missing_terminal_ax_return_artifact_assignments_pruned_8616 = (
+            int(getattr(codegen, "_inertia_missing_terminal_ax_return_artifact_assignments_pruned_8616", 0) or 0)
+            + pruned
+        )
+    return pruned
+
+
 def _build_decompiler_postprocess_passes():
     return (
         DecompilerPostprocessPassSpec("_apply_word_global_types_8616", _globals._apply_word_global_types_8616, True),
@@ -1829,6 +4180,26 @@ def _build_decompiler_postprocess_passes():
             False,
         ),
         DecompilerPostprocessPassSpec(
+            "_materialize_pointer_memory_idioms_8616",
+            _materialize_pointer_memory_idioms_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_nested_stack_counter_accumulator_loop_8616",
+            _materialize_nested_stack_counter_accumulator_loop_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_stack_arg_accumulator_loop_8616",
+            _materialize_stack_arg_accumulator_loop_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_cfg_selector_return_branches_early_8616",
+            _materialize_cfg_selector_return_branches_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_rewrite_decoded_jcc_conditions_8616", _jcc._rewrite_decoded_jcc_conditions_8616, True
         ),
         DecompilerPostprocessPassSpec(
@@ -1842,6 +4213,9 @@ def _build_decompiler_postprocess_passes():
         ),
         DecompilerPostprocessPassSpec(
             "_prune_overwritten_flag_assignments_8616", _flags._prune_overwritten_flag_assignments_8616, True
+        ),
+        DecompilerPostprocessPassSpec(
+            "_dead_code_elimination_after_flag_prune_8616", _dead_code_elimination_after_flag_prune_8616, False
         ),
         DecompilerPostprocessPassSpec(
             "_fix_interval_guard_conditions_8616", _flags._fix_interval_guard_conditions_8616, False
@@ -1884,6 +4258,11 @@ def _build_decompiler_postprocess_passes():
         DecompilerPostprocessPassSpec(
             "_materialize_callsite_stack_arguments_8616",
             _calls._materialize_callsite_stack_arguments_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_missing_terminal_ax_return_8616",
+            _materialize_missing_terminal_ax_return_8616,
             True,
         ),
         DecompilerPostprocessPassSpec(
@@ -1999,6 +4378,16 @@ def _build_decompiler_postprocess_passes():
             False,
         ),
         DecompilerPostprocessPassSpec(
+            "_prune_unreachable_after_return_final_8616",
+            _prune_unreachable_after_return_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_empty_if_return_branches_final_8616",
+            _materialize_empty_if_return_branches_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
             _prune_duplicate_empty_return_guard_before_cfg_suffix_8616,
             True,
@@ -2029,10 +4418,13 @@ def _wrapper_passes_8616() -> tuple[DecompilerPostprocessPassSpec, ...]:
         "_lower_stable_ss_stack_accesses_8616",
         "_attach_callsite_summaries_8616",
         "_materialize_callsite_stack_arguments_8616",
+        "_materialize_missing_terminal_ax_return_8616",
         "_materialize_recovered_callsite_stack_arguments_8616",
         "_materialize_callsite_prototypes_8616",
         "_rewrite_decoded_jcc_conditions_after_calls_8616",
         "_materialize_empty_if_return_branches_8616",
+        "_prune_unreachable_after_return_final_8616",
+        "_materialize_empty_if_return_branches_final_8616",
         "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
         "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
         "_normalize_call_target_names_8616",
@@ -3215,24 +5607,29 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project
     return _impl()
 
 
-def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> None:
+def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> bool:
     if getattr(codegen, "_inertia_pre_validation_stack_semantics_primed", False):
-        return
+        return False
+    changed = False
     try:
         _invalidate_tail_validation_derived_caches_8616(codegen)
         transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
         alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
         if isinstance(alias_facts, list) and alias_facts:
+            before_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
             lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+            after_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
+            changed = changed or after_materialized > before_materialized
         from .lowering.real_mode_linear import (
             lower_stable_ds_es_linear_global_dereferences_8616,
             lower_stable_ss_linear_stack_dereferences_8616,
         )
 
-        lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
-        lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
+        changed = bool(lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)) or changed
+        changed = bool(lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)) or changed
         if _fact_backed_stack_normalize_enabled_8616():
-            _normalize_fact_backed_stack_accesses_8616(project, codegen)
+            changed = bool(_normalize_fact_backed_stack_accesses_8616(project, codegen)) or changed
+        changed = bool(_materialize_pointer_memory_idioms_8616(project, codegen)) or changed
         _invalidate_tail_validation_derived_caches_8616(codegen)
     except Exception as ex:
         logging.getLogger(__name__).debug(
@@ -3242,6 +5639,7 @@ def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> 
         )
     finally:
         codegen._inertia_pre_validation_stack_semantics_primed = True
+    return changed
 
 
 def _postprocess_runtime_config_8616(project, codegen, pass_specs) -> tuple[int | None, bool, bool, set[str], object]:
@@ -3330,7 +5728,12 @@ def _postprocess_optimization_enabled_8616() -> bool:
 
 def _postprocess_spec_enabled_8616(spec_name: str) -> bool:
     if spec_name == "_prune_overwritten_flag_assignments_8616":
-        return os.environ.get("INERTIA_ENABLE_FLAG_OVERWRITE_PRUNE", "").strip().lower() in {"1", "true", "yes", "on"}
+        return os.environ.get("INERTIA_DISABLE_FLAG_OVERWRITE_PRUNE", "").strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     if spec_name == "_materialize_callsite_stack_arguments_final_8616":
         return os.environ.get("INERTIA_ENABLE_FINAL_CALLSITE_REMATERIALIZE", "").strip().lower() in {"1", "true", "yes", "on"}
     if spec_name == "_normalize_call_target_names_final_8616":
@@ -3363,14 +5766,44 @@ def _postprocess_run_bootstrap_steps_8616(project, codegen, skip_names: set[str]
             return False
         if codegen._inertia_postprocess_validation_failed:
             return False
-    if "_rewrite_decoded_jcc_conditions_8616" not in skip_names:
+    if "_materialize_nested_stack_counter_accumulator_loop_8616" not in skip_names:
         if not apply_step(
-            "_rewrite_decoded_jcc_conditions_8616",
-            lambda: _jcc._rewrite_decoded_jcc_conditions_8616(project, codegen),
+            "_materialize_nested_stack_counter_accumulator_loop_8616",
+            lambda: _materialize_nested_stack_counter_accumulator_loop_8616(project, codegen),
         ):
             return False
         if codegen._inertia_postprocess_validation_failed:
             return False
+    if "_materialize_stack_arg_accumulator_loop_8616" not in skip_names:
+        if not apply_step(
+            "_materialize_stack_arg_accumulator_loop_8616",
+            lambda: _materialize_stack_arg_accumulator_loop_8616(project, codegen),
+        ):
+            return False
+        if codegen._inertia_postprocess_validation_failed:
+            return False
+    if "_materialize_cfg_selector_return_branches_early_8616" not in skip_names:
+        if not apply_step(
+            "_materialize_cfg_selector_return_branches_early_8616",
+            lambda: _materialize_cfg_selector_return_branches_8616(project, codegen),
+        ):
+            return False
+        if codegen._inertia_postprocess_validation_failed:
+            return False
+    if "_rewrite_decoded_jcc_conditions_8616" not in skip_names:
+        if not (
+            getattr(codegen, "_inertia_return_selector_materialized_8616", False)
+            or getattr(codegen, "_inertia_pointer_memory_materialized_8616", None)
+            or getattr(codegen, "_inertia_nested_stack_counter_loop_materialized_8616", False)
+            or getattr(codegen, "_inertia_stack_arg_accumulator_loop_materialized_8616", False)
+        ):
+            if not apply_step(
+                "_rewrite_decoded_jcc_conditions_8616",
+                lambda: _jcc._rewrite_decoded_jcc_conditions_8616(project, codegen),
+            ):
+                return False
+            if codegen._inertia_postprocess_validation_failed:
+                return False
     return True
 
 
@@ -3389,8 +5822,25 @@ def _postprocess_run_pass_specs_8616(project, codegen, pass_specs, trace_func_ad
 
         _t_pp_start = _ppt.perf_counter()
         trace_after_callsite = False
+        selector_return_skip_passes = {
+            "_rewrite_decoded_jcc_conditions_8616",
+            "_rewrite_decoded_jcc_conditions_after_calls_8616",
+        }
         for spec in pass_specs:
             if not _postprocess_spec_enabled_8616(spec.name):
+                continue
+            if (
+                spec.name in selector_return_skip_passes
+                and (
+                    getattr(codegen, "_inertia_return_selector_materialized_8616", False)
+                    or getattr(codegen, "_inertia_pointer_memory_materialized_8616", None)
+                    or getattr(codegen, "_inertia_nested_stack_counter_loop_materialized_8616", False)
+                    or getattr(codegen, "_inertia_stack_arg_accumulator_loop_materialized_8616", False)
+                )
+            ):
+                skipped = list(getattr(codegen, "_inertia_postprocess_selector_return_skipped_passes_8616", ()) or ())
+                skipped.append(spec.name)
+                codegen._inertia_postprocess_selector_return_skipped_passes_8616 = tuple(skipped)
                 continue
             project._inertia_decompiler_stage = f"postprocess:{spec.name}"
             _t_pass = _ppt.perf_counter()
@@ -3454,7 +5904,10 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             "_materialize_callsite_prototypes_8616",
             "_materialize_recovered_callsite_stack_arguments_8616",
             "_recover_missing_direct_calls_final_8616",
+            "_materialize_pointer_memory_idioms_8616",
             "_materialize_empty_if_return_branches_8616",
+            "_prune_unreachable_after_return_final_8616",
+            "_materialize_empty_if_return_branches_final_8616",
             "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
             "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
         }
@@ -3462,7 +5915,10 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             "_rewrite_decoded_jcc_conditions_8616",
             "_rewrite_decoded_jcc_conditions_after_calls_8616",
             "_materialize_callsite_stack_arguments_8616",
+            "_materialize_pointer_memory_idioms_8616",
             "_materialize_empty_if_return_branches_8616",
+            "_prune_unreachable_after_return_final_8616",
+            "_materialize_empty_if_return_branches_final_8616",
             "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
             "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
         }
@@ -3611,11 +6067,58 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                                 pass_name,
                                 delta_kind.value,
                             )
+                    elif pass_name in _MISSING_TERMINAL_AX_RETURN_PASS_NAMES_8616:
+                        if _is_missing_terminal_ax_return_delta_8616(codegen, validation) or (
+                            int(getattr(codegen, "_inertia_missing_terminal_ax_return_materialized_8616", 0) or 0) > 0
+                            and _is_direct_callsite_helper_delta_only_8616(
+                                project,
+                                getattr(codegen, "_inertia_current_function_8616", None),
+                                validation,
+                            )
+                        ):
+                            delta_kind = _PostprocessValidationDeltaKind8616.MISSING_TERMINAL_AX_RETURN
+                            is_blocking_delta = False
+                            accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                            accepted.append(
+                                {
+                                    "pass": pass_name,
+                                    "kind": delta_kind.value,
+                                }
+                            )
+                            codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                            logging.getLogger(__name__).warning(
+                                "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                pass_name,
+                                delta_kind.value,
+                            )
+                        else:
+                            is_blocking_delta = True
                     elif pass_name in _JCC_REWRITE_VALIDATION_PASS_NAMES_8616:
                         if is_exit_goto_repair_delta:
                             is_blocking_delta = False
                         elif _is_jcc_call_return_condition_rebinding_delta_8616(codegen, validation):
                             delta_kind = _PostprocessValidationDeltaKind8616.JCC_CALL_RETURN_CONDITION_REBINDING
+                            is_blocking_delta = False
+                            accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                            accepted.append(
+                                {
+                                    "pass": pass_name,
+                                    "kind": delta_kind.value,
+                                }
+                            )
+                            codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                            logging.getLogger(__name__).warning(
+                                "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                pass_name,
+                                delta_kind.value,
+                            )
+                        else:
+                            is_blocking_delta = True
+                    elif pass_name == "_prune_unreachable_after_return_final_8616":
+                        if int(getattr(codegen, "_inertia_unreachable_after_return_pruned_8616", 0) or 0) > 0:
+                            delta_kind = _PostprocessValidationDeltaKind8616.UNREACHABLE_AFTER_RETURN_PRUNE
                             is_blocking_delta = False
                             accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
                             accepted.append(
@@ -3643,13 +6146,90 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                         "_materialize_recovered_callsite_stack_arguments_8616",
                         "_recover_missing_direct_calls_final_8616",
                         "_materialize_empty_if_return_branches_8616",
+                        "_materialize_empty_if_return_branches_final_8616",
                         "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
                         "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
                     }:
                         if is_exit_goto_repair_delta:
                             is_blocking_delta = False
+                        elif (
+                            pass_name == "_materialize_callsite_stack_arguments_8616"
+                            and _is_callsite_stack_argument_materialization_delta_8616(codegen, validation)
+                        ):
+                            delta_kind = _PostprocessValidationDeltaKind8616.CALLSITE_STACK_ARGUMENT_MATERIALIZATION
+                            is_blocking_delta = False
+                            accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                            accepted.append(
+                                {
+                                    "pass": pass_name,
+                                    "kind": delta_kind.value,
+                                }
+                            )
+                            codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                            logging.getLogger(__name__).warning(
+                                "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                pass_name,
+                                delta_kind.value,
+                            )
                         else:
-                            is_blocking_delta = True
+                            current_function = getattr(codegen, "_inertia_current_function_8616", None)
+                            if (
+                                pass_name
+                                in {
+                                    "_materialize_empty_if_return_branches_8616",
+                                    "_materialize_empty_if_return_branches_final_8616",
+                                    "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
+                                    "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
+                                }
+                                and _is_cfg_return_chain_callsite_materialization_delta_8616(
+                                    project, current_function, codegen, validation
+                                )
+                            ):
+                                delta_kind = _PostprocessValidationDeltaKind8616.CFG_RETURN_CHAIN_MATERIALIZATION
+                                is_blocking_delta = False
+                                accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                                accepted.append(
+                                    {
+                                        "pass": pass_name,
+                                        "kind": delta_kind.value,
+                                    }
+                                )
+                                codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                                logging.getLogger(__name__).warning(
+                                    "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                    trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                    pass_name,
+                                    delta_kind.value,
+                                )
+                            elif (
+                                pass_name
+                                in {
+                                    "_materialize_empty_if_return_branches_8616",
+                                    "_materialize_empty_if_return_branches_final_8616",
+                                }
+                                and _is_cfg_return_expr_chain_materialization_delta_8616(
+                                    project, current_function, codegen, validation
+                                )
+                            ):
+                                delta_kind = _PostprocessValidationDeltaKind8616.CFG_RETURN_EXPR_CHAIN_MATERIALIZATION
+                                is_blocking_delta = False
+                                accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                                accepted.append(
+                                    {
+                                        "pass": pass_name,
+                                        "kind": delta_kind.value,
+                                    }
+                                )
+                                codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                                logging.getLogger(__name__).warning(
+                                    "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                    trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                    pass_name,
+                                    delta_kind.value,
+                                )
+                            else:
+                                is_blocking_delta = True
                     elif is_exit_goto_repair_delta:
                         is_blocking_delta = False
                     if not is_blocking_delta:
@@ -3723,8 +6303,11 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
 
 
 def _regenerate_text_safely(codegen, *, context: str) -> bool:
+    logger = logging.getLogger(__name__)
+
     try:
         _repair_missing_cnode_codegen_metadata_8616(getattr(codegen, "cfunc", None), codegen)
+        repair_cfunctioncall_render_targets_8616(codegen)
         _normalize_stack_variable_identifiers_8616(codegen)
         _bind_codegen_variable_types_to_arch_8616(codegen)
         codegen.regenerate_text()
@@ -3733,7 +6316,7 @@ def _regenerate_text_safely(codegen, *, context: str) -> bool:
         codegen._inertia_regeneration_error = str(ex)
         codegen._inertia_regeneration_context = context
         codegen._inertia_regeneration_last_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "Skipping 86_16 postprocess regeneration for %s after %s: %s",
             context,
             getattr(codegen, "_inertia_last_postprocess_pass", None) or "no prior rewrite",
@@ -3785,6 +6368,39 @@ def _repair_missing_cnode_codegen_metadata_8616(root, codegen) -> int:
     if repaired:
         codegen._inertia_codegen_metadata_repaired = int(getattr(codegen, "_inertia_codegen_metadata_repaired", 0) or 0) + repaired
     return repaired
+
+
+def _is_missing_terminal_ax_return_delta_8616(codegen, validation: dict[str, object]) -> bool:
+    if not isinstance(validation, dict):
+        return False
+    if int(getattr(codegen, "_inertia_missing_terminal_ax_return_materialized_8616", 0) or 0) <= 0:
+        return False
+    expected_returns = set(getattr(codegen, "_inertia_missing_terminal_ax_return_fingerprints_8616", ()) or ())
+    if not expected_returns:
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = _validation_delta_touched_fields_8616(delta)
+    if not touched_fields or touched_fields - {"returns", "control_flow_effects"} or "returns" not in touched_fields:
+        return False
+    returns_delta = delta.get("returns")
+    if not isinstance(returns_delta, dict):
+        return False
+    added_returns = set(returns_delta.get("added") or ())
+    removed_returns = set(returns_delta.get("removed") or ())
+    if not added_returns or added_returns - expected_returns:
+        return False
+    replaced_returns = set(getattr(codegen, "_inertia_missing_terminal_ax_return_replaced_fingerprints_8616", ()) or ())
+    if removed_returns - ({"none", "const:0"} | replaced_returns):
+        return False
+    control_delta = delta.get("control_flow_effects")
+    if isinstance(control_delta, dict):
+        added_control = set(control_delta.get("added") or ())
+        removed_control = set(control_delta.get("removed") or ())
+        if added_control - {"return"} or removed_control:
+            return False
+    return True
 
 
 def _is_direct_callsite_helper_delta_only_8616(project, function, validation: dict[str, object]) -> bool:
@@ -3973,6 +6589,53 @@ def _is_jcc_call_return_condition_rebinding_delta_8616(codegen, validation: dict
     return True
 
 
+def _call_fingerprint_args_text_8616(token: object) -> str | None:
+    if not isinstance(token, str) or not token.startswith("call:"):
+        return None
+    open_idx = token.find("(")
+    close_idx = token.rfind(")")
+    if open_idx < 0 or close_idx < open_idx:
+        return None
+    return token[open_idx + 1 : close_idx]
+
+
+def _is_callsite_stack_argument_materialization_delta_8616(codegen, validation: dict[str, object]) -> bool:
+    if not isinstance(validation, dict):
+        return False
+    stats = getattr(codegen, "_inertia_stack_probe_fact_stats", None)
+    materialized_args = int((stats or {}).get("stack_arg_materializations", 0) or 0) if isinstance(stats, dict) else 0
+    materialized_fnptr_branches = int(getattr(codegen, "_inertia_fnptr_branch_symbols_materialized_8616", 0) or 0)
+    if materialized_args <= 0 and materialized_fnptr_branches <= 0:
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = _validation_delta_touched_fields_8616(delta)
+    if touched_fields != {"returns"}:
+        return False
+    returns_delta = delta.get("returns")
+    if not isinstance(returns_delta, dict):
+        return False
+    added = tuple(returns_delta.get("added") or ())
+    removed = tuple(returns_delta.get("removed") or ())
+    if not added or len(added) != len(removed):
+        return False
+    for added_token, removed_token in zip(added, removed, strict=False):
+        added_args = _call_fingerprint_args_text_8616(added_token)
+        removed_args = _call_fingerprint_args_text_8616(removed_token)
+        if not added_args or added_args != removed_args:
+            return False
+        if "stack_slot:" not in added_args:
+            return False
+        if not isinstance(added_token, str) or not isinstance(removed_token, str):
+            return False
+        if not added_token.startswith("call:<indirect>("):
+            return False
+        if not removed_token.startswith("call:addr:"):
+            return False
+    return True
+
+
 def _has_stack_probe_cleanup_evidence_8616(codegen) -> bool:
     summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
     if isinstance(summary_map, dict):
@@ -3997,9 +6660,12 @@ def _has_stack_probe_cleanup_evidence_8616(codegen) -> bool:
 def _is_cfg_return_chain_callsite_materialization_delta_8616(
     project, function, codegen, validation: dict[str, object]
 ) -> bool:
-    if function is None or not isinstance(validation, dict):
+    if not isinstance(validation, dict):
         return False
-    if not getattr(codegen, "_inertia_return_chain_flattened_8616", False):
+    if not (
+        getattr(codegen, "_inertia_return_chain_flattened_8616", False)
+        or getattr(codegen, "_inertia_return_chain_suffix_materialized_8616", False)
+    ):
         return False
     stats = getattr(codegen, "_inertia_empty_return_branch_stats_8616", None)
     if not isinstance(stats, dict):
@@ -4018,8 +6684,12 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
     if not touched_fields or touched_fields - allowed_fields:
         return False
 
-    conditional_values = tuple(int(value) for value in _ordered_conditional_return_values_8616(project, codegen))
     materialized_values = tuple(int(value) for value in getattr(codegen, "_inertia_return_chain_materialized_values_8616", ()) or ())
+    conditional_values = tuple(int(value) for value in _ordered_conditional_return_values_8616(project, codegen))
+    if conditional_values != materialized_values:
+        cfg_values = tuple(int(value) for _cond, value in _ordered_conditional_return_pairs_from_cfg_8616(project, codegen))
+        if cfg_values == materialized_values:
+            conditional_values = cfg_values
     if conditional_values != materialized_values:
         return False
     final_value = _last_ax_return_value_8616(project, codegen)
@@ -4072,6 +6742,8 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
 
     helper_delta = delta.get("helper_calls")
     if isinstance(helper_delta, dict) and ((helper_delta.get("added") or ()) or (helper_delta.get("removed") or ())):
+        if function is None:
+            return False
         helper_validation = dict(validation)
         helper_validation["delta"] = {"helper_calls": helper_delta}
         if not _is_direct_callsite_helper_delta_only_8616(project, function, helper_validation):
@@ -4698,6 +7370,10 @@ def _decompile_8616(self):
             _tv_sys.stderr.flush()
         if self.project.arch.name != "86_16" or self.codegen is None:
             return
+        stage_function = getattr(self, "function", None) or getattr(self, "func", None)
+        if stage_function is not None:
+            self.codegen._inertia_current_function_8616 = stage_function
+
         def _run_no_tv_path():
             postprocess_started = time.perf_counter()
             changed = _postprocess_codegen_8616(self.project, self.codegen)
@@ -4736,7 +7412,14 @@ def _decompile_8616(self):
 
         _tv_sys3.stderr.write(f"[dbg] _decompile_8616 ENTER validation path: addr={func_addr} id={id(self.codegen)}\n")
         _tv_sys3.stderr.flush()
-        _prime_stack_semantics_before_validation_baseline_8616(self.project, self.codegen)
+        primed_stack_semantics = _prime_stack_semantics_before_validation_baseline_8616(self.project, self.codegen)
+        if primed_stack_semantics:
+            regen_context = (
+                f"{func_addr:#x} pre-validation-stack-semantics"
+                if isinstance(func_addr, int)
+                else "pre-validation-stack-semantics"
+            )
+            _regenerate_text_safely(self.codegen, context=regen_context)
         before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
         before_collect_started = time.perf_counter()
         before_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(

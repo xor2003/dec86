@@ -9,6 +9,7 @@ import re
 import sys
 import threading
 import time
+import weakref
 from collections.abc import Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
 from dataclasses import dataclass, replace
@@ -67,7 +68,6 @@ from inertia_decompiler.project_loading import (
     _is_blob_only_input,
 )
 from inertia_decompiler.sidecar_metadata import (
-    _exact_function_span_matches,
     _load_lst_metadata,
     _lst_code_label,
     _lst_code_region,
@@ -732,6 +732,50 @@ def _function_recovery_score(function) -> tuple[int, int]:
     total_bytes = sum(max(0, getattr(block, "size", 0)) for block in blocks)
     return (len(blocks), total_bytes)
 
+
+def _function_block_overlap_count_8616(function, exact_region: tuple[int, int] | None = None) -> int:
+    ranges: list[tuple[int, int]] = []
+    for block in tuple(getattr(function, "blocks", ()) or ()):
+        addr = getattr(block, "addr", None)
+        size = max(0, getattr(block, "size", 0))
+        if not isinstance(addr, int) or size <= 0:
+            continue
+        end = addr + size
+        if exact_region is not None:
+            region_start, region_end = exact_region
+            if end <= region_start or addr >= region_end:
+                continue
+            addr = max(addr, region_start)
+            end = min(end, region_end)
+            if addr >= end:
+                continue
+        ranges.append((addr, end))
+    overlap_count = 0
+    last_end: int | None = None
+    for start, end in sorted(ranges):
+        if last_end is not None and start < last_end:
+            overlap_count += 1
+        last_end = max(last_end or end, end)
+    return overlap_count
+
+
+def _should_replace_exact_region_candidate_8616(
+    current,
+    candidate,
+    exact_region: tuple[int, int] | None,
+) -> bool:
+    current_score = _function_recovery_score(current)
+    candidate_score = _function_recovery_score(candidate)
+    if candidate_score <= current_score:
+        return False
+    if exact_region is not None:
+        current_overlap = _function_block_overlap_count_8616(current, exact_region)
+        candidate_overlap = _function_block_overlap_count_8616(candidate, exact_region)
+        if current_overlap == 0 and candidate_overlap > 0:
+            return False
+    return True
+
+
 def _function_covered_ranges(function) -> list[tuple[int, int]]:
     def _impl():
         ranges: list[tuple[int, int]] = []
@@ -1010,7 +1054,54 @@ def _collect_stitched_blocks_and_edges_8616(
             if start <= succ < end and succ not in visited:
                 queue.append(succ)
             edges.add((block_addr, succ))
+    reachable = _cap_stitched_blocks_to_leaders_8616(project, reachable)
+    edges = _recompute_stitched_edges_8616(reachable, start, end)
     return reachable, edges
+
+
+def _cap_stitched_blocks_to_leaders_8616(project: angr.Project, reachable: dict[int, object]) -> dict[int, object]:
+    if len(reachable) <= 1:
+        return reachable
+    leaders = sorted(reachable)
+    capped: dict[int, object] = {}
+    for block_addr in leaders:
+        block = reachable[block_addr]
+        block_size = int(getattr(block, "size", 0) or 0)
+        if block_size <= 0:
+            capped[block_addr] = block
+            continue
+        block_end = block_addr + block_size
+        next_leader = next((leader for leader in leaders if block_addr < leader < block_end), None)
+        if not isinstance(next_leader, int):
+            capped[block_addr] = block
+            continue
+        capped_size = next_leader - block_addr
+        if capped_size <= 0:
+            capped[block_addr] = block
+            continue
+        try:
+            capped_block = project.factory.block(block_addr, size=capped_size, opt_level=0)
+        except Exception:
+            capped[block_addr] = block
+            continue
+        if int(getattr(capped_block, "size", 0) or 0) > 0:
+            capped[block_addr] = capped_block
+        else:
+            capped[block_addr] = block
+    return capped
+
+
+def _recompute_stitched_edges_8616(
+    reachable: dict[int, object],
+    start: int,
+    end: int,
+) -> set[tuple[int, int]]:
+    edges: set[tuple[int, int]] = set()
+    for block_addr, block in reachable.items():
+        successors, _ = _x86_16_block_successors_from_capstone_8616(block, region_start=start, region_end=end)
+        for succ in successors:
+            edges.add((block_addr, succ))
+    return edges
 
 
 def _should_replace_function_with_stitched_graph_8616(function, reachable: dict[int, object]) -> bool:
@@ -1071,10 +1162,96 @@ def _mark_stitched_return_sites_8616(function, reachable: dict[int, object]) -> 
         last_mnemonic = str(getattr(last_insns[-1], "mnemonic", "")).lower()
         if last_mnemonic in {"ret", "retf", "iret", "retw", "iretq"}:
             function._add_return_site(source_node)
-        if last_mnemonic.startswith("j") and not any(
-            getattr(e[1], "addr", None) == target for e in function.transition_graph.edges(source_node)
-        ):
+        if last_mnemonic.startswith("j") and not tuple(function.transition_graph.edges(source_node)):
             function._add_return_site(source_node)
+
+
+def _mark_x86_16_stitched_recovery_8616(function) -> None:
+    info = getattr(function, "info", None)
+    if not isinstance(info, dict):
+        with contextlib.suppress(Exception):
+            function.info = {}
+        info = getattr(function, "info", None)
+    if isinstance(info, dict):
+        info["x86_16_stitched_recovery"] = True
+    with contextlib.suppress(Exception):
+        setattr(function, "_inertia_x86_16_stitched_recovery", True)
+
+
+def _commit_exact_region_function_to_kb_8616(project: angr.Project, cfg, function, exact_region: tuple[int, int] | None) -> bool:
+    """
+    Commit a selected exact-region function into the function managers that later
+    analysis consults.
+
+    CFGFast can leave smaller region-local pseudo-functions in the project KB
+    even after the recovery layer stitches the full exact-region body. Leaving
+    those stale entries visible makes later decompiler stages treat internal
+    block leaders as independent functions. The recovery layer owns this handoff:
+    it has the exact-region evidence and the selected bounded graph.
+    """
+
+    if getattr(getattr(project, "arch", None), "name", None) != "86_16":
+        return False
+    if exact_region is None:
+        return False
+    entry_addr = getattr(function, "addr", None)
+    if not isinstance(entry_addr, int):
+        return False
+    start, end = exact_region
+    if not (isinstance(start, int) and isinstance(end, int) and start <= entry_addr < end):
+        return False
+
+    managers: list[object] = []
+    project_functions = getattr(getattr(project, "kb", None), "functions", None)
+    cfg_functions = getattr(cfg, "functions", None)
+    for manager in (project_functions, cfg_functions):
+        if manager is not None and all(id(manager) != id(existing) for existing in managers):
+            managers.append(manager)
+
+    changed = False
+    for manager in managers:
+        keys = tuple(getattr(manager, "keys", lambda: ())() or ())
+        for candidate_addr in keys:
+            if not isinstance(candidate_addr, int):
+                continue
+            if start < candidate_addr < end:
+                with contextlib.suppress(Exception):
+                    del manager[candidate_addr]
+                    changed = True
+
+        existing = None
+        with contextlib.suppress(Exception):
+            existing = manager.function(addr=entry_addr, create=False)
+        if existing is not function:
+            with contextlib.suppress(Exception):
+                del manager[entry_addr]
+            function_map = getattr(manager, "_function_map", None)
+            if function_map is None:
+                continue
+            try:
+                function_map[entry_addr] = function
+                changed = True
+            except Exception:
+                continue
+
+        with contextlib.suppress(Exception):
+            manager.function_addrs_set.add(entry_addr)
+        name = getattr(function, "name", None)
+        if isinstance(name, str) and name:
+            with contextlib.suppress(Exception):
+                manager._func_name_to_addrs[name].add(entry_addr)
+        with contextlib.suppress(Exception):
+            manager._func_block_counts.pop(entry_addr, None)
+
+    if project_functions is not None:
+        with contextlib.suppress(Exception):
+            function._function_manager = weakref.proxy(project_functions)
+    with contextlib.suppress(Exception):
+        function._local_transition_graph = None
+    info = getattr(function, "info", None)
+    if isinstance(info, dict):
+        info["x86_16_exact_region_committed"] = True
+    return changed
 
 
 def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
@@ -1427,7 +1604,7 @@ def _recover_candidate_function_pair(
                 if stitched:
                     best_pair = (best_pair[0], stitched_func)
                     truncated = False
-                    setattr(stitched_func, "_inertia_x86_16_stitched_recovery", True)
+                    _mark_x86_16_stitched_recovery_8616(stitched_func)
                     best_score = _function_recovery_score(stitched_func)
             except Exception as ex:
                 logging.getLogger(__name__).debug(
@@ -3248,7 +3425,7 @@ def _fallback_entry_function(
                 )
                 stitched_func, stitched = function, False
             if stitched:
-                setattr(stitched_func, "_inertia_x86_16_stitched_recovery", True)
+                _mark_x86_16_stitched_recovery_8616(stitched_func)
                 function = stitched_func
             _repair_x86_16_function_graph_8616(project, function)
             return cfg, function
@@ -3388,11 +3565,11 @@ def _try_rebased_exact_region_recovery_8616(
         return None
     exact_region_size = max(0, exact_region[1] - exact_region[0])
     slice_plan = plan_x86_16_exact_slice(*exact_region)
-    enable_rebased_exact_slice = _env_flag_enabled_8616("INERTIA_ENABLE_REBASED_EXACT_SLICE")
+    enable_rebased_exact_slice = _env_flag_enabled_8616("INERTIA_ENABLE_REBASED_EXACT_SLICE", "1")
     use_rebased_exact_slice = (
         enable_rebased_exact_slice
         and slice_plan.needs_rebased_slice
-        and 0x40 <= exact_region_size <= 0x280
+        and 0x20 <= exact_region_size <= 0x280
     )
     if not use_rebased_exact_slice:
         return None
@@ -3446,9 +3623,25 @@ def _try_rebased_exact_region_recovery_8616(
         stitched_func, stitched = func, False
     if stitched:
         func = stitched_func
-        setattr(func, "_inertia_x86_16_stitched_recovery", True)
+        _mark_x86_16_stitched_recovery_8616(func)
     func.name = name
     mark_function_original_addr(func, exact_region[0])
+    with contextlib.suppress(Exception):
+        source_func = project.kb.functions.function(addr=exact_region[0], create=False)
+        source_prototype = getattr(source_func, "prototype", None) if source_func is not None else None
+        if source_prototype is not None:
+            func.prototype = source_prototype
+        source_cc = getattr(source_func, "calling_convention", None) if source_func is not None else None
+        if source_cc is not None:
+            func.calling_convention = source_cc
+        source_info = getattr(source_func, "info", None) if source_func is not None else None
+        if isinstance(source_info, dict):
+            func_info = getattr(func, "info", None)
+            if not isinstance(func_info, dict):
+                func_info = {}
+                func.info = func_info
+            for key, value in source_info.items():
+                func_info.setdefault(key, value)
     print(
         f"[dbg] rebased exact-region recovery for {name}: "
         f"{exact_region[0]:#x}-{exact_region[1]:#x} -> {slice_region[0]:#x}-{slice_region[1]:#x}"
@@ -3537,7 +3730,7 @@ def _recover_lst_function(
                         if stitched:
                             best_func = stitched_func
                             best_score = _function_recovery_score(best_func)
-                            setattr(best_func, "_inertia_x86_16_stitched_recovery", True)
+                            _mark_x86_16_stitched_recovery_8616(best_func)
                         for data_refs in (False, True):
                             try:
                                 retried_cfg, retried_func = _pick_function(
@@ -3550,7 +3743,7 @@ def _recover_lst_function(
                             except KeyError:
                                 continue
                             retried_score = _function_recovery_score(retried_func)
-                            if retried_score > best_score:
+                            if _should_replace_exact_region_candidate_8616(best_func, retried_func, exact_region):
                                 best_cfg = retried_cfg
                                 best_func = retried_func
                                 best_score = retried_score
@@ -3571,7 +3764,7 @@ def _recover_lst_function(
                                         region_span=max(window, max(0x180, exact_region[1] - exact_region[0])),
                                     )
                                     cand_score = _function_recovery_score(cand_func)
-                                    if cand_score > best_score:
+                                    if _should_replace_exact_region_candidate_8616(best_func, cand_func, exact_region):
                                         best_cfg = cand_cfg
                                         best_func = cand_func
                                         best_score = cand_score
@@ -3624,6 +3817,8 @@ def _recover_lst_function(
                         func = promoted
 
         func.name = name
+        if exact_region is not None:
+            _commit_exact_region_function_to_kb_8616(project, cfg, func, exact_region)
         return cfg, func
 
 
@@ -3783,8 +3978,15 @@ def _rank_labeled_function_entries(
         "_astart",
         "start",
         "_start",
+        "anchkstk",
+        "_anchkstk",
+        "__anchkstk",
+        "analloca_probe",
+        "_analloca_probe",
+        "__analloca_probe",
         "chkstk",
         "_chkstk",
+        "__chkstk",
         "atol",
         "_atol",
         "strlen",

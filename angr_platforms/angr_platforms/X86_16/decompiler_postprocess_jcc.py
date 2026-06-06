@@ -61,6 +61,15 @@ _JCC_COMPARE_MASK_TESTS_8616: dict[str, tuple[int, bool]] = {
     "jpo": (0x4, False),
 }
 
+_INVERT_CMP_OP_8616: dict[str, str] = {
+    "CmpEQ": "CmpNE",
+    "CmpNE": "CmpEQ",
+    "CmpGT": "CmpLE",
+    "CmpGE": "CmpLT",
+    "CmpLT": "CmpGE",
+    "CmpLE": "CmpGT",
+}
+
 _log = logging.getLogger(__name__)
 
 
@@ -905,6 +914,49 @@ def _decode_inc_dec_jcc_guard_8616(project, codegen, arith_insn, jcc_mnemonic: s
     return _impl()
 
 
+def _decode_test_jcc_guard_8616(project, codegen, test_insn, jcc_mnemonic: str, reg_exprs, ds_var):
+    def _impl():
+        if str(getattr(test_insn, "mnemonic", "")).lower() != "test":
+            return None
+        if jcc_mnemonic not in {"je", "jz", "jne", "jnz"}:
+            return None
+        operands = tuple(getattr(test_insn, "operands", ()) or ())
+        if len(operands) != 2:
+            return None
+        reg_state: dict[str, object] = {}
+        stack_slots: dict[tuple[int, int], object] = {}
+        lhs = _resolve_cmp_operand_expr_8616(
+            project,
+            codegen,
+            operands[0],
+            reg_state,
+            ds_var,
+            test_insn.reg_name,
+            reg_exprs,
+            int(test_insn.address),
+        )
+        rhs = _resolve_cmp_operand_expr_8616(
+            project,
+            codegen,
+            operands[1],
+            reg_state,
+            ds_var,
+            test_insn.reg_name,
+            reg_exprs,
+            int(test_insn.address),
+        )
+        if lhs is None or rhs is None:
+            return None
+        tested = lhs if _same_c_expression_8616(lhs, rhs) else CBinaryOp("And", lhs, rhs, codegen=codegen)
+        return _DecodedCmpGuard8616(
+            lhs=tested,
+            rhs=_const_8616(0, codegen),
+            op="CmpEQ" if jcc_mnemonic in {"je", "jz"} else "CmpNE",
+        )
+
+    return _impl()
+
+
 def _apply_cmp_state_update_8616(project, codegen, insn, reg_state, stack_slots, reg_exprs, ds_var) -> None:
     def _impl():
         mnemonic = insn.mnemonic
@@ -992,6 +1044,23 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
                     cmp_insn.mnemonic,
                 )
             return arith_decoded
+        ds_offset = _reg_offset_8616(project, "ds")
+        if ds_offset is None:
+            if debug_jcc:
+                _log.warning("[jcc-rewrite] ds reg missing block=%#x jcc=%#x", block_addr, jcc_addr)
+            return None
+        ds_var = CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen)
+        test_decoded = _decode_test_jcc_guard_8616(project, codegen, cmp_insn, jcc_mnemonic, reg_exprs, ds_var)
+        if test_decoded is not None:
+            if debug_jcc:
+                _log.warning(
+                    "[jcc-rewrite] decoded test-jcc block=%#x jcc=%#x mnemonic=%s predecessor=%s",
+                    block_addr,
+                    jcc_addr,
+                    jcc_mnemonic,
+                    cmp_insn.mnemonic,
+                )
+            return test_decoded
         if cmp_insn.mnemonic != "cmp" or len(cmp_insn.operands) != 2:
             if debug_jcc:
                 _log.warning(
@@ -999,15 +1068,9 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
                     cmp_insn.mnemonic,
                     block_addr,
                     jcc_addr,
-                )
+            )
             return None
 
-        ds_offset = _reg_offset_8616(project, "ds")
-        if ds_offset is None:
-            if debug_jcc:
-                _log.warning("[jcc-rewrite] ds reg missing block=%#x jcc=%#x", block_addr, jcc_addr)
-            return None
-        ds_var = CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen)
         chain_decoded = _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_exprs, ds_var)
         if chain_decoded is not None:
             return chain_decoded
@@ -1254,6 +1317,56 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 value = repr(expr)
             return (str(type(expr).__name__), repr(value))
 
+        def _const_bool_value_8616(expr) -> int | None:
+            node = expr
+            while isinstance(node, CTypeCast):
+                node = getattr(node, "expr", None)
+            if isinstance(node, CConstant) and int(getattr(node, "value", -1)) in {0, 1}:
+                return int(getattr(node, "value", -1))
+            return None
+
+        def _condition_inverts_decoded_guard_8616(expr) -> bool:
+            if isinstance(expr, CUnaryOp) and getattr(expr, "op", None) == "Not":
+                return not _condition_inverts_decoded_guard_8616(getattr(expr, "operand", None))
+            if isinstance(expr, CITE):
+                iftrue = _const_bool_value_8616(getattr(expr, "iftrue", None))
+                iffalse = _const_bool_value_8616(getattr(expr, "iffalse", None))
+                if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
+                    _log.warning(
+                        "[jcc-rewrite] cite polarity iftrue=%r iffalse=%r inverts=%s",
+                        iftrue,
+                        iffalse,
+                        (iftrue, iffalse) == (0, 1),
+                    )
+                if (iftrue, iffalse) == (0, 1):
+                    return True
+                if (iftrue, iffalse) == (1, 0):
+                    return False
+            return False
+
+        def _invert_decoded_guard_8616(decoded: _DecodedCmpGuard8616, tags):
+            if getattr(decoded, "expr", None) is not None:
+                return _DecodedCmpGuard8616(
+                    lhs=None,
+                    rhs=None,
+                    op=decoded.op,
+                    expr=CUnaryOp("Not", decoded.expr, codegen=codegen, tags=tags),
+                )
+            inverted_op = _INVERT_CMP_OP_8616.get(decoded.op)
+            if inverted_op is not None:
+                return _DecodedCmpGuard8616(lhs=decoded.lhs, rhs=decoded.rhs, op=inverted_op, expr=None)
+            return _DecodedCmpGuard8616(
+                lhs=None,
+                rhs=None,
+                op=decoded.op,
+                expr=CUnaryOp(
+                    "Not",
+                    CBinaryOp(decoded.op, decoded.lhs, decoded.rhs, codegen=codegen, tags=tags),
+                    codegen=codegen,
+                    tags=tags,
+                ),
+            )
+
         def _condition_exprs_from_stmt_8616(stmt):
             cond_pairs = getattr(stmt, "condition_and_nodes", None)
             if isinstance(cond_pairs, (list, tuple)):
@@ -1286,6 +1399,8 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 return ()
             stmts = getattr(root, "statements", None)
             if stmts is not None:
+                if type(stmts).__name__ == "CStatements":
+                    stmts = getattr(stmts, "statements", None)
                 raw_stmts = tuple(stmts or ())
                 flattened: list[object] = []
                 for stmt in raw_stmts:
@@ -1532,7 +1647,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
 
         def _iter_guard_conditions_8616():
             seen_conditions: set[int] = set()
-            for stmt in tuple(getattr(codegen.cfunc, "statements", ()) or ()):
+            for stmt in _statements_from_root_8616(codegen.cfunc):
                 for node in _iter_c_nodes_deep_8616(stmt):
                     cond_pairs = getattr(node, "condition_and_nodes", None)
                     if isinstance(cond_pairs, (list, tuple)):
@@ -1574,12 +1689,10 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     )
                 return None
 
-            # Guardrail: if a condition already contains explicit non-flag
-            # comparisons from another origin, do not rewrite it via the
-            # flag-decode lane. If the explicit comparison carries the same
-            # CMP/JCC tag, decoded binary evidence is the stronger source of
-            # truth and may replace stale/inverted projected comparisons.
-            if _has_nonflag_cmp_8616(cond) and tagged_key != (ins_addr, block_addr):
+            # Guardrail: once a condition is an explicit non-flag comparison,
+            # treat it as materialized. Re-decoding the same branch tag in a
+            # later pass can drop carrier polarity such as CITE(cond, 0, 1).
+            if _has_nonflag_cmp_8616(cond):
                 if debug_jcc:
                     _log.warning("[jcc-rewrite] decode skip explicit-cmp key=%r", (ins_addr, block_addr))
                 return None
@@ -1631,6 +1744,10 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 ins_addr, block_addr = key
                 if isinstance(ins_addr, int) and isinstance(block_addr, int):
                     tags = {"ins_addr": ins_addr, "vex_block_addr": block_addr}
+            if _condition_inverts_decoded_guard_8616(cond):
+                if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
+                    _log.warning("[jcc-rewrite] applying decoded guard polarity inversion key=%r op=%s", key, decoded.op)
+                decoded = _invert_decoded_guard_8616(decoded, tags)
             if getattr(decoded, "expr", None) is not None:
                 with contextlib.suppress(Exception):
                     if not isinstance(getattr(decoded.expr, "tags", None), dict):

@@ -912,6 +912,20 @@ def _preserve_source_label_for_recovered_function_8616(source_function, recovere
         return False
     try:
         recovered_function.name = source_name
+        source_prototype = getattr(source_function, "prototype", None)
+        if source_prototype is not None:
+            recovered_function.prototype = source_prototype
+        source_cc = getattr(source_function, "calling_convention", None)
+        if source_cc is not None:
+            recovered_function.calling_convention = source_cc
+        source_info = getattr(source_function, "info", None)
+        recovered_info = getattr(recovered_function, "info", None)
+        if isinstance(source_info, dict):
+            if not isinstance(recovered_info, dict):
+                recovered_info = {}
+                recovered_function.info = recovered_info
+            for key, value in source_info.items():
+                recovered_info.setdefault(key, value)
     except Exception:
         return False
     return True
@@ -3132,6 +3146,35 @@ def main(argv: list[str] | None = None) -> int:
                 return candidate
         return None
 
+    def _linked_proc_addr_from_metadata_8616(
+        metadata: LSTMetadata | None,
+        proc_name: str | None,
+        proc_kind: str | None,
+    ) -> int | None:
+        if metadata is None or not isinstance(proc_name, str) or not proc_name:
+            return None
+        wanted_name = proc_name.lstrip("_")
+        wanted_kind = (proc_kind or "").strip().upper()
+        cod_proc_kinds = getattr(metadata, "cod_proc_kinds", None)
+        if not isinstance(cod_proc_kinds, Mapping):
+            cod_proc_kinds = {}
+        candidates: list[tuple[int, int, int, int]] = []
+        for addr, label in sorted(_visible_code_labels(metadata).items()):
+            if not isinstance(addr, int) or not isinstance(label, str):
+                continue
+            if label.lstrip("_") != wanted_name:
+                continue
+            known_kind = cod_proc_kinds.get(addr)
+            kind_score = 1
+            if wanted_kind and isinstance(known_kind, str):
+                kind_score = 2 if known_kind.upper() == wanted_kind else 0
+            region_score = 1 if _lst_code_region(metadata, addr) is not None else 0
+            candidates.append((kind_score, region_score, -addr, addr))
+        if not candidates:
+            return None
+        candidates.sort(reverse=True)
+        return candidates[0][3]
+
     def _impl():
         from .cli_arg_parser import _build_cli_argument_parser
 
@@ -3182,50 +3225,109 @@ def main(argv: list[str] | None = None) -> int:
         effective_signature_catalog = args.signature_catalog
         if effective_signature_catalog is None:
             effective_signature_catalog = default_signature_catalog_path()
+        proc_resolved_to_linked_binary = False
         if args.proc is not None:
             binary_path = Path(args.binary)
             cod_path = _resolve_cod_path(binary_path)
-            if cod_path is None:
-                raise ValueError(f"--proc mode requires sibling COD listing: not found for {binary_path}")
-            entries = extract_cod_function_entries(cod_path, args.proc, args.proc_kind)
-            cod_metadata = extract_cod_proc_metadata(cod_path, args.proc, args.proc_kind)
-            # --proc builds a synthetic single-procedure blob, so entry recovery can
-            # start with the lean CFG path even when the procedure is not helper-call
-            # heavy. Falling back to full CFGFast first makes some small COD procs
-            # spend the entire timeout before decompilation begins.
-            prefer_fast_recovery = True
-            selected_entries = extract_small_two_arg_cod_logic_entries(entries)
-            if selected_entries is None:
-                selected_entries = extract_simple_cod_logic_entries(entries)
-            if selected_entries is None:
-                logic_start = infer_cod_logic_start(entries)
-                proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(entries, start_offset=logic_start)
-            else:
-                proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(selected_entries)
-            project = _build_project_from_bytes(
-                proc_code,
-                base_addr=args.base_addr,
-                entry_point=args.entry_point,
-            )
-            setattr(project, "_inertia_c_target", args.c_target)
-            setattr(project, "_inertia_dump_layers", bool(args.dump_layers))
-            setattr(project, "_inertia_dump_layer_root", args.dump_layer_dir)
-            setattr(project, "_inertia_dump_layer_filter", args.dump_layer_filter)
-            _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
-            _apply_binary_specific_annotations(
-                project,
-                args.binary,
-                lst_metadata,
-                cod_metadata=cod_metadata,
-                synthetic_globals=synthetic_globals,
-            )
-            function_label = args.proc
-            if args.addr is not None:
-                print(
-                    f"[dbg] proc mode ignoring caller-provided --addr {args.addr:#x}"
+            linked_proc_addr: int | None = None
+            sidecar_only_input = binary_path.suffix.lower() in {".cod", ".lst", ".map", ".dbg", ".pdb"}
+            if not sidecar_only_input:
+                project = _build_project(
+                    args.binary,
+                    force_blob=args.blob,
+                    base_addr=args.base_addr,
+                    entry_point=args.entry_point,
                 )
-            args.addr = args.entry_point
-            args.window = max(len(proc_code), 1)
+                setattr(project, "_inertia_c_target", args.c_target)
+                setattr(project, "_inertia_trace_c_stages", bool(args.trace_c_stages))
+                setattr(project, "_inertia_dump_layers", bool(args.dump_layers))
+                setattr(project, "_inertia_dump_layer_root", args.dump_layer_dir)
+                setattr(project, "_inertia_dump_layer_filter", args.dump_layer_filter)
+                _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
+                if bool(args.ignore_local_sidecar_hints):
+                    lst_metadata = None
+                    print(
+                        "/* ignoring local sidecar metadata for function discovery and recovery due --ignore-local-sidecar-hints */"
+                    )
+                else:
+                    lst_metadata = _load_lst_metadata(
+                        args.binary,
+                        project,
+                        pat_backend=args.pat_backend,
+                        signature_catalog=effective_signature_catalog,
+                    )
+                linked_proc_addr = _linked_proc_addr_from_metadata_8616(lst_metadata, args.proc, args.proc_kind)
+                if linked_proc_addr is not None:
+                    if cod_path is not None:
+                        try:
+                            cod_metadata = extract_cod_proc_metadata(cod_path, args.proc, args.proc_kind)
+                        except Exception as exc:
+                            print(f"[dbg] failed to parse COD metadata for {args.proc}: {exc}", file=sys.stderr)
+                    _apply_binary_specific_annotations(
+                        project,
+                        args.binary,
+                        lst_metadata,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                    )
+                    if lst_metadata is None:
+                        print("/* no helper metadata (.lst/.map/.cod/debug info) found; using raw binary analysis and quick function-entry scans. */")
+                    print(_recovery_evidence_line(args.binary, lst_metadata))
+                    function_label = args.proc
+                    if args.addr is not None:
+                        print(f"[dbg] proc mode ignoring caller-provided --addr {args.addr:#x}")
+                    args.addr = linked_proc_addr
+                    linked_region = _lst_code_region(lst_metadata, linked_proc_addr) if lst_metadata is not None else None
+                    if linked_region is not None:
+                        args.window = max(args.window, linked_region[1] - linked_region[0])
+                    proc_resolved_to_linked_binary = True
+                    print(
+                        f"[dbg] proc mode resolved {args.proc} to linked binary address {linked_proc_addr:#x}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            if linked_proc_addr is None:
+                if cod_path is None:
+                    raise ValueError(f"--proc mode requires sibling COD listing: not found for {binary_path}")
+                entries = extract_cod_function_entries(cod_path, args.proc, args.proc_kind)
+                cod_metadata = extract_cod_proc_metadata(cod_path, args.proc, args.proc_kind)
+                # --proc builds a synthetic single-procedure blob, so entry recovery can
+                # start with the lean CFG path even when the procedure is not helper-call
+                # heavy. Falling back to full CFGFast first makes some small COD procs
+                # spend the entire timeout before decompilation begins.
+                prefer_fast_recovery = True
+                selected_entries = extract_small_two_arg_cod_logic_entries(entries)
+                if selected_entries is None:
+                    selected_entries = extract_simple_cod_logic_entries(entries)
+                if selected_entries is None:
+                    logic_start = infer_cod_logic_start(entries)
+                    proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(entries, start_offset=logic_start)
+                else:
+                    proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(selected_entries)
+                project = _build_project_from_bytes(
+                    proc_code,
+                    base_addr=args.base_addr,
+                    entry_point=args.entry_point,
+                )
+                setattr(project, "_inertia_c_target", args.c_target)
+                setattr(project, "_inertia_dump_layers", bool(args.dump_layers))
+                setattr(project, "_inertia_dump_layer_root", args.dump_layer_dir)
+                setattr(project, "_inertia_dump_layer_filter", args.dump_layer_filter)
+                _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
+                _apply_binary_specific_annotations(
+                    project,
+                    args.binary,
+                    lst_metadata,
+                    cod_metadata=cod_metadata,
+                    synthetic_globals=synthetic_globals,
+                )
+                function_label = args.proc
+                if args.addr is not None:
+                    print(
+                        f"[dbg] proc mode ignoring caller-provided --addr {args.addr:#x}"
+                    )
+                args.addr = args.entry_point
+                args.window = max(len(proc_code), 1)
         else:
             project = _build_project(
                 args.binary,
@@ -3354,7 +3456,7 @@ def main(argv: list[str] | None = None) -> int:
 
                 direct_recovery_timeout = (
                     max(1, min(args.timeout, 6))
-                    if args.proc is not None
+                    if args.proc is not None and not proc_resolved_to_linked_binary
                     else _default_recovery_timeout(args.timeout, explicit_timeout=timeout_was_explicit)
                 )
                 direct_recovery_timeout = max(1, min(direct_recovery_timeout, _remaining_direct_addr_budget() or 1))
@@ -4130,12 +4232,33 @@ def main(argv: list[str] | None = None) -> int:
             )
             direct_status = direct_acceptance.status
             direct_blocker = direct_acceptance.blocker
+            def _preserve_best_failure_candidate(result: FunctionWorkResult) -> str | None:
+                candidates = [
+                    text
+                    for text in (result.payload, result.partial_payload)
+                    if isinstance(text, str) and text.strip()
+                ]
+                if not candidates:
+                    return None
+
+                def _rank(text: str) -> tuple[int, int, int, int, int]:
+                    quality = assess_decompiled_c_text(text)
+                    quality_violations = len(quality.markers) if quality.reject_as_decompiled else 0
+                    missing_returns = len(_missing_expected_return_values_from_embedded_evidence_8616(text))
+                    missing_calls = len(_missing_expected_calls_from_embedded_evidence_8616(text))
+                    arg_class_violations = len(_arg_class_violations_8616(text))
+                    return (
+                        -quality_violations,
+                        -missing_returns,
+                        -missing_calls,
+                        -arg_class_violations,
+                        len(text),
+                    )
+
+                return max(candidates, key=_rank)
+
             if direct_status != direct_result.status or direct_blocker is not None:
-                preserved_candidate = (
-                    direct_result.partial_payload
-                    if isinstance(direct_result.partial_payload, str) and direct_result.partial_payload.strip()
-                    else (direct_result.payload if isinstance(direct_result.payload, str) and direct_result.payload.strip() else None)
-                )
+                preserved_candidate = _preserve_best_failure_candidate(direct_result)
                 direct_payload = direct_acceptance.gcc_checked_payload
             else:
                 direct_payload = direct_result.payload
@@ -4334,13 +4457,15 @@ def main(argv: list[str] | None = None) -> int:
                     if not payload_text and not partial_text:
                         return ""
 
-                    def _text_semantic_rank(text: str) -> tuple[int, int, int, int, int, int, int]:
+                    def _text_semantic_rank(text: str) -> tuple[int, int, int, int, int, int, int, int]:
                         missing = len(_missing_expected_calls_from_embedded_evidence_8616(text))
                         missing_returns = len(_missing_expected_return_values_from_embedded_evidence_8616(text))
                         arg_class_violations = len(_arg_class_violations_8616(text))
                         call_order_violations = len(_call_order_gate_violations_8616(text))
                         side_effect_floor_violation = 1 if _side_effect_floor_violation_8616(text) else 0
                         loop_violation = 1 if _loop_presence_violation_8616(text) else 0
+                        quality = assess_decompiled_c_text(text)
+                        quality_violations = len(quality.markers) if quality.reject_as_decompiled else 0
                         body = _extract_function_body_text_8616(_strip_comment_blocks_8616(text))
                         present_calls = sum(
                             1
@@ -4354,6 +4479,7 @@ def main(argv: list[str] | None = None) -> int:
                             -call_order_violations,
                             -side_effect_floor_violation,
                             -loop_violation,
+                            -quality_violations,
                             present_calls,
                         )
 
@@ -4364,13 +4490,15 @@ def main(argv: list[str] | None = None) -> int:
                         return 10**9
                     return len(_missing_expected_calls_from_embedded_evidence_8616(payload_text))
 
-                def _candidate_rank(result: FunctionWorkResult) -> tuple[int, int, int, int, int, int, int]:
+                def _candidate_rank(result: FunctionWorkResult) -> tuple[int, int, int, int, int, int, int, int]:
                     text = _candidate_text_for_missing_call_score(result)
                     missing = _missing_call_count(text)
                     missing_returns = len(_missing_expected_return_values_from_embedded_evidence_8616(text))
                     arg_class_violations = len(_arg_class_violations_8616(text))
                     call_order_violations = len(_call_order_gate_violations_8616(text))
                     side_effect_floor_violation = 1 if _side_effect_floor_violation_8616(text) else 0
+                    quality = assess_decompiled_c_text(text)
+                    quality_violations = len(quality.markers) if quality.reject_as_decompiled else 0
                     body = _extract_function_body_text_8616(_strip_comment_blocks_8616(text))
                     present_calls = sum(
                         1
@@ -4385,6 +4513,7 @@ def main(argv: list[str] | None = None) -> int:
                         -call_order_violations,
                         -side_effect_floor_violation,
                         -loop_violation,
+                        -quality_violations,
                         present_calls,
                     )
 
@@ -4434,15 +4563,7 @@ def main(argv: list[str] | None = None) -> int:
                             retry_checked_status = retry_acceptance.status
                             retry_blocker = retry_acceptance.blocker
                             if retry_checked_status != retry_result.status or retry_blocker is not None:
-                                retry_preserved_candidate = (
-                                    retry_result.partial_payload
-                                    if isinstance(retry_result.partial_payload, str) and retry_result.partial_payload.strip()
-                                    else (
-                                        retry_result.payload
-                                        if isinstance(retry_result.payload, str) and retry_result.payload.strip()
-                                        else None
-                                    )
-                                )
+                                retry_preserved_candidate = _preserve_best_failure_candidate(retry_result)
                                 retry_result = replace(
                                     retry_result,
                                     status=retry_checked_status,
@@ -4495,8 +4616,21 @@ def main(argv: list[str] | None = None) -> int:
                     heavy_fallback_budget -= 1
                     return True
 
-                def _accept_direct_fallback_payload(payload_text: str) -> bool:
-                    snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
+                def _accept_direct_fallback_payload(
+                    payload_text: str,
+                    *,
+                    tail_validation_snapshot: dict[str, object] | None = None,
+                ) -> bool:
+                    snapshot = dict(tail_validation_snapshot) if isinstance(tail_validation_snapshot, dict) else None
+                    for attr_name in ("_inertia_partial_tail_validation_snapshot", "_inertia_last_tail_validation_snapshot"):
+                        if snapshot is not None:
+                            break
+                        attr_value = getattr(direct_project, attr_name, None)
+                        if isinstance(attr_value, dict):
+                            snapshot = dict(attr_value)
+                            break
+                    if snapshot is None:
+                        snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
                     checked_acceptance = _validated_generated_c_acceptance_8616(
                         status="ok",
                         payload=payload_text,
@@ -4700,14 +4834,18 @@ def main(argv: list[str] | None = None) -> int:
                             )
                 known_nonopt_c = _non_optimized_slice_rendered(known_nonopt_result)
                 if known_nonopt_c is not None:
-                    _emit_tail_validation_for_function_run_or_uncollected(
+                    fallback_snapshot = _tail_validation_snapshot_for_fallback(
                         direct_project,
-                        cfg,
                         func,
                         allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
+                    )
+                    _emit_tail_validation_snapshot_or_uncollected(
+                        cfg,
+                        func,
+                        fallback_snapshot,
                         binary_path=args.binary,
                     )
-                    if _accept_direct_fallback_payload(known_nonopt_c):
+                    if _accept_direct_fallback_payload(known_nonopt_c, tail_validation_snapshot=fallback_snapshot):
                         print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                         print("/* Falling back to known-function non-optimized decompilation. */")
                         _emit_optional_source_sidecar_c_block(
@@ -4742,14 +4880,18 @@ def main(argv: list[str] | None = None) -> int:
                         )
                 generic_nonopt_c = _non_optimized_slice_rendered(generic_nonopt_result)
                 if generic_nonopt_c is not None:
-                    _emit_tail_validation_for_function_run_or_uncollected(
+                    fallback_snapshot = _tail_validation_snapshot_for_fallback(
                         direct_project,
-                        cfg,
                         func,
                         allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
+                    )
+                    _emit_tail_validation_snapshot_or_uncollected(
+                        cfg,
+                        func,
+                        fallback_snapshot,
                         binary_path=args.binary,
                     )
-                    if _accept_direct_fallback_payload(generic_nonopt_c):
+                    if _accept_direct_fallback_payload(generic_nonopt_c, tail_validation_snapshot=fallback_snapshot):
                         print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                         print("/* Falling back to non-optimized slice decompilation. */")
                         _emit_optional_source_sidecar_c_block(
@@ -4860,14 +5002,18 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 nonopt_c = _non_optimized_slice_rendered(nonopt_result)
                 if nonopt_c is not None:
-                    _emit_tail_validation_for_function_run_or_uncollected(
+                    fallback_snapshot = _tail_validation_snapshot_for_fallback(
                         direct_project,
-                        cfg,
                         func,
                         allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
+                    )
+                    _emit_tail_validation_snapshot_or_uncollected(
+                        cfg,
+                        func,
+                        fallback_snapshot,
                         binary_path=args.binary,
                     )
-                    if _accept_direct_fallback_payload(nonopt_c):
+                    if _accept_direct_fallback_payload(nonopt_c, tail_validation_snapshot=fallback_snapshot):
                         print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                         print("/* Falling back to non-optimized slice decompilation. */")
                         _emit_optional_source_sidecar_c_block(

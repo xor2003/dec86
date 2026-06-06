@@ -45,11 +45,16 @@ import angr
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeBottom, SimTypeShort
 from angr.sim_variable import SimStackVariable
-from angr_platforms.X86_16.analysis_helpers import seed_calling_conventions
+from angr_platforms.X86_16.analysis_helpers import sanitize_direct_call_sites_8616, seed_calling_conventions
 from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations
 from angr_platforms.X86_16.annotations import _apply_known_helper_signatures, annotate_function
+from angr_platforms.X86_16.callee_name_normalization import normalize_callee_name_8616
 from angr_platforms.X86_16.cod_extract import CODProcMetadata, extract_cod_proc_metadata
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
+from angr_platforms.X86_16.compiler_helpers import (
+    identify_x86_16_compiler_helper_at_8616,
+    is_x86_16_stack_probe_name_8616,
+)
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _attach_callsite_summaries_8616,
     _materialize_callsite_prototypes_8616,
@@ -64,15 +69,21 @@ from angr_platforms.X86_16.decompiler_postprocess_flags import (
     _rewrite_flag_condition_pairs_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_jcc import _rewrite_decoded_jcc_conditions_8616
+from angr_platforms.X86_16.decompiler_postprocess_stage import _materialize_missing_terminal_ax_return_8616
 from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+from angr_platforms.X86_16.lowering.real_mode_linear import lower_stable_ss_linear_stack_dereferences_8616
 from angr_platforms.X86_16.lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 from angr_platforms.X86_16.pipeline.contracts import assert_pipeline_contracts_8616
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
-from angr_platforms.X86_16.pipeline.architecture_guard import assert_final_c_quality_8616
+from angr_platforms.X86_16.pipeline.architecture_guard import (
+    assert_final_c_quality_8616,
+    final_c_has_unreachable_call_after_return_8616,
+)
+from angr_platforms.X86_16.render_compat import repair_cfunctioncall_render_targets_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import build_typed_stack_probe_return_facts_8616
 from angr_platforms.X86_16.stack_probe_fact_trace import format_stack_probe_fact_stats_8616
 from angr_platforms.X86_16.structuring.compare32_recovery import recover_32bit_compare_c_8616
@@ -97,7 +108,6 @@ from inertia_decompiler.project_loading import (
 )
 
 from inertia_decompiler.sidecar_metadata import (
-    _exact_function_span_matches,
     _load_lst_metadata,
     _lst_code_label,
     _lst_code_region,
@@ -1061,6 +1071,92 @@ def _apply_binary_specific_annotations(
         )
     return changed
 
+
+def _sync_recovered_function_metadata_from_kb_8616(project: angr.Project, function) -> bool:
+    """
+    Bounded CFG recovery can hand the decompiler a Function object that is not
+    the same object as project.kb.functions[addr].  Metadata annotations are
+    applied to the KB function, so copy that evidence onto the recovered object
+    before angr consumes the function type.
+    """
+
+    addr = getattr(function, "addr", None)
+    if not isinstance(addr, int):
+        return False
+    functions = getattr(getattr(project, "kb", None), "functions", None)
+    if functions is None:
+        return False
+    try:
+        source = functions.function(addr=addr, create=False)
+    except Exception:
+        return False
+    if source is None or source is function:
+        return False
+
+    changed = False
+    stats = getattr(project, "_inertia_function_metadata_sync_stats", None)
+    if not isinstance(stats, dict):
+        stats = {
+            "candidates": 0,
+            "prototype_synced": 0,
+            "calling_convention_synced": 0,
+            "name_synced": 0,
+            "info_synced": 0,
+            "returning_synced": 0,
+        }
+        setattr(project, "_inertia_function_metadata_sync_stats", stats)
+    stats["candidates"] = int(stats.get("candidates", 0) or 0) + 1
+
+    source_name = getattr(source, "name", None)
+    current_name = getattr(function, "name", None)
+    if isinstance(source_name, str) and source_name and source_name != current_name:
+        current_is_generic = not isinstance(current_name, str) or not current_name or current_name.startswith("sub_")
+        if current_is_generic:
+            function.name = source_name
+            stats["name_synced"] = int(stats.get("name_synced", 0) or 0) + 1
+            changed = True
+
+    source_prototype = getattr(source, "prototype", None)
+    if source_prototype is not None and getattr(function, "prototype", None) is not source_prototype:
+        function.prototype = source_prototype
+        if hasattr(source, "is_prototype_guessed"):
+            function.is_prototype_guessed = getattr(source, "is_prototype_guessed", True)
+        stats["prototype_synced"] = int(stats.get("prototype_synced", 0) or 0) + 1
+        changed = True
+
+    source_cc = getattr(source, "calling_convention", None)
+    if source_cc is not None and getattr(function, "calling_convention", None) is not source_cc:
+        function.calling_convention = source_cc
+        stats["calling_convention_synced"] = int(stats.get("calling_convention_synced", 0) or 0) + 1
+        changed = True
+
+    source_returning = getattr(source, "returning", None)
+    if source_returning is not None and getattr(function, "returning", None) != source_returning:
+        function.returning = source_returning
+        stats["returning_synced"] = int(stats.get("returning_synced", 0) or 0) + 1
+        changed = True
+
+    source_info = getattr(source, "info", None)
+    if isinstance(source_info, dict) and source_info:
+        target_info = getattr(function, "info", None)
+        if not isinstance(target_info, dict):
+            function.info = copy.deepcopy(source_info)
+            stats["info_synced"] = int(stats.get("info_synced", 0) or 0) + 1
+            changed = True
+        else:
+            before = copy.deepcopy(target_info)
+            for key, value in source_info.items():
+                if key not in target_info:
+                    target_info[key] = copy.deepcopy(value)
+                elif key == "x86_16_annotations" and isinstance(target_info.get(key), dict) and isinstance(value, dict):
+                    target_info[key].update(copy.deepcopy(value))
+            if target_info != before:
+                stats["info_synced"] = int(stats.get("info_synced", 0) or 0) + 1
+                changed = True
+
+    return changed
+
+
 def _sidecar_cod_metadata_for_function(
     project: angr.Project,
     function,
@@ -1527,6 +1623,7 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
 
         _trace_dump("regen-fallback-text", fallback_text)
         try:
+            repair_cfunctioncall_render_targets_8616(codegen)
             _bind_codegen_render_variable_types_8616(codegen)
             codegen.regenerate_text()
         except RecursionError:
@@ -1707,6 +1804,52 @@ def _expected_call_presence_score_8616(rendered_text: str, cod_metadata: CODProc
         return score
 
     return _impl()
+
+
+def _commentless_c_text_8616(rendered_text: str) -> str:
+    text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered_text, flags=re.S)
+    text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+    return "\n".join(line for line in text_wo_comments.splitlines() if not line.lstrip().startswith("///"))
+
+
+def _cod_signature_and_stack_alias_score_8616(
+    rendered_text: str,
+    function,
+    cod_metadata: CODProcMetadata | None,
+) -> int:
+    if cod_metadata is None or not isinstance(rendered_text, str) or not rendered_text:
+        return 0
+    code = _commentless_c_text_8616(rendered_text)
+    score = 0
+    func_name = getattr(function, "name", None)
+    header_args = ""
+    if isinstance(func_name, str) and func_name:
+        header_re = re.compile(
+            rf"(?m)^[ \t]*(?:[A-Za-z_][\w\s\*]*?)\s+{re.escape(func_name.lstrip('_'))}\s*\((?P<args>[^()]*)\)"
+        )
+        header_match = header_re.search(code)
+        if header_match is not None:
+            header_args = header_match.group("args")
+    aliases = getattr(cod_metadata, "stack_aliases", {}) or {}
+    if isinstance(aliases, dict):
+        for disp, raw_name in aliases.items():
+            if not isinstance(raw_name, str) or not raw_name:
+                continue
+            name = raw_name.lstrip("_")
+            if not name:
+                continue
+            if isinstance(disp, int) and disp > 0:
+                if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", header_args):
+                    score += 2
+            elif re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", code):
+                score += 1
+    return score
+
+
+def _final_c_unreachable_after_return_penalty_8616(rendered_text: str) -> int:
+    if final_c_has_unreachable_call_after_return_8616(rendered_text):
+        return -1
+    return 0
 
 
 _IMPLICIT_STACK_PLACEHOLDER_RE_8616 = re.compile(r"\b(?:arg|s|ir|vvar)_[0-9a-fA-F]+\b")
@@ -1927,6 +2070,20 @@ def _preserve_source_label_for_same_addr_function_8616(source_function, recovere
     try:
         recovered_function.name = source_name
         mark_function_original_addr(recovered_function, source_addr)
+        source_prototype = getattr(source_function, "prototype", None)
+        if source_prototype is not None:
+            recovered_function.prototype = source_prototype
+        source_cc = getattr(source_function, "calling_convention", None)
+        if source_cc is not None:
+            recovered_function.calling_convention = source_cc
+        source_info = getattr(source_function, "info", None)
+        recovered_info = getattr(recovered_function, "info", None)
+        if isinstance(source_info, dict):
+            if not isinstance(recovered_info, dict):
+                recovered_info = {}
+                recovered_function.info = recovered_info
+            for key, value in source_info.items():
+                recovered_info.setdefault(key, value)
     except Exception:
         return False
     return True
@@ -2029,8 +2186,10 @@ def _decompile_function(
                     cod_metadata=effective_cod_metadata,
                     synthetic_globals=synthetic_globals,
                 )
+                _sync_recovered_function_metadata_from_kb_8616(project, function)
                 _prepare_function_for_decompilation(project, function, effective_cod_metadata)
                 seed_calling_conventions(cfg)
+                _sync_recovered_function_metadata_from_kb_8616(project, function)
                 block_count, byte_count = _function_complexity(function)
                 profile = _function_decompilation_profile(function, block_count, byte_count)
                 function_info = getattr(function, "info", None)
@@ -2325,6 +2484,22 @@ def _decompile_function(
         except _AnalysisTimeout:
             partial_payload = None
             if dec is not None and getattr(dec, "codegen", None) is not None:
+                if getattr(getattr(project, "arch", None), "name", None) == "86_16":
+                    try:
+                        if not getattr(dec.codegen, "_inertia_semantic_facts_transferred", False):
+                            transfer_semantic_alias_facts_to_codegen_8616(project, dec.codegen)
+                        alias_facts = getattr(dec.codegen, "_inertia_semantic_alias_facts", None)
+                        if alias_facts:
+                            lower_stack_accesses_from_alias_facts_8616(dec.codegen, alias_facts)
+                        lower_stable_ss_linear_stack_dereferences_8616(dec.codegen, project=project)
+                    except PipelineHardError:
+                        raise
+                    except Exception as ex:
+                        logging.getLogger(__name__).debug(
+                            "Partial-timeout stack semantic priming failed at function=%#x: %s",
+                            function_original_addr(function),
+                            ex,
+                        )
                 _remember_tail_validation_snapshot(dec.codegen)
                 rendered_text, _ = _regenerate_codegen_text_safely(
                     dec.codegen,
@@ -2457,6 +2632,22 @@ def _decompile_function(
             setattr(project, "_inertia_partial_codegen_text", None)
             return "empty", detail
         if not enable_postprocess:
+            if getattr(getattr(project, "arch", None), "name", None) == "86_16":
+                try:
+                    if not getattr(dec.codegen, "_inertia_semantic_facts_transferred", False):
+                        transfer_semantic_alias_facts_to_codegen_8616(project, dec.codegen)
+                    alias_facts = getattr(dec.codegen, "_inertia_semantic_alias_facts", None)
+                    if alias_facts:
+                        lower_stack_accesses_from_alias_facts_8616(dec.codegen, alias_facts)
+                    lower_stable_ss_linear_stack_dereferences_8616(dec.codegen, project=project)
+                except PipelineHardError:
+                    raise
+                except Exception as ex:
+                    logging.getLogger(__name__).debug(
+                        "Non-postprocess stack semantic priming failed at function=%#x: %s",
+                        function_original_addr(function),
+                        ex,
+                    )
             _remember_tail_validation_snapshot(dec.codegen)
             rendered_text, _ = _regenerate_codegen_text_safely(
                 dec.codegen,
@@ -2620,6 +2811,9 @@ def _decompile_function(
                 return False
             return _simplify_structured_c_expressions(dec.codegen)
 
+        def _run_materialize_missing_terminal_ax_return_pass() -> bool:
+            return _materialize_missing_terminal_ax_return_8616(project, dec.codegen)
+
         # ── FACT-BASED STACK LOWERING: transfer + materialize BEFORE old-style passes ──
         # AGENTS rule: alias facts must be transferred and materialized early.
         # If this produces bindings but no materialized variables, PipelineHardError raises.
@@ -2678,6 +2872,7 @@ def _decompile_function(
             lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
             _run_simplify_structured_c_expressions_pass,
             lambda: _simplify_basic_algebraic_identities(dec.codegen),
+            _run_materialize_missing_terminal_ax_return_pass,
             _run_materialize_missing_stack_local_declarations_pass,
             _run_materialize_missing_register_local_declarations_pass,
             lambda: _prune_unused_local_declarations(dec.codegen),
@@ -2731,6 +2926,7 @@ def _decompile_function(
                 lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
                 _run_simplify_structured_c_expressions_pass,
                 lambda: _simplify_basic_algebraic_identities(dec.codegen),
+                _run_materialize_missing_terminal_ax_return_pass,
                 _run_materialize_missing_stack_local_declarations_pass,
                 _run_materialize_missing_register_local_declarations_pass,
                 lambda: _prune_unused_local_declarations(dec.codegen),
@@ -2971,18 +3167,31 @@ def _decompile_function(
                 regenerated
                 and isinstance(cached_rendered_text, str)
                 and cached_rendered_text.strip()
+                and _final_c_unreachable_after_return_penalty_8616(cached_rendered_text) == 0
                 and _under_recovered_call_heavy_codegen_8616(rendered_text, effective_cod_metadata)
                 and not _under_recovered_call_heavy_codegen_8616(cached_rendered_text, effective_cod_metadata)
             ):
                 rendered_text = cached_rendered_text
             if regenerated and isinstance(cached_rendered_text, str) and cached_rendered_text.strip():
-                cached_score = _expected_call_presence_score_8616(cached_rendered_text, effective_cod_metadata)
-                rendered_score = _expected_call_presence_score_8616(rendered_text, effective_cod_metadata)
+                cached_score = (
+                    _final_c_unreachable_after_return_penalty_8616(cached_rendered_text),
+                    _expected_call_presence_score_8616(cached_rendered_text, effective_cod_metadata),
+                )
+                rendered_score = (
+                    _final_c_unreachable_after_return_penalty_8616(rendered_text),
+                    _expected_call_presence_score_8616(rendered_text, effective_cod_metadata),
+                )
                 if cached_score > rendered_score:
                     rendered_text = cached_rendered_text
             if isinstance(live_call_baseline_text, str) and live_call_baseline_text.strip():
-                baseline_score = _expected_call_presence_score_8616(live_call_baseline_text, effective_cod_metadata)
-                rendered_score = _expected_call_presence_score_8616(rendered_text, effective_cod_metadata)
+                baseline_score = (
+                    _final_c_unreachable_after_return_penalty_8616(live_call_baseline_text),
+                    _expected_call_presence_score_8616(live_call_baseline_text, effective_cod_metadata),
+                )
+                rendered_score = (
+                    _final_c_unreachable_after_return_penalty_8616(rendered_text),
+                    _expected_call_presence_score_8616(rendered_text, effective_cod_metadata),
+                )
                 if baseline_score > rendered_score:
                     rendered_text = live_call_baseline_text
         else:
@@ -3192,14 +3401,15 @@ def _decompile_function(
                 _pre_helper_format_text,
             ]
 
-            def _semantic_rank(text: str) -> tuple[int, int, int]:
+            def _semantic_rank(text: str) -> tuple[int, int, int, int, int]:
                 if not isinstance(text, str) or not text.strip():
-                    return (-10**9, 0, 0)
+                    return (-10**9, 0, 0, 0, 0)
                 return (
+                    _final_c_unreachable_after_return_penalty_8616(text),
                     _expected_call_presence_score_8616(text, effective_cod_metadata),
+                    _cod_signature_and_stack_alias_score_8616(text, function, effective_cod_metadata),
                     _global_declaration_coverage_score_8616(text, effective_cod_metadata, synthetic_globals),
                     -_implicit_placeholder_artifact_count_8616(text),
-                    len(text),
                 )
 
             best_text = max(fallback_candidates, key=_semantic_rank)
@@ -3302,6 +3512,50 @@ def _function_complexity(function):
     def _impl():
         project = getattr(function, "project", None)
         function_info = getattr(function, "info", None)
+        local_blocks = tuple((getattr(function, "_local_blocks", {}) or {}).values())
+        if local_blocks:
+            block_addrs = tuple(
+                sorted(
+                    addr
+                    for addr in (getattr(block, "addr", None) for block in local_blocks)
+                    if isinstance(addr, int)
+                )
+            )
+            total_bytes = sum(
+                int(getattr(block, "size", 0) or len(getattr(block, "bytestr", b"") or b""))
+                for block in local_blocks
+            )
+            complexity = (len(block_addrs), total_bytes)
+            if isinstance(function_info, dict):
+                function_info["_inertia_function_complexity"] = {
+                    "block_addrs": block_addrs,
+                    "blocks": complexity[0],
+                    "bytes": complexity[1],
+                    "source": "bounded_local_blocks",
+                }
+            return complexity
+        blocks = tuple(getattr(function, "blocks", ()) or ())
+        if blocks:
+            block_addrs = tuple(
+                sorted(
+                    addr
+                    for addr in (getattr(block, "addr", None) for block in blocks)
+                    if isinstance(addr, int)
+                )
+            )
+            total_bytes = sum(
+                int(getattr(block, "size", 0) or len(getattr(block, "bytes", b"") or b""))
+                for block in blocks
+            )
+            complexity = (len(block_addrs), total_bytes)
+            if isinstance(function_info, dict):
+                function_info["_inertia_function_complexity"] = {
+                    "block_addrs": block_addrs,
+                    "blocks": complexity[0],
+                    "bytes": complexity[1],
+                    "source": "bounded_blocks",
+                }
+            return complexity
         block_addrs = tuple(sorted(getattr(function, "block_addrs_set", set()) or ()))
         if isinstance(function_info, dict):
             cached_complexity = function_info.get("_inertia_function_complexity")
@@ -3310,12 +3564,10 @@ def _function_complexity(function):
                 and tuple(cached_complexity.get("block_addrs", ())) == block_addrs
                 and isinstance(cached_complexity.get("blocks"), int)
                 and isinstance(cached_complexity.get("bytes"), int)
+                and cached_complexity.get("source") == "factory_decode"
             ):
                 return cached_complexity["blocks"], cached_complexity["bytes"]
         if project is None:
-            blocks = tuple(getattr(function, "blocks", ()) or ())
-            if blocks:
-                return len(blocks), sum(int(getattr(block, "size", 0) or 0) for block in blocks)
             return 0, 0
         total_bytes = 0
         for block_addr in block_addrs:
@@ -3336,6 +3588,7 @@ def _function_complexity(function):
                 "block_addrs": block_addrs,
                 "blocks": complexity[0],
                 "bytes": complexity[1],
+                "source": "factory_decode",
             }
         return complexity
 
@@ -3364,8 +3617,7 @@ def _direct_call_stub_filter_regions(project: angr.Project, function) -> tuple[l
 
 
 def _is_stack_probe_name_8616(name: str | None) -> bool:
-    stack_probe_names = {"anchkstk", "__anchkstk", "_anchkstk", "analloca_probe", "__analloca_probe"}
-    return isinstance(name, str) and name.strip().lower().lstrip("_") in stack_probe_names
+    return is_x86_16_stack_probe_name_8616(name)
 
 
 def _is_known_noreturn_name_8616(name: str | None) -> bool:
@@ -3388,23 +3640,118 @@ def _sidecar_enclosing_label_8616(metadata, addr: int) -> str | None:
     return None
 
 
+def _function_name_at_addr_8616(project, addr: int) -> str | None:
+    functions = getattr(getattr(project, "kb", None), "functions", None)
+    lookup = getattr(functions, "function", None)
+    if not callable(lookup):
+        return None
+    try:
+        function = lookup(addr=addr, create=False)
+    except TypeError:
+        return None
+    name = normalize_callee_name_8616(getattr(function, "name", None))
+    return name if isinstance(name, str) and name else None
+
+
+def _compiler_helper_name_at_addr_8616(project, addr: int) -> str | None:
+    evidence = identify_x86_16_compiler_helper_at_8616(project, addr)
+    return evidence.name if evidence is not None else None
+
+
+def _label_at_addr_8616(project, addr: int) -> str | None:
+    label = getattr(getattr(project, "kb", None), "labels", {}).get(addr)
+    label = normalize_callee_name_8616(label)
+    return label if isinstance(label, str) and label else None
+
+
 def _original_callee_name_8616(project: angr.Project, slice_target: int) -> str | None:
     original_project = getattr(project, "_inertia_original_project", None)
     original_delta = getattr(project, "_inertia_original_linear_delta", None)
     if original_project is None or not isinstance(original_delta, int):
         return None
     original_target = slice_target + original_delta
-    label = getattr(getattr(original_project, "kb", None), "labels", {}).get(original_target)
+    function_name = _function_name_at_addr_8616(original_project, original_target)
+    if isinstance(function_name, str) and function_name:
+        return function_name
+    helper_name = _compiler_helper_name_at_addr_8616(original_project, original_target)
+    if isinstance(helper_name, str) and helper_name:
+        return helper_name
+    label = _label_at_addr_8616(original_project, original_target)
     if isinstance(label, str) and label:
         return label
     metadata = getattr(original_project, "_inertia_lst_metadata", None)
     if metadata is None:
         return None
-    label = getattr(metadata, "code_labels", {}).get(original_target)
+    label = normalize_callee_name_8616(getattr(metadata, "code_labels", {}).get(original_target))
     if isinstance(label, str) and label:
         return label
-    span_label = _sidecar_enclosing_label_8616(metadata, original_target)
+    span_label = normalize_callee_name_8616(_sidecar_enclosing_label_8616(metadata, original_target))
     return span_label if isinstance(span_label, str) and span_label else None
+
+
+def _callee_names_equivalent_8616(left: str | None, right: str | None) -> bool:
+    left_name = normalize_callee_name_8616(left)
+    right_name = normalize_callee_name_8616(right)
+    if not isinstance(left_name, str) or not isinstance(right_name, str):
+        return False
+    return left_name == right_name or left_name.lstrip("_") == right_name.lstrip("_")
+
+
+def _function_named_addr_8616(project, name: str) -> int | None:
+    functions = getattr(getattr(project, "kb", None), "functions", None)
+    lookup = getattr(functions, "function", None)
+    if not callable(lookup):
+        return None
+    lookup_names = [name]
+    undecorated = name.lstrip("_")
+    decorated = f"_{undecorated}" if undecorated else None
+    if decorated is not None and decorated not in lookup_names:
+        lookup_names.append(decorated)
+    for lookup_name in lookup_names:
+        try:
+            function = lookup(name=lookup_name, create=False)
+        except TypeError:
+            continue
+        addr = getattr(function, "addr", None)
+        if isinstance(addr, int):
+            return addr
+    return None
+
+
+def _candidate_original_target_8616(project, candidate: int) -> int | None:
+    original_delta = getattr(project, "_inertia_original_linear_delta", None)
+    if not isinstance(original_delta, int):
+        return None
+    return candidate + original_delta
+
+
+def _call_name_matches_target_evidence_8616(project, candidate: int, call_name: str | None) -> bool:
+    expected = normalize_callee_name_8616(call_name)
+    if not isinstance(expected, str) or not expected:
+        return False
+    for known_name in (
+        _original_callee_name_8616(project, candidate),
+        _function_name_at_addr_8616(project, candidate),
+        _compiler_helper_name_at_addr_8616(project, candidate),
+        _label_at_addr_8616(project, candidate),
+    ):
+        if _callee_names_equivalent_8616(known_name, expected):
+            return True
+    original_project = getattr(project, "_inertia_original_project", None)
+    original_target = _candidate_original_target_8616(project, candidate)
+    if original_project is not None and isinstance(original_target, int):
+        for known_name in (
+            _function_name_at_addr_8616(original_project, original_target),
+            _compiler_helper_name_at_addr_8616(original_project, original_target),
+            _label_at_addr_8616(original_project, original_target),
+        ):
+            if _callee_names_equivalent_8616(known_name, expected):
+                return True
+        named_addr = _function_named_addr_8616(original_project, expected)
+        if isinstance(named_addr, int) and named_addr == original_target:
+            return True
+    named_addr = _function_named_addr_8616(project, expected)
+    return isinstance(named_addr, int) and named_addr == candidate
 
 
 def _parse_direct_call_target_8616(insn) -> int | None:
@@ -3456,6 +3803,22 @@ def _iter_capstone_direct_calls_8616(project: angr.Project, function):
     return _impl()
 
 
+def _callsite_addr_points_to_call_insn_8616(project: angr.Project, function, callsite: int) -> bool:
+    factory = getattr(project, "factory", None)
+    if factory is None:
+        return True
+    try:
+        block = factory.block(callsite, opt_level=0)
+    except Exception:
+        return True
+    for insn in getattr(getattr(block, "capstone", None), "insns", ()) or ():
+        if getattr(insn, "address", None) != callsite:
+            continue
+        mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+        return mnemonic in {"call", "lcall"}
+    return False
+
+
 def _compute_candidate_targets_8616(target: int, linked_base: int | None, image_end: int | None) -> set[int]:
     candidates = {target}
     if isinstance(linked_base, int):
@@ -3490,7 +3853,11 @@ def _choose_preferred_candidate_8616(
             original_label = _original_callee_name_8616(project, candidate)
             slice_entry = getattr(project, "entry", None)
             unbased_penalty = 1 if isinstance(slice_entry, int) and candidate < slice_entry else 0
-            rank = (unbased_penalty, 0 if isinstance(original_label, str) and bool(original_label) else 1, -candidate)
+            # Exact original-target evidence is stronger than the based/unbased
+            # address preference. In exact-region slices the true near target may
+            # be below the slice entry, while adding the linked base can point at
+            # an unrelated internal function.
+            rank = (0 if isinstance(original_label, str) and bool(original_label) else 1, unbased_penalty, -candidate)
             if preferred_rank is None or rank < preferred_rank:
                 preferred_candidate = candidate
                 preferred_rank = rank
@@ -3503,7 +3870,11 @@ def _choose_preferred_candidate_8616(
 
 def _collect_direct_calls_8616(project: angr.Project, function) -> list[tuple[int | None, int, int | None]]:
     direct_calls: list[tuple[int | None, int, int | None]] = []
+    skipped_invalid_callsite = False
     for callsite in getattr(function, "get_call_sites", lambda: [])() or ():
+        if isinstance(callsite, int) and not _callsite_addr_points_to_call_insn_8616(project, function, callsite):
+            skipped_invalid_callsite = True
+            continue
         try:
             target = function.get_call_target(callsite)
         except Exception as ex:
@@ -3518,8 +3889,12 @@ def _collect_direct_calls_8616(project: angr.Project, function) -> list[tuple[in
         with contextlib.suppress(Exception):
             ret_addr = function.get_call_return(callsite)
         direct_calls.append((callsite, target, ret_addr))
-    if not direct_calls:
-        direct_calls.extend(_iter_capstone_direct_calls_8616(project, function))
+    if not direct_calls or skipped_invalid_callsite:
+        known_callsites = {callsite for callsite, _target, _ret_addr in direct_calls if isinstance(callsite, int)}
+        for callsite, target, ret_addr in _iter_capstone_direct_calls_8616(project, function):
+            if isinstance(callsite, int) and callsite in known_callsites:
+                continue
+            direct_calls.append((callsite, target, ret_addr))
     return direct_calls
 
 
@@ -3528,6 +3903,18 @@ def _call_name_by_callsite_8616(direct_calls: list[tuple[int | None, int, int | 
     if not (cod_call_names and ordered_callsites and len(cod_call_names) >= len(ordered_callsites)):
         return {}
     return {cs: cod_call_names[idx] for idx, cs in enumerate(ordered_callsites) if isinstance(cod_call_names[idx], str) and cod_call_names[idx]}
+
+
+def _proven_cod_call_name_for_candidates_8616(
+    project,
+    candidates: set[int],
+    cod_call_names: tuple[str, ...],
+) -> str | None:
+    for candidate in sorted(candidates):
+        for call_name in cod_call_names:
+            if _call_name_matches_target_evidence_8616(project, candidate, call_name):
+                return call_name
+    return None
 
 
 def _candidate_is_filtered_8616(
@@ -3563,10 +3950,19 @@ def _create_or_update_direct_call_stub_8616(
             stub = project.kb.functions.function(addr=candidate, create=True)
             if isinstance(callsite_addr, int) and (preferred_candidate is None or candidate == preferred_candidate):
                 with contextlib.suppress(Exception):
-                    if not isinstance(ret_addr, int):
-                        ret_addr = function.get_call_return(callsite_addr)
-                    function._call_sites[callsite_addr] = (candidate, ret_addr)
-            stub_name = _original_callee_name_8616(project, candidate) or fallback_call_name
+                    call_return = ret_addr
+                    if not isinstance(call_return, int):
+                        call_return = function.get_call_return(callsite_addr)
+                    function._call_sites[callsite_addr] = (candidate, call_return)
+            stub_name = _original_callee_name_8616(project, candidate)
+            if not isinstance(stub_name, str) or not stub_name:
+                stub_name = _compiler_helper_name_at_addr_8616(project, candidate)
+            if (
+                (not isinstance(stub_name, str) or not stub_name)
+                and isinstance(fallback_call_name, str)
+                and _call_name_matches_target_evidence_8616(project, candidate, fallback_call_name)
+            ):
+                stub_name = fallback_call_name
             if isinstance(stub_name, str) and stub_name:
                 with contextlib.suppress(Exception):
                     stub.name = stub_name
@@ -3621,13 +4017,7 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
         direct_calls = _collect_direct_calls_8616(project, function)
         local_ranges, original_region = _direct_call_stub_filter_regions(project, function)
         original_delta = getattr(project, "_inertia_original_linear_delta", None)
-        cod_call_names = tuple(
-            name
-            for name in dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ())
-            if isinstance(name, str) and name
-        )
-        cod_call_name_index = 0
-        call_name_by_callsite = _call_name_by_callsite_8616(direct_calls, cod_call_names)
+        cod_call_names = tuple(name for name in getattr(cod_metadata, "call_names", ()) or () if isinstance(name, str) and name)
 
         for callsite_addr, target, ret_addr in direct_calls:
             if not isinstance(target, int):
@@ -3636,15 +4026,8 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
             preferred_candidate, fallback_call_name = _choose_preferred_candidate_8616(
                 project, candidates, local_ranges, original_region, original_delta
             )
-            if (
-                isinstance(callsite_addr, int)
-                and callsite_addr in call_name_by_callsite
-                and isinstance(call_name_by_callsite[callsite_addr], str)
-            ):
-                fallback_call_name = call_name_by_callsite[callsite_addr]
-            elif (not isinstance(fallback_call_name, str) or not fallback_call_name) and cod_call_name_index < len(cod_call_names):
-                fallback_call_name = cod_call_names[cod_call_name_index]
-                cod_call_name_index += 1
+            if not isinstance(fallback_call_name, str) or not fallback_call_name:
+                fallback_call_name = _proven_cod_call_name_for_candidates_8616(project, candidates, cod_call_names)
 
             if measure_single_function_context:
                 metric_candidates += len(candidates)
@@ -3823,6 +4206,7 @@ def _prepare_function_for_decompilation(
         {"addr": display_addr, "slice_addr": function.addr, "name": function.name},
     )
     _maybe_normalize_function()
+    sanitize_direct_call_sites_8616(function)
     created_helper_stubs = _register_direct_call_target_function_stubs(project, function, cod_metadata=cod_metadata)
     if created_helper_stubs:
         print(f"[dbg] registered {created_helper_stubs} direct callee stub(s) for {function.addr:#x}", file=sys.stderr, flush=True)

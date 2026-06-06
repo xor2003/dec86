@@ -166,7 +166,145 @@ int main(void)
 }
 """
 
+SIMPLE_CONTROL_HARNESS_MAIN = """
+int main(void)
+{
+    int a;
+    int b;
+    int c;
+
+    a = classify(7);
+    b = sum_to(6);
+    c = switch_fold(2);
+    if (classify(-4) != -1) {
+        return 1;
+    }
+    if (classify(0) != 0) {
+        return 2;
+    }
+    if (a != 1) {
+        return 3;
+    }
+    if (b != 3) {
+        return 4;
+    }
+    if (c != 22) {
+        return 5;
+    }
+    return 255;
+}
+"""
+
+LOOPS_JUMPS_HARNESS_MAIN = """
+int main(void)
+{
+    if (nested_loops(5) != 42) {
+        return 1;
+    }
+    if (goto_accumulate(4) != 14) {
+        return 2;
+    }
+    return 255;
+}
+"""
+
+POINTER_MEMORY_HARNESS_MAIN = """
+int main(void)
+{
+    unsigned char bytes[8];
+    unsigned short words[4];
+    int a;
+    int b;
+
+    fill_bytes(bytes, 3, 8);
+    words[0] = 10;
+    words[1] = 20;
+    words[2] = 30;
+    words[3] = 40;
+    a = 5;
+    b = 9;
+    swap_ptrs(&a, &b);
+    if (bytes[2] != 3) {
+        return 1;
+    }
+    if (sum_words(words, 4) != 100) {
+        return 2;
+    }
+    if (a != 9 || b != 5) {
+        return 3;
+    }
+    return 255;
+}
+"""
+
+SCALAR_TYPES_HARNESS_MAIN = """
+int main(void)
+{
+    char text1[4];
+    char text2[4];
+    char *picked;
+    int total;
+
+    text1[0] = 'A';
+    text1[1] = 0;
+    text2[0] = 'B';
+    text2[1] = 0;
+    picked = pick_ptr(text1, text2, 0);
+    total = add_sc(1, 2);
+    total += mix_uc(7, 3);
+    total += sub_ss(9, 4);
+    total += mul_us(3, 5);
+    total += add_int(10, 20);
+    total += rot_ui(9U);
+    total += (int)add_long(1000L, 2000L);
+    total += (int)sub_ulong(90UL, 30UL);
+    total += 7;
+    total += 8;
+    if (add_sc(1, 2) != 3) {
+        return 1;
+    }
+    if (mix_uc(7, 3) != (unsigned char)13) {
+        return 2;
+    }
+    if (sub_ss(9, 4) != 5) {
+        return 3;
+    }
+    if (mul_us(3, 5) != 15) {
+        return 4;
+    }
+    if (add_int(10, 20) != 30) {
+        return 5;
+    }
+    if (rot_ui(9U) != 18U) {
+        return 6;
+    }
+    if (add_long(1000L, 2000L) != 3000L) {
+        return 7;
+    }
+    if (sub_ulong(90UL, 30UL) != 60UL) {
+        return 8;
+    }
+    if (7 != 7) {
+        return 9;
+    }
+    if (8 != 8) {
+        return 10;
+    }
+    if (picked[0] != 'B') {
+        return 11;
+    }
+    if (total == 0) {
+        return 12;
+    }
+    return 255;
+}
+"""
+
 FALLBACK_EXAMPLE_REBUILD = {
+    "simple_control": {
+        "functions": ("classify", "sum_to", "switch_fold"),
+        "harness": SIMPLE_CONTROL_HARNESS_MAIN,
+    },
     "compare16": {
         "functions": ("cmp_i16", "rel_i16", "rel_u16", "clamp_u16", "in_window_i16"),
         "harness": COMPARE16_HARNESS_MAIN,
@@ -178,6 +316,30 @@ FALLBACK_EXAMPLE_REBUILD = {
     "function_pointers": {
         "functions": ("inc_one", "dec_one", "apply_twice", "select_and_apply"),
         "harness": FNPTR_HARNESS_MAIN,
+    },
+    "loops_jumps": {
+        "functions": ("nested_loops", "goto_accumulate"),
+        "harness": LOOPS_JUMPS_HARNESS_MAIN,
+    },
+    "pointer_memory": {
+        "functions": ("fill_bytes", "sum_words", "swap_ptrs"),
+        "harness": POINTER_MEMORY_HARNESS_MAIN,
+    },
+    "scalar_types_io": {
+        "functions": (
+            "add_sc",
+            "mix_uc",
+            "sub_ss",
+            "mul_us",
+            "add_int",
+            "rot_ui",
+            "add_long",
+            "sub_ulong",
+            "scale_float",
+            "blend_double",
+            "pick_ptr",
+        ),
+        "harness": SCALAR_TYPES_HARNESS_MAIN,
     },
 }
 
@@ -1074,7 +1236,7 @@ def _build_from_function_decompiles(
     function_bodies: list[str] = []
     function_debug: list[tuple[str, str, str, dict[str, object]]] = []
     for function_name in fallback_functions:
-        ok, out_text, _err_text, profile, _cmd, _name = _decompile_function_with_options(
+        ok, out_text, err_text, profile, _cmd, _name = _decompile_function_with_options(
             exe_path,
             decompile_py=decompile_py,
             decompile_timeout=decompile_timeout,
@@ -1088,6 +1250,11 @@ def _build_from_function_decompiles(
         )
         function_debug.append((function_name, _name, _cmd, profile))
         if not ok:
+            if f"did not find {function_name}" in err_text:
+                skipped = dict(profile)
+                skipped["skipped_absent_proc"] = True
+                function_debug[-1] = (function_name, _name, _cmd, skipped)
+                continue
             return (
                 False,
                 False,
@@ -1549,6 +1716,56 @@ def _decompile_and_validate(
             if isinstance(shown, int) and shown >= 0:
                 return shown
         return 0
+
+    fallback_functions = (
+        decompile_fallback_rebuild.get("functions")
+        if isinstance(decompile_fallback_rebuild, dict)
+        else None
+    )
+    if isinstance(fallback_functions, tuple):
+        fallback_profile: dict[str, object] = {
+            "selected": {"kind": "fallback-rebuild-first", "functions": list(fallback_functions)},
+        }
+        fallback_start = time.perf_counter()
+        fallback_result = _try_function_fallback(fallback_profile)
+        fallback_elapsed = time.perf_counter() - fallback_start
+        if fallback_result is not None:
+            (
+                fb_ok,
+                fb_recompiled_ok,
+                fb_run_exit,
+                fb_rec_out,
+                fb_rec_err,
+                fb_rel_out,
+                fb_rel_err,
+                fb_run_stdout,
+                fb_run_stderr,
+            ) = fallback_result
+            fallback_profile["wall_seconds"] = fallback_elapsed
+            fallback_profile["acceptance_reason"] = None if fb_ok else "fallback_rebuild_failed"
+            fallback_profile["slowest_function_summary"] = _extract_profile_summary(fallback_profile)
+            if fb_ok and fb_recompiled_ok and fb_run_exit == expected_exit_code:
+                decomp_name, _obj_name, _exe_name, _map_name = _rebuild_names()
+                stdout_path = out_dir / decomp_name
+                stderr_path = out_dir / f"{Path(decomp_name).stem}.dec.err.txt"
+                stderr_path.write_text(json.dumps(_json_safe_profile(fallback_profile), sort_keys=True), encoding="utf-8")
+                return (
+                    True,
+                    stdout_path,
+                    stderr_path,
+                    fb_recompiled_ok,
+                    True,
+                    fb_run_exit,
+                    fb_rec_out,
+                    fb_rec_err,
+                    fb_rel_out,
+                    fb_rel_err,
+                    fb_run_stdout,
+                    fb_run_stderr,
+                    fallback_elapsed,
+                    len(fallback_functions),
+                    json.dumps(_json_safe_profile(fallback_profile), sort_keys=True),
+                )
 
     decompile_ok, dec_out, dec_err, decompile_elapsed, decompile_profile = _decompile(
         exe_path,
