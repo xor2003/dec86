@@ -31,7 +31,7 @@ DEFAULT_OUT_DIR = REPO_ROOT / "examples" / "build_msc6"
 DEFAULT_KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
 DEFAULT_MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
 DEFAULT_DECOMPILE = REPO_ROOT / "decompile.py"
-DEFAULT_DECOMPILE_SKIP = ("enum_union", "medium_structs")
+DEFAULT_DECOMPILE_SKIP = ("medium_structs",)
 HARNESS_SUCCESS_EXIT_CODE = 255
 DECOMPILE_MAX_FUNCTIONS_DEFAULT = 0
 DEFAULT_SIGNATURE_CATALOG_NAME = "runtime_signature_catalog.pat"
@@ -324,6 +324,34 @@ int main(void)
 }
 """
 
+ENUM_UNION_PREFIX = """
+enum TokenKind {
+    TOK_ZERO,
+    TOK_ONE,
+    TOK_TWO,
+    TOK_MANY
+};
+"""
+
+ENUM_UNION_HARNESS_MAIN = """
+int main(void)
+{
+    unsigned short combined;
+
+    combined = combine_bytes(0x34, 0x12);
+    if (token_cost(TOK_TWO) != 2) {
+        return 1;
+    }
+    if (token_cost(TOK_MANY) != 9) {
+        return 2;
+    }
+    if (combined != 0x1234) {
+        return 3;
+    }
+    return 255;
+}
+"""
+
 FALLBACK_EXAMPLE_REBUILD = {
     "simple_control": {
         "functions": ("classify", "sum_to", "switch_fold"),
@@ -369,6 +397,11 @@ FALLBACK_EXAMPLE_REBUILD = {
         "functions": ("_sum_globals", "bump_static"),
         "prefix": STORAGE_CLASSES_PREFIX,
         "harness": STORAGE_CLASSES_HARNESS_MAIN,
+    },
+    "enum_union": {
+        "functions": ("token_cost", "combine_bytes"),
+        "prefix": ENUM_UNION_PREFIX,
+        "harness": ENUM_UNION_HARNESS_MAIN,
     },
 }
 

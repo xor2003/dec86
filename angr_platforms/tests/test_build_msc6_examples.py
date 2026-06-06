@@ -1,5 +1,8 @@
 from scripts.build_msc6_examples import (
     COMPARE16_HARNESS_MAIN,
+    DEFAULT_DECOMPILE_SKIP,
+    ENUM_UNION_HARNESS_MAIN,
+    FALLBACK_EXAMPLE_REBUILD,
     _child_trace_path,
     _extract_decompiled_function_definition,
     _is_decompile_output_acceptable,
@@ -61,3 +64,9 @@ def test_acceptance_uses_final_clean_tail_validation_over_rejected_lanes():
 
     assert ok is True
     assert reason is None
+
+
+def test_enum_union_fallback_is_enabled_by_default():
+    assert "enum_union" not in DEFAULT_DECOMPILE_SKIP
+    assert FALLBACK_EXAMPLE_REBUILD["enum_union"]["functions"] == ("token_cost", "combine_bytes")
+    assert "token_cost(TOK_TWO)" in ENUM_UNION_HARNESS_MAIN

@@ -2004,7 +2004,10 @@ def _rehydrate_missing_evidenced_calls_on_live_codegen_8616(
 
 
 def _missing_return_chain_values_from_text_8616(codegen, text: str) -> list[int]:
-    if not getattr(codegen, "_inertia_return_chain_flattened_8616", False):
+    if not (
+        getattr(codegen, "_inertia_return_chain_flattened_8616", False)
+        or getattr(codegen, "_inertia_return_chain_suffix_materialized_8616", False)
+    ):
         return []
     values = [int(value) for value in tuple(getattr(codegen, "_inertia_return_chain_materialized_values_8616", ()) or ())]
     final_value = getattr(codegen, "_inertia_return_chain_final_value_8616", None)
@@ -2018,6 +2021,58 @@ def _missing_return_chain_values_from_text_8616(codegen, text: str) -> list[int]
         if re.search(rf"\breturn\s+{re.escape(str(value))}\s*;", emitted_text) is None:
             missing.append(int(value))
     return missing
+
+
+def _materialize_codegen_global_externs_text_8616(c_text: str, codegen) -> str:
+    specs = tuple(getattr(codegen, "_inertia_global_declaration_specs_8616", ()) or ())
+    if not specs or not isinstance(c_text, str) or not c_text.strip():
+        return c_text
+
+    declarations: list[str] = []
+    names: set[str] = set()
+    for spec in specs:
+        if not isinstance(spec, (list, tuple)) or len(spec) != 3:
+            continue
+        ctype, name, array_len = spec
+        if not isinstance(ctype, str) or not isinstance(name, str):
+            continue
+        if re.fullmatch(r"[A-Za-z_]\w*", name) is None:
+            continue
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", c_text) is None:
+            continue
+        names.add(name)
+        ctype = " ".join(ctype.split())
+        if isinstance(array_len, int) and array_len > 0:
+            declarations.append(f"extern {ctype} {name}[{array_len}];")
+        else:
+            declarations.append(f"extern {ctype} {name};")
+    if not declarations:
+        return c_text
+
+    lines = c_text.splitlines()
+    kept_lines: list[str] = []
+    removed_existing = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("extern "):
+            if any(re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", stripped) for name in names):
+                removed_existing = True
+                continue
+        kept_lines.append(line)
+
+    function_re = re.compile(r"^\s*[A-Za-z_][\w\s\*]*\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*$")
+    insert_idx = next((idx for idx, line in enumerate(kept_lines[:-1]) if function_re.match(line) and kept_lines[idx + 1].strip() == "{"), None)
+    if insert_idx is None:
+        insert_idx = 0
+    decl_block = list(dict.fromkeys(declarations))
+    if insert_idx > 0 and kept_lines[insert_idx - 1].strip():
+        decl_block = ["", *decl_block]
+    if kept_lines[insert_idx].strip():
+        decl_block = [*decl_block, ""]
+    updated = kept_lines[:insert_idx] + decl_block + kept_lines[insert_idx:]
+    if not removed_existing and updated == lines:
+        return c_text
+    return "\n".join(updated) + ("\n" if c_text.endswith("\n") else "")
 
 
 def _preserve_return_chain_text_8616(project, function, codegen, formatted: str) -> str:
@@ -3318,6 +3373,7 @@ def _decompile_function(
         formatted = _normalize_integer_dereference_stores_text(formatted)
         formatted = _materialize_stack_base_placeholder_declaration_text(formatted)
         formatted = _materialize_missing_g_hex_externs_text(formatted)
+        formatted = _materialize_codegen_global_externs_text_8616(formatted, dec.codegen)
         formatted = _prune_dead_stack_base_assignments_text(formatted)
         _debug_dump_calls_8616("post-normalize-concat-zero", formatted, debug_call_addr)
         formatted = _collapse_duplicate_type_keywords_text(formatted)

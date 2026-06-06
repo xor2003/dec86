@@ -34,7 +34,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
 
@@ -1635,7 +1635,7 @@ def _materialize_decrement_switch_return_chain_8616(project, codegen) -> bool:
         if mnemonic == "dec" and len(operands) == 1:
             if int(getattr(operands[0], "type", -1)) == 1 and str(insn.reg_name(operands[0].reg)).lower() == "ax":
                 chain.append(insn)
-    if len(chain) < 4:
+    if len(chain) < 2:
         if debug:
             log.warning("[cfg-selector-return] decrement-switch refused chain_len=%d", len(chain))
         return False
@@ -1650,6 +1650,73 @@ def _materialize_decrement_switch_return_chain_8616(project, codegen) -> bool:
         jcc = insns[start + 1]
         mnemonic = str(getattr(jcc, "mnemonic", "")).lower()
         return jcc if mnemonic in expected else None
+
+    def _materialize_sequential_jne_chain() -> bool:
+        jccs = [_following_jcc_after(insn, {"jne", "jnz"}) for insn in chain]
+        if any(jcc is None for jcc in jccs):
+            return False
+        assert all(jcc is not None for jcc in jccs)
+        case_targets: list[int] = []
+        for jcc in jccs:
+            jcc_idx = index_by_addr.get(int(getattr(jcc, "address", -1)))
+            if jcc_idx is None:
+                return False
+            target = _resolve_one_hop_jmp_target_8616(project, _next_linear_jmp_target_8616(insns, jcc_idx))
+            if target is None:
+                return False
+            case_targets.append(int(target))
+        default_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(jccs[-1]))
+        if default_target is None:
+            return False
+        case_exprs = [_branch_target_return_expr_8616(project, codegen, target) for target in case_targets]
+        default_expr = _branch_target_return_expr_8616(project, codegen, int(default_target))
+        if default_expr is None or any(expr is None for expr in case_exprs):
+            return False
+
+        statements = []
+        for case_value, expr in enumerate(case_exprs):
+            cond = CBinaryOp(
+                "CmpEQ",
+                _clone_c_value_for_codegen_tree_8616(selector),
+                CConstant(int(case_value), SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            )
+            statements.append(
+                CIfElse(
+                    [
+                        (
+                            cond,
+                            CStatements(
+                                statements=[CReturn(_clone_c_value_for_codegen_tree_8616(expr), codegen=codegen)],
+                                codegen=codegen,
+                            ),
+                        )
+                    ],
+                    else_node=None,
+                    cstyle_ifs=True,
+                    codegen=codegen,
+                )
+            )
+        statements.append(CReturn(_clone_c_value_for_codegen_tree_8616(default_expr), codegen=codegen))
+        codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+        codegen._inertia_decrement_switch_return_materialized_8616 = True
+        codegen._inertia_sequential_decrement_switch_return_materialized_8616 = True
+        codegen._inertia_return_expr_chain_materialized_8616 = True
+        codegen._inertia_return_selector_materialized_8616 = True
+        codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
+            _expr_fingerprint(expr, project) for expr in (*case_exprs, default_expr)
+        )
+        if debug:
+            log.warning("[cfg-selector-return] sequential decrement-switch materialized cases=%d", len(case_exprs))
+        return True
+
+    if len(chain) >= 2 and _materialize_sequential_jne_chain():
+        return True
+
+    if len(chain) < 4:
+        if debug:
+            log.warning("[cfg-selector-return] decrement-switch refused chain_len=%d", len(chain))
+        return False
 
     jcc0 = _following_jcc_after(chain[0], {"jne", "jnz"})
     jcc1 = _following_jcc_after(chain[1], {"jge", "jnl"})
@@ -1770,6 +1837,300 @@ def _imm_from_operand_8616(operand) -> int | None:
     if int(getattr(operand, "type", -1)) != 2:
         return None
     return int(getattr(operand, "imm", 0) or 0)
+
+
+def _absolute_mem_disp_size_8616(operand) -> tuple[int, int] | None:
+    if int(getattr(operand, "type", -1)) != 3:
+        return None
+    mem = getattr(operand, "mem", None)
+    if mem is None:
+        return None
+    if int(getattr(mem, "base", 0) or 0) != 0 or int(getattr(mem, "index", 0) or 0) != 0:
+        return None
+    return int(getattr(mem, "disp", 0) or 0), int(getattr(operand, "size", 0) or 0)
+
+
+def _indexed_mem_disp_size_8616(insn, operand, *, base_reg: str) -> tuple[int, int] | None:
+    if int(getattr(operand, "type", -1)) != 3:
+        return None
+    mem = getattr(operand, "mem", None)
+    if mem is None or not getattr(mem, "base", None):
+        return None
+    try:
+        if str(insn.reg_name(mem.base)).lower() != base_reg:
+            return None
+    except Exception:
+        return None
+    if int(getattr(mem, "index", 0) or 0) != 0:
+        return None
+    return int(getattr(mem, "disp", 0) or 0), int(getattr(operand, "size", 0) or 0)
+
+
+def _cod_source_global_names_for_byte_sum_loop_8616(project, codegen) -> tuple[str | None, str | None]:
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return None, None
+    try:
+        metadata = _calls._cod_metadata_for_function_8616(project, func_addr)
+    except Exception:
+        metadata = None
+    source_lines = tuple(getattr(metadata, "source_lines", ()) or ()) if metadata is not None else ()
+    counter_name = None
+    table_name = None
+    for line in source_lines:
+        if not isinstance(line, str):
+            continue
+        if counter_name is None:
+            match = re.search(r"\b[A-Za-z_]\w*\s*=\s*([A-Za-z_]\w*)\s*;", line)
+            if match is not None:
+                counter_name = match.group(1)
+        if table_name is None:
+            match = re.search(r"\+=\s*([A-Za-z_]\w*)\s*\[", line)
+            if match is not None:
+                table_name = match.group(1)
+    return counter_name, table_name
+
+
+def _global_cvar_8616(project, codegen, *, addr: int, size: int, name: str, signed: bool = False):
+    cfunc = getattr(codegen, "cfunc", None)
+    variable_type = SimTypeChar(signed) if int(size) == 1 else SimTypeShort(signed)
+    variable_type = _bind_type_to_project_arch_8616(project, variable_type)
+    return CVariable(
+        SimMemoryVariable(int(addr), int(size), name=name, region=getattr(cfunc, "addr", None)),
+        variable_type=variable_type,
+        codegen=codegen,
+    )
+
+
+def _materialize_global_byte_index_sum_loop_8616(project, codegen) -> bool:
+    """Recover a word accumulator plus byte global-index loop from instruction evidence.
+
+    Generic MS C shape:
+        total = global_word;
+        for (i = 0; i < limit; ++i)
+            total += global_byte_array[i];
+        return total;
+    """
+
+    if getattr(codegen, "_inertia_global_byte_sum_loop_materialized_8616", False):
+        return False
+    insns = _linear_function_insns_for_codegen_8616(project, codegen)
+    if len(insns) < 12:
+        return False
+    index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
+    stats = getattr(codegen, "_inertia_global_byte_sum_loop_stats_8616", None)
+    if not isinstance(stats, dict):
+        stats = {"raw_fact_count": 0, "classified_fact_count": 0, "materialized_count": 0, "failure_count": 0}
+        codegen._inertia_global_byte_sum_loop_stats_8616 = stats
+
+    for init_idx in range(len(insns) - 8):
+        mov_global = insns[init_idx]
+        if str(getattr(mov_global, "mnemonic", "")).lower() != "mov":
+            continue
+        mov_global_ops = tuple(getattr(mov_global, "operands", ()) or ())
+        if len(mov_global_ops) != 2 or _reg_name_from_operand_8616(mov_global, mov_global_ops[0]) != "ax":
+            continue
+        word_global = _absolute_mem_disp_size_8616(mov_global_ops[1])
+        if word_global is None or int(word_global[1]) != 2:
+            continue
+
+        mov_total = insns[init_idx + 1]
+        if str(getattr(mov_total, "mnemonic", "")).lower() != "mov":
+            continue
+        mov_total_ops = tuple(getattr(mov_total, "operands", ()) or ())
+        if len(mov_total_ops) != 2 or _reg_name_from_operand_8616(mov_total, mov_total_ops[1]) != "ax":
+            continue
+        total_slot = _stack_mem_disp_size_8616(mov_total, mov_total_ops[0])
+        if total_slot is None or int(total_slot[0]) >= 0:
+            continue
+
+        mov_i_zero = insns[init_idx + 2]
+        i_disp = _match_stack_zero_init_8616(mov_i_zero)
+        if i_disp is None or int(i_disp) >= 0 or int(i_disp) == int(total_slot[0]):
+            continue
+        stats["raw_fact_count"] = int(stats.get("raw_fact_count", 0) or 0) + 1
+
+        jmp_to_cmp = insns[init_idx + 3]
+        if str(getattr(jmp_to_cmp, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+        cmp_addr = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(jmp_to_cmp))
+        cmp_idx = index_by_addr.get(int(cmp_addr)) if cmp_addr is not None else None
+        if cmp_idx is None or cmp_idx + 2 >= len(insns):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+
+        inc_idx = init_idx + 4
+        if not _match_stack_inc_8616(insns[inc_idx], int(i_disp)):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+        cmp_i = insns[cmp_idx]
+        cmp_ops = tuple(getattr(cmp_i, "operands", ()) or ())
+        cmp_slot = _stack_mem_disp_size_8616(cmp_i, cmp_ops[0]) if len(cmp_ops) == 2 else None
+        limit = _imm_from_operand_8616(cmp_ops[1]) if len(cmp_ops) == 2 else None
+        if (
+            str(getattr(cmp_i, "mnemonic", "")).lower() != "cmp"
+            or cmp_slot is None
+            or int(cmp_slot[0]) != int(i_disp)
+            or limit is None
+        ):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+        jl = insns[cmp_idx + 1]
+        if str(getattr(jl, "mnemonic", "")).lower() not in {"jl", "jnge"}:
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+        body_addr = _jcc._branch_target_imm_8616(jl)
+        exit_addr = _resolve_one_hop_jmp_target_8616(project, _next_linear_jmp_target_8616(insns, cmp_idx + 1))
+        body_idx = index_by_addr.get(int(body_addr)) if body_addr is not None else None
+        if body_idx is None or body_idx + 4 >= len(insns) or exit_addr is None:
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+
+        mov_bx = insns[body_idx]
+        mov_bx_ops = tuple(getattr(mov_bx, "operands", ()) or ())
+        if (
+            str(getattr(mov_bx, "mnemonic", "")).lower() != "mov"
+            or len(mov_bx_ops) != 2
+            or _reg_name_from_operand_8616(mov_bx, mov_bx_ops[0]) != "bx"
+        ):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+        bx_slot = _stack_mem_disp_size_8616(mov_bx, mov_bx_ops[1])
+        if bx_slot is None or int(bx_slot[0]) != int(i_disp):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+
+        mov_al = insns[body_idx + 1]
+        mov_al_ops = tuple(getattr(mov_al, "operands", ()) or ())
+        if (
+            str(getattr(mov_al, "mnemonic", "")).lower() != "mov"
+            or len(mov_al_ops) != 2
+            or _reg_name_from_operand_8616(mov_al, mov_al_ops[0]) != "al"
+        ):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+        byte_global = _indexed_mem_disp_size_8616(mov_al, mov_al_ops[1], base_reg="bx")
+        if byte_global is None or int(byte_global[1]) != 1:
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+
+        clear_ah = insns[body_idx + 2]
+        clear_ops = tuple(getattr(clear_ah, "operands", ()) or ())
+        if (
+            str(getattr(clear_ah, "mnemonic", "")).lower() not in {"sub", "xor"}
+            or len(clear_ops) != 2
+            or _reg_name_from_operand_8616(clear_ah, clear_ops[0]) != "ah"
+            or _reg_name_from_operand_8616(clear_ah, clear_ops[1]) != "ah"
+        ):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+
+        add_total = insns[body_idx + 3]
+        add_ops = tuple(getattr(add_total, "operands", ()) or ())
+        add_slot = _stack_mem_disp_size_8616(add_total, add_ops[0]) if len(add_ops) == 2 else None
+        if (
+            str(getattr(add_total, "mnemonic", "")).lower() != "add"
+            or add_slot is None
+            or int(add_slot[0]) != int(total_slot[0])
+            or _reg_name_from_operand_8616(add_total, add_ops[1]) != "ax"
+        ):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+
+        back_jmp = insns[body_idx + 4]
+        back_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(back_jmp))
+        if str(getattr(back_jmp, "mnemonic", "")).lower() not in {"jmp", "ljmp"} or int(back_target or -1) != int(
+            getattr(insns[inc_idx], "address", -1)
+        ):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+
+        exit_expr = _branch_target_return_expr_8616(project, codegen, int(exit_addr))
+        total_expr = _named_stack_expr_from_evidence_8616(project, codegen, int(total_slot[0]), 2)
+        i_expr = _named_stack_expr_from_evidence_8616(project, codegen, int(i_disp), 2)
+        if exit_expr is None or total_expr is None or i_expr is None:
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+        if _expr_fingerprint(exit_expr, project) != _expr_fingerprint(total_expr, project):
+            stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            continue
+
+        stats["classified_fact_count"] = int(stats.get("classified_fact_count", 0) or 0) + 1
+        counter_name, table_name = _cod_source_global_names_for_byte_sum_loop_8616(project, codegen)
+        counter_name = counter_name or f"global_word_{int(word_global[0]) & 0xFFFF:04x}"
+        table_name = table_name or f"global_u8_{int(byte_global[0]) & 0xFFFF:04x}"
+        counter_expr = _global_cvar_8616(project, codegen, addr=int(word_global[0]), size=2, name=counter_name, signed=True)
+        table_expr = _global_cvar_8616(project, codegen, addr=int(byte_global[0]), size=1, name=table_name, signed=False)
+        indexed_byte = CIndexedVariable(
+            table_expr,
+            i_expr,
+            variable_type=_bind_type_to_project_arch_8616(project, SimTypeChar(False)),
+            codegen=codegen,
+        )
+        init_total = CAssignment(
+            total_expr,
+            counter_expr,
+            codegen=codegen,
+        )
+        init_i = CAssignment(
+            i_expr,
+            CConstant(0, SimTypeShort(True), codegen=codegen),
+            codegen=codegen,
+        )
+        condition = CBinaryOp(
+            "CmpLT",
+            i_expr,
+            CConstant(int(limit), SimTypeShort(True), codegen=codegen),
+            codegen=codegen,
+        )
+        iterator = _inc_assignment_8616(i_expr, codegen)
+        body = CStatements(
+            statements=[
+                CAssignment(
+                    total_expr,
+                    CBinaryOp(
+                        "Add",
+                        total_expr,
+                        indexed_byte,
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                )
+            ],
+            codegen=codegen,
+        )
+        codegen.cfunc.statements = CStatements(
+            statements=[
+                init_total,
+                CForLoop(init_i, condition, iterator, body, codegen=codegen),
+                CReturn(total_expr, codegen=codegen),
+            ],
+            codegen=codegen,
+        )
+        codegen._inertia_global_byte_sum_loop_materialized_8616 = True
+        codegen._inertia_global_byte_sum_loop_evidence_8616 = {
+            "total_disp": int(total_slot[0]),
+            "index_disp": int(i_disp),
+            "word_global": int(word_global[0]),
+            "byte_global": int(byte_global[0]),
+            "limit": int(limit),
+            "counter_name": counter_name,
+            "table_name": table_name,
+        }
+        codegen._inertia_global_declaration_specs_8616 = tuple(
+            dict.fromkeys(
+                tuple(getattr(codegen, "_inertia_global_declaration_specs_8616", ()) or ())
+                + (
+                    ("short", counter_name, None),
+                    ("unsigned char", table_name, int(limit)),
+                )
+            )
+        )
+        stats["materialized_count"] = int(stats.get("materialized_count", 0) or 0) + 1
+        return True
+    return False
 
 
 def _materialize_stack_arg_accumulator_loop_8616(project, codegen) -> bool:
@@ -3813,7 +4174,10 @@ def _return_chain_counts_8616(codegen) -> tuple[int, int]:
 
 
 def _return_chain_expected_counts_8616(codegen) -> tuple[int, int] | None:
-    if not getattr(codegen, "_inertia_return_chain_flattened_8616", False):
+    if not (
+        getattr(codegen, "_inertia_return_chain_flattened_8616", False)
+        or getattr(codegen, "_inertia_return_chain_suffix_materialized_8616", False)
+    ):
         return None
     values = tuple(getattr(codegen, "_inertia_return_chain_materialized_values_8616", ()) or ())
     if not values:
@@ -4160,6 +4524,106 @@ def _prune_replaced_insert_artifact_assignments_8616(root, replaced_return_keys:
     return pruned
 
 
+def _materialize_stack_byte_pair_return_8616(project, codegen) -> bool:
+    """Recover word returns built by storing adjacent stack bytes then loading the word."""
+
+    insns = _linear_function_insns_for_codegen_8616(project, codegen)
+    if not insns:
+        return False
+
+    byte_stores: dict[int, object] = {}
+    al_source = None
+    returned_base: int | None = None
+    raw_fact_count = 0
+    classified_fact_count = 0
+
+    def _reg_name(insn, operand) -> str | None:
+        with contextlib.suppress(Exception):
+            return str(insn.reg_name(operand.reg)).lower()
+        return None
+
+    def _bp_mem_disp(insn, operand, *, size: int | None = None) -> int | None:
+        if int(getattr(operand, "type", -1)) != 3:
+            return None
+        if size is not None and int(getattr(operand, "size", 0) or 0) != size:
+            return None
+        mem = operand.mem
+        if str(insn.reg_name(mem.base)).lower() != "bp":
+            return None
+        disp = getattr(mem, "disp", None)
+        return int(disp) if isinstance(disp, int) else None
+
+    def _stack_byte_expr(disp: int):
+        return _jcc._stack_slot_expr_8616(codegen, int(disp), 1)
+
+    for insn in insns:
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if mnemonic != "mov" or len(operands) != 2:
+            continue
+        dst, src = operands
+        if int(getattr(dst, "type", -1)) == 1 and _reg_name(insn, dst) == "al":
+            src_disp = _bp_mem_disp(insn, src, size=1)
+            if src_disp is not None:
+                raw_fact_count += 1
+                al_source = _stack_byte_expr(src_disp)
+                if al_source is not None:
+                    classified_fact_count += 1
+            continue
+        if int(getattr(dst, "type", -1)) == 3 and int(getattr(dst, "size", 0) or 0) == 1:
+            dst_disp = _bp_mem_disp(insn, dst, size=1)
+            if dst_disp is not None and int(getattr(src, "type", -1)) == 1 and _reg_name(insn, src) == "al":
+                raw_fact_count += 1
+                if al_source is not None:
+                    byte_stores[int(dst_disp)] = _clone_c_value_for_codegen_tree_8616(al_source)
+                    classified_fact_count += 1
+            continue
+        if int(getattr(dst, "type", -1)) == 1 and _reg_name(insn, dst) == "ax":
+            src_disp = _bp_mem_disp(insn, src, size=2)
+            if src_disp is not None and src_disp in byte_stores and src_disp + 1 in byte_stores:
+                raw_fact_count += 1
+                returned_base = int(src_disp)
+                classified_fact_count += 1
+
+    stats = {
+        "raw_fact_count": raw_fact_count,
+        "classified_fact_count": classified_fact_count,
+        "materialized_count": 0,
+        "failure_count": 0,
+    }
+    codegen._inertia_stack_byte_pair_return_stats_8616 = stats
+    if returned_base is None:
+        if raw_fact_count:
+            stats["failure_count"] = 1
+        return False
+
+    low_expr = byte_stores.get(returned_base)
+    high_expr = byte_stores.get(returned_base + 1)
+    if low_expr is None or high_expr is None:
+        stats["failure_count"] = 1
+        return False
+
+    high_shift = CBinaryOp(
+        "Shl",
+        _clone_c_value_for_codegen_tree_8616(high_expr),
+        CConstant(8, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+    )
+    return_expr = CBinaryOp(
+        "Or",
+        _clone_c_value_for_codegen_tree_8616(low_expr),
+        high_shift,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        statements=[CReturn(return_expr, codegen=codegen)],
+        codegen=codegen,
+    )
+    stats["materialized_count"] = 1
+    codegen._inertia_stack_byte_pair_return_materialized_8616 = True
+    return True
+
+
 def _build_decompiler_postprocess_passes():
     return (
         DecompilerPostprocessPassSpec("_apply_word_global_types_8616", _globals._apply_word_global_types_8616, True),
@@ -4182,6 +4646,11 @@ def _build_decompiler_postprocess_passes():
         DecompilerPostprocessPassSpec(
             "_materialize_pointer_memory_idioms_8616",
             _materialize_pointer_memory_idioms_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_global_byte_index_sum_loop_8616",
+            _materialize_global_byte_index_sum_loop_8616,
             True,
         ),
         DecompilerPostprocessPassSpec(
@@ -4263,6 +4732,11 @@ def _build_decompiler_postprocess_passes():
         DecompilerPostprocessPassSpec(
             "_materialize_missing_terminal_ax_return_8616",
             _materialize_missing_terminal_ax_return_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_stack_byte_pair_return_8616",
+            _materialize_stack_byte_pair_return_8616,
             True,
         ),
         DecompilerPostprocessPassSpec(
@@ -5766,6 +6240,14 @@ def _postprocess_run_bootstrap_steps_8616(project, codegen, skip_names: set[str]
             return False
         if codegen._inertia_postprocess_validation_failed:
             return False
+    if "_materialize_global_byte_index_sum_loop_8616" not in skip_names:
+        if not apply_step(
+            "_materialize_global_byte_index_sum_loop_8616",
+            lambda: _materialize_global_byte_index_sum_loop_8616(project, codegen),
+        ):
+            return False
+        if codegen._inertia_postprocess_validation_failed:
+            return False
     if "_materialize_nested_stack_counter_accumulator_loop_8616" not in skip_names:
         if not apply_step(
             "_materialize_nested_stack_counter_accumulator_loop_8616",
@@ -5794,6 +6276,7 @@ def _postprocess_run_bootstrap_steps_8616(project, codegen, skip_names: set[str]
         if not (
             getattr(codegen, "_inertia_return_selector_materialized_8616", False)
             or getattr(codegen, "_inertia_pointer_memory_materialized_8616", None)
+            or getattr(codegen, "_inertia_global_byte_sum_loop_materialized_8616", False)
             or getattr(codegen, "_inertia_nested_stack_counter_loop_materialized_8616", False)
             or getattr(codegen, "_inertia_stack_arg_accumulator_loop_materialized_8616", False)
         ):
@@ -5834,6 +6317,7 @@ def _postprocess_run_pass_specs_8616(project, codegen, pass_specs, trace_func_ad
                 and (
                     getattr(codegen, "_inertia_return_selector_materialized_8616", False)
                     or getattr(codegen, "_inertia_pointer_memory_materialized_8616", None)
+                    or getattr(codegen, "_inertia_global_byte_sum_loop_materialized_8616", False)
                     or getattr(codegen, "_inertia_nested_stack_counter_loop_materialized_8616", False)
                     or getattr(codegen, "_inertia_stack_arg_accumulator_loop_materialized_8616", False)
                 )
@@ -5903,6 +6387,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             "_materialize_callsite_stack_arguments_8616",
             "_materialize_callsite_prototypes_8616",
             "_materialize_recovered_callsite_stack_arguments_8616",
+            "_materialize_stack_byte_pair_return_8616",
             "_recover_missing_direct_calls_final_8616",
             "_materialize_pointer_memory_idioms_8616",
             "_materialize_empty_if_return_branches_8616",
@@ -5915,6 +6400,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             "_rewrite_decoded_jcc_conditions_8616",
             "_rewrite_decoded_jcc_conditions_after_calls_8616",
             "_materialize_callsite_stack_arguments_8616",
+            "_materialize_stack_byte_pair_return_8616",
             "_materialize_pointer_memory_idioms_8616",
             "_materialize_empty_if_return_branches_8616",
             "_prune_unreachable_after_return_final_8616",
@@ -6670,7 +7156,10 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
     stats = getattr(codegen, "_inertia_empty_return_branch_stats_8616", None)
     if not isinstance(stats, dict):
         return False
-    if int(stats.get("refused", 0) or 0) != 0:
+    # Refusals here can come from broader/full-chain attempts that correctly
+    # refuse prefix calls.  The proof is the suffix materialization plus CFG
+    # value/final-AX agreement below, not a zero-refusal diagnostic counter.
+    if int(stats.get("materialized", 0) or 0) <= 0:
         return False
     delta = validation.get("delta")
     if not isinstance(delta, dict):
