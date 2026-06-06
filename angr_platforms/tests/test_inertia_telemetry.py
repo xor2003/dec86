@@ -318,9 +318,61 @@ def test_otlp_export_uses_provider_without_collector(monkeypatch, tmp_path):
     reset_telemetry_for_tests()
 
 
+def test_otlp_export_can_be_enabled_from_cli_arg(monkeypatch, tmp_path):
+    reset_telemetry_for_tests()
+    monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.delenv("INERTIA_OTEL_EXPORT_OTLP", raising=False)
+    monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
+    monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
+
+    args = SimpleNamespace(
+        otel_spans=True,
+        otel_span_file=tmp_path / "otel_cli.json",
+        otel_top_n=None,
+        otel_min_ms=None,
+        otel_full_jsonl=None,
+        otel_stderr=None,
+        otel_format=None,
+        otel_text_max_spans=None,
+        otel_export_otlp=True,
+        otel_service_name=None,
+        otel_force_flush_ms=None,
+        otel_endpoint=None,
+    )
+
+    class _Provider:
+        def __init__(self):
+            self.flushed = False
+            self.shutdown_called = False
+
+        def force_flush(self, *, timeout_millis):
+            self.flushed = timeout_millis > 0
+
+        def shutdown(self):
+            self.shutdown_called = True
+
+    provider = _Provider()
+    monkeypatch.setattr(telemetry, "_configure_otlp_exporter", lambda: (provider, "configured"))
+
+    cli_core._configure_cli_telemetry_8616(args)
+
+    with telemetry.span("test.otlp.cli"):
+        pass
+
+    summary = telemetry.build_compact_summary()
+    assert summary["otel_export"] == "configured"
+
+    emit_compact_summary()
+    assert provider.flushed
+    assert provider.shutdown_called
+
+    reset_telemetry_for_tests()
+
+
 def test_otlp_endpoint_does_not_enable_export_implicitly(monkeypatch):
     reset_telemetry_for_tests()
     monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
+    monkeypatch.delenv("INERTIA_OTEL_EXPORT_OTLP", raising=False)
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
 
     assert configure_telemetry_from_env()

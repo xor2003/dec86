@@ -179,6 +179,81 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         help="Enable compact OTLP-like span output for decompilation (default: INERTIA_OTEL_SPANS).",
     )
     parser.add_argument(
+        "--otel-top-n",
+        type=int,
+        default=None,
+        help=(
+            "Keep only N slowest spans in compact summaries (default: INERTIA_OTEL_TOP_N, env fallback)."
+        ),
+    )
+    parser.add_argument(
+        "--otel-min-ms",
+        type=float,
+        default=None,
+        help=(
+            "Only include spans whose duration is at least this many milliseconds "
+            "(default: INERTIA_OTEL_MIN_MS, env fallback)."
+        ),
+    )
+    parser.add_argument(
+        "--otel-full-jsonl",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Write full JSONL spans plus compact summary to --otel-span-file when enabled "
+            "(default: INERTIA_OTEL_FULL_JSONL)."
+        ),
+    )
+    parser.add_argument(
+        "--otel-stderr",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Write compact telemetry output to stderr (default: INERTIA_OTEL_STDERR, "
+            "false disables stderr summary)."
+        ),
+    )
+    parser.add_argument(
+        "--otel-format",
+        default=None,
+        choices=("text", "slow", "json", "jsonl", "agent", "agent_text", "slow_text"),
+        help=(
+            "Span output format override for compact traces: text, slow, json, jsonl "
+            "(default: INERTIA_OTEL_SPAN_FORMAT)."
+        ),
+    )
+    parser.add_argument(
+        "--otel-text-max-spans",
+        type=int,
+        default=None,
+        help="Maximum number of spans to include in compact text output (default: INERTIA_OTEL_TEXT_MAX_SPANS).",
+    )
+    parser.add_argument(
+        "--otel-export-otlp",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Enable OTLP export in addition to local tracing. This is controlled by CLI "
+            "and no longer requires INERTIA_OTEL_EXPORT_OTLP in the environment."
+        ),
+    )
+    parser.add_argument(
+        "--otel-service-name",
+        default=None,
+        help="OTEL service.name attribute (default: INERTIA_OTEL_SERVICE_NAME).",
+    )
+    parser.add_argument(
+        "--otel-force-flush-ms",
+        type=int,
+        default=None,
+        help="OTLP provider shutdown flush timeout in milliseconds (default: INERTIA_OTEL_FORCE_FLUSH_MS).",
+    )
+    parser.add_argument(
+        "--otel-endpoint",
+        default=None,
+        help="OTLP endpoint URL (sets OTEL_EXPORTER_OTLP_ENDPOINT).",
+    )
+    parser.add_argument(
         "--otel-span-file",
         type=Path,
         default=None,
