@@ -896,10 +896,19 @@ def _hoist_c89_local_declarations_text(c_text: str) -> str:
     return _impl()
 
 
+def _codegen_signature_authoritative_8616(function=None, codegen=None) -> bool:
+    for obj in (codegen, function):
+        if obj is not None and getattr(obj, "_inertia_codegen_signature_authoritative_8616", None):
+            return True
+    return False
+
+
 def _materialize_annotated_cod_declarations_text(
     c_text: str,
     function,
     metadata: CODProcMetadata | None,
+    *,
+    preserve_source_header: bool = False,
 ) -> str:
     def _impl():
         if metadata is None or function is None:
@@ -942,14 +951,15 @@ def _materialize_annotated_cod_declarations_text(
             pointer_evidence_text = f"{source_arg_text}\n{pointer_evidence_text}"
         source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
         source_prototypes = _source_function_prototype_decls_from_cod_source_lines(metadata.source_lines)
-        header_changed = _apply_source_decl_to_header_8616(
-            lines,
-            header_index=header_index,
-            header_re=header_re,
-            func_name=func_name,
-            source_decl=source_decl,
-            header_changed=header_changed,
-        )
+        if not preserve_source_header:
+            header_changed = _apply_source_decl_to_header_8616(
+                lines,
+                header_index=header_index,
+                header_re=header_re,
+                func_name=func_name,
+                source_decl=source_decl,
+                header_changed=header_changed,
+            )
 
         _normalize_existing_decl_names_8616(
             lines,
@@ -1099,8 +1109,12 @@ def _split_args_8616(arg_text: str) -> list[str]:
 
 def _arg_has_pointer_evidence_8616(pointer_evidence_text: str, arg_name: str, source_arg: str | None = None) -> bool:
     name = re.escape(arg_name)
-    if source_arg is not None and "*" in source_arg:
-        return True
+    if source_arg is not None:
+        source_prefix = source_arg[: source_arg.rfind(arg_name)].strip() if arg_name in source_arg else source_arg
+        # Source declarations are stronger evidence than rendered-body text.
+        # The legacy text heuristic can confuse arithmetic multiplication
+        # ("b * a") with unary pointer dereference ("*a").
+        return "*" in source_prefix or re.search(r"\[[^\]]*\]\s*$", source_arg.strip()) is not None
     patterns = (
         rf"(?<![A-Za-z_])\*\s*{name}\s*\+\+",
         rf"(?<![A-Za-z_])\*\s*{name}\b",
@@ -1919,6 +1933,52 @@ def _infer_decl_for_global_8616(name: str, width: int | None, body_text: str) ->
     return [f"    extern {c_decl_type} {name};"]
 
 
+def _source_function_designator_names_8616(
+    source_lines: Sequence[str] | None,
+    candidate_names: set[str],
+) -> set[str]:
+    if not source_lines or not candidate_names:
+        return set()
+
+    candidate_by_normalized = {
+        str(name).lstrip("_"): str(name)
+        for name in candidate_names
+        if isinstance(name, str) and name
+    }
+    if not candidate_by_normalized:
+        return set()
+
+    function_pointer_vars: set[str] = set()
+    for raw_line in source_lines:
+        line = str(raw_line).strip()
+        if not line:
+            continue
+        for match in re.finditer(r"\(\s*\*\s*(?P<name>[A-Za-z_][\w$?@]*)\s*\)\s*\(", line):
+            function_pointer_vars.add(match.group("name"))
+
+    if not function_pointer_vars:
+        return set()
+
+    designators: set[str] = set()
+    for raw_line in source_lines:
+        line = str(raw_line).strip()
+        if not line:
+            continue
+        for fp_var in function_pointer_vars:
+            match = re.search(
+                rf"(?<![A-Za-z_]){re.escape(fp_var)}(?![A-Za-z0-9_])\s*=\s*(?P<target>[A-Za-z_][\w$?@]*)\s*;",
+                line,
+            )
+            if match is None:
+                continue
+            target = match.group("target")
+            normalized_target = target.lstrip("_")
+            proven_name = candidate_by_normalized.get(normalized_target)
+            if proven_name is not None:
+                designators.add(proven_name)
+    return designators
+
+
 def _materialize_missing_synthetic_global_declarations_text(
     c_text: str,
     metadata: CODProcMetadata | None = None,
@@ -1961,6 +2021,11 @@ def _materialize_missing_synthetic_global_declarations_text(
         if body_text:
             candidate_names.update(_collect_global_usage_candidates_from_body_8616(body_text, declared))
 
+        source_function_designators = _source_function_designator_names_8616(
+            getattr(metadata, "source_lines", ()) if metadata is not None else (),
+            candidate_names,
+        )
+
         used = _used_global_names_8616(lines, body_text, declared, candidate_names)
         if not used:
             return c_text
@@ -1972,6 +2037,10 @@ def _materialize_missing_synthetic_global_declarations_text(
         declarations: list[str] = []
         for name in used:
             if name not in candidate_names:
+                continue
+            if name in source_function_designators:
+                declarations.append(f"int {name}();")
+                declared.add(name)
                 continue
             width = name_to_width.get(name)
             declarations.extend(_infer_decl_for_global_8616(name, width, body_text))
@@ -2153,17 +2222,24 @@ def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name:
         if stripped_name and stripped_name != func_name:
             candidate_names.add(stripped_name)
 
-        decl_re = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?:\{|;)?\s*$")
+        decl_res = (
+            re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?:\{|;)?\s*$"),
+            re.compile(
+                r"^(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+"
+                r"(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^()]*)\)\s*(?:\{|;)?\s*$"
+            ),
+        )
         for line in source_lines:
             stripped = line.strip()
             if not stripped or stripped in {"{", "}"}:
                 continue
             if stripped.startswith(("if ", "while ", "for ", "switch ", "return ", "case ", "default ")):
                 continue
-            decl_match = decl_re.match(stripped)
-            if decl_match is None or decl_match.group("name") not in candidate_names:
-                continue
-            return decl_match.group("args")
+            for decl_re in decl_res:
+                decl_match = decl_re.match(stripped)
+                if decl_match is None or decl_match.group("name") not in candidate_names:
+                    continue
+                return decl_match.group("args")
         return None
 
     return _impl()
@@ -2235,9 +2311,17 @@ def _repair_missing_cod_function_header_text(c_text: str, function, metadata: CO
     return _impl()
 
 
-def _align_function_header_with_cod_source_decl_text(c_text: str, function, metadata: CODProcMetadata | None) -> str:
+def _align_function_header_with_cod_source_decl_text(
+    c_text: str,
+    function,
+    metadata: CODProcMetadata | None,
+    *,
+    codegen=None,
+) -> str:
     def _impl():
         if metadata is None or function is None:
+            return c_text
+        if _codegen_signature_authoritative_8616(function=function, codegen=codegen):
             return c_text
         func_name = getattr(function, "name", None)
         if not isinstance(func_name, str) or not func_name:
@@ -2942,6 +3026,8 @@ def _align_unknown_call_names_from_cod_evidence_text(c_text: str) -> str:
     Evidence source: `* calls = ...` comment emitted from parsed COD metadata.
     This pass only changes names and only when order-matched evidence exists.
     """
+    if os.environ.get("INERTIA_ENABLE_LEGACY_TEXT_CALL_NAME_ALIGNMENT") != "1":
+        return c_text
     lines = c_text.splitlines()
     if not lines:
         return c_text
@@ -3076,18 +3162,53 @@ def _collapse_annotated_stack_aliases_text(c_text: str) -> str:
                 brace_depth += lines[body_end].count("{") - lines[body_end].count("}")
                 body_end += 1
 
-            renames: dict[str, str] = {}
-            removed_indexes: set[int] = set()
+            annotated_decls: list[tuple[int, re.Match[str], int]] = []
+            decl_indexes_by_name: dict[str, int] = {}
             for scan_index in range(body_start, body_end):
                 match = decl_re.match(lines[scan_index])
                 if match is None:
                     continue
+                disp = int(match.group("value"), 16)
+                if match.group("sign") == "-":
+                    disp = -disp
+                annotated_decls.append((scan_index, match, disp))
+                decl_indexes_by_name.setdefault(match.group("name"), scan_index)
+
+            renames: dict[str, str] = {}
+            removed_indexes: set[int] = set()
+            grouped: dict[tuple[int, str], list[tuple[int, re.Match[str]]]] = {}
+            for scan_index, match, disp in annotated_decls:
                 local_name = match.group("name")
                 alias_name = match.group("alias")
-                if local_name == alias_name or alias_name not in arg_names:
+                if local_name == alias_name:
                     continue
-                renames[local_name] = alias_name
-                removed_indexes.add(scan_index)
+                grouped.setdefault((disp, alias_name), []).append((scan_index, match))
+
+            for (_disp, alias_name), entries in grouped.items():
+                if alias_name in arg_names:
+                    for scan_index, match in entries:
+                        renames[match.group("name")] = alias_name
+                        removed_indexes.add(scan_index)
+                    continue
+
+                entry_indexes = {scan_index for scan_index, _match in entries}
+                alias_decl_index = decl_indexes_by_name.get(alias_name)
+                if alias_decl_index is not None and alias_decl_index not in entry_indexes:
+                    continue
+                decl_types = {match.group("type").strip() for _scan_index, match in entries}
+                if len(decl_types) != 1:
+                    continue
+
+                keep_index, keep_match = entries[0]
+                lines[keep_index] = (
+                    f"{keep_match.group('indent')}{keep_match.group('type').strip()} {alias_name}; "
+                    f"// [bp{keep_match.group('sign')}0x{keep_match.group('value')}] {alias_name}"
+                )
+                changed = True
+                for scan_index, match in entries:
+                    renames[match.group("name")] = alias_name
+                    if scan_index != keep_index:
+                        removed_indexes.add(scan_index)
 
             if not renames:
                 index = body_end
@@ -3096,7 +3217,7 @@ def _collapse_annotated_stack_aliases_text(c_text: str) -> str:
             def _rename_in_line(line: str) -> str:
                 updated = line
                 for local_name, alias_name in sorted(renames.items(), key=lambda item: -len(item[0])):
-                    updated = re.sub(rf"(?<![A-Za-z_]){re.escape(local_name)}(?![A-Za-z_])", alias_name, updated)
+                    updated = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(local_name)}(?![A-Za-z0-9_])", alias_name, updated)
                 return updated
 
             for scan_index in range(body_start, body_end):
@@ -3889,7 +4010,7 @@ def _sorted_metadata_stack_aliases(
     return sorted(aliases.items(), key=lambda item: (item[0], str(item[1])))
 
 
-def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata | None) -> str:
+def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata | None, *, codegen=None) -> str:
     def _impl():
         nonlocal c_text
         if metadata is None:
@@ -3918,6 +4039,9 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
 
         source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
         source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, getattr(function, "name", None))
+        preserve_codegen_header = _codegen_signature_authoritative_8616(function=function, codegen=codegen)
+        header_source_decl = None if preserve_codegen_header else source_decl
+        header_source_arg_text = None if preserve_codegen_header else source_arg_text
         positive_arg_aliases = [
             name
             for disp, name in _sorted_metadata_stack_aliases(metadata)
@@ -3940,8 +4064,8 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
             metadata=metadata,
             positive_aliases=positive_aliases,
             positive_arg_aliases=positive_arg_aliases,
-            source_decl=source_decl,
-            source_arg_text=source_arg_text,
+            source_decl=header_source_decl,
+            source_arg_text=header_source_arg_text,
         )
 
         comments: list[str] = []
@@ -4254,7 +4378,8 @@ def _prune_parameter_shadow_declarations_text(c_text: str) -> str:
             r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
         )
         decl_re = re.compile(
-            r"^(?P<indent>\s*)(?:[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?://.*)?$"
+            r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default|break|continue)\b)"
+            r"(?:[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?://.*)?$"
         )
         out = list(lines)
         idx = 0
@@ -4796,6 +4921,7 @@ def _format_known_helper_calls(
     api_style: str,
     binary_path: Path | None,
     cod_metadata: CODProcMetadata | None = None,
+    codegen=None,
 ) -> str:
     def _impl():
         nonlocal c_text
@@ -4863,7 +4989,7 @@ def _format_known_helper_calls(
         if declarations:
             c_text = "\n".join(declarations) + "\n\n" + c_text
         c_text = _rewrite_known_helper_signature_text(c_text, function)
-        c_text = _align_function_header_with_cod_source_decl_text(c_text, function, cod_metadata)
+        c_text = _align_function_header_with_cod_source_decl_text(c_text, function, cod_metadata, codegen=codegen)
         c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
         return _repair_missing_fallthrough_returns(c_text).rstrip("\n")
 

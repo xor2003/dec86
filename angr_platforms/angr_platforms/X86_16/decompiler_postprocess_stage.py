@@ -1611,6 +1611,54 @@ def _clone_c_value_for_codegen_tree_8616(value):
     return _clone(value, {})
 
 
+def _clone_c_value_preserving_cvariables_8616(value):
+    """Clone expression structure while preserving canonical CVariable leaves."""
+
+    def _is_c_node(obj) -> bool:
+        return hasattr(obj, "__slots__") and obj.__class__.__module__.startswith("angr.analyses.decompiler")
+
+    def _clone(obj, memo: dict[int, object]):
+        if obj is None:
+            return None
+        if isinstance(obj, CVariable):
+            return obj
+        if isinstance(obj, (str, bytes, int, float, bool)):
+            return obj
+        if isinstance(obj, list):
+            return [_clone(item, memo) for item in obj]
+        if isinstance(obj, tuple):
+            return tuple(_clone(item, memo) for item in obj)
+        if isinstance(obj, dict):
+            return {_clone(key, memo): _clone(item, memo) for key, item in obj.items()}
+        if not _is_c_node(obj):
+            return obj
+        obj_id = id(obj)
+        if obj_id in memo:
+            return memo[obj_id]
+        cloned = copy.copy(obj)
+        memo[obj_id] = cloned
+        slot_names: list[str] = []
+        for cls in type(obj).__mro__:
+            slots = getattr(cls, "__slots__", ())
+            if isinstance(slots, str):
+                slots = (slots,)
+            slot_names.extend(str(slot) for slot in slots)
+        for attr in dict.fromkeys(slot_names):
+            if attr == "codegen" or not hasattr(obj, attr):
+                continue
+            try:
+                child = getattr(obj, attr)
+            except Exception:
+                continue
+            cloned_child = _clone(child, memo)
+            if cloned_child is not child:
+                with contextlib.suppress(Exception):
+                    setattr(cloned, attr, cloned_child)
+        return cloned
+
+    return _clone(value, {})
+
+
 def _materialize_decrement_switch_return_chain_8616(project, codegen) -> bool:
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
     log = logging.getLogger(__name__)
@@ -2454,7 +2502,15 @@ def _match_indexed_reg_store_8616(insn, *, base_reg: str, index_reg: str, src_re
     return disp == 0 and int(mem_size) == int(size) and {base, index} == {base_reg, index_reg}
 
 
-def _match_indexed_reg_load_8616(insn, *, dst_reg: str, base_reg: str, index_reg: str, size: int) -> bool:
+def _match_indexed_reg_load_8616(
+    insn,
+    *,
+    dst_reg: str,
+    base_reg: str,
+    index_reg: str,
+    size: int,
+    disp: int = 0,
+) -> bool:
     if str(getattr(insn, "mnemonic", "")).lower() != "mov":
         return False
     operands = tuple(getattr(insn, "operands", ()) or ())
@@ -2463,11 +2519,24 @@ def _match_indexed_reg_load_8616(insn, *, dst_reg: str, base_reg: str, index_reg
     mem = _mem_base_index_size_8616(insn, operands[1])
     if mem is None:
         return False
-    base, index, disp, mem_size = mem
-    return disp == 0 and int(mem_size) == int(size) and {base, index} == {base_reg, index_reg}
+    base, index, mem_disp, mem_size = mem
+    return int(mem_disp) == int(disp) and int(mem_size) == int(size) and {base, index} == {base_reg, index_reg}
 
 
-def _match_reg_indirect_load_8616(insn, *, dst_reg: str, base_reg: str, size: int) -> bool:
+def _match_cmp_indexed_reg_8616(insn, *, base_reg: str, index_reg: str, rhs_reg: str, size: int, disp: int = 0) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "cmp":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if len(operands) != 2 or _reg_name_from_operand_8616(insn, operands[1]) != rhs_reg:
+        return False
+    mem = _mem_base_index_size_8616(insn, operands[0])
+    if mem is None:
+        return False
+    base, index, mem_disp, mem_size = mem
+    return int(mem_disp) == int(disp) and int(mem_size) == int(size) and {base, index} == {base_reg, index_reg}
+
+
+def _match_reg_indirect_load_8616(insn, *, dst_reg: str, base_reg: str, size: int, disp: int = 0) -> bool:
     if str(getattr(insn, "mnemonic", "")).lower() != "mov":
         return False
     operands = tuple(getattr(insn, "operands", ()) or ())
@@ -2476,11 +2545,11 @@ def _match_reg_indirect_load_8616(insn, *, dst_reg: str, base_reg: str, size: in
     mem = _mem_base_index_size_8616(insn, operands[1])
     if mem is None:
         return False
-    base, index, disp, mem_size = mem
-    return base == base_reg and index is None and disp == 0 and int(mem_size) == int(size)
+    base, index, mem_disp, mem_size = mem
+    return base == base_reg and index is None and int(mem_disp) == int(disp) and int(mem_size) == int(size)
 
 
-def _match_reg_indirect_store_8616(insn, *, base_reg: str, src_reg: str, size: int) -> bool:
+def _match_reg_indirect_store_8616(insn, *, base_reg: str, src_reg: str, size: int, disp: int = 0) -> bool:
     if str(getattr(insn, "mnemonic", "")).lower() != "mov":
         return False
     operands = tuple(getattr(insn, "operands", ()) or ())
@@ -2489,8 +2558,8 @@ def _match_reg_indirect_store_8616(insn, *, base_reg: str, src_reg: str, size: i
     mem = _mem_base_index_size_8616(insn, operands[0])
     if mem is None:
         return False
-    base, index, disp, mem_size = mem
-    return base == base_reg and index is None and disp == 0 and int(mem_size) == int(size)
+    base, index, mem_disp, mem_size = mem
+    return base == base_reg and index is None and int(mem_disp) == int(disp) and int(mem_size) == int(size)
 
 
 def _stack_expr_8616(codegen, disp: int, size: int = 2):
@@ -2511,8 +2580,16 @@ def _word_type_for_project_8616(project):
     return _bind_type_to_project_arch_8616(project, SimTypeShort(False))
 
 
-def _pointer_type_for_project_8616(project, pointee_size: int):
-    pointee = SimTypeChar(False) if int(pointee_size) == 1 else SimTypeShort(False)
+def _signed_word_type_for_project_8616(project):
+    return _bind_type_to_project_arch_8616(project, SimTypeShort(True))
+
+
+def _void_type_for_project_8616(project):
+    return _bind_type_to_project_arch_8616(project, SimTypeBottom(label="void"))
+
+
+def _pointer_type_for_project_8616(project, pointee_size: int, *, signed: bool = False):
+    pointee = SimTypeChar(signed) if int(pointee_size) == 1 else SimTypeShort(signed)
     return _bind_type_to_project_arch_8616(
         project,
         _SimTypeNearPointer16_8616(_bind_type_to_project_arch_8616(project, pointee)),
@@ -2600,14 +2677,38 @@ def _canonical_stack_cvar_at_offset_8616(cfunc, offset: int):
     return best
 
 
-def _ensure_pointer_stack_arg_expr_8616(project, codegen, disp: int, *, pointee_size: int, fallback_name: str | None = None):
-    """Materialize BP-positive slots proven by register-indirect memory use as pointer args."""
+def _install_canonical_stack_cvar_8616(cfunc, cvar, variable_type=None) -> None:
+    variable = getattr(cvar, "variable", None)
+    if not isinstance(cvar, CVariable) or not isinstance(variable, SimStackVariable):
+        return
+    offset = getattr(variable, "offset", None)
+    if not isinstance(offset, int):
+        return
+    if variable_type is None:
+        variable_type = getattr(cvar, "variable_type", None)
+    variables = getattr(cfunc, "variables_in_use", None)
+    if isinstance(variables, dict):
+        for existing_variable in tuple(variables.keys()):
+            if not isinstance(existing_variable, SimStackVariable):
+                continue
+            if getattr(existing_variable, "offset", None) == offset and existing_variable is not variable:
+                del variables[existing_variable]
+        variables[variable] = cvar
+    unified = getattr(cfunc, "unified_local_vars", None)
+    if isinstance(unified, dict):
+        for existing_variable in tuple(unified.keys()):
+            if not isinstance(existing_variable, SimStackVariable):
+                continue
+            if getattr(existing_variable, "offset", None) == offset and existing_variable is not variable:
+                del unified[existing_variable]
+        unified[variable] = {(cvar, variable_type)}
 
+
+def _ensure_typed_stack_arg_expr_8616(project, codegen, disp: int, arg_type, *, fallback_name: str | None = None):
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None or int(disp) < 4:
         return None
     disp = int(disp)
-    pointer_type = _pointer_type_for_project_8616(project, int(pointee_size))
     word_type = _word_type_for_project_8616(project)
     arg_name = (
         _stack_alias_name_from_optional_cod_8616(project, codegen, disp)
@@ -2626,17 +2727,18 @@ def _ensure_pointer_stack_arg_expr_8616(project, codegen, disp: int, *, pointee_
             SimTypeFunction([], word_type, arg_names=(), variadic=False),
         )
 
+    arg_type = _bind_type_to_project_arch_8616(project, arg_type)
     args = list(getattr(prototype, "args", ()) or ())
     arg_names = list(getattr(prototype, "arg_names", None) or ())
     cursor = 4
     target_index = None
-    for idx, arg_type in enumerate(args):
+    for idx, existing_type in enumerate(args):
         if cursor == disp:
             target_index = idx
             break
-        cursor += max(2, _type_size_bytes_for_stack_arg_8616(project, arg_type))
+        cursor += max(2, _type_size_bytes_for_stack_arg_8616(project, existing_type))
     while target_index is None and cursor <= disp and disp <= 0x40:
-        new_type = pointer_type if cursor == disp else word_type
+        new_type = arg_type if cursor == disp else word_type
         args.append(new_type)
         arg_names.append(arg_name if cursor == disp else _fallback_stack_arg_name_8616(cursor))
         if cursor == disp:
@@ -2646,19 +2748,17 @@ def _ensure_pointer_stack_arg_expr_8616(project, codegen, disp: int, *, pointee_
     if target_index is None:
         return None
 
-    args[target_index] = pointer_type
+    args[target_index] = arg_type
     while len(arg_names) < len(args):
         arg_names.append(_fallback_stack_arg_name_8616(4 + len(arg_names) * 2))
     arg_names[target_index] = arg_name
 
     desired_args: list[CVariable] = []
-    variables = getattr(cfunc, "variables_in_use", None)
-    unified = getattr(cfunc, "unified_local_vars", None)
     func_addr = getattr(cfunc, "addr", None)
     cursor = 4
     target_cvar = None
-    for idx, arg_type in enumerate(args):
-        width = max(2, _type_size_bytes_for_stack_arg_8616(project, arg_type))
+    for idx, current_type in enumerate(args):
+        width = max(2, _type_size_bytes_for_stack_arg_8616(project, current_type))
         name = arg_names[idx] if idx < len(arg_names) and isinstance(arg_names[idx], str) and arg_names[idx] else None
         if name is None:
             name = _fallback_stack_arg_name_8616(cursor)
@@ -2666,15 +2766,12 @@ def _ensure_pointer_stack_arg_expr_8616(project, codegen, disp: int, *, pointee_
         variable = getattr(cvar, "variable", None) if cvar is not None else None
         if not isinstance(cvar, CVariable) or not isinstance(variable, SimStackVariable):
             variable = SimStackVariable(cursor, width, base="bp", name=name, region=func_addr)
-            cvar = CVariable(variable, variable_type=arg_type, codegen=codegen)
+            cvar = CVariable(variable, variable_type=current_type, codegen=codegen)
         else:
             variable.name = name
             variable.size = width
-            cvar.variable_type = arg_type
-        if isinstance(variables, dict):
-            variables[variable] = cvar
-        if isinstance(unified, dict):
-            unified[variable] = {(cvar, arg_type)}
+            cvar.variable_type = current_type
+        _install_canonical_stack_cvar_8616(cfunc, cvar, current_type)
         desired_args.append(cvar)
         if cursor == disp:
             target_cvar = cvar
@@ -2701,29 +2798,18 @@ def _ensure_pointer_stack_arg_expr_8616(project, codegen, disp: int, *, pointee_
         func.prototype = new_prototype
         func.is_prototype_guessed = False
 
-    desired_ids = {id(arg) for arg in desired_args}
-    arg_offsets = {getattr(getattr(arg, "variable", None), "offset", None) for arg in desired_args}
-    if isinstance(variables, dict):
-        for variable, cvar in tuple(variables.items()):
-            if not isinstance(variable, SimStackVariable):
-                continue
-            if getattr(variable, "offset", None) in arg_offsets and id(cvar) not in desired_ids:
-                del variables[variable]
-    if isinstance(unified, dict):
-        for variable, entries in tuple(unified.items()):
-            if not isinstance(variable, SimStackVariable) or getattr(variable, "offset", None) not in arg_offsets:
-                continue
-            kept = {(expr, typ) for expr, typ in (entries or ()) if id(expr) in desired_ids}
-            if kept:
-                unified[variable] = kept
-            else:
-                del unified[variable]
-
     refresh = getattr(cfunc, "refresh", None)
     if callable(refresh):
         with contextlib.suppress(Exception):
             refresh()
     return target_cvar
+
+
+def _ensure_pointer_stack_arg_expr_8616(project, codegen, disp: int, *, pointee_size: int, fallback_name: str | None = None):
+    """Materialize BP-positive slots proven by register-indirect memory use as pointer args."""
+
+    pointer_type = _pointer_type_for_project_8616(project, int(pointee_size))
+    return _ensure_typed_stack_arg_expr_8616(project, codegen, disp, pointer_type, fallback_name=fallback_name)
 
 
 def _named_stack_expr_from_evidence_8616(project, codegen, disp: int, size: int = 2):
@@ -2736,9 +2822,8 @@ def _named_stack_expr_from_evidence_8616(project, codegen, disp: int, size: int 
         if getattr(expr, "variable_type", None) is None:
             expr.variable_type = _word_type_for_project_8616(project)
         cfunc = getattr(codegen, "cfunc", None)
-        variables = getattr(cfunc, "variables_in_use", None)
-        if isinstance(variables, dict) and isinstance(variable, SimStackVariable):
-            variables[variable] = expr
+        if cfunc is not None:
+            _install_canonical_stack_cvar_8616(cfunc, expr, getattr(expr, "variable_type", None))
     return expr
 
 
@@ -2755,6 +2840,52 @@ def _inc_assignment_8616(expr, codegen):
     )
 
 
+def _match_reg_shl1_8616(insn, reg_name: str) -> bool:
+    if str(getattr(insn, "mnemonic", "")).lower() != "shl":
+        return False
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    return (
+        len(operands) == 2
+        and _reg_name_from_operand_8616(insn, operands[0]) == reg_name
+        and _imm_from_operand_8616(operands[1]) == 1
+    )
+
+
+def _const_short_8616(codegen, value: int, *, signed: bool = False):
+    return CConstant(int(value), SimTypeShort(signed), codegen=codegen)
+
+
+def _mul_expr_8616(lhs, rhs, codegen):
+    return CBinaryOp(
+        "Mul",
+        _clone_c_value_preserving_cvariables_8616(lhs),
+        _clone_c_value_preserving_cvariables_8616(rhs),
+        codegen=codegen,
+    )
+
+
+def _add_expr_8616(lhs, rhs, codegen):
+    return CBinaryOp(
+        "Add",
+        _clone_c_value_preserving_cvariables_8616(lhs),
+        _clone_c_value_preserving_cvariables_8616(rhs),
+        codegen=codegen,
+    )
+
+
+def _inc_assignment_preserving_cvariables_8616(expr, codegen):
+    return CAssignment(
+        _clone_c_value_preserving_cvariables_8616(expr),
+        CBinaryOp(
+            "Add",
+            _clone_c_value_preserving_cvariables_8616(expr),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+
 def _deref_expr_8616(expr, codegen):
     project = getattr(codegen, "project", None)
     word_type = _word_type_for_project_8616(project)
@@ -2764,6 +2895,68 @@ def _deref_expr_8616(expr, codegen):
         variable_type=word_type,
         codegen=codegen,
     )
+
+
+def _indexed_word_pointer_expr_8616(base_expr, index_expr, codegen, *, variable_type=None):
+    return CIndexedVariable(
+        _clone_c_value_preserving_cvariables_8616(base_expr),
+        _clone_c_value_preserving_cvariables_8616(index_expr),
+        variable_type=variable_type,
+        codegen=codegen,
+    )
+
+
+def _mark_codegen_signature_authoritative_8616(project, codegen, reason: str) -> None:
+    setattr(codegen, "_inertia_codegen_signature_authoritative_8616", reason)
+    for obj in (
+        getattr(codegen, "_func", None),
+        getattr(codegen, "function", None),
+        getattr(getattr(codegen, "cfunc", None), "function", None),
+    ):
+        if obj is not None:
+            setattr(obj, "_inertia_codegen_signature_authoritative_8616", reason)
+    cfunc_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    if isinstance(cfunc_addr, int):
+        with contextlib.suppress(Exception):
+            func = project.kb.functions.function(addr=cfunc_addr, create=False)
+            if func is not None:
+                setattr(func, "_inertia_codegen_signature_authoritative_8616", reason)
+
+
+def _set_codegen_return_type_8616(project, codegen, return_type) -> None:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return
+    prototype = getattr(cfunc, "functy", None) or getattr(cfunc, "prototype", None)
+    arg_list = list(getattr(cfunc, "arg_list", ()) or ())
+    if prototype is not None:
+        args = list(getattr(prototype, "args", ()) or ())
+        arg_names = list(getattr(prototype, "arg_names", None) or ())
+    else:
+        args = [getattr(arg, "variable_type", None) or _word_type_for_project_8616(project) for arg in arg_list]
+        arg_names = []
+    if arg_list and len(args) != len(arg_list):
+        args = [getattr(arg, "variable_type", None) or _word_type_for_project_8616(project) for arg in arg_list]
+    if arg_list and len(arg_names) != len(arg_list):
+        arg_names = [
+            getattr(getattr(arg, "variable", None), "name", None) or getattr(arg, "name", None) or f"arg_{idx}"
+            for idx, arg in enumerate(arg_list)
+        ]
+    new_prototype = SimTypeFunction(
+        args,
+        _bind_type_to_project_arch_8616(project, return_type),
+        arg_names=tuple(arg_names),
+        variadic=getattr(prototype, "variadic", False) if prototype is not None else False,
+    )
+    new_prototype = _bind_type_to_project_arch_8616(project, new_prototype)
+    cfunc.functy = new_prototype
+    with contextlib.suppress(Exception):
+        cfunc.prototype = new_prototype
+    func_addr = getattr(cfunc, "addr", None)
+    func = project.kb.functions.function(addr=func_addr, create=False) if isinstance(func_addr, int) else None
+    if func is not None:
+        func.prototype = new_prototype
+        func.is_prototype_guessed = False
 
 
 def _materialize_byte_pointer_fill_loop_8616(project, codegen, insns: tuple, index_by_addr: dict[int, int]) -> bool:
@@ -2974,6 +3167,481 @@ def _materialize_word_pointer_sum_loop_8616(project, codegen, insns: tuple, inde
     return False
 
 
+def _materialize_word_pair_pointer_accumulation_loop_8616(
+    project,
+    codegen,
+    insns: tuple,
+    index_by_addr: dict[int, int],
+) -> bool:
+    """Recover loops that accumulate two adjacent word fields from a pointer array.
+
+    Generic MS C shape:
+        total = 0;
+        for (i = 0; i < count; ++i) {
+            total += words[i * 2] * 2;
+            total += words[i * 2 + 1];
+        }
+
+    This intentionally materializes a word-pointer view, not a struct.  Struct
+    naming remains a later typed-object recovery problem.
+    """
+
+    stats = {
+        "raw_fact_count": 0,
+        "classified_fact_count": 0,
+        "materialized_count": 0,
+        "failure_count": 0,
+    }
+    codegen._inertia_word_pair_pointer_accumulation_stats_8616 = stats
+
+    for init_idx in range(len(insns) - 18):
+        total_disp = _match_stack_zero_init_8616(insns[init_idx])
+        i_disp = _match_stack_zero_init_8616(insns[init_idx + 1])
+        if total_disp is None or i_disp is None or total_disp >= 0 or i_disp >= 0 or total_disp == i_disp:
+            continue
+        stats["raw_fact_count"] += 1
+
+        first_jmp = insns[init_idx + 2]
+        if str(getattr(first_jmp, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
+            stats["failure_count"] += 1
+            continue
+        inc_addr = int(getattr(insns[init_idx + 3], "address", -1))
+        if not _match_stack_inc_8616(insns[init_idx + 3], i_disp):
+            stats["failure_count"] += 1
+            continue
+        cond_target = _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(first_jmp))
+        if cond_target is None or int(cond_target) != int(getattr(insns[init_idx + 4], "address", -1)):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[init_idx + 4], "ax", 6):
+            stats["failure_count"] += 1
+            continue
+        if not _match_cmp_stack_ax_8616(insns[init_idx + 5], i_disp):
+            stats["failure_count"] += 1
+            continue
+        jcc = insns[init_idx + 6]
+        if str(getattr(jcc, "mnemonic", "")).lower() not in {"jl", "jnge"}:
+            stats["failure_count"] += 1
+            continue
+        body_target = _jcc._branch_target_imm_8616(jcc)
+        exit_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(jcc, "address", -1)), -1)),
+        )
+        if body_target is None or exit_target is None:
+            stats["failure_count"] += 1
+            continue
+
+        exit_expr = _branch_target_return_expr_8616(project, codegen, int(exit_target))
+        total_expr = _named_stack_expr_from_evidence_8616(project, codegen, int(total_disp), 2)
+        if exit_expr is None or total_expr is None or _expr_fingerprint(exit_expr, project) != _expr_fingerprint(total_expr, project):
+            stats["failure_count"] += 1
+            continue
+
+        body = _block_insns_8616(project, int(body_target))
+        if len(body) < 14:
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(body[0], "bx", i_disp):
+            stats["failure_count"] += 1
+            continue
+        if not (_match_reg_shl1_8616(body[1], "bx") and _match_reg_shl1_8616(body[2], "bx")):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(body[3], "si", 4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_indexed_reg_load_8616(body[4], dst_reg="ax", base_reg="bx", index_reg="si", size=2):
+            stats["failure_count"] += 1
+            continue
+        if not _match_reg_shl1_8616(body[5], "ax"):
+            stats["failure_count"] += 1
+            continue
+        add_left_ops = tuple(getattr(body[6], "operands", ()) or ())
+        add_left_slot = _stack_mem_disp_size_8616(body[6], add_left_ops[0]) if len(add_left_ops) == 2 else None
+        if (
+            str(getattr(body[6], "mnemonic", "")).lower() != "add"
+            or add_left_slot is None
+            or int(add_left_slot[0]) != int(total_disp)
+            or _reg_name_from_operand_8616(body[6], add_left_ops[1]) != "ax"
+        ):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(body[7], "si", i_disp):
+            stats["failure_count"] += 1
+            continue
+        if not (_match_reg_shl1_8616(body[8], "si") and _match_reg_shl1_8616(body[9], "si")):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(body[10], "bx", 4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_indexed_reg_load_8616(body[11], dst_reg="ax", base_reg="bx", index_reg="si", size=2, disp=2):
+            stats["failure_count"] += 1
+            continue
+        add_right_ops = tuple(getattr(body[12], "operands", ()) or ())
+        add_right_slot = _stack_mem_disp_size_8616(body[12], add_right_ops[0]) if len(add_right_ops) == 2 else None
+        if (
+            str(getattr(body[12], "mnemonic", "")).lower() != "add"
+            or add_right_slot is None
+            or int(add_right_slot[0]) != int(total_disp)
+            or _reg_name_from_operand_8616(body[12], add_right_ops[1]) != "ax"
+        ):
+            stats["failure_count"] += 1
+            continue
+        if _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(body[13])) != inc_addr:
+            stats["failure_count"] += 1
+            continue
+
+        pairs_expr = _ensure_pointer_stack_arg_expr_8616(
+            project,
+            codegen,
+            4,
+            pointee_size=2,
+            fallback_name="pairs",
+        ) or _stack_expr_8616(codegen, 4, 2)
+        count_expr = _ensure_typed_stack_arg_expr_8616(
+            project,
+            codegen,
+            6,
+            _word_type_for_project_8616(project),
+            fallback_name="count",
+        ) or _stack_expr_8616(codegen, 6, 2)
+        i_expr = _named_stack_expr_from_evidence_8616(project, codegen, int(i_disp), 2)
+        if any(expr is None for expr in (pairs_expr, count_expr, i_expr)):
+            stats["failure_count"] += 1
+            continue
+
+        stats["classified_fact_count"] += 1
+        word_type = _word_type_for_project_8616(project)
+        word_index = _mul_expr_8616(i_expr, _const_short_8616(codegen, 2), codegen)
+        next_word_index = _add_expr_8616(word_index, _const_short_8616(codegen, 1), codegen)
+        left_word = _indexed_word_pointer_expr_8616(pairs_expr, word_index, codegen, variable_type=word_type)
+        right_word = _indexed_word_pointer_expr_8616(pairs_expr, next_word_index, codegen, variable_type=word_type)
+        left_twice = _mul_expr_8616(left_word, _const_short_8616(codegen, 2), codegen)
+        pair_total = _add_expr_8616(left_twice, right_word, codegen)
+        body_node = CStatements(
+            statements=[
+                CAssignment(
+                    _clone_c_value_preserving_cvariables_8616(total_expr),
+                    _add_expr_8616(total_expr, pair_total, codegen),
+                    codegen=codegen,
+                ),
+                _inc_assignment_preserving_cvariables_8616(i_expr, codegen),
+            ],
+            codegen=codegen,
+        )
+        codegen.cfunc.statements = CStatements(
+            statements=[
+                CAssignment(
+                    _clone_c_value_preserving_cvariables_8616(total_expr),
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _clone_c_value_preserving_cvariables_8616(i_expr),
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CWhileLoop(
+                    CBinaryOp(
+                        "CmpLT",
+                        _clone_c_value_preserving_cvariables_8616(i_expr),
+                        _clone_c_value_preserving_cvariables_8616(count_expr),
+                        codegen=codegen,
+                    ),
+                    body_node,
+                    codegen=codegen,
+                ),
+                CReturn(_clone_c_value_preserving_cvariables_8616(total_expr), codegen=codegen),
+            ],
+            codegen=codegen,
+        )
+        stats["materialized_count"] += 1
+        codegen._inertia_pointer_memory_materialized_8616 = "word_pair_accumulation_loop"
+        _mark_codegen_signature_authoritative_8616(project, codegen, "word_pair_pointer_accumulation_loop")
+        return True
+    return False
+
+
+def _materialize_word_pointer_first_gt_loop_8616(project, codegen, insns: tuple, index_by_addr: dict[int, int]) -> bool:
+    """Recover signed word-pointer first-greater-than search loops."""
+
+    stats = {
+        "raw_fact_count": 0,
+        "classified_fact_count": 0,
+        "materialized_count": 0,
+        "failure_count": 0,
+    }
+    codegen._inertia_word_pointer_first_gt_stats_8616 = stats
+
+    signed_word = _signed_word_type_for_project_8616(project)
+    for init_idx in range(len(insns) - 6):
+        i_disp = _match_stack_zero_init_8616(insns[init_idx])
+        if i_disp is None or i_disp >= 0:
+            continue
+        stats["raw_fact_count"] += 1
+        cond_addr = int(getattr(insns[init_idx + 1], "address", -1))
+        if not _match_stack_mov_to_reg_8616(insns[init_idx + 1], "ax", i_disp):
+            stats["failure_count"] += 1
+            continue
+        if not _match_cmp_stack_ax_8616(insns[init_idx + 2], 6):
+            stats["failure_count"] += 1
+            continue
+        count_jcc = insns[init_idx + 3]
+        if str(getattr(count_jcc, "mnemonic", "")).lower() not in {"jg", "jnle"}:
+            stats["failure_count"] += 1
+            continue
+        body_target = _jcc._branch_target_imm_8616(count_jcc)
+        exit_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(count_jcc, "address", -1)), -1)),
+        )
+        if body_target is None or exit_target is None:
+            stats["failure_count"] += 1
+            continue
+
+        body = _block_insns_8616(project, int(body_target))
+        if len(body) < 6:
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(body[0], "bx", i_disp):
+            stats["failure_count"] += 1
+            continue
+        if not _match_reg_shl1_8616(body[1], "bx"):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(body[2], "si", 4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(body[3], "ax", 8):
+            stats["failure_count"] += 1
+            continue
+        if not _match_cmp_indexed_reg_8616(body[4], base_reg="bx", index_reg="si", rhs_reg="ax", size=2):
+            stats["failure_count"] += 1
+            continue
+        value_jcc = body[5]
+        if str(getattr(value_jcc, "mnemonic", "")).lower() not in {"jg", "jnle"}:
+            stats["failure_count"] += 1
+            continue
+        return_i_target = _jcc._branch_target_imm_8616(value_jcc)
+        inc_target = _resolve_one_hop_jmp_target_8616(
+            project,
+            _next_linear_jmp_target_8616(insns, index_by_addr.get(int(getattr(value_jcc, "address", -1)), -1)),
+        )
+        if return_i_target is None or inc_target is None:
+            stats["failure_count"] += 1
+            continue
+
+        inc_block = _block_insns_8616(project, int(inc_target))
+        if len(inc_block) < 2 or not _match_stack_inc_8616(inc_block[0], i_disp):
+            stats["failure_count"] += 1
+            continue
+        if _resolve_one_hop_jmp_target_8616(project, _jcc._branch_target_imm_8616(inc_block[1])) != cond_addr:
+            stats["failure_count"] += 1
+            continue
+
+        i_expr = _named_stack_expr_from_evidence_8616(project, codegen, int(i_disp), 2)
+        values_expr = _ensure_typed_stack_arg_expr_8616(
+            project,
+            codegen,
+            4,
+            _pointer_type_for_project_8616(project, 2, signed=True),
+            fallback_name="values",
+        ) or _stack_expr_8616(codegen, 4, 2)
+        count_expr = _ensure_typed_stack_arg_expr_8616(project, codegen, 6, signed_word, fallback_name="count") or _stack_expr_8616(
+            codegen, 6, 2
+        )
+        threshold_expr = _ensure_typed_stack_arg_expr_8616(
+            project,
+            codegen,
+            8,
+            signed_word,
+            fallback_name="threshold",
+        ) or _stack_expr_8616(codegen, 8, 2)
+        if any(expr is None for expr in (i_expr, values_expr, count_expr, threshold_expr)):
+            stats["failure_count"] += 1
+            continue
+        if isinstance(i_expr, CVariable):
+            i_expr.variable_type = signed_word
+            _install_canonical_stack_cvar_8616(codegen.cfunc, i_expr, signed_word)
+
+        return_i_expr = _branch_target_return_expr_8616(project, codegen, int(return_i_target))
+        return_minus_one_expr = _branch_target_return_expr_8616(project, codegen, int(exit_target))
+        if return_i_expr is None or _expr_fingerprint(return_i_expr, project) != _expr_fingerprint(i_expr, project):
+            stats["failure_count"] += 1
+            continue
+        minus_one = CConstant(-1, signed_word, codegen=codegen)
+        if return_minus_one_expr is None or _expr_fingerprint(return_minus_one_expr, project) != _expr_fingerprint(minus_one, project):
+            stats["failure_count"] += 1
+            continue
+
+        stats["classified_fact_count"] += 1
+        indexed_value = _indexed_word_pointer_expr_8616(values_expr, i_expr, codegen, variable_type=signed_word)
+        if_body = CStatements(
+            statements=[CReturn(_clone_c_value_preserving_cvariables_8616(i_expr), codegen=codegen)],
+            codegen=codegen,
+        )
+        loop_body = CStatements(
+            statements=[
+                CIfElse(
+                    [
+                        (
+                            CBinaryOp(
+                                "CmpGT",
+                                _clone_c_value_preserving_cvariables_8616(indexed_value),
+                                _clone_c_value_preserving_cvariables_8616(threshold_expr),
+                                codegen=codegen,
+                            ),
+                            if_body,
+                        )
+                    ],
+                    else_node=None,
+                    cstyle_ifs=True,
+                    codegen=codegen,
+                ),
+                _inc_assignment_preserving_cvariables_8616(i_expr, codegen),
+            ],
+            codegen=codegen,
+        )
+        codegen.cfunc.statements = CStatements(
+            statements=[
+                CAssignment(
+                    _clone_c_value_preserving_cvariables_8616(i_expr),
+                    CConstant(0, signed_word, codegen=codegen),
+                    codegen=codegen,
+                ),
+                CWhileLoop(
+                    CBinaryOp(
+                        "CmpLT",
+                        _clone_c_value_preserving_cvariables_8616(i_expr),
+                        _clone_c_value_preserving_cvariables_8616(count_expr),
+                        codegen=codegen,
+                    ),
+                    loop_body,
+                    codegen=codegen,
+                ),
+                CReturn(minus_one, codegen=codegen),
+            ],
+            codegen=codegen,
+        )
+        _set_codegen_return_type_8616(project, codegen, signed_word)
+        stats["materialized_count"] += 1
+        codegen._inertia_pointer_memory_materialized_8616 = "word_pointer_first_gt_loop"
+        _mark_codegen_signature_authoritative_8616(project, codegen, "word_pointer_first_gt_loop")
+        return True
+    return False
+
+
+def _materialize_word_pointer_rotate3_8616(project, codegen, insns: tuple, _index_by_addr: dict[int, int]) -> bool:
+    stats = {
+        "raw_fact_count": 0,
+        "classified_fact_count": 0,
+        "materialized_count": 0,
+        "failure_count": 0,
+    }
+    codegen._inertia_word_pointer_rotate3_stats_8616 = stats
+
+    for idx in range(max(0, len(insns) - 13)):
+        if not _match_stack_mov_to_reg_8616(insns[idx], "bx", 4):
+            continue
+        stats["raw_fact_count"] += 1
+        if not _match_reg_indirect_load_8616(insns[idx + 1], dst_reg="ax", base_reg="bx", size=2):
+            stats["failure_count"] += 1
+            continue
+        tmp_ops = tuple(getattr(insns[idx + 2], "operands", ()) or ())
+        tmp_slot = _stack_mem_disp_size_8616(insns[idx + 2], tmp_ops[0]) if len(tmp_ops) == 2 else None
+        if str(getattr(insns[idx + 2], "mnemonic", "")).lower() != "mov" or tmp_slot is None:
+            stats["failure_count"] += 1
+            continue
+        tmp_disp = int(tmp_slot[0])
+        if tmp_disp >= 0 or _reg_name_from_operand_8616(insns[idx + 2], tmp_ops[1]) != "ax":
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 3], "bx", 4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_reg_indirect_load_8616(insns[idx + 4], dst_reg="ax", base_reg="bx", size=2, disp=2):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 5], "bx", 4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_reg_indirect_store_8616(insns[idx + 6], base_reg="bx", src_reg="ax", size=2):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 7], "bx", 4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_reg_indirect_load_8616(insns[idx + 8], dst_reg="ax", base_reg="bx", size=2, disp=4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 9], "bx", 4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_reg_indirect_store_8616(insns[idx + 10], base_reg="bx", src_reg="ax", size=2, disp=2):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 11], "ax", tmp_disp):
+            stats["failure_count"] += 1
+            continue
+        if not _match_stack_mov_to_reg_8616(insns[idx + 12], "bx", 4):
+            stats["failure_count"] += 1
+            continue
+        if not _match_reg_indirect_store_8616(insns[idx + 13], base_reg="bx", src_reg="ax", size=2, disp=4):
+            stats["failure_count"] += 1
+            continue
+
+        values_expr = _ensure_pointer_stack_arg_expr_8616(
+            project,
+            codegen,
+            4,
+            pointee_size=2,
+            fallback_name="values",
+        ) or _stack_expr_8616(codegen, 4, 2)
+        tmp_expr = _named_stack_expr_from_evidence_8616(project, codegen, int(tmp_disp), 2)
+        if any(expr is None for expr in (values_expr, tmp_expr)):
+            stats["failure_count"] += 1
+            continue
+
+        stats["classified_fact_count"] += 1
+        word_type = _word_type_for_project_8616(project)
+        value_0 = _indexed_word_pointer_expr_8616(values_expr, _const_short_8616(codegen, 0), codegen, variable_type=word_type)
+        value_1 = _indexed_word_pointer_expr_8616(values_expr, _const_short_8616(codegen, 1), codegen, variable_type=word_type)
+        value_2 = _indexed_word_pointer_expr_8616(values_expr, _const_short_8616(codegen, 2), codegen, variable_type=word_type)
+        codegen.cfunc.statements = CStatements(
+            statements=[
+                CAssignment(
+                    _clone_c_value_preserving_cvariables_8616(tmp_expr),
+                    _clone_c_value_preserving_cvariables_8616(value_0),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _clone_c_value_preserving_cvariables_8616(value_0),
+                    _clone_c_value_preserving_cvariables_8616(value_1),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _clone_c_value_preserving_cvariables_8616(value_1),
+                    _clone_c_value_preserving_cvariables_8616(value_2),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _clone_c_value_preserving_cvariables_8616(value_2),
+                    _clone_c_value_preserving_cvariables_8616(tmp_expr),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        )
+        _set_codegen_return_type_8616(project, codegen, _void_type_for_project_8616(project))
+        stats["materialized_count"] += 1
+        codegen._inertia_pointer_memory_materialized_8616 = "word_pointer_rotate3"
+        _mark_codegen_signature_authoritative_8616(project, codegen, "word_pointer_rotate3")
+        return True
+    return False
+
+
 def _materialize_pointer_swap_8616(project, codegen, insns: tuple, _index_by_addr: dict[int, int]) -> bool:
     for idx in range(max(0, len(insns) - 9)):
         if not _match_stack_mov_to_reg_8616(insns[idx], "bx", 4):
@@ -3054,6 +3722,9 @@ def _materialize_pointer_memory_idioms_8616(project, codegen) -> bool:
     return (
         _materialize_byte_pointer_fill_loop_8616(project, codegen, insns, index_by_addr)
         or _materialize_word_pointer_sum_loop_8616(project, codegen, insns, index_by_addr)
+        or _materialize_word_pair_pointer_accumulation_loop_8616(project, codegen, insns, index_by_addr)
+        or _materialize_word_pointer_first_gt_loop_8616(project, codegen, insns, index_by_addr)
+        or _materialize_word_pointer_rotate3_8616(project, codegen, insns, index_by_addr)
         or _materialize_pointer_swap_8616(project, codegen, insns, index_by_addr)
     )
 

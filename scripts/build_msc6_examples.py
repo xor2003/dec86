@@ -31,7 +31,7 @@ DEFAULT_OUT_DIR = REPO_ROOT / "examples" / "build_msc6"
 DEFAULT_KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
 DEFAULT_MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
 DEFAULT_DECOMPILE = REPO_ROOT / "decompile.py"
-DEFAULT_DECOMPILE_SKIP = ("medium_structs",)
+DEFAULT_DECOMPILE_SKIP: tuple[str, ...] = ()
 HARNESS_SUCCESS_EXIT_CODE = 255
 DECOMPILE_MAX_FUNCTIONS_DEFAULT = 0
 DEFAULT_SIGNATURE_CATALOG_NAME = "runtime_signature_catalog.pat"
@@ -237,6 +237,49 @@ int main(void)
 }
 """
 
+MEDIUM_STRUCTS_PREFIX = """
+struct Pair {
+    int left;
+    int right;
+};
+"""
+
+MEDIUM_STRUCTS_HARNESS_MAIN = """
+int main(void)
+{
+    struct Pair pairs[3];
+    int values[4];
+    int total;
+    int pos;
+
+    pairs[0].left = 1;
+    pairs[0].right = 3;
+    pairs[1].left = 2;
+    pairs[1].right = 5;
+    pairs[2].left = 4;
+    pairs[2].right = 7;
+
+    values[0] = 4;
+    values[1] = 8;
+    values[2] = 15;
+    values[3] = 16;
+
+    rotate_triplet(values);
+    total = accumulate_pairs(pairs, 3);
+    pos = find_first_gt(values, 4, 10);
+    if (values[0] != 8 || values[1] != 15 || values[2] != 4) {
+        return 1;
+    }
+    if (total != 29) {
+        return 2;
+    }
+    if (pos != 1) {
+        return 3;
+    }
+    return 255;
+}
+"""
+
 SCALAR_TYPES_HARNESS_MAIN = """
 int main(void)
 {
@@ -376,6 +419,11 @@ FALLBACK_EXAMPLE_REBUILD = {
     "pointer_memory": {
         "functions": ("fill_bytes", "sum_words", "swap_ptrs"),
         "harness": POINTER_MEMORY_HARNESS_MAIN,
+    },
+    "medium_structs": {
+        "functions": ("accumulate_pairs", "rotate_triplet", "find_first_gt"),
+        "prefix": MEDIUM_STRUCTS_PREFIX,
+        "harness": MEDIUM_STRUCTS_HARNESS_MAIN,
     },
     "scalar_types_io": {
         "functions": (
@@ -2004,7 +2052,10 @@ def main() -> int:
         "--skip-constructs",
         type=lambda text: [item.strip() for item in text.split(",") if item.strip()],
         default=list(DEFAULT_DECOMPILE_SKIP),
-        help="Comma-separated source stems to skip decompilation for (default: enum_union,medium_structs)",
+        help=(
+            "Comma-separated source stems to skip decompilation for "
+            f"(default: {','.join(DEFAULT_DECOMPILE_SKIP)})"
+        ),
     )
     ap.add_argument(
         "--decompile-mode",

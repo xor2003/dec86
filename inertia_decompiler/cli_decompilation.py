@@ -3299,6 +3299,7 @@ def _decompile_function(
             api_style,
             binary_path,
             cod_metadata=effective_cod_metadata,
+            codegen=dec.codegen,
         )
         if effective_cod_metadata is not None:
             pre_score = _expected_call_presence_score_8616(_pre_helper_format_text, effective_cod_metadata)
@@ -3327,7 +3328,7 @@ def _decompile_function(
         _debug_dump_calls_8616("post-materialize-missing-generic-locals-1", formatted, debug_call_addr)
         formatted = _prune_unused_local_declarations_text(formatted)
         _debug_dump_calls_8616("post-prune-unused-local-decls-1", formatted, debug_call_addr)
-        formatted = _annotate_cod_proc_output(formatted, function, effective_cod_metadata)
+        formatted = _annotate_cod_proc_output(formatted, function, effective_cod_metadata, codegen=dec.codegen)
         _debug_dump_calls_8616("post-annotate-cod-proc-output", formatted, debug_call_addr)
         _emit_c_stage_trace(
             project,
@@ -3353,7 +3354,12 @@ def _decompile_function(
         )
         formatted = _prune_trailing_generic_return_text(formatted)
         _debug_dump_calls_8616("post-prune-trailing-generic-return", formatted, debug_call_addr)
-        formatted = _materialize_annotated_cod_declarations_text(formatted, function, effective_cod_metadata)
+        formatted = _materialize_annotated_cod_declarations_text(
+            formatted,
+            function,
+            effective_cod_metadata,
+            preserve_source_header=bool(getattr(dec.codegen, "_inertia_codegen_signature_authoritative_8616", None)),
+        )
         _debug_dump_calls_8616("post-materialize-annotated-cod-decls", formatted, debug_call_addr)
         formatted = _align_unknown_call_names_from_cod_evidence_text(formatted)
         _debug_dump_calls_8616("post-align-unknown-call-names-from-cod", formatted, debug_call_addr)

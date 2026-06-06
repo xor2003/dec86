@@ -70,3 +70,14 @@ def test_enum_union_fallback_is_enabled_by_default():
     assert "enum_union" not in DEFAULT_DECOMPILE_SKIP
     assert FALLBACK_EXAMPLE_REBUILD["enum_union"]["functions"] == ("token_cost", "combine_bytes")
     assert "token_cost(TOK_TWO)" in ENUM_UNION_HARNESS_MAIN
+
+
+def test_medium_structs_has_function_fallback_contract():
+    assert "medium_structs" not in DEFAULT_DECOMPILE_SKIP
+    assert FALLBACK_EXAMPLE_REBUILD["medium_structs"]["functions"] == (
+        "accumulate_pairs",
+        "rotate_triplet",
+        "find_first_gt",
+    )
+    assert "struct Pair" in FALLBACK_EXAMPLE_REBUILD["medium_structs"]["prefix"]
+    assert "return 255;" in FALLBACK_EXAMPLE_REBUILD["medium_structs"]["harness"]
