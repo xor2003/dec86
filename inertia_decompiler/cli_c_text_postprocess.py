@@ -415,8 +415,23 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
         out_lines: list[str] = []
         changed = False
         header_start_re = re.compile(r"^\s*(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+[A-Za-z_]\w*\s*\(")
-        return_re = re.compile(r"^(?P<indent>\s*)return\s+[^;]+;\s*$")
+        return_re = re.compile(r"^(?P<indent>\s*)return\s+(?P<expr>[^;]+);\s*$")
         bare_return_re = re.compile(r"^\s*return;\s*$")
+        side_effect_call_re = re.compile(r"^[A-Za-z_]\w*\s*\(.*\)$")
+
+        def _return_line_is_terminal(start_index: int, current_depth: int) -> bool:
+            depth = current_depth
+            scan_index = start_index + 1
+            while scan_index < line_count:
+                scan_line = lines[scan_index]
+                stripped = scan_line.strip()
+                if stripped and stripped != "}" and not stripped.startswith("//"):
+                    return False
+                depth += scan_line.count("{") - scan_line.count("}")
+                if depth <= 0:
+                    return True
+                scan_index += 1
+            return False
 
         index = 0
         line_count = len(lines)
@@ -439,7 +454,16 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
                     body_line = lines[index]
                     return_match = return_re.match(body_line)
                     if is_void and return_match is not None:
-                        body_line = f"{return_match.group('indent')}return;"
+                        indent = return_match.group("indent")
+                        expr = return_match.group("expr").strip()
+                        if side_effect_call_re.match(expr) is not None:
+                            out_lines.append(f"{indent}{expr};")
+                        if _return_line_is_terminal(index, brace_depth):
+                            changed = True
+                            brace_depth += body_line.count("{") - body_line.count("}")
+                            index += 1
+                            continue
+                        body_line = f"{indent}return;"
                         changed = True
                     elif not is_void and bare_return_re.match(body_line) is not None:
                         changed = True
@@ -488,7 +512,16 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
                 body_line = lines[index]
                 return_match = return_re.match(body_line)
                 if is_void and return_match is not None:
-                    body_line = f"{return_match.group('indent')}return;"
+                    indent = return_match.group("indent")
+                    expr = return_match.group("expr").strip()
+                    if side_effect_call_re.match(expr) is not None:
+                        out_lines.append(f"{indent}{expr};")
+                    if _return_line_is_terminal(index, brace_depth):
+                        changed = True
+                        brace_depth += body_line.count("{") - body_line.count("}")
+                        index += 1
+                        continue
+                    body_line = f"{indent}return;"
                     changed = True
                 elif not is_void and bare_return_re.match(body_line) is not None:
                     changed = True
@@ -4626,8 +4659,10 @@ def _normalize_unsupported_computed_goto_text(c_text: str) -> str:
     return pattern.sub(_replace, c_text)
 
 
-def _rewrite_known_helper_signature_text(c_text: str, function) -> str:
+def _rewrite_known_helper_signature_text(c_text: str, function, *, codegen=None) -> str:
     def _impl():
+        if bool(getattr(codegen, "_inertia_codegen_signature_authoritative_8616", False)):
+            return c_text
         SOURCE_EMPTY_HELPERS = {"_dos_getProcessId", "_dos_setProcessId"}
         helper_decl = preferred_known_helper_signature_decl(getattr(function, "name", None))
         if helper_decl is None:
@@ -4988,7 +5023,7 @@ def _format_known_helper_calls(
         declarations.extend(_known_helper_declarations(cod_metadata))
         if declarations:
             c_text = "\n".join(declarations) + "\n\n" + c_text
-        c_text = _rewrite_known_helper_signature_text(c_text, function)
+        c_text = _rewrite_known_helper_signature_text(c_text, function, codegen=codegen)
         c_text = _align_function_header_with_cod_source_decl_text(c_text, function, cod_metadata, codegen=codegen)
         c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
         return _repair_missing_fallthrough_returns(c_text).rstrip("\n")

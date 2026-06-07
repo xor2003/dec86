@@ -53,14 +53,6 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
     "writestringat": "void writestringat(unsigned short rowcol, const char *s);",
     "dispdigit": "void dispdigit(unsigned char digit);",
     "dispnum": "void dispnum(unsigned short value);",
-    "Swaps": "void Swaps(void *lhs, void *rhs);",
-    "_Swaps": "void _Swaps(void *lhs, void *rhs);",
-    "SwapBars": "int SwapBars(int iRow1, int iRow2);",
-    "_SwapBars": "int _SwapBars(int iRow1, int iRow2);",
-    "PercolateUp": "short PercolateUp(int iMaxLevel);",
-    "_PercolateUp": "short _PercolateUp(int iMaxLevel);",
-    "PercolateDown": "int PercolateDown(int i);",
-    "_PercolateDown": "int _PercolateDown(int i);",
 }
 
 
@@ -77,6 +69,16 @@ class CallTargetSeed:
     target_addr: int
     return_addr: int | None
     kind: str
+
+
+@dataclass(frozen=True)
+class DirectCallsiteSanitizationEvidence:
+    raw_fact_count: int = 0
+    normalized_fact_count: int = 0
+    classified_fact_count: int = 0
+    materialized_count: int = 0
+    failure_count: int = 0
+    pruned_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -1367,6 +1369,62 @@ def resolve_direct_call_target_from_block(project, block_addr: int) -> int | Non
     return _resolve_direct_call_target_from_insn(project, insn)
 
 
+def _callsite_addr_decodes_to_direct_call_8616(project, callsite_addr: int) -> bool | None:
+    try:
+        block = project.factory.block(callsite_addr, opt_level=0)
+    except Exception:
+        return None
+
+    insns = getattr(getattr(block, "capstone", None), "insns", ()) or ()
+    for insn in insns:
+        if getattr(insn, "address", None) != callsite_addr:
+            continue
+        mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+        return mnemonic in {"call", "lcall"}
+    return None
+
+
+def sanitize_direct_call_sites_8616(function) -> DirectCallsiteSanitizationEvidence:
+    def _impl():
+        project = getattr(function, "project", None)
+        if project is None or getattr(getattr(project, "arch", None), "name", None) != "86_16":
+            return DirectCallsiteSanitizationEvidence()
+
+        call_sites = getattr(function, "_call_sites", None)
+        if not isinstance(call_sites, dict):
+            return DirectCallsiteSanitizationEvidence()
+
+        raw_fact_count = len(call_sites)
+        normalized_fact_count = 0
+        classified_fact_count = 0
+        failure_count = 0
+        pruned_count = 0
+        for callsite_addr in tuple(call_sites):
+            if not isinstance(callsite_addr, int):
+                failure_count += 1
+                continue
+            normalized_fact_count += 1
+            is_call = _callsite_addr_decodes_to_direct_call_8616(project, callsite_addr)
+            if is_call is None:
+                failure_count += 1
+                continue
+            classified_fact_count += 1
+            if not is_call:
+                del call_sites[callsite_addr]
+                pruned_count += 1
+
+        return DirectCallsiteSanitizationEvidence(
+            raw_fact_count=raw_fact_count,
+            normalized_fact_count=normalized_fact_count,
+            classified_fact_count=classified_fact_count,
+            materialized_count=pruned_count,
+            failure_count=failure_count,
+            pruned_count=pruned_count,
+        )
+
+    return _impl()
+
+
 def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | None:
     def _impl():
         """
@@ -1425,7 +1483,8 @@ def patch_direct_call_sites(function) -> bool:
         call_sites = getattr(function, "_call_sites", None)
         if not isinstance(call_sites, dict):
             return False
-        changed = False
+        sanitization = sanitize_direct_call_sites_8616(function)
+        changed = sanitization.pruned_count > 0
         for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
             try:
                 block = project.factory.block(block_addr, opt_level=0)
@@ -1753,6 +1812,11 @@ def patch_dos_int21_call_sites(function, binary_path: Path | str | None = None) 
 
 
 def seed_calling_conventions(cfg) -> None:
+    try:
+        from .calling_convention_compat import apply_x86_16_wide_stack_prototype_evidence
+    except Exception:  # pragma: no cover - compatibility fallback during partial imports
+        apply_x86_16_wide_stack_prototype_evidence = None
+
     def _is_stack_probe_helper_name(name: str | None) -> bool:
         if not isinstance(name, str):
             return False
@@ -1764,13 +1828,18 @@ def seed_calling_conventions(cfg) -> None:
     success_count = 0
     error_count = 0
     stack_probe_count = 0
+    wide_stack_count = 0
     total_functions = len(getattr(cfg, "functions", {}))
+    project = getattr(cfg, "project", None) or getattr(cfg, "_project", None)
     if track:
         start = time.perf_counter()
     for function in getattr(cfg, "functions", {}).values():
         candidate_count += 1
         try:
             function._init_prototype_and_calling_convention()
+            if project is not None and apply_x86_16_wide_stack_prototype_evidence is not None:
+                if apply_x86_16_wide_stack_prototype_evidence(project, function):
+                    wide_stack_count += 1
             success_count += 1
             if _is_stack_probe_helper_name(getattr(function, "name", None)):
                 stack_probe_count += 1
@@ -1788,7 +1857,7 @@ def seed_calling_conventions(cfg) -> None:
         print(
             f"[metric] seed_calling_conventions cfg_functions={total_functions} "
             f"candidates={candidate_count} initialized={success_count} errors={error_count} "
-            f"stack_probes={stack_probe_count} elapsed_ms={elapsed_ms}",
+            f"stack_probes={stack_probe_count} wide_stack={wide_stack_count} elapsed_ms={elapsed_ms}",
             file=sys.stderr,
             flush=True,
         )

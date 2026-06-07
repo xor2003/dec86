@@ -227,6 +227,7 @@ def test_bp_stack_prototype_promotion_respects_scalar_source_decl_over_weak_poin
         ),
     )
     codegen = SimpleNamespace(
+        next_idx=lambda _name: 1,
         project=project,
         cfunc=SimpleNamespace(
             addr=0x1000,
@@ -245,6 +246,423 @@ def test_bp_stack_prototype_promotion_respects_scalar_source_decl_over_weak_poin
     postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen)
 
     assert not isinstance(func.prototype.args[1], SimTypePointer)
+
+
+def test_bp_stack_prototype_promotion_demotes_unproved_annotated_pointer_arg():
+    arch = Arch86_16()
+    first_stack_var = SimStackVariable(4, 2, base="bp", name="iRow1", region=0x1000)
+    stack_var = SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    first_stack_cvar = structured_c.CVariable(
+        first_stack_var,
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=c_codegen,
+    )
+    stack_cvar = structured_c.CVariable(
+        stack_var,
+        variable_type=SimTypePointer(SimTypeShort(False)).with_arch(arch),
+        codegen=c_codegen,
+    )
+    func = SimpleNamespace(
+        prototype=_FakePrototype(
+            args=[SimTypeShort(False).with_arch(arch), SimTypePointer(SimTypeShort(False)).with_arch(arch)],
+            arg_names=("iRow1", "iRow2"),
+            returnty=SimTypeBottom(),
+        ),
+        is_prototype_guessed=True,
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {
+                    4: {"name": "iRow1"},
+                    6: {"name": "iRow2"},
+                },
+                "source_lines": (
+                    "void SwapBars(int iRow1, int iRow2)",
+                    "{",
+                    "}",
+                ),
+            }
+        },
+    )
+    project = SimpleNamespace(
+        arch=arch,
+        _inertia_c_target="portable-flat",
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+    codegen = SimpleNamespace(
+        next_idx=lambda _name: 1,
+        project=project,
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            statements=SimpleNamespace(statements=[]),
+            variables_in_use={first_stack_var: first_stack_cvar, stack_var: stack_cvar},
+            arg_list=[first_stack_cvar, stack_cvar],
+            functy=func.prototype,
+        ),
+    )
+    first_stack_cvar.codegen = codegen
+    stack_cvar.codegen = codegen
+
+    changed = postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen)
+
+    assert changed is True
+    assert not isinstance(func.prototype.args[1], SimTypePointer)
+    assert not isinstance(stack_cvar.variable_type, SimTypePointer)
+
+
+def test_annotation_arg_sync_demotes_unproved_pointer_from_source_scalar_arg():
+    arch = Arch86_16()
+    first_stack_var = SimStackVariable(2, 2, base="bp", name="iRow1", region=0x1000)
+    second_stack_var = SimStackVariable(4, 2, base="bp", name="iRow2", region=0x1000)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    first_stack_cvar = structured_c.CVariable(
+        first_stack_var,
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=c_codegen,
+    )
+    second_stack_cvar = structured_c.CVariable(
+        second_stack_var,
+        variable_type=SimTypePointer(SimTypeShort(False)).with_arch(arch),
+        codegen=c_codegen,
+    )
+    func = SimpleNamespace(
+        addr=0x1000,
+        prototype=_FakePrototype(
+            args=[SimTypeShort(False).with_arch(arch), SimTypePointer(SimTypeShort(False)).with_arch(arch)],
+            arg_names=("iRow1", "iRow2"),
+            returnty=SimTypeBottom(),
+        ),
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {
+                    2: {"name": "iRow1"},
+                    4: {"name": "iRow2"},
+                },
+                "source_lines": (
+                    "void SwapBars( int iRow1, int iRow2 )",
+                    "{",
+                    "}",
+                ),
+            }
+        },
+    )
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=arch, _inertia_c_target="portable-flat"),
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            functy=func.prototype,
+            arg_list=[first_stack_cvar, second_stack_cvar],
+        ),
+    )
+    first_stack_cvar.codegen = codegen
+    second_stack_cvar.codegen = codegen
+
+    changed = postprocess._sync_arg_list_from_annotations_8616(
+        codegen=codegen,
+        func=func,
+        stack_specs=func.info[ANNOTATION_KEY]["stack_vars"],
+        resolve_stack_cvar=lambda offset: {2: first_stack_cvar, 4: second_stack_cvar}.get(offset),
+        promote_near_pointers=False,
+    )
+
+    assert changed is True
+    assert not isinstance(codegen.cfunc.functy.args[1], SimTypePointer)
+    assert not isinstance(second_stack_cvar.variable_type, SimTypePointer)
+
+
+def test_annotation_arg_sync_uses_project_cod_metadata_source_flags():
+    arch = Arch86_16()
+    first_stack_var = SimStackVariable(2, 2, base="bp", name="iRow1", region=0x1000)
+    second_stack_var = SimStackVariable(4, 2, base="bp", name="iRow2", region=0x1000)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    first_stack_cvar = structured_c.CVariable(
+        first_stack_var,
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=c_codegen,
+    )
+    second_stack_cvar = structured_c.CVariable(
+        second_stack_var,
+        variable_type=SimTypePointer(SimTypeShort(False)).with_arch(arch),
+        codegen=c_codegen,
+    )
+    func = SimpleNamespace(
+        addr=0x1000,
+        prototype=_FakePrototype(
+            args=[SimTypeShort(False).with_arch(arch), SimTypePointer(SimTypeShort(False)).with_arch(arch)],
+            arg_names=("iRow1", "iRow2"),
+            returnty=SimTypeBottom(),
+        ),
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {2: {"name": "iRow1"}, 4: {"name": "iRow2"}},
+                "source_lines": (),
+            }
+        },
+    )
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(
+            arch=arch,
+            _inertia_c_target="portable-flat",
+            _inertia_cod_metadata_by_func_addr_8616={
+                0x1000: SimpleNamespace(source_lines=("void SwapBars( int iRow1, int iRow2 )", "{", "}"))
+            },
+        ),
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            functy=func.prototype,
+            arg_list=[first_stack_cvar, second_stack_cvar],
+        ),
+    )
+    first_stack_cvar.codegen = codegen
+    second_stack_cvar.codegen = codegen
+
+    changed = postprocess._sync_arg_list_from_annotations_8616(
+        codegen=codegen,
+        func=func,
+        stack_specs=func.info[ANNOTATION_KEY]["stack_vars"],
+        resolve_stack_cvar=lambda offset: {2: first_stack_cvar, 4: second_stack_cvar}.get(offset),
+        promote_near_pointers=False,
+    )
+
+    assert changed is True
+    assert not isinstance(codegen.cfunc.functy.args[1], SimTypePointer)
+    assert not isinstance(second_stack_cvar.variable_type, SimTypePointer)
+
+
+def test_fallback_arg_promotion_demotes_pointer_from_project_cod_scalar_flags():
+    arch = Arch86_16()
+    first_stack_var = SimStackVariable(2, 2, base="bp", name="iRow1", region=0x1000)
+    second_stack_var = SimStackVariable(4, 2, base="bp", name="iRow2", region=0x1000)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    first_stack_cvar = structured_c.CVariable(
+        first_stack_var,
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=c_codegen,
+    )
+    second_stack_cvar = structured_c.CVariable(
+        second_stack_var,
+        variable_type=SimTypePointer(SimTypeShort(False)).with_arch(arch),
+        codegen=c_codegen,
+    )
+    prototype = _FakePrototype(
+        args=[SimTypeShort(False).with_arch(arch), SimTypePointer(SimTypeShort(False)).with_arch(arch)],
+        arg_names=("iRow1", "iRow2"),
+        returnty=SimTypeBottom(),
+    )
+    func = SimpleNamespace(addr=0x1000, prototype=prototype)
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=arch, _inertia_c_target="portable-flat"),
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            functy=prototype,
+            arg_list=[first_stack_cvar, second_stack_cvar],
+            statements=SimpleNamespace(statements=[]),
+        ),
+    )
+    first_stack_cvar.codegen = codegen
+    second_stack_cvar.codegen = codegen
+
+    changed = postprocess._promote_from_fallback_args_8616(
+        project=codegen.project,
+        codegen=codegen,
+        func=func,
+        current_proto=prototype,
+        existing_args=[first_stack_cvar, second_stack_cvar],
+        source_pointer_flags=(False, False),
+        promote_near_pointers=False,
+    )
+
+    assert changed is True
+    assert not isinstance(codegen.cfunc.functy.args[1], SimTypePointer)
+    assert not isinstance(second_stack_cvar.variable_type, SimTypePointer)
+
+
+def test_apply_annotations_uses_project_cod_source_prototype_for_active_function():
+    arch = Arch86_16()
+    func = SimpleNamespace(addr=0x1000, name="SwapBars", prototype=None, info={})
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    first_stack_cvar = structured_c.CVariable(
+        SimStackVariable(2, 2, base="bp", name="iRow1", region=0x1000),
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=c_codegen,
+    )
+    second_stack_cvar = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="iRow2", region=0x1000),
+        variable_type=SimTypePointer(SimTypeShort(False)).with_arch(arch),
+        codegen=c_codegen,
+    )
+    duplicate_second_cvar = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg_6", region=0x1000),
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=c_codegen,
+    )
+    body_call = structured_c.CFunctionCall("DrawBar", None, [duplicate_second_cvar], codegen=c_codegen)
+
+    class _Functions:
+        def function(self, *, addr, create=False):
+            assert addr == 0x1000
+            return func
+
+    project = SimpleNamespace(
+        arch=arch,
+        _inertia_c_target="portable-flat",
+        _inertia_cod_metadata_by_func_addr_8616={
+            0x1000: SimpleNamespace(source_lines=("void SwapBars( int iRow1, int iRow2 )", "{", "}"))
+        },
+        kb=SimpleNamespace(functions=_Functions()),
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        _function=SimpleNamespace(prototype=None, is_prototype_guessed=True),
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            functy=None,
+            arg_list=[first_stack_cvar, second_stack_cvar],
+            statements=structured_c.CStatements(
+                [structured_c.CExpressionStatement(body_call, codegen=c_codegen)],
+                codegen=c_codegen,
+            ),
+            variables_in_use={
+                first_stack_cvar.variable: first_stack_cvar,
+                second_stack_cvar.variable: second_stack_cvar,
+                duplicate_second_cvar.variable: duplicate_second_cvar,
+            },
+        ),
+    )
+    first_stack_cvar.codegen = codegen
+    second_stack_cvar.codegen = codegen
+    duplicate_second_cvar.codegen = codegen
+    body_call.codegen = codegen
+
+    changed = postprocess._apply_annotations_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(func.prototype.returnty, SimTypeBottom)
+    assert not any(isinstance(arg, SimTypePointer) for arg in func.prototype.args)
+    assert not isinstance(second_stack_cvar.variable_type, SimTypePointer)
+    assert codegen.cfunc.functy is func.prototype
+    assert codegen._function.prototype is func.prototype
+    assert codegen._function.is_prototype_guessed is False
+    assert codegen._inertia_codegen_decl_refresh_required_8616 is True
+    assert codegen._inertia_codegen_prototype_sync_count_8616 >= 1
+    assert body_call.args[0] is second_stack_cvar
+
+
+def test_unify_positive_bp_arg_stack_variables_replaces_duplicate_body_slots():
+    arch = Arch86_16()
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    arg_cvar = structured_c.CVariable(
+        SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000),
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=c_codegen,
+    )
+    duplicate_cvar = structured_c.CVariable(
+        SimStackVariable(6, 2, base="bp", name="arg_6", region=0x1000),
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=c_codegen,
+    )
+    call = structured_c.CFunctionCall("DrawBar", None, [duplicate_cvar], codegen=c_codegen)
+    statements = structured_c.CStatements(
+        [structured_c.CExpressionStatement(call, codegen=c_codegen)],
+        codegen=c_codegen,
+    )
+    cfunc = SimpleNamespace(
+        arg_list=[arg_cvar],
+        statements=statements,
+        variables_in_use={
+            arg_cvar.variable: arg_cvar,
+            duplicate_cvar.variable: duplicate_cvar,
+        },
+        unified_local_vars={
+            duplicate_cvar.variable: {(duplicate_cvar, duplicate_cvar.variable_type)},
+        },
+    )
+    codegen = SimpleNamespace(cfunc=cfunc)
+
+    changed = postprocess._unify_positive_bp_arg_stack_variables_8616(SimpleNamespace(arch=arch), codegen)
+
+    assert changed is True
+    assert call.args[0] is arg_cvar
+    assert list(cfunc.variables_in_use.values()) == [arg_cvar]
+    assert duplicate_cvar.variable not in cfunc.unified_local_vars
+    assert codegen._inertia_arg_stack_identity_unified_8616 == 1
+    assert codegen._inertia_codegen_decl_refresh_required_8616 is True
+
+
+def test_metadata_lookup_merges_rebased_source_annotations_into_partial_active_metadata():
+    active = SimpleNamespace(
+        addr=0x1000,
+        prototype=None,
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {2: {"name": "iRow1"}},
+                "global_vars": {},
+                "source_lines": (),
+                "source_return_lines": (),
+            }
+        },
+    )
+    rebased = SimpleNamespace(
+        addr=0x10768,
+        prototype=None,
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {},
+                "global_vars": {},
+                "source_lines": ("void SwapBars( int iRow1, int iRow2 )", "{", "}"),
+                "source_return_lines": (),
+            }
+        },
+    )
+
+    class _Functions:
+        def function(self, *, addr, create=False):
+            assert create is False
+            return {0x1000: active, 0x10768: rebased}.get(addr)
+
+    project = SimpleNamespace(
+        _inertia_original_linear_delta=0xF768,
+        kb=SimpleNamespace(functions=_Functions()),
+    )
+
+    selected = postprocess._metadata_function_for_codegen_addr_8616(project, 0x1000)
+
+    assert selected is active
+    assert active.info[ANNOTATION_KEY]["source_lines"] == ("void SwapBars( int iRow1, int iRow2 )", "{", "}")
+
+
+def test_metadata_lookup_uses_project_cod_metadata_source_annotations():
+    active = SimpleNamespace(
+        addr=0x1000,
+        prototype=None,
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {2: {"name": "iRow1"}},
+                "global_vars": {},
+                "source_lines": (),
+                "source_return_lines": (),
+            }
+        },
+    )
+
+    class _Functions:
+        def function(self, *, addr, create=False):
+            assert create is False
+            return active if addr == 0x1000 else None
+
+    project = SimpleNamespace(
+        _inertia_cod_metadata_by_func_addr_8616={
+            0x1000: SimpleNamespace(source_lines=("void SwapBars( int iRow1, int iRow2 )", "{", "}"))
+        },
+        kb=SimpleNamespace(functions=_Functions()),
+    )
+
+    selected = postprocess._metadata_function_for_codegen_addr_8616(project, 0x1000)
+
+    assert selected is active
+    assert active.info[ANNOTATION_KEY]["source_lines"] == ("void SwapBars( int iRow1, int iRow2 )", "{", "}")
 
 
 def test_bp_stack_prototype_promotion_shrinks_overguessed_stack_arguments():
@@ -460,6 +878,44 @@ def test_classify_return_shape_treats_explicit_void_returns_as_void():
 
     assert changed is True
     assert isinstance(func.prototype.returnty, SimTypeBottom)
+
+
+def test_void_return_value_prune_preserves_call_side_effect_and_control_flow():
+    arch = Arch86_16()
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    call = structured_c.CFunctionCall(
+        "DrawTime",
+        None,
+        [structured_c.CConstant(1, SimTypeShort(False), codegen=c_codegen)],
+        codegen=c_codegen,
+    )
+    ret = structured_c.CReturn(call, codegen=c_codegen)
+    after = structured_c.CExpressionStatement(
+        structured_c.CFunctionCall("After", None, [], codegen=c_codegen),
+        codegen=c_codegen,
+    )
+    prototype = _FakePrototype(args=[], arg_names=(), returnty=SimTypeBottom(label="void"))
+    func = SimpleNamespace(prototype=prototype, is_prototype_guessed=False, info={})
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([ret, after], codegen=c_codegen))
+    )
+
+    changed = postprocess._prune_void_function_return_values_8616(project, codegen)
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert isinstance(statements[0], structured_c.CExpressionStatement)
+    assert statements[0].expr is call
+    assert isinstance(statements[1], structured_c.CReturn)
+    assert statements[1].retval is None
+    assert statements[2] is after
+    assert codegen._inertia_codegen_decl_refresh_required_8616 is True
 
 
 def test_classify_return_shape_promotes_far_pointer_returns_from_void_prototypes():

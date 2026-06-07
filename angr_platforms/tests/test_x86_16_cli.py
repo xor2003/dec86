@@ -5,6 +5,7 @@ import importlib.util
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from concurrent.futures.thread import _threads_queues
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ import inertia_decompiler.non_optimized_fallback as non_optimized_fallback
 import inertia_decompiler.sidecar_cache as sidecar_cache
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeChar, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from inertia_decompiler import sidecar_metadata, sidecar_parsers
 from inertia_decompiler.rizin_discovery import RizinDiscoveryResult, RizinDiscoveryStatus
@@ -32,6 +33,7 @@ from inertia_decompiler.direct_addr_failure_family import (
 )
 from inertia_decompiler.slice_recovery import SliceRecoveryAttemptOutcome
 from inertia_decompiler.work_items import FunctionWorkItem
+from inertia_decompiler.x86_16_exact_slice import mark_function_original_addr
 from omf_pat import (
     CachedPatRegexSpec,
     PatModule,
@@ -115,6 +117,139 @@ def test_decompilation_preserves_source_label_refuses_named_retry_conflict():
 
     assert cli_decompilation._preserve_source_label_for_same_addr_function_8616(source, recovered) is False
     assert recovered.name == "other_name"
+
+
+def test_missing_return_chain_values_checks_suffix_materialization():
+    codegen = SimpleNamespace(
+        _inertia_return_chain_flattened_8616=False,
+        _inertia_return_chain_suffix_materialized_8616=True,
+        _inertia_return_chain_materialized_values_8616=(1, 2, 3),
+        _inertia_return_chain_final_value_8616=255,
+    )
+
+    missing = cli_decompilation._missing_return_chain_values_from_text_8616(
+        codegen,
+        "int main(void)\n{\n    return 255;\n}\n",
+    )
+
+    assert missing == [1, 2, 3]
+
+
+def test_codegen_render_refresh_signal_is_structured_and_consumed():
+    codegen = SimpleNamespace()
+
+    assert cli_decompilation._codegen_requires_render_refresh_8616(codegen) is False
+
+    codegen._inertia_codegen_decl_refresh_required_8616 = True
+    assert cli_decompilation._codegen_requires_render_refresh_8616(codegen) is True
+
+    cli_decompilation._clear_codegen_render_refresh_8616(codegen)
+    assert cli_decompilation._codegen_requires_render_refresh_8616(codegen) is False
+
+
+def test_sync_recovered_function_metadata_from_kb_copies_annotations_to_distinct_function_object():
+    prototype = SimTypeFunction([SimTypeShort(False), SimTypeShort(False)], SimTypeShort(False))
+    source = SimpleNamespace(
+        addr=0x1005A,
+        name="rel_i16",
+        prototype=prototype,
+        calling_convention="cc",
+        is_prototype_guessed=False,
+        returning=True,
+        info={"x86_16_annotations": {"source_return_lines": ("return mask;",)}},
+    )
+    recovered = SimpleNamespace(
+        addr=0x1005A,
+        name="sub_1005a",
+        prototype=None,
+        calling_convention=None,
+        is_prototype_guessed=True,
+        returning=None,
+        info={},
+    )
+
+    class _Functions:
+        def function(self, *, addr, create=False):
+            assert create is False
+            return source if addr == source.addr else None
+
+    project = SimpleNamespace(kb=SimpleNamespace(functions=_Functions()))
+
+    assert cli_decompilation._sync_recovered_function_metadata_from_kb_8616(project, recovered) is True
+    assert recovered.name == "rel_i16"
+    assert recovered.prototype is prototype
+    assert recovered.calling_convention == "cc"
+    assert recovered.is_prototype_guessed is False
+    assert recovered.returning is True
+    assert recovered.info["x86_16_annotations"]["source_return_lines"] == ("return mask;",)
+    assert project._inertia_function_metadata_sync_stats["prototype_synced"] == 1
+
+
+def test_sync_recovered_function_metadata_preserves_nonempty_source_annotations():
+    source = SimpleNamespace(
+        addr=0x1000,
+        name="SwapBars",
+        prototype=None,
+        calling_convention=None,
+        returning=None,
+        info={
+            "x86_16_annotations": {
+                "source_lines": (),
+                "source_return_lines": (),
+                "stack_vars": {2: {"name": "iRow1"}},
+            }
+        },
+    )
+    recovered = SimpleNamespace(
+        addr=0x1000,
+        name="SwapBars",
+        prototype=None,
+        calling_convention=None,
+        returning=None,
+        info={
+            "x86_16_annotations": {
+                "source_lines": ("void SwapBars( int iRow1, int iRow2 )", "{", "}"),
+                "source_return_lines": ("return value;",),
+                "stack_vars": {4: {"name": "iRow2"}},
+            }
+        },
+    )
+
+    class _Functions:
+        def function(self, *, addr, create=False):
+            assert create is False
+            return source if addr == source.addr else None
+
+    project = SimpleNamespace(kb=SimpleNamespace(functions=_Functions()))
+
+    assert cli_decompilation._sync_recovered_function_metadata_from_kb_8616(project, recovered) is True
+    annotations = recovered.info["x86_16_annotations"]
+    assert annotations["source_lines"] == ("void SwapBars( int iRow1, int iRow2 )", "{", "}")
+    assert annotations["source_return_lines"] == ("return value;",)
+    assert annotations["stack_vars"] == {2: {"name": "iRow1"}, 4: {"name": "iRow2"}}
+
+
+def test_apply_function_annotations_covers_rebased_active_and_original_addresses(monkeypatch):
+    applied_addrs = []
+
+    def fake_apply(_project, _binary_path, _lst_metadata, *, func_addr=None, **_kwargs):
+        applied_addrs.append(func_addr)
+        return True
+
+    monkeypatch.setattr(cli_decompilation, "_apply_binary_specific_annotations", fake_apply)
+    function = SimpleNamespace(addr=0x1000, name="SwapBars")
+    mark_function_original_addr(function, 0x10768)
+
+    changed = cli_decompilation._apply_function_annotations_for_active_and_original_8616(
+        SimpleNamespace(),
+        Path("SORTDEMO.EXE"),
+        SimpleNamespace(),
+        function,
+        cod_metadata=SimpleNamespace(),
+    )
+
+    assert changed is True
+    assert applied_addrs == [0x10768, 0x1000]
 LIFE_EXE = REPO_ROOT / "LIFE.EXE"
 LIFE2_EXE = REPO_ROOT / "LIFE2.EXE"
 LIFE_COD = REPO_ROOT / "LIFE.COD"
@@ -272,8 +407,6 @@ def test_emit_file_summary_sorts_and_dedupes_compilers_and_signature_sources(cap
             "Microsoft C v5",
         ),
         _inertia_flair_sig_titles=("ZLIB", "bsort"),
-        _inertia_flair_local_pat_sources=(r"C:\\sig\\BSORT.sig",),
-        _inertia_peer_exe_titles=("showmenu", "zlib"),
     )
     metadata = SimpleNamespace(signature_code_addrs=(0x1000, 0x1010))
 
@@ -290,7 +423,7 @@ def test_emit_file_summary_sorts_and_dedupes_compilers_and_signature_sources(cap
 
     assert capsys.readouterr().out.strip().splitlines() == [
         "summary: probable compiler versions: Microsoft C v5, Microsoft C v5.1, Microsoft C v6ax",
-        "summary: probable library/signature sources: BSORT, showmenu, ZLIB",
+        "summary: probable library/signature sources: bsort, ZLIB",
         "summary: signature-matched library functions: 2",
         "summary: hidden signature-matched labels: 3",
         "summary: same_family_retry_stops=2 fallback_family_labels=isolated_retry, structurer_retry",
@@ -3527,6 +3660,25 @@ def test_match_byte_store_addr_expr_accepts_word_typed_dereference_split_store()
     assert decompile._match_byte_store_addr_expr(deref) is addr_expr
 
 
+def test_match_byte_load_addr_expr_accepts_cast_wrapped_byte_dereference():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    addr_expr = structured_c.CVariable(
+        SimRegisterVariable(10, 2, name="bp"),
+        variable_type=decompile.SimTypePointer(SimTypeChar(False)).with_arch(project.arch),
+        codegen=codegen,
+    )
+    deref = structured_c.CUnaryOp(
+        "Dereference",
+        addr_expr,
+        codegen=codegen,
+    )
+    casted = structured_c.CTypeCast(None, SimTypeChar(False), deref, codegen=codegen)
+
+    assert decompile._match_byte_load_addr_expr(casted) is addr_expr
+
+
 def test_coalesce_segmented_word_store_statements_rewrites_word_typed_split_store_inside_while_loop(monkeypatch):
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(
@@ -3601,6 +3753,252 @@ def test_coalesce_segmented_word_store_statements_rewrites_word_typed_split_stor
     assert isinstance(replacement, structured_c.CAssignment)
     assert replacement.lhs is replacement_lhs
     assert replacement.rhs is word_rhs
+
+
+def test_coalesce_segmented_word_store_statements_folds_preceding_byte_load_pair(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        arg_list=(),
+        sort_local_vars=lambda: None,
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False)
+
+    low_addr_expr = object()
+    high_addr_expr = object()
+    low_load_rhs = object()
+    high_load_rhs = object()
+    low_store_lhs = object()
+    high_store_lhs = object()
+    low_tmp_var = SimRegisterVariable(15, 1, name="tmp_15")
+    high_tmp_var = SimRegisterVariable(17, 1, name="tmp_17")
+    low_tmp_def = structured_c.CVariable(low_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    high_tmp_def = structured_c.CVariable(high_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    low_tmp_use = structured_c.CVariable(low_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    high_tmp_use = structured_c.CVariable(high_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    local_word = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x10010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    loaded_pair = structured_c.CBinaryOp(
+        "Or",
+        low_tmp_use,
+        structured_c.CBinaryOp(
+            "Shl",
+            high_tmp_use,
+            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    low_store_rhs = structured_c.CBinaryOp(
+        "Add",
+        loaded_pair,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    high_store_rhs = object()
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(low_tmp_def, low_load_rhs, codegen=codegen),
+            structured_c.CAssignment(high_tmp_def, high_load_rhs, codegen=codegen),
+            structured_c.CAssignment(low_store_lhs, low_store_rhs, codegen=codegen),
+            structured_c.CAssignment(high_store_lhs, high_store_rhs, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    monkeypatch.setattr(
+        decompile,
+        "_match_byte_load_addr_expr",
+        lambda node: low_addr_expr if node is low_load_rhs else high_addr_expr if node is high_load_rhs else None,
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_match_byte_store_addr_expr",
+        lambda node: low_addr_expr if node is low_store_lhs else high_addr_expr if node is high_store_lhs else None,
+    )
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
+    monkeypatch.setattr(decompile, "_same_c_expression", lambda lhs, rhs: lhs is rhs)
+    monkeypatch.setattr(decompile, "_match_shift_right_8_expr", lambda node: low_store_rhs if node is high_store_rhs else None)
+    monkeypatch.setattr(
+        decompile,
+        "_classify_segmented_addr_expr",
+        lambda expr, _project: SimpleNamespace(kind="stack") if expr is low_addr_expr else None,
+    )
+    monkeypatch.setattr(decompile, "_resolve_stack_cvar_from_addr_expr", lambda *_args, **_kwargs: local_word)
+
+    changed = decompile._coalesce_segmented_word_store_statements(project, codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    replacement = codegen.cfunc.statements.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert replacement.lhs is local_word
+    assert isinstance(replacement.rhs, structured_c.CBinaryOp)
+    assert replacement.rhs.op == "Add"
+    assert replacement.rhs.lhs is local_word
+    assert replacement.rhs.rhs.value == 2
+
+
+def test_coalesce_segmented_word_store_statements_uses_byte_lhs_for_wide_typed_load(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        arg_list=(),
+        sort_local_vars=lambda: None,
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False)
+
+    base_addr = structured_c.CVariable(SimRegisterVariable(10, 2, name="bp"), codegen=codegen)
+    low_addr_expr = base_addr
+    high_addr_expr = structured_c.CBinaryOp(
+        "Add",
+        base_addr,
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    low_load_rhs = structured_c.CUnaryOp("Dereference", low_addr_expr, codegen=codegen)
+    high_load_rhs = structured_c.CUnaryOp("Dereference", high_addr_expr, codegen=codegen)
+    low_store_lhs = object()
+    high_store_lhs = object()
+    low_tmp_var = SimRegisterVariable(15, 1, name="tmp_15")
+    high_tmp_var = SimRegisterVariable(17, 1, name="tmp_17")
+    low_tmp_def = structured_c.CVariable(low_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    high_tmp_def = structured_c.CVariable(high_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    low_tmp_use = structured_c.CVariable(low_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    high_tmp_use = structured_c.CVariable(high_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    local_word = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x10010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    loaded_pair = structured_c.CBinaryOp(
+        "Or",
+        low_tmp_use,
+        structured_c.CBinaryOp(
+            "Shl",
+            high_tmp_use,
+            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    low_store_rhs = structured_c.CBinaryOp(
+        "Add",
+        loaded_pair,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    high_store_rhs = object()
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(low_tmp_def, low_load_rhs, codegen=codegen),
+            structured_c.CAssignment(high_tmp_def, high_load_rhs, codegen=codegen),
+            structured_c.CAssignment(low_store_lhs, low_store_rhs, codegen=codegen),
+            structured_c.CAssignment(high_store_lhs, high_store_rhs, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    monkeypatch.setattr(decompile, "_match_byte_load_addr_expr", lambda _node: None)
+    monkeypatch.setattr(
+        decompile,
+        "_match_byte_store_addr_expr",
+        lambda node: low_addr_expr if node is low_store_lhs else high_addr_expr if node is high_store_lhs else None,
+    )
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
+    monkeypatch.setattr(decompile, "_same_c_expression", lambda lhs, rhs: lhs is rhs)
+    monkeypatch.setattr(decompile, "_match_shift_right_8_expr", lambda node: low_store_rhs if node is high_store_rhs else None)
+    monkeypatch.setattr(
+        decompile,
+        "_classify_segmented_addr_expr",
+        lambda expr, _project: SimpleNamespace(kind="stack") if expr is low_addr_expr else None,
+    )
+    monkeypatch.setattr(decompile, "_resolve_stack_cvar_from_addr_expr", lambda *_args, **_kwargs: local_word)
+
+    changed = decompile._coalesce_segmented_word_store_statements(project, codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    replacement = codegen.cfunc.statements.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert replacement.lhs is local_word
+    assert isinstance(replacement.rhs, structured_c.CBinaryOp)
+    assert replacement.rhs.op == "Add"
+    assert replacement.rhs.lhs is local_word
+
+
+def test_coalesce_segmented_word_store_statements_folds_stack_word_byte_carriers(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        arg_list=(),
+        sort_local_vars=lambda: None,
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False)
+
+    word_var = SimStackVariable(-2, 2, base="bp", name="total", region=0x10010)
+    word_def = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
+    word_use = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
+    low_tmp_var = SimRegisterVariable(15, 1, name="tmp_15")
+    high_tmp_var = SimRegisterVariable(17, 1, name="tmp_17")
+    low_tmp_def = structured_c.CVariable(low_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    high_tmp_def = structured_c.CVariable(high_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    low_tmp_use = structured_c.CVariable(low_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    high_tmp_use = structured_c.CVariable(high_tmp_var, variable_type=SimTypeChar(False), codegen=codegen)
+    loaded_pair = structured_c.CBinaryOp(
+        "Or",
+        low_tmp_use,
+        structured_c.CBinaryOp(
+            "Shl",
+            high_tmp_use,
+            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    recombined = structured_c.CBinaryOp(
+        "Add",
+        loaded_pair,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(low_tmp_def, word_use, codegen=codegen),
+            structured_c.CAssignment(high_tmp_def, word_use, codegen=codegen),
+            structured_c.CAssignment(word_def, recombined, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    monkeypatch.setattr(decompile, "_same_c_expression", lambda lhs, rhs: lhs is rhs)
+
+    changed = decompile._coalesce_segmented_word_store_statements(project, codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    replacement = codegen.cfunc.statements.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert replacement.lhs is word_def
+    assert isinstance(replacement.rhs, structured_c.CBinaryOp)
+    assert replacement.rhs.op == "Add"
+    assert replacement.rhs.lhs is word_use
+    assert replacement.rhs.rhs.value == 2
 
 
 def test_coalesce_segmented_word_load_expressions_preserves_existing_dereference_evidence(monkeypatch):
@@ -4525,7 +4923,256 @@ def test_register_direct_call_target_function_stubs_falls_back_to_capstone_direc
     assert set(created) == {(0x140D, True), (0x1140D, True)}
 
 
-def test_register_direct_call_target_function_stubs_uses_cod_call_names_for_unlabeled_targets():
+def test_collect_direct_calls_skips_stale_non_call_inventory_and_uses_capstone():
+    blocks = {
+        0x10010: SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=[
+                    SimpleNamespace(address=0x10010, mnemonic="push", op_str="bp", insn=SimpleNamespace(size=1)),
+                    SimpleNamespace(address=0x10011, mnemonic="mov", op_str="bp, sp", insn=SimpleNamespace(size=2)),
+                    SimpleNamespace(address=0x10016, mnemonic="call", op_str="0x140D", insn=SimpleNamespace(size=3)),
+                ]
+            )
+        )
+    }
+    function = SimpleNamespace(
+        block_addrs_set=set(blocks),
+        get_call_sites=lambda: [0x10010],
+        get_call_target=lambda _site: 0x140D,
+        get_call_return=lambda _site: None,
+    )
+    project = SimpleNamespace(factory=SimpleNamespace(block=lambda block_addr, opt_level=0: blocks[block_addr]))
+
+    direct_calls = cli_decompilation._collect_direct_calls_8616(project, function)
+
+    assert direct_calls == [(0x10016, 0x140D, 0x10019)]
+
+
+def test_mark_stitched_return_sites_handles_jump_endpoint_without_undefined_target():
+    node = SimpleNamespace(addr=0x1000)
+    return_sites = []
+    function = SimpleNamespace(
+        get_node=lambda addr: node if addr == 0x1000 else None,
+        transition_graph=SimpleNamespace(edges=lambda _node: ()),
+        _add_return_site=lambda return_node: return_sites.append(return_node),
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(SimpleNamespace(mnemonic="jmp"),)))
+
+    decompile._mark_stitched_return_sites_8616(function, {0x1000: block})
+
+    assert return_sites == [node]
+
+
+def test_mark_x86_16_stitched_recovery_uses_info_for_slotted_function():
+    class SlottedFunction:
+        __slots__ = ("info",)
+
+        def __init__(self):
+            self.info = {}
+
+    function = SlottedFunction()
+
+    decompile._mark_x86_16_stitched_recovery_8616(function)
+
+    assert function.info["x86_16_stitched_recovery"] is True
+
+
+def test_collect_stitched_blocks_caps_block_at_internal_leader():
+    def _imm_operand(value):
+        return SimpleNamespace(type=2, imm=value)
+
+    def _insn(address, mnemonic, size=1, imm=None):
+        operands = (_imm_operand(imm),) if imm is not None else ()
+        return SimpleNamespace(
+            address=address,
+            mnemonic=mnemonic,
+            size=size,
+            insn=SimpleNamespace(operands=operands),
+        )
+
+    def _block(addr, insns, size):
+        return SimpleNamespace(
+            addr=addr,
+            size=size,
+            bytes=b"\x90" * size,
+            capstone=SimpleNamespace(insns=tuple(insns)),
+        )
+
+    full_blocks = {
+        0x1000: _block(0x1000, (_insn(0x1000, "jg", size=2, imm=0x1004),), 2),
+        0x1002: _block(0x1002, (_insn(0x1002, "jmp", size=2, imm=0x1008),), 2),
+        0x1004: _block(0x1004, (_insn(0x1004, "or", size=4), _insn(0x1008, "ret", size=1)), 5),
+        0x1008: _block(0x1008, (_insn(0x1008, "ret", size=1),), 1),
+    }
+    capped_blocks = {
+        (0x1004, 4): _block(0x1004, (_insn(0x1004, "or", size=4),), 4),
+    }
+
+    def _factory_block(addr, size=None, opt_level=0):
+        if size is not None and (addr, size) in capped_blocks:
+            return capped_blocks[(addr, size)]
+        return full_blocks[addr]
+
+    project = SimpleNamespace(factory=SimpleNamespace(block=_factory_block))
+
+    reachable, edges = decompile._collect_stitched_blocks_and_edges_8616(project, 0x1000, 0x1000, 0x1010)
+
+    assert reachable[0x1004].size == 4
+    assert (0x1004, 0x1008) in edges
+
+
+def test_exact_region_candidate_replacement_refuses_overlapping_byte_inflation():
+    clean = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(addr=0x1000, size=4),
+            SimpleNamespace(addr=0x1004, size=4),
+            SimpleNamespace(addr=0x1008, size=1),
+        )
+    )
+    overlapping = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(addr=0x1000, size=4),
+            SimpleNamespace(addr=0x1004, size=5),
+            SimpleNamespace(addr=0x1008, size=1),
+        )
+    )
+
+    assert decompile._function_block_overlap_count_8616(clean, (0x1000, 0x1010)) == 0
+    assert decompile._function_block_overlap_count_8616(overlapping, (0x1000, 0x1010)) == 1
+    assert decompile._should_replace_exact_region_candidate_8616(clean, overlapping, (0x1000, 0x1010)) is False
+
+
+def test_commit_exact_region_function_to_kb_evicts_interior_pseudofunctions():
+    class FakeFunction:
+        def __init__(self, addr, name):
+            self.addr = addr
+            self.name = name
+            self.info = {}
+            self._local_transition_graph = object()
+
+    class FakeFunctionManager:
+        def __init__(self):
+            self._function_map = {}
+            self.function_addrs_set = set()
+            self._func_name_to_addrs = defaultdict(set)
+            self._func_block_counts = {}
+
+        def keys(self):
+            return self._function_map.keys()
+
+        def __delitem__(self, addr):
+            del self._function_map[addr]
+            self.function_addrs_set.discard(addr)
+
+        def function(self, *, addr=None, create=False, **_kwargs):
+            if addr in self._function_map:
+                return self._function_map[addr]
+            if create:
+                func = FakeFunction(addr, f"sub_{addr:x}")
+                self._function_map[addr] = func
+                return func
+            return None
+
+    selected = FakeFunction(0x1005A, "rel_i16")
+    project_manager = FakeFunctionManager()
+    cfg_manager = FakeFunctionManager()
+    for manager in (project_manager, cfg_manager):
+        manager._function_map[0x1005A] = FakeFunction(0x1005A, "stale_rel_i16")
+        manager._function_map[0x10075] = FakeFunction(0x10075, "sub_10075")
+        manager._function_map[0x10079] = FakeFunction(0x10079, "sub_10079")
+        manager.function_addrs_set.update(manager._function_map)
+
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"), kb=SimpleNamespace(functions=project_manager))
+    cfg = SimpleNamespace(functions=cfg_manager)
+
+    changed = decompile._commit_exact_region_function_to_kb_8616(project, cfg, selected, (0x1005A, 0x100D0))
+
+    assert changed is True
+    assert project_manager.function(addr=0x1005A, create=False) is selected
+    assert cfg_manager.function(addr=0x1005A, create=False) is selected
+    assert sorted(project_manager.keys()) == [0x1005A]
+    assert sorted(cfg_manager.keys()) == [0x1005A]
+    assert selected.info["x86_16_exact_region_committed"] is True
+
+
+def test_function_complexity_uses_bounded_local_blocks_before_raw_decode():
+    class FakeFactory:
+        def block(self, _addr, opt_level=0):
+            return SimpleNamespace(bytes=b"\x90" * 100)
+
+    function = SimpleNamespace(
+        project=SimpleNamespace(factory=FakeFactory()),
+        info={},
+        block_addrs_set={0x1000, 0x1004},
+        _local_blocks={
+            0x1000: SimpleNamespace(addr=0x1000, size=4),
+            0x1004: SimpleNamespace(addr=0x1004, size=1),
+        },
+    )
+
+    assert cli_decompilation._function_complexity(function) == (2, 5)
+    assert function.info["_inertia_function_complexity"]["source"] == "bounded_local_blocks"
+
+
+def test_original_callee_name_uses_original_project_function_table_for_exact_slices():
+    class OriginalFunctionManager:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            if addr == 0x1005A and not create:
+                return SimpleNamespace(addr=addr, name="rel_i16")
+            return None
+
+    original_project = SimpleNamespace(kb=SimpleNamespace(functions=OriginalFunctionManager(), labels={}))
+    project = SimpleNamespace(
+        _inertia_original_project=original_project,
+        _inertia_original_linear_delta=0xF1A7,
+    )
+
+    assert decompile._original_callee_name_8616(project, 0xEB3) == "rel_i16"
+
+
+def test_register_direct_call_target_function_stubs_prefers_proven_exact_slice_target_name():
+    created = {}
+
+    class CurrentFunctionManager:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            if not create:
+                return None
+            stub = created.setdefault(addr, SimpleNamespace(addr=addr, name=f"sub_{addr:x}"))
+            return stub
+
+    class OriginalFunctionManager:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            if addr == 0x1005A and not create:
+                return SimpleNamespace(addr=addr, name="rel_i16")
+            return None
+
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x1000, size=0x120),),
+        _call_sites={},
+        get_call_sites=lambda: [0x1060],
+        get_call_target=lambda _site: 0xEB3,
+        get_call_return=lambda _site: 0x1063,
+    )
+    original_project = SimpleNamespace(kb=SimpleNamespace(functions=OriginalFunctionManager(), labels={}))
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        entry=0x1000,
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x1000, max_addr=0x117B)),
+        kb=SimpleNamespace(functions=CurrentFunctionManager(), labels={}),
+        _inertia_original_project=original_project,
+        _inertia_original_linear_delta=0xF1A7,
+    )
+
+    count = decompile._register_direct_call_target_function_stubs(project, function)
+
+    assert count == 2
+    assert function._call_sites[0x1060] == (0xEB3, 0x1063)
+    assert created[0xEB3].name == "rel_i16"
+    assert created[0x1EB3].name == "sub_1eb3"
+
+
+def test_register_direct_call_target_function_stubs_refuses_unproved_cod_call_names_for_unlabeled_targets():
     created = {}
 
     class FakeFunctionManager:
@@ -4547,10 +5194,50 @@ def test_register_direct_call_target_function_stubs_uses_cod_call_names_for_unla
     count = decompile._register_direct_call_target_function_stubs(project, function, cod_metadata=cod_metadata)
 
     assert count == 4
-    assert created[0x1446].name == "clock"
-    assert created[0x183A].name == "aNchkstk"
-    assert created[0x11446].name == "clock"
-    assert created[0x1183A].name == "aNchkstk"
+    assert created[0x1446].name == "sub_1446"
+    assert created[0x183A].name == "sub_183a"
+    assert created[0x11446].name == "sub_11446"
+    assert created[0x1183A].name == "sub_1183a"
+
+
+def test_register_direct_call_target_function_stubs_names_binary_signature_stack_probe():
+    helper_bytes = bytes.fromhex("59 8b dc 2b d8 72 0a 3b 1e b6 00 72 04 8b e3 ff e1")
+    created = {}
+
+    class FakeFunctionManager:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            if not create:
+                return None
+            stub = created.setdefault(addr, SimpleNamespace(addr=addr, name=f"sub_{addr:x}"))
+            return stub
+
+    def _load(addr: int, size: int):
+        if addr != 0x103BE:
+            raise KeyError(addr)
+        return helper_bytes[:size]
+
+    function = SimpleNamespace(
+        addr=0x10010,
+        _call_sites={},
+        get_call_sites=lambda: [0x10017],
+        get_call_target=lambda _site: 0x103BE,
+        get_call_return=lambda _site: 0x1001A,
+    )
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        entry=0x10010,
+        loader=SimpleNamespace(
+            memory=SimpleNamespace(load=_load),
+            main_object=SimpleNamespace(linked_base=0, max_addr=0x20000),
+        ),
+        kb=SimpleNamespace(functions=FakeFunctionManager(), labels={}),
+    )
+
+    count = decompile._register_direct_call_target_function_stubs(project, function)
+
+    assert count == 1
+    assert function._call_sites[0x10017] == (0x103BE, 0x1001A)
+    assert created[0x103BE].name == "aNchkstk"
 
 
 def test_rank_exe_function_seeds_uses_persistent_cache(monkeypatch, tmp_path):
@@ -5343,7 +6030,7 @@ def test_main_aggregate_uses_sidecar_fallback_tail_validation_snapshot(monkeypat
     assert '"function_addr": 65552' in captured.err
 
 
-def test_main_direct_path_uses_peer_sidecar_fallback_tail_validation_snapshot(monkeypatch, tmp_path, capsys):
+def test_main_direct_path_uses_trivial_sidecar_fallback_tail_validation_snapshot(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     project = SimpleNamespace(
@@ -5360,6 +6047,12 @@ def test_main_direct_path_uses_peer_sidecar_fallback_tail_validation_snapshot(mo
         project=project,
         normalized=False,
         analyses={},
+        info={
+            "x86_16_tail_validation": {
+                "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
+                "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
+            }
+        },
         normalize=lambda: None,
     )
     metadata = LSTMetadata(
@@ -5381,31 +6074,26 @@ def test_main_direct_path_uses_peer_sidecar_fallback_tail_validation_snapshot(mo
         "_decompile_function_with_stats",
         lambda *_args, **_kwargs: ("error", "Decompiler did not produce code.", None, 1, 4, 0.01),
     )
-    monkeypatch.setattr(decompile, "_try_decompile_non_optimized_known_function", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_try_decompile_non_optimized_known_function",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(decompile, "_try_decompile_sidecar_slice", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         decompile,
-        "_try_decompile_peer_sidecar_slice",
-        lambda project_arg, *_args, **_kwargs: (
-            setattr(
-                project_arg,
-                "_inertia_last_tail_validation_snapshot",
-                {
-                    "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
-                    "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
-                },
-            )
-            or "int sub_10010(void) { return 0; }"
-        ),
+        "_try_emit_trivial_sidecar_c",
+        lambda *_args, **_kwargs: "int sub_10010(void) { return 0; }",
     )
     monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
 
     rc = decompile.main([str(binary), "--addr", "0x10010", "--timeout", "2"])
     captured = capsys.readouterr()
 
-    assert rc == 6
-    assert "validation=uncollected" in captured.out
-    assert "status=error blocker=Decompiler did not produce code." in captured.out
+    assert rc == 0
+    assert "validation=ok" in captured.out
+    assert "/* -- c (trivial sidecar fallback) -- */" in captured.out
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in captured.err
 
 
 def test_main_direct_partial_timeout_uses_captured_tail_validation_snapshot(monkeypatch, tmp_path, capsys):
@@ -9141,23 +9829,47 @@ def test_recover_seeded_exe_functions_stops_after_limit_without_return_addrs(mon
     assert call_order == [0x10010, 0x10040]
 
 
-def test_match_flair_startup_entry_matches_watcom_startup_pattern():
-    entry_bytes = bytes.fromhex("CCEBFD90909090" + "90" * 25)
+def test_match_flair_startup_entry_matches_watcom_startup_pattern(tmp_path):
+    flair_root = tmp_path / "flair"
+    startup_dir = flair_root / "startup"
+    startup_dir.mkdir(parents=True, exist_ok=True)
+    (startup_dir / "exe_wa16.pat").write_text(
+        f"CCEBFD{'..' * 29} 0000 0000 0010 :0000 watcom_entry\n",
+        encoding="utf-8",
+    )
 
-    matches = match_flair_startup_entry(entry_bytes, Path("/home/xor/ida77/flair77"))
+    entry_bytes = bytes.fromhex("CCEBFD" + "90" * 29)
+
+    matches = match_flair_startup_entry(entry_bytes, flair_root)
 
     assert matches
     assert any(match.pat_path.endswith("exe_wa16.pat") for match in matches)
 
 
-def test_list_flair_sig_libraries_reads_pascal_catalogs():
-    libraries = list_flair_sig_libraries(Path("/home/xor/ida77/flair77"))
+def test_list_flair_sig_libraries_reads_pascal_catalogs(tmp_path):
+    flair_root = tmp_path / "flair"
+    sig_dir = flair_root / "flair-sigs"
+    bin_dir = flair_root / "bin" / "linux"
+    sig_dir.mkdir(parents=True, exist_ok=True)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (sig_dir / "sample.sig").write_text("sample", encoding="utf-8")
+    (bin_dir / "dumpsig").write_text(
+        "#!/usr/bin/env sh\n"
+        "echo 'Signature     : Turbo Pascal V5.0/5.5/6.0/7.0'\n"
+        "echo 'OS types      : DOS'\n"
+        "echo 'App types     : EXE'\n"
+        "echo 'File types    : PROGRAM'\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "dumpsig").chmod(0o755)
+
+    libraries = list_flair_sig_libraries(flair_root)
 
     assert any("Turbo Pascal" in library.title for library in libraries)
 
 
 def test_ensure_pat_from_omf_input_generates_fallback_pat_for_obj(tmp_path):
-    pat_path = ensure_pat_from_omf_input(SYNTHETIC_OBJ, tmp_path, flair_root=Path("/home/xor/ida77/flair77"))
+    pat_path = ensure_pat_from_omf_input(SYNTHETIC_OBJ, tmp_path)
 
     assert pat_path is not None
     modules = parse_pat_file(pat_path)
@@ -9165,7 +9877,11 @@ def test_ensure_pat_from_omf_input_generates_fallback_pat_for_obj(tmp_path):
 
 
 def test_ensure_pat_from_omf_input_merges_plb_and_fallback_for_life_obj(tmp_path):
-    pat_path = ensure_pat_from_omf_input(REPO_ROOT / "LIFE.OBJ", tmp_path, flair_root=Path("/home/xor/ida77/flair77"))
+    life_obj = REPO_ROOT / "LIFE.OBJ"
+    if not life_obj.exists():
+        pytest.skip("LIFE.OBJ fixture is not available")
+
+    pat_path = ensure_pat_from_omf_input(life_obj, tmp_path)
 
     assert pat_path is not None
     modules = parse_pat_file(pat_path)
@@ -9387,19 +10103,13 @@ def test_detect_flair_metadata_forwards_pat_backend(monkeypatch):
         ),
     )
 
-    monkeypatch.setattr(sidecar_parsers.Path, "exists", lambda self: True)
     monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(sidecar_parsers, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(sidecar_parsers, "_match_flair_startup_pat_functions", lambda *_args, **_kwargs: ({}, {}))
-
-    def _fake_discover(binary, project_arg, *, flair_root=None, backend=None, **_kwargs):
-        recorded["binary"] = binary
-        recorded["project"] = project_arg
-        recorded["flair_root"] = flair_root
+    def _fake_startup_pat_match(project_arg, flair_root, *, backend=None):
         recorded["backend"] = backend
-        return SimpleNamespace(code_labels={}, code_ranges={}, source_formats=())
+        del project_arg, flair_root
+        return {}, {}
 
-    monkeypatch.setattr(sidecar_parsers, "discover_local_pat_matches", _fake_discover)
+    monkeypatch.setattr(sidecar_parsers, "_match_flair_startup_pat_functions", _fake_startup_pat_match)
 
     sidecar_parsers._detect_flair_metadata(Path("/tmp/demo.exe"), project, pat_backend="python_regex")
 
@@ -9482,34 +10192,6 @@ def test_match_signature_catalog_matches_prebuilt_catalog(tmp_path):
     assert result.matched_compiler_names == ("Microsoft C v5.1",)
 
 
-def test_detect_flair_metadata_merges_local_pat_matches(monkeypatch):
-    project = SimpleNamespace(
-        entry=0x2000,
-        loader=SimpleNamespace(
-            main_object=SimpleNamespace(),
-            memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 32),
-        ),
-    )
-    monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(sidecar_parsers, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(sidecar_parsers, "_match_flair_startup_pat_functions", lambda *_args, **_kwargs: ({}, {}))
-    monkeypatch.setattr(
-        sidecar_parsers,
-        "discover_local_pat_matches",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            code_labels={0x1234: "helper_func"},
-            code_ranges={0x1234: (0x1234, 0x1250)},
-            source_formats=("local_omf_pat",),
-        ),
-    )
-
-    code_labels, code_ranges, source_formats = sidecar_parsers._detect_flair_metadata(Path("/tmp/demo.exe"), project)
-
-    assert code_labels[0x1234] == "helper_func"
-    assert code_ranges[0x1234] == (0x1234, 0x1250)
-    assert "local_omf_pat" in source_formats
-
-
 def test_detect_flair_metadata_merges_signature_catalog(monkeypatch, tmp_path):
     project = SimpleNamespace(
         entry=0x2000,
@@ -9521,7 +10203,6 @@ def test_detect_flair_metadata_merges_signature_catalog(monkeypatch, tmp_path):
     catalog = tmp_path / "catalog.pat"
     catalog.write_text("---\n")
     monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(sidecar_parsers, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(sidecar_parsers, "_match_flair_startup_pat_functions", lambda *_args, **_kwargs: ({}, {}))
     monkeypatch.setattr(
         sidecar_parsers,
@@ -9531,11 +10212,6 @@ def test_detect_flair_metadata_merges_signature_catalog(monkeypatch, tmp_path):
             code_ranges={0x2345: (0x2345, 0x2350)},
             source_formats=("signature_catalog",),
         ),
-    )
-    monkeypatch.setattr(
-        sidecar_parsers,
-        "discover_local_pat_matches",
-        lambda *_args, **_kwargs: SimpleNamespace(code_labels={}, code_ranges={}, source_formats=()),
     )
 
     code_labels, code_ranges, source_formats = sidecar_parsers._detect_flair_metadata(
@@ -9561,7 +10237,6 @@ def test_detect_flair_metadata_searches_startup_pats_across_whole_binary(monkeyp
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(sidecar_parsers, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(sidecar_parsers, "_load_flair_startup_pat_modules", lambda *_args, **_kwargs: ("module",))
 
     def _fake_match(image_bytes, base_addr, modules, *, backend=None):
@@ -9572,11 +10247,6 @@ def test_detect_flair_metadata_searches_startup_pats_across_whole_binary(monkeyp
         return {0x2010: "startup_sig_func"}, {0x2010: (0x2010, 0x2020)}
 
     monkeypatch.setattr(sidecar_parsers, "match_pat_modules", _fake_match)
-    monkeypatch.setattr(
-        sidecar_parsers,
-        "discover_local_pat_matches",
-        lambda *_args, **_kwargs: SimpleNamespace(code_labels={}, code_ranges={}, source_formats=()),
-    )
 
     code_labels, code_ranges, source_formats = sidecar_parsers._detect_flair_metadata(
         Path("/tmp/demo.exe"),
@@ -9587,209 +10257,7 @@ def test_detect_flair_metadata_searches_startup_pats_across_whole_binary(monkeyp
     assert seen == {"image_len": 64, "base_addr": 0x2000, "modules": ("module",), "backend": "python_regex"}
     assert code_labels[0x2010] == "startup_sig_func"
     assert code_ranges[0x2010] == (0x2010, 0x2020)
-    assert "flair_pat" in source_formats
-
-
-def test_peer_exe_catalog_requires_exact_span_byte_match():
-    image = bytes.fromhex("90 90 55 8B EC C3 90 55 8B EC 90 C3 90")
-    peer_image = bytes.fromhex("90 90 55 8B EC C3 90 55 8B ED 90 C3 90")
-    project = SimpleNamespace(
-        loader=SimpleNamespace(
-            memory=SimpleNamespace(load=lambda addr, size: image[addr - 0x1000 : addr - 0x1000 + size])
-        )
-    )
-    peer_project = SimpleNamespace(
-        loader=SimpleNamespace(
-            memory=SimpleNamespace(load=lambda addr, size: peer_image[addr - 0x1000 : addr - 0x1000 + size])
-        )
-    )
-    peer_metadata = LSTMetadata(
-        data_labels={},
-        code_labels={0x1002: "match_func", 0x1007: "mismatch_func"},
-        code_ranges={0x1002: (0x1002, 0x1006), 0x1007: (0x1007, 0x100C)},
-        absolute_addrs=True,
-        source_format="cod_listing",
-    )
-
-    labels, ranges = sidecar_metadata._merge_peer_function_catalog(project, peer_project, peer_metadata)
-
-    assert labels == {0x1002: "match_func"}
-    assert ranges == {0x1002: (0x1002, 0x1006)}
-
-
-def test_discover_peer_exe_catalog_matches_merges_exact_sibling_catalog(monkeypatch, tmp_path):
-    binary = tmp_path / "demo2.exe"
-    peer_binary = tmp_path / "demo.exe"
-    binary.write_bytes(b"MZ")
-    peer_binary.write_bytes(b"MZ")
-    image = bytes.fromhex("90 90 55 8B EC C3 90")
-    project = SimpleNamespace(
-        entry=0x1000,
-        loader=SimpleNamespace(
-            main_object=SimpleNamespace(linked_base=0x10000),
-            memory=SimpleNamespace(load=lambda addr, size: image[addr - 0x1000 : addr - 0x1000 + size]),
-        ),
-    )
-    peer_project = SimpleNamespace(
-        loader=SimpleNamespace(
-            memory=SimpleNamespace(load=lambda addr, size: image[addr - 0x1000 : addr - 0x1000 + size]),
-        )
-    )
-    peer_metadata = LSTMetadata(
-        data_labels={},
-        code_labels={0x1002: "peer_func"},
-        code_ranges={0x1002: (0x1002, 0x1006)},
-        absolute_addrs=True,
-        source_format="cod_listing+codeview_nb00",
-    )
-
-    monkeypatch.setattr(sidecar_metadata, "_peer_exe_family_candidates", lambda _binary: (peer_binary,))
-    monkeypatch.setattr(sidecar_metadata, "_build_project", lambda *args, **kwargs: peer_project)
-    monkeypatch.setattr(
-        sidecar_metadata,
-        "_load_lst_metadata",
-        lambda path, *_args, **kwargs: (
-            peer_metadata if path == peer_binary and kwargs.get("allow_peer_exe") is False else None
-        ),
-    )
-
-    labels, ranges, source_formats = sidecar_metadata._discover_peer_exe_catalog_matches(binary, project)
-
-    assert labels == {0x1002: "peer_func"}
-    assert ranges == {0x1002: (0x1002, 0x1006)}
-    assert source_formats == ("peer_exe",)
-    assert getattr(project, "_inertia_peer_exe_titles", ()) == (peer_binary.name,)
-    assert getattr(project, "_inertia_peer_exe_paths", ()) == (str(peer_binary),)
-    assert getattr(project, "_inertia_peer_sidecar_cache", {}).get(str(peer_binary)) == (peer_project, peer_metadata)
-
-
-def test_try_decompile_peer_sidecar_slice_uses_native_peer_metadata(monkeypatch, tmp_path):
-    peer_binary = tmp_path / "demo.exe"
-    peer_binary.write_bytes(b"MZ")
-    project = SimpleNamespace(
-        entry=0x1000,
-        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000)),
-        _inertia_peer_exe_paths=(str(peer_binary),),
-    )
-    metadata = LSTMetadata(
-        data_labels={},
-        code_labels={0x1000: "func"},
-        code_ranges={0x1000: (0x1000, 0x1006)},
-        absolute_addrs=True,
-        source_format="peer_exe",
-    )
-    peer_project = SimpleNamespace(entry=0x1000)
-    peer_metadata = LSTMetadata(
-        data_labels={},
-        code_labels={0x1000: "func"},
-        code_ranges={0x1000: (0x1000, 0x1006)},
-        absolute_addrs=True,
-        source_format="cod_listing+codeview_nb00",
-        cod_path=str(tmp_path / "demo.cod"),
-    )
-
-    monkeypatch.setattr(decompile, "_build_project", lambda *args, **kwargs: peer_project)
-    monkeypatch.setattr(
-        decompile,
-        "_load_lst_metadata",
-        lambda path, *_args, **kwargs: (
-            peer_metadata if path == peer_binary and kwargs.get("allow_peer_exe") is False else None
-        ),
-    )
-    monkeypatch.setattr(decompile, "_exact_function_span_matches", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(
-        decompile,
-        "_try_decompile_sidecar_slice",
-        lambda project_arg, metadata_arg, addr, name, **_kwargs: (
-            ("ok", "void func(void)\n{\n}\n")
-            if project_arg is peer_project and metadata_arg is peer_metadata and addr == 0x1000 and name == "func"
-            else None
-        ),
-    )
-
-    rendered = decompile._try_decompile_peer_sidecar_slice(
-        project,
-        metadata,
-        0x1000,
-        "func",
-        timeout=6,
-        api_style="default",
-        binary_path=tmp_path / "demo2.exe",
-    )
-
-    assert rendered == "void func(void)\n{\n}\n"
-
-
-def test_try_decompile_peer_sidecar_slice_reuses_cached_peer_bundle(monkeypatch, tmp_path):
-    peer_binary = tmp_path / "demo.exe"
-    peer_binary.write_bytes(b"MZ")
-    project = SimpleNamespace(
-        entry=0x1000,
-        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000)),
-        _inertia_peer_exe_paths=(str(peer_binary),),
-    )
-    metadata = LSTMetadata(
-        data_labels={},
-        code_labels={0x1000: "func"},
-        code_ranges={0x1000: (0x1000, 0x1006)},
-        absolute_addrs=True,
-        source_format="peer_exe",
-    )
-    peer_project = SimpleNamespace(entry=0x1000)
-    peer_metadata = LSTMetadata(
-        data_labels={},
-        code_labels={0x1000: "func"},
-        code_ranges={0x1000: (0x1000, 0x1006)},
-        absolute_addrs=True,
-        source_format="cod_listing+codeview_nb00",
-    )
-    build_calls = []
-    metadata_calls = []
-
-    def _fake_build(*_args, **_kwargs):
-        build_calls.append("build")
-        return peer_project
-
-    def _fake_load(path, *_args, **kwargs):
-        metadata_calls.append((path, kwargs.get("allow_peer_exe")))
-        return peer_metadata if path == peer_binary and kwargs.get("allow_peer_exe") is False else None
-
-    monkeypatch.setattr(decompile, "_build_project", _fake_build)
-    monkeypatch.setattr(decompile, "_load_lst_metadata", _fake_load)
-    monkeypatch.setattr(decompile, "_exact_function_span_matches", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(
-        decompile,
-        "_try_decompile_sidecar_slice",
-        lambda project_arg, metadata_arg, addr, name, **_kwargs: (
-            ("ok", f"void {name}(void)\n{{\n}}\n")
-            if project_arg is peer_project and metadata_arg is peer_metadata and addr == 0x1000
-            else None
-        ),
-    )
-
-    rendered_once = decompile._try_decompile_peer_sidecar_slice(
-        project,
-        metadata,
-        0x1000,
-        "func",
-        timeout=6,
-        api_style="default",
-        binary_path=tmp_path / "demo2.exe",
-    )
-    rendered_twice = decompile._try_decompile_peer_sidecar_slice(
-        project,
-        metadata,
-        0x1000,
-        "func",
-        timeout=6,
-        api_style="default",
-        binary_path=tmp_path / "demo2.exe",
-    )
-
-    assert rendered_once == "void func(void)\n{\n}\n"
-    assert rendered_twice == "void func(void)\n{\n}\n"
-    assert build_calls == ["build"]
-    assert metadata_calls == [(peer_binary, False)]
+    assert "startup_flair_pat" in source_formats
 
 
 def test_try_decompile_sidecar_slice_retries_with_broader_exact_region_recovery(monkeypatch):
@@ -10020,34 +10488,32 @@ def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeyp
     assert metadata.signature_code_addrs == frozenset({0x1010})
 
 
-def test_life2_without_peer_exe_metadata_has_no_sidecars_but_life_does():
+def test_life2_without_external_binary_catalog_metadata_has_no_sidecars_but_life_does():
     life_project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    life_metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, life_project, allow_peer_exe=False)
+    life_metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, life_project)
 
     life2_project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    life2_metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, life2_project, allow_peer_exe=False)
+    life2_metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, life2_project)
 
     assert life_metadata is not None
     assert sidecar_metadata._visible_code_labels(life_metadata)
     assert life2_metadata is not None
     assert sidecar_metadata._visible_code_labels(life2_metadata) == {}
-    assert life2_metadata.source_format == "flair_pat"
+    assert life2_metadata.source_format == "startup_flair_pat"
 
 
-def test_life2_default_metadata_stays_independent_from_life_peer_catalog():
+def test_life2_default_metadata_stays_independent_from_peer_binary_catalog():
     project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
     metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project)
 
     assert metadata is not None
     assert "peer_exe" not in metadata.source_format
-    assert getattr(project, "_inertia_peer_exe_titles", ()) == ()
-    assert getattr(project, "_inertia_peer_exe_paths", ()) == ()
     assert sidecar_metadata._visible_code_labels(metadata) == {}
 
 
 def test_life2_signature_metadata_seeds_bounded_recovery_without_peer_catalog():
     project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project)
 
     assert metadata is not None
     assert sidecar_metadata._visible_code_labels(metadata) == {}
@@ -10066,7 +10532,7 @@ def test_life2_signature_metadata_seeds_bounded_recovery_without_peer_catalog():
 
 def test_life2_signature_metadata_bounded_span_precedes_tiny_helper_seed(monkeypatch):
     project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project)
 
     assert metadata is not None
     project._inertia_lst_metadata = metadata
@@ -10121,13 +10587,12 @@ def test_load_lst_metadata_reuses_cached_flair_metadata(monkeypatch, tmp_path):
         assert signature_catalog is None
         seen["calls"] += 1
         setattr(_project, "_inertia_flair_startup_matches", ("startup/demo.pat",))
-        setattr(_project, "_inertia_flair_local_pat_sources", ("local_omf_pat",))
         setattr(_project, "_inertia_signature_compiler_names", ("Microsoft C v5.1",))
-        return {0x1010: "sig_func"}, {0x1010: (0x1010, 0x1020)}, ("flair_pat",)
+        return {0x1010: "sig_func"}, {0x1010: (0x1010, 0x1020)}, ("startup_flair_pat",)
 
     monkeypatch.setattr(sidecar_metadata, "_detect_flair_metadata", fake_detect_flair_metadata)
 
-    first = sidecar_metadata._load_lst_metadata(binary, project, allow_peer_exe=False, pat_backend="python")
+    first = sidecar_metadata._load_lst_metadata(binary, project, pat_backend="python")
     assert first is not None
     assert first.code_labels[0x1010] == "sig_func"
     assert seen["calls"] == 1
@@ -10137,24 +10602,13 @@ def test_load_lst_metadata_reuses_cached_flair_metadata(monkeypatch, tmp_path):
         loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x1000, max_addr=0x1040)),
         kb=SimpleNamespace(labels={}),
     )
-    second = sidecar_metadata._load_lst_metadata(binary, second_project, allow_peer_exe=False, pat_backend="python")
+    second = sidecar_metadata._load_lst_metadata(binary, second_project, pat_backend="python")
 
     assert second is not None
     assert second.code_labels[0x1010] == "sig_func"
     assert seen["calls"] == 1
     assert getattr(second_project, "_inertia_flair_startup_matches", ()) == ("startup/demo.pat",)
-    assert getattr(second_project, "_inertia_flair_local_pat_sources", ()) == ("local_omf_pat",)
     assert getattr(second_project, "_inertia_signature_compiler_names", ()) == ("Microsoft C v5.1",)
-
-
-def test_life2_peer_catalog_oracle_requires_explicit_helper_call():
-    project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    labels, ranges, source_formats = sidecar_metadata._discover_peer_exe_catalog_matches(LIFE2_EXE, project)
-
-    assert source_formats == ("peer_exe",)
-    assert labels
-    assert ranges
-    assert {"main", "init_life", "init_buf", "draw_box", "init_mats"} <= set(labels.values())
 
 
 def test_parse_ida_map_metadata_prefers_segment_class_over_loc_name(tmp_path):

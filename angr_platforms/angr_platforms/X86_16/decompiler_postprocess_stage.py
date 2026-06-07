@@ -5471,6 +5471,11 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
+            "_unify_positive_bp_arg_stack_variables_8616",
+            _post._unify_positive_bp_arg_stack_variables_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_normalize_call_target_names_8616",
             _calls._normalize_call_target_names_8616,
             False,
@@ -5515,6 +5520,11 @@ def _build_decompiler_postprocess_passes():
         DecompilerPostprocessPassSpec(
             "_materialize_callsite_stack_arguments_final_8616",
             _calls._materialize_callsite_stack_arguments_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_unify_positive_bp_arg_stack_variables_final_8616",
+            _post._unify_positive_bp_arg_stack_variables_8616,
             True,
         ),
         DecompilerPostprocessPassSpec(
@@ -5808,6 +5818,25 @@ def _deepcopy_cfunc_for_validation_8616(cfunc):
                 with contextlib.suppress(Exception):
                     setattr(cloned, attr, value)
         return cloned
+    except Exception:
+        with contextlib.suppress(Exception):
+            fallback = copy.copy(cfunc)
+            memo = _validation_snapshot_identity_memo_8616(cfunc)
+            statements = getattr(cfunc, "statements", None)
+            with contextlib.suppress(Exception):
+                fallback.statements = _snapshot_c_ast_value_for_validation_8616(statements, memo)
+            for attr in ("variables_in_use", "unified_local_vars", "variable_kb"):
+                value = getattr(cfunc, attr, None)
+                if isinstance(value, dict):
+                    with contextlib.suppress(Exception):
+                        setattr(fallback, attr, dict(value))
+                else:
+                    with contextlib.suppress(Exception):
+                        setattr(fallback, attr, value)
+            with contextlib.suppress(Exception):
+                setattr(fallback, "_inertia_validation_snapshot_fallback", "manual")
+            return fallback
+        raise
     finally:
         if isinstance(dispatch, dict):
             if previous is sentinel:
@@ -7036,6 +7065,8 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         codegen._inertia_rewrite_failure_pass = None
         codegen._inertia_rewrite_failure_error = None
         codegen._inertia_last_postprocess_pass = None
+        codegen._inertia_postprocess_regeneration_disabled = False
+        codegen._inertia_regeneration_suppressed_contexts = ()
         codegen._inertia_postprocess_validation_failed = False
         codegen._inertia_postprocess_validation_failure_pass = None
         codegen._inertia_postprocess_validation_failure_error = None
@@ -7111,7 +7142,8 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                 _restore_codegen_cfunc(codegen, snapshot)
                 _restore_codegen_inertia_metadata_8616(codegen, metadata_snapshot)
                 if context is not None:
-                    _regenerate_text_safely(codegen, context=context)
+                    if not getattr(codegen, "_inertia_postprocess_regeneration_disabled", False):
+                        _regenerate_text_safely(codegen, context=context)
 
             try:
                 if isinstance(pass_timeout_seconds, int) and pass_timeout_seconds > 0:
@@ -7179,6 +7211,17 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                         if isinstance(trace_func_addr, int)
                         else f"postprocess:{pass_name}:validation"
                     )
+                    if getattr(codegen, "_inertia_postprocess_regeneration_disabled", False):
+                        rejected = list(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
+                        rejected.append(pass_name)
+                        codegen._inertia_postprocess_rejected_passes = tuple(rejected)
+                        logging.getLogger(__name__).warning(
+                            "postprocess validation skipped function=%#x pass=%s verdict=regeneration-disabled",
+                            trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                            pass_name,
+                        )
+                        _restore_step_state(context=f"{validation_context}:restore")
+                        return True
                     if not _regenerate_text_safely(codegen, context=validation_context):
                         _restore_step_state(context=f"{validation_context}:restore")
                         rejected = list(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
@@ -7450,10 +7493,11 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
 
         _postprocess_run_pass_specs_8616(project, codegen, pass_specs, trace_func_addr, _apply_step)
         if not codegen._inertia_postprocess_validation_failed:
-            final_context = (
-                f"{trace_func_addr:#x} postprocess:final" if isinstance(trace_func_addr, int) else "postprocess:final"
-            )
-            _regenerate_text_safely(codegen, context=final_context)
+            if not getattr(codegen, "_inertia_postprocess_regeneration_disabled", False):
+                final_context = (
+                    f"{trace_func_addr:#x} postprocess:final" if isinstance(trace_func_addr, int) else "postprocess:final"
+                )
+                _regenerate_text_safely(codegen, context=final_context)
         return _postprocess_set_completion_state_8616(project, codegen, accepted_changed)
 
     return _impl()
@@ -7461,6 +7505,12 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
 
 def _regenerate_text_safely(codegen, *, context: str) -> bool:
     logger = logging.getLogger(__name__)
+    if getattr(codegen, "_inertia_postprocess_regeneration_disabled", False):
+        codegen._inertia_regeneration_failed = True
+        codegen._inertia_regeneration_error = "suppressed by earlier recursion guard"
+        codegen._inertia_regeneration_context = context
+        codegen._inertia_regeneration_last_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
+        return False
 
     try:
         _repair_missing_cnode_codegen_metadata_8616(getattr(codegen, "cfunc", None), codegen)
@@ -7473,13 +7523,26 @@ def _regenerate_text_safely(codegen, *, context: str) -> bool:
         codegen._inertia_regeneration_error = str(ex)
         codegen._inertia_regeneration_context = context
         codegen._inertia_regeneration_last_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
-        logger.warning(
-            "Skipping 86_16 postprocess regeneration for %s after %s: %s",
-            context,
-            getattr(codegen, "_inertia_last_postprocess_pass", None) or "no prior rewrite",
-            ex,
-            exc_info=True,
-        )
+        if isinstance(ex, RecursionError):
+            codegen._inertia_postprocess_regeneration_disabled = True
+            suppressed_contexts = set(getattr(codegen, "_inertia_regeneration_suppressed_contexts", ()))  # type: ignore[arg-type]
+            if context not in suppressed_contexts:
+                logger.warning(
+                    "Skipping 86_16 postprocess regeneration for %s after %s: %s",
+                    context,
+                    getattr(codegen, "_inertia_last_postprocess_pass", None) or "no prior rewrite",
+                    ex,
+                )
+                suppressed_contexts.add(context)
+            codegen._inertia_regeneration_suppressed_contexts = tuple(sorted(suppressed_contexts))
+        else:
+            logger.warning(
+                "Skipping 86_16 postprocess regeneration for %s after %s: %s",
+                context,
+                getattr(codegen, "_inertia_last_postprocess_pass", None) or "no prior rewrite",
+                ex,
+                exc_info=True,
+            )
         return False
     codegen._inertia_regeneration_failed = False
     codegen._inertia_regeneration_error = None

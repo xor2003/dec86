@@ -399,7 +399,24 @@ from .direct_addr_failure_family import (
 from .msc51_local_hash import emit_msc51_diagnostic
 
 print = _timestamped_print
-__all__ = ['_apply_binary_specific_annotations', '_sidecar_cod_metadata_for_function', '_snapshot_codegen_text', '_regenerate_codegen_text_safely', '_emit_optional_source_sidecar_c_block', '_format_minimal_codegen_output', '_apply_known_cod_object_annotations', '_cod_proc_has_call_heavy_helper_profile', '_decompile_function', '_function_complexity', '_direct_call_stub_filter_regions', '_register_direct_call_target_function_stubs', '_prepare_function_for_decompilation', '_function_decompilation_profile', '_preferred_decompiler_options', '_preferred_expr_collapse_depth', '_decompile_function_with_stats']
+__all__ = ['_apply_binary_specific_annotations', '_apply_function_annotations_for_active_and_original_8616', '_sidecar_cod_metadata_for_function', '_snapshot_codegen_text', '_regenerate_codegen_text_safely', '_emit_optional_source_sidecar_c_block', '_format_minimal_codegen_output', '_apply_known_cod_object_annotations', '_cod_proc_has_call_heavy_helper_profile', '_decompile_function', '_function_complexity', '_direct_call_stub_filter_regions', '_register_direct_call_target_function_stubs', '_prepare_function_for_decompilation', '_function_decompilation_profile', '_preferred_decompiler_options', '_preferred_expr_collapse_depth', '_decompile_function_with_stats']
+
+
+def _normalize_text_payload_8616(payload: object) -> str:
+    """Coerce arbitrary codegen payloads into stable text for emission."""
+    if payload is None:
+        return ""
+    if isinstance(payload, tuple) and payload:
+        return _normalize_text_payload_8616(payload[0])
+    if isinstance(payload, bytes):
+        text = payload.decode("utf-8", errors="ignore")
+    elif isinstance(payload, str):
+        text = payload
+    else:
+        text = str(payload)
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+    return text
 
 
 def _effective_decompile_timeout_8616(
@@ -1072,6 +1089,78 @@ def _apply_binary_specific_annotations(
     return changed
 
 
+def _apply_function_annotations_for_active_and_original_8616(
+    project: angr.Project,
+    binary_path: Path | None,
+    lst_metadata: LSTMetadata | None,
+    function,
+    *,
+    cod_metadata: CODProcMetadata | None = None,
+    synthetic_globals: dict[int, tuple[str, int]] | None = None,
+) -> bool:
+    original_addr = function_original_addr(function)
+    if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
+        print(
+            "[dbg-x87-proto] "
+            f"apply_function_annotations active={getattr(function, 'addr', None)!r} "
+            f"original={original_addr!r} "
+            f"name={getattr(function, 'name', None)!r} "
+            f"project_id={id(project)} "
+            f"function_project_id={id(getattr(function, 'project', None)) if getattr(function, 'project', None) is not None else None} "
+            f"cod_source_lines={len(tuple(getattr(cod_metadata, 'source_lines', ()) or ())) if cod_metadata is not None else 0}",
+            file=sys.stderr,
+            flush=True,
+        )
+    if cod_metadata is not None:
+        metadata_by_addr = getattr(project, "_inertia_cod_metadata_by_func_addr_8616", None)
+        if not isinstance(metadata_by_addr, dict):
+            metadata_by_addr = {}
+            setattr(project, "_inertia_cod_metadata_by_func_addr_8616", metadata_by_addr)
+        metadata_by_addr[original_addr] = cod_metadata
+        active_addr = getattr(function, "addr", None)
+        if isinstance(active_addr, int):
+            metadata_by_addr[active_addr] = cod_metadata
+    changed = _apply_binary_specific_annotations(
+        project,
+        binary_path,
+        lst_metadata,
+        func_addr=original_addr,
+        cod_metadata=cod_metadata,
+        synthetic_globals=synthetic_globals,
+    )
+    active_addr = getattr(function, "addr", None)
+    if isinstance(active_addr, int) and active_addr != original_addr:
+        changed |= _apply_binary_specific_annotations(
+            project,
+            binary_path,
+            lst_metadata,
+            func_addr=active_addr,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+        )
+    if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
+        functions = getattr(getattr(project, "kb", None), "functions", None)
+        for label, addr in (("original", original_addr), ("active", active_addr)):
+            if not isinstance(addr, int) or functions is None:
+                continue
+            try:
+                func = functions.function(addr=addr, create=False)
+            except Exception:
+                func = None
+            info = getattr(func, "info", None)
+            annotations = info.get("x86_16_annotations") if isinstance(info, dict) else None
+            print(
+                "[dbg-x87-proto] "
+                f"annotation_state {label}={addr!r} "
+                f"func_id={id(func) if func is not None else None} "
+                f"source_lines={len(tuple(annotations.get('source_lines', ()) or ())) if isinstance(annotations, dict) else 0} "
+                f"stack_offsets={sorted(k for k in annotations.get('stack_vars', {}) if isinstance(k, int)) if isinstance(annotations, dict) else []}",
+                file=sys.stderr,
+                flush=True,
+            )
+    return changed
+
+
 def _sync_recovered_function_metadata_from_kb_8616(project: angr.Project, function) -> bool:
     """
     Bounded CFG recovery can hand the decompiler a Function object that is not
@@ -1149,7 +1238,21 @@ def _sync_recovered_function_metadata_from_kb_8616(project: angr.Project, functi
                 if key not in target_info:
                     target_info[key] = copy.deepcopy(value)
                 elif key == "x86_16_annotations" and isinstance(target_info.get(key), dict) and isinstance(value, dict):
-                    target_info[key].update(copy.deepcopy(value))
+                    target_annotations = target_info[key]
+                    incoming_annotations = copy.deepcopy(value)
+                    for annotation_key, annotation_value in incoming_annotations.items():
+                        if annotation_key in {"source_lines", "source_return_lines"}:
+                            if annotation_value or annotation_key not in target_annotations:
+                                target_annotations[annotation_key] = annotation_value
+                            continue
+                        if (
+                            annotation_key in {"stack_vars", "global_vars"}
+                            and isinstance(target_annotations.get(annotation_key), dict)
+                            and isinstance(annotation_value, dict)
+                        ):
+                            target_annotations[annotation_key].update(annotation_value)
+                            continue
+                        target_annotations[annotation_key] = annotation_value
             if target_info != before:
                 stats["info_synced"] = int(stats.get("info_synced", 0) or 0) + 1
                 changed = True
@@ -1203,7 +1306,7 @@ def _sidecar_cod_metadata_for_function(
 
 def _snapshot_codegen_text(codegen) -> str:
     try:
-        return codegen.text
+        return _normalize_text_payload_8616(codegen.text)
     except Exception as ex:
         logging.getLogger(__name__).debug(
             "Codegen text snapshot failed at function=%#x stage=snapshot-text: %s",
@@ -1385,7 +1488,8 @@ def _record_layer_dump(
         "path": str(stage_path),
         "bytes": 0,
     }
-    if not isinstance(text, str) or not text.strip():
+    text = _normalize_text_payload_8616(text)
+    if not text.strip():
         try:
             with manifest_path.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -1428,10 +1532,11 @@ def _emit_c_stage_trace(
     duplication. Set INERTIA_TRACE_C_STAGES_FULL=1 to enable them.
     """
 
+    c_text = _normalize_text_payload_8616(c_text)
     if not bool(getattr(project, "_inertia_trace_c_stages", False)):
         _record_layer_dump(project, function, label, c_text, layer_dump_state=layer_dump_state)
         return
-    if not isinstance(c_text, str) or not c_text.strip():
+    if not c_text.strip():
         _record_layer_dump(project, function, f"{label}:skipped", c_text, layer_dump_state=layer_dump_state)
         return
     display_addr = function_original_addr(function)
@@ -1453,7 +1558,8 @@ def _debug_dump_calls_8616(label: str, c_text: str, function_addr: int) -> None:
         target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else None
         if isinstance(target_addr, int) and function_addr != target_addr:
             return
-        if not isinstance(c_text, str) or not c_text:
+        c_text = _normalize_text_payload_8616(c_text)
+        if not c_text:
             return
         log = logging.getLogger(__name__)
         filter_text = os.environ.get("INERTIA_DEBUG_CALL_MUTATION_FILTER", "")
@@ -1481,8 +1587,8 @@ def _debug_dump_rewrite_pass_lines_8616(codegen, *, pass_index: int, pass_name: 
             rendered = codegen.render_text(codegen.cfunc)
         except Exception:
             rendered = _snapshot_codegen_text(codegen)
-        snapshot = rendered[0] if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str) else rendered
-        if not isinstance(snapshot, str) or not snapshot:
+        snapshot = _normalize_text_payload_8616(rendered)
+        if not snapshot:
             return
         log = logging.getLogger(__name__)
         for line in snapshot.splitlines():
@@ -1613,12 +1719,10 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
 
         def _render_text_or_none(tag: str) -> str | None:
             rendered = codegen.render_text(codegen.cfunc)
-            if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
-                _trace_dump(tag, rendered[0])
-                return rendered[0]
-            if isinstance(rendered, str):
-                _trace_dump(tag, rendered)
-                return rendered
+            text = _normalize_text_payload_8616(rendered)
+            if text:
+                _trace_dump(tag, text)
+                return text
             return None
 
         _trace_dump("regen-fallback-text", fallback_text)
@@ -1655,6 +1759,15 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
 
     return _impl()
 
+
+def _codegen_requires_render_refresh_8616(codegen) -> bool:
+    return bool(getattr(codegen, "_inertia_codegen_decl_refresh_required_8616", False))
+
+
+def _clear_codegen_render_refresh_8616(codegen) -> None:
+    with contextlib.suppress(Exception):
+        setattr(codegen, "_inertia_codegen_decl_refresh_required_8616", False)
+
 def _emit_optional_source_sidecar_c_block(
     binary_path: Path | None,
     function_name: str | None,
@@ -1663,6 +1776,7 @@ def _emit_optional_source_sidecar_c_block(
     alternate_source_c: bool,
     c_header: str,
 ) -> None:
+    c_text = _normalize_text_payload_8616(c_text)
     if alternate_source_c:
         source_text = render_local_source_sidecar_function(binary_path, function_name)
         if source_text is not None:
@@ -2233,14 +2347,24 @@ def _decompile_function(
                     "_inertia_skip_normalize_for_tiny_core",
                     bool(pre_block_count <= 1 and pre_byte_count <= 0x80),
                 )
-                _apply_binary_specific_annotations(
-                    project,
+                annotation_project = getattr(function, "project", project)
+                _apply_function_annotations_for_active_and_original_8616(
+                    annotation_project,
                     binary_path,
                     lst_metadata,
-                    func_addr=function_original_addr(function),
+                    function,
                     cod_metadata=effective_cod_metadata,
                     synthetic_globals=synthetic_globals,
                 )
+                if annotation_project is not project:
+                    _apply_function_annotations_for_active_and_original_8616(
+                        project,
+                        binary_path,
+                        lst_metadata,
+                        function,
+                        cod_metadata=effective_cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                    )
                 _sync_recovered_function_metadata_from_kb_8616(project, function)
                 _prepare_function_for_decompilation(project, function, effective_cod_metadata)
                 seed_calling_conventions(cfg)
@@ -3179,7 +3303,8 @@ def _decompile_function(
                 function.addr,
                 stack_probe_fact_stats,
             )
-        if changed:
+        render_refresh_required = bool(changed or _codegen_requires_render_refresh_8616(dec.codegen))
+        if render_refresh_required:
             cached_rendered_text = _snapshot_codegen_text(dec.codegen)
             live_call_baseline_text = _live_snapshot if isinstance(_live_snapshot, str) else ""
             recurrence_rebound = bool(
@@ -3208,6 +3333,7 @@ def _decompile_function(
                     dec.codegen,
                     context=f"{hex(function.addr)} {function.name}",
                 )
+            _clear_codegen_render_refresh_8616(dec.codegen)
             if (
                 not regenerated
                 and isinstance(cached_rendered_text, str)
@@ -3253,6 +3379,19 @@ def _decompile_function(
             rendered_text = _snapshot_codegen_text(dec.codegen)
         debug_call_addr = function_original_addr(function)
         _debug_dump_calls_8616("post-structured-codegen", rendered_text, debug_call_addr)
+        if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
+            cfunc = getattr(dec.codegen, "cfunc", None)
+            arg_types = tuple(
+                repr(getattr(arg, "variable_type", None)) for arg in tuple(getattr(cfunc, "arg_list", ()) or ())
+            )
+            print(
+                "[dbg-x87-proto] "
+                f"cli_after_codegen functy={getattr(cfunc, 'functy', None)!r} "
+                f"prototype={getattr(cfunc, 'prototype', None)!r} "
+                f"arg_types={arg_types!r}",
+                file=sys.stderr,
+                flush=True,
+            )
         _emit_c_stage_trace(
             project,
             function,
@@ -3343,7 +3482,7 @@ def _decompile_function(
         _debug_dump_calls_8616("post-materialize-missing-generic-locals-2", formatted, debug_call_addr)
         formatted = _prune_unused_local_declarations_text(formatted)
         _debug_dump_calls_8616("post-prune-unused-local-decls-2", formatted, debug_call_addr)
-        formatted = _rewrite_known_helper_signature_text(formatted, function)
+        formatted = _rewrite_known_helper_signature_text(formatted, function, codegen=dec.codegen)
         _debug_dump_calls_8616("post-rewrite-known-helper-signature", formatted, debug_call_addr)
         _emit_c_stage_trace(
             project,
