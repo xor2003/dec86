@@ -178,7 +178,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Capture a deterministic SORTDEMO one-function debug bundle.")
     parser.add_argument("binary", type=Path)
     parser.add_argument("--addr", type=lambda value: int(value, 0), required=True)
-    parser.add_argument("--timeout", type=int, default=30)
+    parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--window", type=lambda value: int(value, 0), default=0x40)
     parser.add_argument("--base-addr", type=lambda value: int(value, 0), default=0x1000)
     parser.add_argument("--entry-point", type=lambda value: int(value, 0), default=0x100)
