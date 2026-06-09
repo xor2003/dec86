@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import ast
+from functools import cache
 from pathlib import Path
 
+from angr_platforms.X86_16.layer_module_status import (
+    LAYER_MODULE_RECORDS,
+    LayerModuleAdmission,
+    layer_module_records_by_module,
+)
 from angr_platforms.X86_16.widening.widening_rules import run_typed_widening_pass_8616
 
 _ROOT = Path(__file__).resolve().parents[1] / "angr_platforms" / "X86_16"
@@ -66,9 +72,10 @@ def _resolve_import_from_module(current_module: str, level: int, module: str | N
     return ".".join(base)
 
 
-def _production_importers_for_module(module_name: str) -> list[str]:
+@cache
+def _production_import_index() -> dict[str, list[str]]:
     test_root = Path(__file__).resolve().parent
-    importers: list[str] = []
+    index: dict[str, list[str]] = {}
     for path in _tracked_python_files():
         if test_root in path.parents:
             continue
@@ -77,15 +84,22 @@ def _production_importers_for_module(module_name: str) -> list[str]:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name == module_name or alias.name.startswith(module_name + "."):
-                        importers.append(f"{path}:{node.lineno}")
+                    index.setdefault(alias.name, []).append(f"{path}:{node.lineno}")
             elif isinstance(node, ast.ImportFrom):
                 source = _resolve_import_from_module(current_module, node.level, node.module)
-                if source == module_name or source.startswith(module_name + "."):
-                    importers.append(f"{path}:{node.lineno}")
+                if source:
+                    index.setdefault(source, []).append(f"{path}:{node.lineno}")
                 for alias in node.names:
-                    if source and f"{source}.{alias.name}" == module_name:
-                        importers.append(f"{path}:{node.lineno}")
+                    if source:
+                        index.setdefault(f"{source}.{alias.name}", []).append(f"{path}:{node.lineno}")
+    return index
+
+
+def _production_importers_for_module(module_name: str) -> list[str]:
+    importers: list[str] = []
+    for source, source_importers in _production_import_index().items():
+        if source == module_name or source.startswith(module_name + "."):
+            importers.extend(source_importers)
     return importers
 
 
@@ -201,6 +215,55 @@ def test_layer_compatibility_wrappers_do_not_hide_production_logic() -> None:
     )
     offenders: list[str] = []
     for path in shim_paths:
+        tree = ast.parse(path.read_text(), filename=str(path))
+        if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for node in tree.body):
+            offenders.append(str(path))
+
+    assert offenders == []
+
+
+def test_flagged_layer_modules_have_explicit_admission_status() -> None:
+    modules = layer_module_records_by_module()
+    expected = {
+        "angr_platforms.X86_16.validation.canonicalize",
+        "angr_platforms.X86_16.alias.state",
+        "angr_platforms.X86_16.alias.domains",
+        "angr_platforms.X86_16.structuring.loop_recovery",
+        "angr_platforms.X86_16.structuring.simple_loop_recovery",
+        "angr_platforms.X86_16.structuring.control_flow",
+        "angr_platforms.X86_16.semantics.evidence_cache",
+        "angr_platforms.X86_16.postprocess.simplify",
+        "angr_platforms.X86_16.quality",
+        "angr_platforms.X86_16.postprocess.condition_patterns",
+        "angr_platforms.X86_16.postprocess.cleanup",
+        "angr_platforms.X86_16.lowering.segmented_lowering",
+        "angr_platforms.X86_16.ir.ir_canonicalize_8616",
+        "angr_platforms.X86_16.exact_region_diagnostics",
+    }
+
+    assert set(modules) == expected
+    assert all(record.note for record in LAYER_MODULE_RECORDS)
+
+
+def test_layer_module_admission_status_matches_production_imports() -> None:
+    mismatches: list[str] = []
+    for record in LAYER_MODULE_RECORDS:
+        importers = _production_importers_for_module(record.module)
+        if record.admission is LayerModuleAdmission.PRODUCTION_WIRED and not importers:
+            mismatches.append(f"{record.module}: marked production_wired but has no production importer")
+        if record.admission is LayerModuleAdmission.TEST_ONLY_PROTOTYPE and importers:
+            mismatches.append(f"{record.module}: marked test_only_prototype but imported by {importers}")
+
+    assert mismatches == []
+
+
+def test_compatibility_wrapper_admission_modules_do_not_hide_logic() -> None:
+    offenders: list[str] = []
+    for record in LAYER_MODULE_RECORDS:
+        if record.admission is not LayerModuleAdmission.COMPATIBILITY_WRAPPER:
+            continue
+        rel_parts = record.module.removeprefix("angr_platforms.X86_16.").split(".")
+        path = _ROOT.joinpath(*rel_parts).with_suffix(".py")
         tree = ast.parse(path.read_text(), filename=str(path))
         if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for node in tree.body):
             offenders.append(str(path))
