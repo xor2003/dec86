@@ -2450,6 +2450,8 @@ def _align_function_header_with_cod_source_decl_text(
 
         return_type = decl_match.group("ret").strip()
         args = decl_match.group("args").strip()
+        if _source_decl_has_custom_ptr_8616(_split_args_8616(args)):
+            return c_text
         if args == "void":
             args = "void"
         args = args.replace("const char*", "const char *").replace("char*", "char *")
@@ -4364,7 +4366,15 @@ def _rewrite_cod_header_arg_parts_8616(
 ) -> tuple[list[str], bool]:
     def _impl():
         source_evidence_text = "\n".join(source_lines)
-        preserve_source_typedefs = bool(source_decl and (source_decl.strip().startswith("long ") or re.search(r"[A-Z]", source_decl.split("(", 1)[0] if "(" in source_decl else source_decl)))
+        source_has_custom_ptr = _source_decl_has_custom_ptr_8616(source_parts)
+        preserve_source_typedefs = bool(
+            source_decl
+            and not source_has_custom_ptr
+            and (
+                source_decl.strip().startswith("long ")
+                or re.search(r"[A-Z]", source_decl.split("(", 1)[0] if "(" in source_decl else source_decl)
+            )
+        )
 
         def normalize_arg_text(part: str) -> str:
             text = part
@@ -4391,6 +4401,7 @@ def _rewrite_cod_header_arg_parts_8616(
         source_arg_names = [_decl_arg_name_8616(part) for part in source_parts if _decl_arg_name_8616(part)]
         source_types_match_names = (
             bool(source_parts)
+            and not source_has_custom_ptr
             and len(parts) == len(source_parts)
             and len(current_arg_names) == len(source_arg_names)
             and current_arg_names == source_arg_names

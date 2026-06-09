@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from inertia_decompiler.cli_c_text_postprocess import (
     _align_unknown_call_names_from_cod_evidence_text,
+    _align_function_header_with_cod_source_decl_text,
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_generic_local_declarations_text,
     _materialize_missing_synthetic_global_declarations_text,
@@ -70,6 +71,52 @@ int SwapBars(int iRow1, int iRow2)
 
     assert "int *iRow2" not in rewritten
     assert "SwapBars(int iRow1, int iRow2)" in rewritten or "SwapBars( int iRow1, int iRow2 )" in rewritten
+
+
+def test_helper_call_format_keeps_codegen_header_for_custom_source_pointer_type():
+    c_text = """void Swaps(unsigned short *bar1, unsigned short *bar2)
+{
+    bar1[0] = bar2[0];
+}
+"""
+    metadata = SimpleNamespace(
+        source_lines=(
+            "void Swaps( BAR *bar1, BAR *bar2 )",
+            "{",
+            "}",
+        )
+    )
+    function = SimpleNamespace(name="Swaps")
+
+    rewritten = _align_function_header_with_cod_source_decl_text(c_text, function, metadata)
+
+    assert "void Swaps(unsigned short *bar1, unsigned short *bar2)" in rewritten
+    assert "BAR *" not in rewritten
+
+
+def test_cod_annotation_keeps_codegen_header_for_custom_source_pointer_type():
+    c_text = """void Swaps(unsigned short *bar1, unsigned short *bar2)
+{
+    unsigned short local_2;
+    local_2 = bar1[0];
+}
+"""
+    metadata = SimpleNamespace(
+        source_lines=(
+            "void Swaps( BAR *bar1, BAR *bar2 )",
+            "{",
+            "}",
+        ),
+        stack_aliases={4: "bar1", 6: "bar2"},
+        call_names=(),
+        global_names=(),
+    )
+    function = SimpleNamespace(name="Swaps")
+
+    rewritten = _materialize_annotated_cod_declarations_text(c_text, function, metadata)
+
+    assert "void Swaps(unsigned short *bar1, unsigned short *bar2)" in rewritten
+    assert "BAR *" not in rewritten
 
 
 def test_known_helper_signature_text_refuses_authoritative_codegen_signature():

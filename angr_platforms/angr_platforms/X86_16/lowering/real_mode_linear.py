@@ -118,6 +118,14 @@ class DirectStackMoveExpressionOp8616(Enum):
     SHL = "Shl"
 
 
+class DirectGlobalUpdateMaterializationKind8616(Enum):
+    """How a binary-proven direct global update was materialized in C."""
+
+    REPLACED_TAGGED_ASSIGNMENT = "replace"
+    INSERTED_BEFORE_NEXT_TAGGED_STATEMENT = "insert_before_next"
+    INSERTED_AT_BODY_START = "insert_body_start"
+
+
 @dataclass(frozen=True, slots=True)
 class DirectStackMoveFact8616:
     """Binary-proven direct BP-relative stack MOV side effect."""
@@ -3246,6 +3254,13 @@ def _callee_name_for_direct_stack_move_8616(project, target: int) -> tuple[str, 
     return f"sub_{int(target):x}", None, int(target)
 
 
+def _is_stack_probe_helper_name_for_linear_lowering_8616(name: str | None) -> bool:
+    if not isinstance(name, str):
+        return False
+    lowered = name.strip().lower().lstrip("_")
+    return lowered in {"anchkstk", "chkstk"}
+
+
 def _callee_has_zero_args_8616(callee, callee_name: str) -> bool:
     prototype = getattr(callee, "prototype", None)
     args = getattr(prototype, "args", None)
@@ -3424,6 +3439,67 @@ def _has_direct_global_update_assignment_8616(root, addr: int) -> bool:
         lhs = _strip_casts_8616(getattr(stmt, "lhs", None))
         variable = getattr(lhs, "variable", None) if isinstance(lhs, structured_c.CVariable) else None
         if isinstance(variable, SimMemoryVariable) and getattr(variable, "addr", None) == addr:
+            return True
+    return False
+
+
+def _global_cvar_identity_8616(cvar) -> tuple[int, int | None] | None:
+    cvar = _strip_casts_8616(cvar)
+    if not isinstance(cvar, structured_c.CVariable):
+        return None
+    variable = getattr(cvar, "variable", None)
+    if not isinstance(variable, SimMemoryVariable):
+        return None
+    addr = getattr(variable, "addr", None)
+    if not isinstance(addr, int):
+        return None
+    size = getattr(variable, "size", None)
+    return addr, size if isinstance(size, int) else None
+
+
+def _same_global_cvar_8616(lhs, rhs) -> bool:
+    lhs_id = _global_cvar_identity_8616(lhs)
+    rhs_id = _global_cvar_identity_8616(rhs)
+    return lhs_id is not None and lhs_id == rhs_id
+
+
+def _is_same_global_update_assignment_8616(stmt, dst_cvar, delta: int) -> bool:
+    if not isinstance(stmt, structured_c.CAssignment):
+        return False
+    if not _same_global_cvar_8616(getattr(stmt, "lhs", None), dst_cvar):
+        return False
+    rhs = _strip_casts_8616(getattr(stmt, "rhs", None))
+    if not isinstance(rhs, structured_c.CBinaryOp):
+        return False
+    expected_op = "Add" if delta > 0 else "Sub"
+    if getattr(rhs, "op", None) != expected_op:
+        return False
+    if not _same_global_cvar_8616(getattr(rhs, "lhs", None), dst_cvar):
+        return False
+    rhs_const = _strip_casts_8616(getattr(rhs, "rhs", None))
+    return isinstance(rhs_const, structured_c.CConstant) and getattr(rhs_const, "value", None) == abs(int(delta))
+
+
+def _list_has_global_update_assignment_8616(statements: list[object], dst_cvar, delta: int) -> bool:
+    for stmt in statements:
+        if _is_same_global_update_assignment_8616(stmt, dst_cvar, delta):
+            return True
+    return False
+
+
+def _insertion_point_has_global_update_assignment_8616(
+    statements: list[object],
+    insert_index: int,
+    dst_cvar,
+    delta: int,
+) -> bool:
+    if insert_index > 0:
+        previous_assignment = _last_transparent_assignment_8616(statements[insert_index - 1])
+        if _is_same_global_update_assignment_8616(previous_assignment, dst_cvar, delta):
+            return True
+    if insert_index < len(statements):
+        next_assignment = _first_transparent_assignment_8616(statements[insert_index])
+        if _is_same_global_update_assignment_8616(next_assignment, dst_cvar, delta):
             return True
     return False
 
@@ -3997,6 +4073,131 @@ def _insert_before_nearest_following_tagged_statement_8616(root, project, ins_ad
     return True
 
 
+def _insert_global_update_before_nearest_following_tagged_statement_8616(
+    root,
+    project,
+    ins_addr: int,
+    assignment,
+    *,
+    delta: int,
+) -> bool:
+    best: tuple[int, int, list[object], int] | None = None
+    dst_cvar = getattr(assignment, "lhs", None)
+    seen: set[int] = set()
+
+    def visit(node, depth: int) -> None:
+        nonlocal best
+        if node is None or id(node) in seen:
+            return
+        seen.add(id(node))
+        statements = getattr(node, "statements", None)
+        if isinstance(statements, list):
+            if _list_has_global_update_assignment_8616(statements, dst_cvar, delta):
+                setattr(root, "_inertia_global_update_assignment_already_present_8616", True)
+                return
+            for index, stmt in enumerate(tuple(statements)):
+                stmt_addr = _following_instruction_addr_in_node_8616(stmt, project, ins_addr, set())
+                if isinstance(stmt_addr, int):
+                    distance = stmt_addr - ins_addr
+                    if distance > 0 and (best is None or distance < best[0] or (distance == best[0] and depth > best[1])):
+                        best = (distance, depth, statements, index)
+                visit(stmt, depth + 1)
+        for attr in ("body", "else_node", "initializer", "iterator", "iteration"):
+            with contextlib.suppress(Exception):
+                child = getattr(node, attr, None)
+            if child is not None:
+                visit(child, depth + 1)
+        with contextlib.suppress(Exception):
+            pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            for _condition, body in tuple(pairs):
+                visit(body, depth + 1)
+
+    visit(root, 0)
+    if best is None:
+        return False
+    _distance, _depth, statements, index = best
+    if _insertion_point_has_global_update_assignment_8616(statements, index, dst_cvar, delta):
+        setattr(root, "_inertia_global_update_assignment_already_present_8616", True)
+        return False
+    statements.insert(index, assignment)
+    return True
+
+
+def _direct_global_update_ordered_insns_8616(project, function) -> tuple[object, ...]:
+    ordered: list[object] = []
+    for block in _direct_global_update_blocks_8616(project, function):
+        for wrapper in _capstone_insns_for_direct_global_update_8616(project, block):
+            insn = getattr(wrapper, "insn", wrapper)
+            if isinstance(getattr(insn, "address", None), int):
+                ordered.append(insn)
+    return tuple(sorted(ordered, key=lambda insn: int(getattr(insn, "address", 0))))
+
+
+def _operand_is_stack_memory_8616(operand) -> bool:
+    if getattr(operand, "type", None) != X86_OP_MEM:
+        return False
+    mem = getattr(operand, "mem", None)
+    if mem is None:
+        return False
+    base = getattr(mem, "base", X86_REG_INVALID)
+    index = getattr(mem, "index", X86_REG_INVALID)
+    return base in {X86_REG_BP, X86_REG_SP} and index in {0, X86_REG_INVALID}
+
+
+def _setup_prefix_instruction_is_nonsemantic_8616(project, insn) -> bool:
+    insn_id = getattr(insn, "id", None)
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if insn_id in {X86_INS_PUSH, X86_INS_POP}:
+        return all(getattr(operand, "type", None) in {X86_OP_REG, X86_OP_IMM} for operand in operands)
+    if insn_id == X86_INS_MOV:
+        return all(getattr(operand, "type", None) != X86_OP_MEM or _operand_is_stack_memory_8616(operand) for operand in operands)
+    if insn_id in {X86_INS_ADD, X86_INS_SUB}:
+        if len(operands) != 2 or getattr(operands[0], "type", None) != X86_OP_REG:
+            return False
+        return getattr(operands[0], "reg", None) in {X86_REG_SP, X86_REG_BP}
+    if insn_id in {X86_INS_CALL, X86_INS_LCALL}:
+        if len(operands) != 1:
+            return False
+        target = _direct_call_target_from_operand_8616(operands[0])
+        if target is None:
+            return False
+        callee_name, _callee, _resolved_target = _callee_name_for_direct_stack_move_8616(project, target)
+        return _is_stack_probe_helper_name_for_linear_lowering_8616(callee_name)
+    return False
+
+
+def _direct_global_update_can_insert_at_body_start_8616(project, function, fact: DirectGlobalUpdateFact8616) -> bool:
+    insns = _direct_global_update_ordered_insns_8616(project, function)
+    if not insns:
+        return False
+    found_fact = False
+    for insn in insns:
+        ins_addr = getattr(insn, "address", None)
+        if not isinstance(ins_addr, int):
+            continue
+        if ins_addr == fact.ins_addr:
+            found_fact = True
+            break
+        if ins_addr > fact.ins_addr:
+            break
+        if not _setup_prefix_instruction_is_nonsemantic_8616(project, insn):
+            return False
+    return found_fact
+
+
+def _insert_global_update_at_body_start_8616(root, assignment, *, delta: int) -> bool:
+    statements = getattr(root, "statements", None)
+    if not isinstance(statements, list):
+        return False
+    dst_cvar = getattr(assignment, "lhs", None)
+    if _list_has_global_update_assignment_8616(statements, dst_cvar, delta):
+        setattr(root, "_inertia_global_update_assignment_already_present_8616", True)
+        return False
+    statements.insert(0, assignment)
+    return True
+
+
 def materialize_direct_global_incdec_instructions_8616(codegen, project=None, function=None) -> bool:
     """Materialize direct no-base/no-index real-mode global INC/DEC effects."""
 
@@ -4014,7 +4215,16 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
 
     stats = getattr(codegen, "_inertia_direct_global_update_lowering_8616", None)
     if not isinstance(stats, dict):
-        stats = {"raw_fact_count": 0, "classified_fact_count": 0, "materialized_count": 0, "failure_count": 0}
+        stats = {
+            "raw_fact_count": 0,
+            "classified_fact_count": 0,
+            "materialized_count": 0,
+            "replaced_count": 0,
+            "inserted_count": 0,
+            "body_start_inserted_count": 0,
+            "already_materialized_count": 0,
+            "failure_count": 0,
+        }
         setattr(codegen, "_inertia_direct_global_update_lowering_8616", stats)
 
     facts = _direct_global_update_instruction_facts_8616(project, function)
@@ -4054,7 +4264,12 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
         stats["classified_fact_count"] = int(stats.get("classified_fact_count", 0) or 0) + 1
         name = _direct_global_update_name_8616(project, getattr(getattr(codegen, "cfunc", None), "addr", None), addr)
         variable = SimMemoryVariable(addr, width, name=name, region=getattr(getattr(codegen, "cfunc", None), "addr", None))
-        cvar = structured_c.CVariable(variable, variable_type=_type_for_access_width_8616(width), codegen=codegen)
+        cvar = structured_c.CVariable(
+            variable,
+            unified_variable=variable,
+            variable_type=_type_for_access_width_8616(width),
+            codegen=codegen,
+        )
         variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
         if isinstance(variables_in_use, dict):
             variables_in_use[variable] = cvar
@@ -4071,8 +4286,51 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
             )
             return structured_c.CAssignment(_cvar, rhs, codegen=codegen, tags=tags)
 
-        if not _replace_tagged_assignment_8616(root, project, fact.ins_addr, replacement_factory):
+        materialized = _replace_tagged_assignment_8616(root, project, fact.ins_addr, replacement_factory)
+        materialized_by = DirectGlobalUpdateMaterializationKind8616.REPLACED_TAGGED_ASSIGNMENT if materialized else None
+        if materialized:
+            stats["replaced_count"] = int(stats.get("replaced_count", 0) or 0) + 1
+        else:
+            inserted_assignment = replacement_factory({"ins_addr": fact.ins_addr})
+            materialized = _insert_global_update_before_nearest_following_tagged_statement_8616(
+                root,
+                project,
+                fact.ins_addr,
+                inserted_assignment,
+                delta=delta,
+            )
+            if materialized:
+                materialized_by = DirectGlobalUpdateMaterializationKind8616.INSERTED_BEFORE_NEXT_TAGGED_STATEMENT
+                stats["inserted_count"] = int(stats.get("inserted_count", 0) or 0) + 1
+            elif _direct_global_update_can_insert_at_body_start_8616(project, function, fact):
+                materialized = _insert_global_update_at_body_start_8616(
+                    root,
+                    inserted_assignment,
+                    delta=delta,
+                )
+                if materialized:
+                    materialized_by = DirectGlobalUpdateMaterializationKind8616.INSERTED_AT_BODY_START
+                    stats["body_start_inserted_count"] = int(stats.get("body_start_inserted_count", 0) or 0) + 1
+
+        if not materialized:
+            if bool(getattr(root, "_inertia_global_update_assignment_already_present_8616", False)):
+                stats["already_materialized_count"] = int(stats.get("already_materialized_count", 0) or 0) + 1
+                if os.environ.get("INERTIA_DEBUG_GLOBAL_UPDATE") == "1":
+                    print(
+                        "[dbg-global-update] already-present "
+                        f"ins={fact.ins_addr:#x} addr={addr:#x} name={name}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                continue
             stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
+            if os.environ.get("INERTIA_DEBUG_GLOBAL_UPDATE") == "1":
+                print(
+                    "[dbg-global-update] failed-materialize "
+                    f"ins={fact.ins_addr:#x} addr={addr:#x} name={name} stats={stats!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             continue
 
         ctype = "unsigned char" if width == 1 else "unsigned short"
@@ -4102,6 +4360,14 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
             ),
         )
         stats["materialized_count"] = int(stats.get("materialized_count", 0) or 0) + 1
+        if os.environ.get("INERTIA_DEBUG_GLOBAL_UPDATE") == "1":
+            print(
+                "[dbg-global-update] materialized "
+                f"kind={materialized_by.name if materialized_by is not None else None} "
+                f"ins={fact.ins_addr:#x} addr={addr:#x} name={name} stats={stats!r}",
+                file=sys.stderr,
+                flush=True,
+            )
         changed = True
 
     if changed and getattr(codegen.cfunc, "body", None) is root:

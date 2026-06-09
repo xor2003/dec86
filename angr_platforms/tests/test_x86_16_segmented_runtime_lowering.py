@@ -22,6 +22,7 @@ from capstone.x86_const import (
     X86_INS_DEC,
     X86_INS_INC,
     X86_INS_MOV,
+    X86_INS_PUSH,
     X86_INS_SHL,
     X86_OP_IMM,
     X86_OP_MEM,
@@ -298,6 +299,31 @@ def test_materialize_direct_global_inc_redecodes_blocks_without_capstone_details
 
 def test_materialize_direct_global_inc_refuses_without_tagged_site():
     project, codegen = _project()
+    unknown_call = SimpleNamespace(address=0x4014, id=X86_INS_CALL, operands=(_imm_operand(0x2000),))
+    mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x1234)
+    operand = SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem)
+    insn = SimpleNamespace(address=0x4018, id=X86_INS_INC, operands=(operand,))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(unknown_call, insn))),))
+
+    changed = materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == []
+
+
+def test_materialize_direct_global_inc_inserts_before_next_tagged_statement():
+    project, codegen = _project()
+    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: SimpleNamespace(global_names=("counter",))}
+    later_var = SimRegisterVariable(0, 2, name="ax")
+    later = CVariable(later_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.statements.statements.append(
+        CAssignment(
+            later,
+            CConstant(7, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+            tags={"ins_addr": 0x4020},
+        )
+    )
     mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x1234)
     operand = SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem)
     insn = SimpleNamespace(address=0x4018, id=X86_INS_INC, operands=(operand,))
@@ -305,8 +331,62 @@ def test_materialize_direct_global_inc_refuses_without_tagged_site():
 
     changed = materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
 
-    assert changed is False
-    assert codegen.cfunc.statements.statements == []
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 2
+    inserted = statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable.name == "counter"
+    assert inserted.lhs.variable.addr == 0x1234
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Add"
+    assert statements[1].lhs.variable.name == "ax"
+    stats = codegen._inertia_direct_global_update_lowering_8616
+    assert stats["materialized_count"] == 1
+    assert stats["inserted_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_global_inc_inserts_at_body_start_after_stack_probe_prefix_without_tags():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(labels={0x2000: "aNchkstk"})
+    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: SimpleNamespace(global_names=("counter",))}
+    later_var = SimRegisterVariable(0, 2, name="ax")
+    later = CVariable(later_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.statements.statements.append(
+        CAssignment(
+            later,
+            CConstant(7, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+    )
+    push_bp = SimpleNamespace(address=0x4010, id=X86_INS_PUSH, operands=(_reg_operand(X86_REG_BP),))
+    mov_ax = SimpleNamespace(address=0x4011, id=X86_INS_MOV, operands=(_reg_operand(X86_REG_AX), _imm_operand(2)))
+    call_probe = SimpleNamespace(address=0x4014, id=X86_INS_CALL, operands=(_imm_operand(0x2000),))
+    mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x1234)
+    operand = SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem)
+    inc_global = SimpleNamespace(address=0x4017, id=X86_INS_INC, operands=(operand,))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(push_bp, mov_ax, call_probe, inc_global))),),
+    )
+
+    changed = materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 2
+    inserted = statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable.name == "counter"
+    assert inserted.lhs.variable.addr == 0x1234
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Add"
+    assert statements[1].lhs.variable.name == "ax"
+    stats = codegen._inertia_direct_global_update_lowering_8616
+    assert stats["materialized_count"] == 1
+    assert stats["body_start_inserted_count"] == 1
+    assert stats["failure_count"] == 0
 
 
 def test_materialize_direct_stack_inc_instruction_replaces_tagged_loop_iterator():
