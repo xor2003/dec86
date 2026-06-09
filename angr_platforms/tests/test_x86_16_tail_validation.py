@@ -2513,3 +2513,196 @@ def test_tail_validation_compare_summaries_treats_negated_compare_and_inverted_c
 
     assert diff["changed"] is False
     assert diff["status"] == "stable"
+
+
+def test_tail_validation_normalizes_void_return_loop_exit_guard_to_loop_condition():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before_cond = CBinaryOp(
+        "CmpLE",
+        _reg(project, "ax", before_codegen),
+        _stack(-4, before_codegen, name="goal"),
+        codegen=before_codegen,
+    )
+    after_cond = CBinaryOp(
+        "CmpGT",
+        _reg(project, "ax", after_codegen),
+        _stack(-4, after_codegen, name="goal"),
+        codegen=after_codegen,
+    )
+    before = _codegen(
+        [CWhileLoop(before_cond, CStatements([], codegen=before_codegen), codegen=before_codegen)],
+        before_codegen,
+    )
+    after = _codegen(
+        [
+            CWhileLoop(
+                _const(1, after_codegen),
+                CStatements(
+                    [
+                        CIfElse(
+                            [
+                                (
+                                    after_cond,
+                                    CStatements([CReturn(None, codegen=after_codegen)], codegen=after_codegen),
+                                )
+                            ],
+                            else_node=None,
+                            codegen=after_codegen,
+                        )
+                    ],
+                    codegen=after_codegen,
+                ),
+                codegen=after_codegen,
+            )
+        ],
+        after_codegen,
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(
+        collect_x86_16_tail_validation_summary(project, before, mode="live_out"),
+        collect_x86_16_tail_validation_summary(project, after, mode="live_out"),
+    )
+
+    assert diff["changed"] is False
+    assert diff["status"] == "stable"
+
+
+def test_tail_validation_normalizes_void_return_loop_exit_guard_after_call_feeder(monkeypatch):
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before_call = CFunctionCall("clock", None, [], codegen=before_codegen)
+    after_call = CFunctionCall("clock", None, [], codegen=after_codegen)
+    before_cond = CBinaryOp(
+        "CmpLE",
+        before_call,
+        _stack(-4, before_codegen, name="goal"),
+        codegen=before_codegen,
+    )
+    feeder = CAssignment(_reg(project, "ax", after_codegen, var_name="t"), after_call, codegen=after_codegen)
+    after_cond = CBinaryOp(
+        "CmpGT",
+        _reg(project, "ax", after_codegen, var_name="t"),
+        _stack(-4, after_codegen, name="goal"),
+        codegen=after_codegen,
+    )
+    before = _codegen(
+        [CWhileLoop(before_cond, CStatements([], codegen=before_codegen), codegen=before_codegen)],
+        before_codegen,
+    )
+    after = _codegen(
+        [
+            CWhileLoop(
+                _const(1, after_codegen),
+                CStatements(
+                    [
+                        feeder,
+                        CIfElse(
+                            [
+                                (
+                                    after_cond,
+                                    CStatements([CReturn(None, codegen=after_codegen)], codegen=after_codegen),
+                                )
+                            ],
+                            else_node=None,
+                            codegen=after_codegen,
+                        ),
+                    ],
+                    codegen=after_codegen,
+                ),
+                codegen=after_codegen,
+            )
+        ],
+        after_codegen,
+    )
+
+    monkeypatch.setattr(
+        tail_validation_module,
+        "build_x86_16_contextual_condition_fingerprints",
+        lambda _root, _project: {id(after_cond): "CmpGT(call:clock(),stack_slot:SS:BP-0x4:size2)"},
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(
+        collect_x86_16_tail_validation_summary(project, before, mode="live_out"),
+        collect_x86_16_tail_validation_summary(project, after, mode="live_out"),
+    )
+
+    assert diff["changed"] is False
+    assert diff["status"] == "stable"
+
+
+def test_tail_validation_normalizes_multi_branch_void_return_loop_exit_guard(monkeypatch):
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before_cond = CBinaryOp(
+        "CmpLE",
+        CFunctionCall("clock", None, [], codegen=before_codegen),
+        _stack(-4, before_codegen, name="goal"),
+        codegen=before_codegen,
+    )
+    first_exit_cond = CBinaryOp(
+        "CmpGT",
+        _reg(project, "dx", after_codegen),
+        _stack(-2, after_codegen, name="goal_hi"),
+        codegen=after_codegen,
+    )
+    second_exit_cond = CBinaryOp(
+        "CmpGT",
+        _reg(project, "ax", after_codegen),
+        _stack(-4, after_codegen, name="goal_lo"),
+        codegen=after_codegen,
+    )
+    before = _codegen(
+        [CWhileLoop(before_cond, CStatements([], codegen=before_codegen), codegen=before_codegen)],
+        before_codegen,
+    )
+    after = _codegen(
+        [
+            CWhileLoop(
+                _const(1, after_codegen),
+                CStatements(
+                    [
+                        CAssignment(
+                            _reg(project, "ax", after_codegen, var_name="t"),
+                            CFunctionCall("clock", None, [], codegen=after_codegen),
+                            codegen=after_codegen,
+                        ),
+                        CIfElse(
+                            [
+                                (
+                                    first_exit_cond,
+                                    CStatements([CReturn(None, codegen=after_codegen)], codegen=after_codegen),
+                                ),
+                                (
+                                    second_exit_cond,
+                                    CStatements([CReturn(None, codegen=after_codegen)], codegen=after_codegen),
+                                ),
+                            ],
+                            else_node=None,
+                            codegen=after_codegen,
+                        ),
+                    ],
+                    codegen=after_codegen,
+                ),
+                codegen=after_codegen,
+            )
+        ],
+        after_codegen,
+    )
+
+    monkeypatch.setattr(
+        tail_validation_module,
+        "build_x86_16_contextual_condition_fingerprints",
+        lambda _root, _project: {id(first_exit_cond): "CmpGT(call:clock(),stack_slot:SS:BP-0x4:size2)"},
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(
+        collect_x86_16_tail_validation_summary(project, before, mode="live_out"),
+        collect_x86_16_tail_validation_summary(project, after, mode="live_out"),
+    )
+
+    assert diff["changed"] is False
+    assert diff["status"] == "stable"

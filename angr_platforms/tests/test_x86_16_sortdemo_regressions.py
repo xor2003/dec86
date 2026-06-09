@@ -76,7 +76,7 @@ def _run_decompile_file(
 
 
 def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_clean():
-    result = _run_decompile_addr(SORTDEMO_EXE, 0x10F38)
+    result = _run_decompile_addr(SORTDEMO_EXE, 0x10F38, analysis_timeout=30)
     scorecard = build_acceptance_scorecard(
         "Sleep",
         _combined_output(result),

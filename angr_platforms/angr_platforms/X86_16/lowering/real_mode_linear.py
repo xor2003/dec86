@@ -3201,16 +3201,49 @@ def _direct_call_target_from_operand_8616(operand) -> int | None:
     return target if isinstance(target, int) else None
 
 
-def _callee_name_for_direct_stack_move_8616(project, target: int) -> tuple[str, object | None]:
-    functions = getattr(getattr(project, "kb", None), "functions", None)
-    callee = None
-    if functions is not None:
-        with contextlib.suppress(Exception):
-            callee = functions.function(addr=int(target), create=False)
-    name = getattr(callee, "name", None)
-    if not isinstance(name, str) or not name:
-        name = f"sub_{int(target):x}"
-    return name, callee
+def _direct_stack_move_call_target_candidates_8616(project, target: int) -> tuple[tuple[object, int], ...]:
+    candidates: list[tuple[object, int]] = [(project, int(target))]
+    delta = getattr(project, "_inertia_original_linear_delta", None)
+    original_project = getattr(project, "_inertia_original_project", None)
+    if original_project is not None:
+        candidates.append((original_project, int(target)))
+        if isinstance(delta, int) and delta:
+            candidates.append((original_project, int(target) + delta))
+            rebased = int(target) - delta
+            if rebased >= 0:
+                candidates.append((project, rebased))
+    deduped: list[tuple[object, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for candidate_project, candidate_target in candidates:
+        key = (id(candidate_project), int(candidate_target))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((candidate_project, int(candidate_target)))
+    return tuple(deduped)
+
+
+def _callee_name_for_direct_stack_move_8616(project, target: int) -> tuple[str, object | None, int]:
+    for candidate_project, candidate_target in _direct_stack_move_call_target_candidates_8616(project, target):
+        functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
+        callee = None
+        if functions is not None:
+            with contextlib.suppress(Exception):
+                callee = functions.function(addr=int(candidate_target), create=False)
+        name = getattr(callee, "name", None)
+        if isinstance(name, str) and name:
+            return name, callee, int(candidate_target)
+        for labels in (
+            getattr(getattr(candidate_project, "kb", None), "labels", None),
+            getattr(getattr(candidate_project, "_inertia_lst_metadata", None), "code_labels", None),
+        ):
+            if labels is None:
+                continue
+            with contextlib.suppress(Exception):
+                label = labels.get(int(candidate_target))
+                if isinstance(label, str) and label.strip():
+                    return label.lstrip("_"), callee, int(candidate_target)
+    return f"sub_{int(target):x}", None, int(target)
 
 
 def _callee_has_zero_args_8616(callee, callee_name: str) -> bool:
@@ -3237,7 +3270,7 @@ def _wide_call_return_stack_arith_fact_at_8616(project, insns: tuple[object, ...
     call_target = _direct_call_target_from_operand_8616(call_operands[0])
     if call_target is None:
         return None
-    callee_name, callee = _callee_name_for_direct_stack_move_8616(project, call_target)
+    callee_name, callee, resolved_call_target = _callee_name_for_direct_stack_move_8616(project, call_target)
     if not _callee_has_zero_args_8616(callee, callee_name):
         return None
     if getattr(add_insn, "id", None) != X86_INS_ADD or getattr(adc_insn, "id", None) != X86_INS_ADC:
@@ -3286,7 +3319,7 @@ def _wide_call_return_stack_arith_fact_at_8616(project, insns: tuple[object, ...
         ins_addr,
         source_offset=arg_offset,
         source_op=DirectStackMoveExpressionOp8616.ADD,
-        source_call_target=call_target,
+        source_call_target=resolved_call_target,
         source_call_name=callee_name,
     )
 
@@ -3493,7 +3526,10 @@ def _direct_stack_move_source_expr_8616(codegen, fact: DirectStackMoveFact8616):
         call_name = fact.source_call_name
         callee = None
         if project is not None:
-            call_name, callee = _callee_name_for_direct_stack_move_8616(project, fact.source_call_target)
+            call_name, callee, _resolved_call_target = _callee_name_for_direct_stack_move_8616(
+                project,
+                fact.source_call_target,
+            )
         if not isinstance(call_name, str) or not call_name:
             call_name = f"sub_{int(fact.source_call_target):x}"
         call_expr = structured_c.CFunctionCall(call_name, callee, [], codegen=codegen)
@@ -3660,7 +3696,26 @@ def _is_control_statement_8616(stmt) -> bool:
     return any(hasattr(stmt, attr) for attr in ("condition_and_nodes", "body", "else_node", "iterator", "iteration"))
 
 
-def _replace_precontrol_stack_assignment_8616(root, dst_cvar, replacement, *, allow_low_half_lhs: bool = False) -> bool:
+def _call_name_from_expr_8616(expr) -> str | None:
+    expr = _strip_casts_8616(expr)
+    if not isinstance(expr, structured_c.CFunctionCall):
+        return None
+    target = getattr(expr, "callee_target", None)
+    if isinstance(target, str) and target.strip():
+        return target.lstrip("_")
+    callee = getattr(expr, "callee_func", None)
+    name = getattr(callee, "name", None)
+    return name.lstrip("_") if isinstance(name, str) and name.strip() else None
+
+
+def _replace_precontrol_stack_assignment_8616(
+    root,
+    dst_cvar,
+    replacement,
+    *,
+    allow_low_half_lhs: bool = False,
+    consume_following_call_name: str | None = None,
+) -> bool:
     refused: list[str] = []
 
     def scan_container(container, path: str) -> bool:
@@ -3693,6 +3748,19 @@ def _replace_precontrol_stack_assignment_8616(root, dst_cvar, replacement, *, al
                 )
                 continue
             statements[index] = replacement
+            if isinstance(consume_following_call_name, str) and index + 1 < len(statements):
+                next_stmt = statements[index + 1]
+                next_lhs = getattr(next_stmt, "lhs", None)
+                next_rhs = getattr(next_stmt, "rhs", None)
+                if (
+                    isinstance(next_stmt, structured_c.CAssignment)
+                    and (
+                        _same_stack_cvar_8616(next_lhs, dst_cvar)
+                        or _same_stack_low_half_cvar_8616(next_lhs, dst_cvar)
+                    )
+                    and _call_name_from_expr_8616(next_rhs) == consume_following_call_name.lstrip("_")
+                ):
+                    del statements[index + 1]
             return True
         return False
 
@@ -4165,6 +4233,7 @@ def materialize_direct_stack_mov_instructions_8616(
                     dst_cvar,
                     fallback_assignment,
                     allow_low_half_lhs=True,
+                    consume_following_call_name=fact.source_call_name,
                 )
             elif fact.source_kind is DirectStackMoveSourceKind8616.STACK_SLOT and allow_stack_slot_fallback:
                 materialized = _insert_after_nearest_preceding_tagged_statement_8616(

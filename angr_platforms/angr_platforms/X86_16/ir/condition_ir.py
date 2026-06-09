@@ -426,6 +426,20 @@ def normalize_condition_fingerprint_string_8616(
     return value
 
 
+def invert_condition_fingerprint_string_8616(value: str) -> str | None:
+    """Invert a comparison fingerprint while preserving its arguments."""
+    call = _split_fingerprint_call_8616(value)
+    if call is None:
+        return None
+    op, inner = call
+    if op == "Not":
+        return inner
+    inverted = inverted_comparison_op_8616(op)
+    if inverted is None:
+        return None
+    return f"{inverted}({inner})"
+
+
 def _split_fingerprint_call_8616(value: str) -> tuple[str, str] | None:
     """Split ``CmpEQ(reg:ax,#0x0)`` into (``CmpEQ``, ``reg:ax,#0x0``)."""
     if not isinstance(value, str) or not value.endswith(")"):

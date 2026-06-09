@@ -16,7 +16,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from capstone.x86_const import (
+    X86_INS_ADC,
     X86_INS_ADD,
+    X86_INS_CALL,
     X86_INS_DEC,
     X86_INS_INC,
     X86_INS_MOV,
@@ -26,6 +28,7 @@ from capstone.x86_const import (
     X86_OP_REG,
     X86_REG_AX,
     X86_REG_BP,
+    X86_REG_DX,
     X86_REG_INVALID,
 )
 from inertia_decompiler.cli_arg_parser import _build_cli_argument_parser
@@ -33,6 +36,8 @@ from inertia_decompiler.recompile_check import check_c_recompiles_8616
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering.real_mode_linear import (
+    DirectStackMoveSourceKind8616,
+    _direct_stack_move_instruction_facts_8616,
     materialize_direct_global_incdec_instructions_8616,
     materialize_direct_stack_incdec_instructions_8616,
     materialize_direct_stack_mov_instructions_8616,
@@ -63,6 +68,141 @@ def _project():
     root = CStatements([], addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root, variables_in_use={}, unified_local_vars={})
     return project, codegen
+
+
+def _reg_operand(reg, *, size=2):
+    return SimpleNamespace(type=X86_OP_REG, size=size, reg=reg)
+
+
+def _bp_mem_operand(offset: int, *, size=2):
+    return SimpleNamespace(
+        type=X86_OP_MEM,
+        size=size,
+        mem=SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=offset),
+    )
+
+
+def _imm_operand(value: int, *, size=2):
+    return SimpleNamespace(type=X86_OP_IMM, size=size, imm=value)
+
+
+def test_direct_stack_move_wide_call_return_uses_original_project_for_rebased_call_target():
+    class _Functions:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            return None
+
+    original_project = SimpleNamespace(
+        kb=SimpleNamespace(functions=_Functions(), labels={}),
+        _inertia_lst_metadata=SimpleNamespace(code_labels={0x1137E: "_clock"}),
+    )
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(functions=_Functions()),
+        _inertia_original_project=original_project,
+        _inertia_original_linear_delta=0xFF38,
+    )
+    call = SimpleNamespace(address=0x100B, id=X86_INS_CALL, operands=(_imm_operand(0x1446),))
+    add = SimpleNamespace(
+        address=0x100E,
+        id=X86_INS_ADD,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(4)),
+    )
+    adc = SimpleNamespace(
+        address=0x1011,
+        id=X86_INS_ADC,
+        operands=(_reg_operand(X86_REG_DX), _bp_mem_operand(6)),
+    )
+    mov_lo = SimpleNamespace(
+        address=0x1014,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-4), _reg_operand(X86_REG_AX)),
+    )
+    mov_hi = SimpleNamespace(
+        address=0x1017,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(call,))),
+            SimpleNamespace(capstone=SimpleNamespace(insns=(add, adc, mov_lo, mov_hi))),
+        )
+    )
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.source_kind is DirectStackMoveSourceKind8616.WIDE_CALL_RETURN_STACK_ARITH
+    assert fact.dst_offset == -4
+    assert fact.width == 4
+    assert fact.source_offset == 4
+    assert fact.source_call_target == 0x1137E
+    assert fact.source_call_name == "clock"
+
+
+def test_materialize_wide_call_return_consumes_following_low_half_call_assignment():
+    class _Functions:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            return None
+
+    project, codegen = _project()
+    original_project = SimpleNamespace(
+        kb=SimpleNamespace(functions=_Functions(), labels={}),
+        _inertia_lst_metadata=SimpleNamespace(code_labels={0x1137E: "_clock"}),
+    )
+    project.kb = SimpleNamespace(functions=_Functions(), labels={})
+    project._inertia_original_project = original_project
+    project._inertia_original_linear_delta = 0xFF38
+    low_goal = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="goal"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.extend(
+        [
+            CAssignment(low_goal, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            CAssignment(low_goal, CFunctionCall("clock", None, [], codegen=codegen), codegen=codegen),
+        ]
+    )
+    call = SimpleNamespace(address=0x100B, id=X86_INS_CALL, operands=(_imm_operand(0x1446),))
+    add = SimpleNamespace(
+        address=0x100E,
+        id=X86_INS_ADD,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(4)),
+    )
+    adc = SimpleNamespace(
+        address=0x1011,
+        id=X86_INS_ADC,
+        operands=(_reg_operand(X86_REG_DX), _bp_mem_operand(6)),
+    )
+    mov_lo = SimpleNamespace(
+        address=0x1014,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-4), _reg_operand(X86_REG_AX)),
+    )
+    mov_hi = SimpleNamespace(
+        address=0x1017,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(call,))),
+            SimpleNamespace(capstone=SimpleNamespace(insns=(add, adc, mov_lo, mov_hi))),
+        )
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    stmt = codegen.cfunc.statements.statements[0]
+    assert isinstance(stmt, CAssignment)
+    assert isinstance(stmt.rhs, CBinaryOp)
+    assert stmt.rhs.op == "Add"
+    assert isinstance(stmt.rhs.lhs, CFunctionCall)
+    assert getattr(stmt.rhs.lhs, "callee_target", None) == "clock"
 
 
 def test_materialize_direct_global_inc_instruction_from_binary_evidence():

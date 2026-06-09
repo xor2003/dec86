@@ -38,6 +38,7 @@ from .decompiler_postprocess_flags import _split_ordering_if_chain_replacement_c
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 from .ir.condition_ir import (
     _INVERTED_COMPARISON_OPS_8616,
+    invert_condition_fingerprint_string_8616,
     normalize_condition_fingerprint_algebraic_8616,
     normalize_condition_fingerprint_string_8616,
 )
@@ -202,6 +203,11 @@ def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -
 def _invert_condition_fingerprint_8616(
     node, project, contextual_condition_fingerprints: Mapping[int, str]
 ) -> str | None:
+    contextual = contextual_condition_fingerprints.get(id(node))
+    if contextual is not None:
+        inverted_contextual = invert_condition_fingerprint_string_8616(contextual)
+        if inverted_contextual is not None:
+            return inverted_contextual
     if isinstance(node, CBinaryOp):
         inverted_op = _INVERTED_COMPARISON_OPS_8616.get(node.op)
         if inverted_op is not None:
@@ -210,7 +216,7 @@ def _invert_condition_fingerprint_8616(
             return f"{inverted_op}({lhs},{rhs})"
     if isinstance(node, CUnaryOp) and node.op == "Not":
         return contextual_condition_fingerprints.get(id(node.operand), _expr_fingerprint(node.operand, project))
-    fingerprint = contextual_condition_fingerprints.get(id(node), _expr_fingerprint(node, project))
+    fingerprint = contextual or _expr_fingerprint(node, project)
     return _wrap_not_fingerprint(fingerprint)
 
 
@@ -227,21 +233,37 @@ def _extract_loop_break_guard_normalization_8616(
         if not statements:
             return None
 
-        first_stmt = statements[0]
-        break_cond = None
-        suppressed_node_ids = {id(first_stmt)}
+        guard_index = 0
+        while guard_index < len(statements) and isinstance(statements[guard_index], CAssignment):
+            guard_index += 1
+        if guard_index >= len(statements):
+            return None
 
-        if isinstance(first_stmt, CIfBreak):
-            break_cond = getattr(first_stmt, "condition", None)
-        elif isinstance(first_stmt, CIfElse):
-            branches = tuple(getattr(first_stmt, "condition_and_nodes", ()) or ())
-            if len(branches) != 1 or getattr(first_stmt, "else_node", None) is not None:
+        guard_stmt = statements[guard_index]
+        break_cond = None
+        suppressed_node_ids = {id(guard_stmt)}
+
+        def _is_void_loop_exit_stmt_8616(stmt) -> bool:
+            if isinstance(stmt, CBreak):
+                return True
+            if isinstance(stmt, CReturn) and getattr(stmt, "retval", None) is None:
+                return True
+            return False
+
+        if isinstance(guard_stmt, CIfBreak):
+            break_cond = getattr(guard_stmt, "condition", None)
+        elif isinstance(guard_stmt, CIfElse):
+            branches = tuple(getattr(guard_stmt, "condition_and_nodes", ()) or ())
+            else_node = getattr(guard_stmt, "else_node", None)
+            else_statements = tuple(getattr(else_node, "statements", ()) or ()) if else_node is not None else ()
+            if len(branches) < 1 or else_statements:
                 return None
-            break_cond, branch_node = branches[0]
-            branch_statements = tuple(getattr(branch_node, "statements", ()) or ())
-            if len(branch_statements) != 1 or not isinstance(branch_statements[0], CBreak):
-                return None
-            suppressed_node_ids.add(id(branch_statements[0]))
+            break_cond = branches[0][0]
+            for _branch_cond, branch_node in branches:
+                branch_statements = tuple(getattr(branch_node, "statements", ()) or ())
+                if len(branch_statements) != 1 or not _is_void_loop_exit_stmt_8616(branch_statements[0]):
+                    return None
+                suppressed_node_ids.add(id(branch_statements[0]))
         else:
             return None
 
@@ -250,6 +272,18 @@ def _extract_loop_break_guard_normalization_8616(
         normalized = _invert_condition_fingerprint_8616(break_cond, project, contextual_condition_fingerprints)
         if normalized is None:
             return None
+        if guard_index > 0:
+            contextual_fingerprint = contextual_condition_fingerprints.get(id(break_cond))
+            if contextual_fingerprint is None:
+                return None
+            prefix_assignments = statements[:guard_index]
+            prefix_has_call = any(
+                isinstance(child, CFunctionCall)
+                for stmt in prefix_assignments
+                for child in _iter_c_nodes_deep_8616(getattr(stmt, "rhs", None))
+            )
+            if prefix_has_call and "call:" not in contextual_fingerprint:
+                return None
         return normalized, suppressed_node_ids
 
     return _impl()
