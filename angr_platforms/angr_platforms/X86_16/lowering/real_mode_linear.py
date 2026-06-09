@@ -23,6 +23,8 @@ from capstone.x86_const import (
     X86_INS_ADC,
     X86_INS_ADD,
     X86_INS_CALL,
+    X86_INS_CDQ,
+    X86_INS_CWD,
     X86_INS_DEC,
     X86_INS_INC,
     X86_INS_LCALL,
@@ -31,6 +33,7 @@ from capstone.x86_const import (
     X86_INS_PUSH,
     X86_INS_RET,
     X86_INS_SAL,
+    X86_INS_SAR,
     X86_INS_SHL,
     X86_INS_SUB,
     X86_OP_IMM,
@@ -116,6 +119,7 @@ class DirectStackMoveExpressionOp8616(Enum):
 
     ADD = "Add"
     SHL = "Shl"
+    SIGNED_DIV2 = "Div"
 
 
 class DirectGlobalUpdateMaterializationKind8616(Enum):
@@ -3198,6 +3202,52 @@ def _previous_shifted_stack_load_for_register_8616(
     return source_offset, immediate, DirectStackMoveExpressionOp8616.SHL
 
 
+def _previous_signed_half_stack_load_for_register_8616(
+    insns: tuple[object, ...], index: int, reg_id: int, width: int
+) -> tuple[int, int, DirectStackMoveExpressionOp8616] | None:
+    """Recover MS C signed /2 lowering feeding a direct stack store.
+
+    MS C emits signed division by two as:
+    ``mov ax, [bp+off]; cwd/cdq; sub ax, dx; sar ax, 1; mov [bp+dst], ax``.
+    The store is a semantic stack-slot assignment and must be materialized
+    before later uses of the destination local.
+    """
+
+    if reg_id != X86_REG_AX or width != 2 or index <= 3:
+        return None
+    sign_extend = getattr(insns[index - 3], "insn", insns[index - 3])
+    subtract = getattr(insns[index - 2], "insn", insns[index - 2])
+    shift = getattr(insns[index - 1], "insn", insns[index - 1])
+    if getattr(sign_extend, "id", None) not in {X86_INS_CWD, X86_INS_CDQ}:
+        return None
+    if getattr(subtract, "id", None) != X86_INS_SUB:
+        return None
+    sub_operands = tuple(getattr(subtract, "operands", ()) or ())
+    if len(sub_operands) != 2:
+        return None
+    if not _register_operand_is_8616(sub_operands[0], X86_REG_AX):
+        return None
+    if not _register_operand_is_8616(sub_operands[1], X86_REG_DX):
+        return None
+    if getattr(shift, "id", None) != X86_INS_SAR:
+        return None
+    shift_operands = tuple(getattr(shift, "operands", ()) or ())
+    if len(shift_operands) != 2:
+        return None
+    dst, amount = shift_operands
+    if not _register_operand_is_8616(dst, X86_REG_AX):
+        return None
+    if getattr(amount, "type", None) != X86_OP_IMM or getattr(amount, "imm", None) != 1:
+        return None
+    source = _previous_stack_load_for_register_8616(insns, index - 3, X86_REG_AX)
+    if source is None:
+        return None
+    source_offset, source_width = source
+    if source_width != width:
+        return None
+    return source_offset, 2, DirectStackMoveExpressionOp8616.SIGNED_DIV2
+
+
 def _register_operand_is_8616(operand, reg_id: int) -> bool:
     return getattr(operand, "type", None) == X86_OP_REG and getattr(operand, "reg", None) == reg_id
 
@@ -3412,9 +3462,12 @@ def _direct_stack_move_instruction_facts_8616(project, function) -> tuple[Direct
                 continue
 
             shifted_load = _previous_shifted_stack_load_for_register_8616(insns, index, reg_id, width)
-            if shifted_load is None:
+            expr_load = shifted_load
+            if expr_load is None:
+                expr_load = _previous_signed_half_stack_load_for_register_8616(insns, index, reg_id, width)
+            if expr_load is None:
                 continue
-            source_offset, immediate, source_op = shifted_load
+            source_offset, immediate, source_op = expr_load
             facts.append(
                 DirectStackMoveFact8616(
                     dst_offset,
@@ -3579,12 +3632,26 @@ def _direct_stack_move_source_expr_8616(codegen, fact: DirectStackMoveFact8616):
         if (
             not isinstance(fact.source_offset, int)
             or not isinstance(fact.source_immediate, int)
-            or fact.source_op is not DirectStackMoveExpressionOp8616.SHL
+            or fact.source_op not in {DirectStackMoveExpressionOp8616.SHL, DirectStackMoveExpressionOp8616.SIGNED_DIV2}
         ):
             return None
         source = _resolve_direct_stack_update_cvar_8616(codegen, fact.source_offset, fact.width)
         if source is None:
             return None
+        if fact.source_op is DirectStackMoveExpressionOp8616.SIGNED_DIV2:
+            signed_type = SimTypeShort(True)
+            signed_source = structured_c.CTypeCast(
+                target_type,
+                signed_type,
+                source,
+                codegen=codegen,
+            )
+            return structured_c.CBinaryOp(
+                fact.source_op.value,
+                signed_source,
+                structured_c.CConstant(fact.source_immediate, signed_type, codegen=codegen),
+                codegen=codegen,
+            )
         return structured_c.CBinaryOp(
             fact.source_op.value,
             source,

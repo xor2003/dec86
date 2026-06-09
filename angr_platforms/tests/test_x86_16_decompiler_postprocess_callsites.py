@@ -2,19 +2,23 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CStatements
+from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CFunctionCall, CStatements, CVariable
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from angr_platforms.X86_16.analysis_helpers import (
     collect_neighbor_call_targets,
     resolve_direct_call_target_from_block,
     sanitize_direct_call_sites_8616,
 )
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsitePushExprOp8616, CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
     CallArgSemanticKind8616,
     _attach_callsite_summaries_8616,
     _call_arg_semantic_kind_8616,
     _lookup_callee_function_8616,
+    _materialize_callsite_stack_arguments_8616,
     _mov_reg_imm_setup_matches_push_source_8616,
     _normalize_call_target_names_8616,
     _ordered_callsite_pairs_8616,
@@ -153,6 +157,85 @@ def test_reg_expr_setup_matches_dec_push_source_from_instruction_bytes():
 
     assert _reg_expr_setup_matches_push_source_8616(project, 0x1004, source)
     assert not _reg_expr_setup_matches_push_source_8616(project, 0x1004, ("expr", ("bp", -2), (("add", 1),)))
+
+
+def test_callsite_materialization_prunes_proven_expr_push_source_alias_clobber(tmp_path):
+    cod_path = tmp_path / "TEST.COD"
+    cod_path.write_text(";|*** void Swaps( BAR *bar1, BAR *bar2 )\n", encoding="utf-8")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_Memory(b"\x8B\x46\xFC\xD1\xE0\x05\x4C\x0B\x50", 0x1040)),
+        _inertia_c_target="portable-flat",
+        _inertia_lst_metadata=SimpleNamespace(cod_path=cod_path, code_labels={}),
+    )
+    codegen = _DummyCodegen(project)
+    i_var = SimStackVariable(-4, 2, base="bp", name="i", region=0x4010)
+    parent_var = SimStackVariable(-2, 2, base="bp", name="iParent", region=0x4010)
+    ds_reg = project.arch.registers["ds"][0]
+    ds_var = SimRegisterVariable(ds_reg, 2, name="ds")
+    i_cvar = CVariable(i_var, variable_type=SimTypeShort(False), codegen=codegen)
+    parent_cvar = CVariable(parent_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ds_cvar = CVariable(ds_var, variable_type=SimTypeShort(False), codegen=codegen)
+
+    def indexed_seg_ptr(index):
+        offset = CBinaryOp(
+            "Add",
+            CBinaryOp("Shl", index, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            CConstant(0x0B4C, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+        return CFunctionCall("SEG_PTR", None, [ds_cvar, offset], codegen=codegen)
+
+    seed_parent = CAssignment(
+        parent_cvar,
+        CBinaryOp("Div", i_cvar, CConstant(2, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100A},
+    )
+    clobber_parent = CAssignment(
+        parent_cvar,
+        CBinaryOp("Add", parent_cvar, CConstant(0x0B4C, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1048},
+    )
+    call = CFunctionCall(
+        "Swaps",
+        None,
+        [indexed_seg_ptr(parent_cvar), indexed_seg_ptr(i_cvar)],
+        codegen=codegen,
+        tags={"ins_addr": 0x1052},
+    )
+    root = CStatements([seed_parent, clobber_parent, call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        statements=root,
+        body=root,
+        variables_in_use={i_var: i_cvar, parent_var: parent_cvar, ds_var: ds_cvar},
+        unified_local_vars={},
+    )
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1052,
+            target_addr=0x10794,
+            return_addr=0x1055,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(
+                ("expr", ("bp", -4), (("shl", 1), ("add", 0x0B4C))),
+                ("expr", ("bp", -2), (("shl", 1), ("add", 0x0B4C))),
+            ),
+        )
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [seed_parent, call]
+    assert codegen._inertia_callsite_pre_call_source_alias_artifacts_pruned_8616 == 1
 
 
 def test_reg_expr_setup_matches_imul_ax_memory_push_source_from_instruction_bytes():

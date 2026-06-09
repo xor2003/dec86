@@ -26,7 +26,7 @@ from .callsite_stack_metadata import (
     _stack_carrier_key_8616,
     prune_materialized_callsite_segment_metadata_8616,
 )
-from .callsite_summary import CallsitePushExprOp8616, summarize_x86_16_callsite
+from .callsite_summary import CallsitePushExprOp8616, CallsitePushSourceKind8616, summarize_x86_16_callsite
 from .cod_extract import extract_cod_proc_metadata
 from .decompiler_postprocess import _normalize_arg_names_8616
 from .decompiler_postprocess_utils import (
@@ -71,6 +71,13 @@ _NAMESPACED_TARGET_RE = re.compile(r"^::0x(?P<addr>[0-9a-fA-F]+)::")
 log = logging.getLogger(__name__)
 _RUNTIME_SEGMENT_HELPERS_8616 = frozenset({"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR"})
 _CALL_TOKEN_RE_8616 = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+class CallsiteAliasArtifactDecision8616(Enum):
+    """Evidence decision for pre-call stack-source alias artifacts."""
+
+    PRUNE_BINARY_PUSH_EXPR_ALIAS = "prune_binary_push_expr_alias"
+    KEEP_NO_BINARY_PUSH_EXPR_EVIDENCE = "keep_no_binary_push_expr_evidence"
 
 
 def _source_call_floor_enabled_8616() -> bool:
@@ -1270,6 +1277,68 @@ def _reg_expr_setup_matches_push_source_8616(project, ins_addr: int | None, sour
                 if actual == expected:
                     return True
     return False
+
+
+def _bp_offsets_from_push_source_8616(source) -> frozenset[int]:
+    """Return BP stack offsets read by a structured callsite push source."""
+
+    offsets: set[int] = set()
+
+    def collect(current) -> None:
+        if not isinstance(current, tuple) or len(current) < 2:
+            return
+        source_kind = current[0]
+        if source_kind in {CallsitePushSourceKind8616.BP_VALUE.value, CallsitePushSourceKind8616.BP_ADDRESS.value}:
+            if isinstance(current[1], int):
+                offsets.add(int(current[1]))
+            return
+        if source_kind == CallsitePushSourceKind8616.EXPR.value and isinstance(current[1], tuple):
+            collect(current[1])
+            return
+        if source_kind == CallsitePushSourceKind8616.BP_INDEX_ADDRESS.value:
+            if isinstance(current[1], int):
+                offsets.add(int(current[1]))
+            if len(current) >= 5 and isinstance(current[4], tuple):
+                collect(current[4])
+            return
+        if source_kind == CallsitePushSourceKind8616.GLOBAL_INDEX_VALUE.value and len(current) >= 4:
+            if isinstance(current[3], tuple):
+                collect(current[3])
+
+    collect(source)
+    return frozenset(offsets)
+
+
+def _expr_push_sources_for_bp_offset_8616(push_sources: tuple, offset: int) -> tuple[tuple, ...]:
+    """Select expression push sources proven to read a BP stack offset."""
+
+    if not isinstance(push_sources, tuple):
+        return ()
+    matches: list[tuple] = []
+    for source in push_sources:
+        if not (
+            isinstance(source, tuple)
+            and len(source) == 3
+            and source[0] == CallsitePushSourceKind8616.EXPR.value
+            and isinstance(source[1], tuple)
+        ):
+            continue
+        if offset in _bp_offsets_from_push_source_8616(source):
+            matches.append(source)
+    return tuple(matches)
+
+
+def _expr_push_sources_8616(push_sources: tuple) -> tuple[tuple, ...]:
+    if not isinstance(push_sources, tuple):
+        return ()
+    return tuple(
+        source
+        for source in push_sources
+        if isinstance(source, tuple)
+        and len(source) == 3
+        and source[0] == CallsitePushSourceKind8616.EXPR.value
+        and isinstance(source[1], tuple)
+    )
 
 
 def _signature_arg_parts_and_variadic_8616(decl: str) -> tuple[tuple[str, ...], bool] | None:
@@ -9118,14 +9187,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             callsite_addr = getattr(summary, "callsite_addr", None)
             if not isinstance(callsite_addr, int):
                 return _debug_relocate_refuse("missing-callsite")
-            source_offsets = {
-                int(source[1])
-                for source in push_sources
-                if isinstance(source, tuple)
-                and len(source) >= 2
-                and source[0] == "bp"
-                and isinstance(source[1], int)
-            }
+            source_offsets = set().union(
+                *(_bp_offsets_from_push_source_8616(source) for source in push_sources)
+            )
             if not source_offsets:
                 return _debug_relocate_refuse("missing-bp-source-offsets")
 
@@ -9366,6 +9430,122 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         return True
                 return False
 
+            def _rhs_is_safe_push_alias_artifact_8616(rhs) -> bool:
+                if _statement_contains_call(rhs):
+                    return False
+                for node in (rhs, *_iter_c_nodes_deep_8616(rhs)):
+                    if isinstance(node, CFunctionCall):
+                        return False
+                    if isinstance(node, CUnaryOp) and getattr(node, "op", None) == "Dereference":
+                        return False
+                    if _expr_contains_dirty_carrier_8616(node):
+                        return False
+                return True
+
+            def _pop_pre_call_source_alias_artifacts_8616(call, summary, push_sources: tuple) -> int:
+                def _debug_alias(decision: CallsiteAliasArtifactDecision8616, reason: str) -> int:
+                    if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                        log.warning(
+                            "[call-source-alias-artifact] function=%#x target=%s decision=%s reason=%s",
+                            getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                            _call_node_name_8616(call),
+                            decision.value,
+                            reason,
+                        )
+                    if decision is CallsiteAliasArtifactDecision8616.KEEP_NO_BINARY_PUSH_EXPR_EVIDENCE:
+                        codegen._inertia_callsite_pre_call_source_alias_artifacts_refused_8616 = (
+                            int(
+                                getattr(
+                                    codegen,
+                                    "_inertia_callsite_pre_call_source_alias_artifacts_refused_8616",
+                                    0,
+                                )
+                                or 0
+                            )
+                            + 1
+                        )
+                    return 0
+
+                if call is None or summary is None or bool(getattr(summary, "stack_probe_helper", False)):
+                    return _debug_alias(
+                        CallsiteAliasArtifactDecision8616.KEEP_NO_BINARY_PUSH_EXPR_EVIDENCE,
+                        "missing-call-summary-or-stack-probe",
+                    )
+                if not isinstance(push_sources, tuple) or not push_sources:
+                    return _debug_alias(
+                        CallsiteAliasArtifactDecision8616.KEEP_NO_BINARY_PUSH_EXPR_EVIDENCE,
+                        "missing-push-sources",
+                    )
+                if not tuple(getattr(call, "args", ()) or ()):
+                    return _debug_alias(
+                        CallsiteAliasArtifactDecision8616.KEEP_NO_BINARY_PUSH_EXPR_EVIDENCE,
+                        "missing-materialized-args",
+                    )
+
+                source_offsets = set().union(
+                    *(_bp_offsets_from_push_source_8616(source) for source in push_sources)
+                )
+                expr_sources = _expr_push_sources_8616(push_sources)
+                if not source_offsets or not expr_sources:
+                    return _debug_alias(
+                        CallsiteAliasArtifactDecision8616.KEEP_NO_BINARY_PUSH_EXPR_EVIDENCE,
+                        "missing-source-offsets-or-expr-sources",
+                    )
+
+                consumed = 0
+                while new_statements and consumed < 4:
+                    candidate = new_statements[-1]
+                    if _statement_contains_call(candidate):
+                        break
+                    assignment = _top_level_assignment_node_8616(candidate)
+                    if assignment is None or _statement_contains_call(assignment):
+                        break
+                    lhs, rhs = _assignment_lhs_rhs(assignment)
+                    if lhs is None or rhs is None:
+                        break
+                    lhs_offset = _stack_variable_offset_8616(lhs)
+                    if not isinstance(lhs_offset, int):
+                        break
+                    if lhs_offset not in source_offsets:
+                        break
+                    matching_sources = _expr_push_sources_for_bp_offset_8616(push_sources, lhs_offset)
+                    matching_sources = tuple(dict.fromkeys((*matching_sources, *expr_sources)))
+                    if not matching_sources:
+                        break
+                    lhs_key = _c_variable_identity_key_8616(lhs)
+                    if not _call_args_reference_identity_8616(call, lhs_key):
+                        break
+                    ins_addr = _assignment_ins_addr_8616(assignment)
+                    if not isinstance(ins_addr, int):
+                        ins_addr = _assignment_ins_addr_8616(candidate)
+                    if not isinstance(ins_addr, int):
+                        break
+                    if not any(_reg_expr_setup_matches_push_source_8616(project, ins_addr, source) for source in matching_sources):
+                        break
+                    if not _rhs_is_safe_push_alias_artifact_8616(rhs):
+                        break
+                    new_statements.pop()
+                    consumed += 1
+
+                if consumed <= 0:
+                    return _debug_alias(
+                        CallsiteAliasArtifactDecision8616.KEEP_NO_BINARY_PUSH_EXPR_EVIDENCE,
+                        "no-proven-suffix",
+                    )
+                codegen._inertia_callsite_pre_call_source_alias_artifacts_pruned_8616 = (
+                    int(getattr(codegen, "_inertia_callsite_pre_call_source_alias_artifacts_pruned_8616", 0) or 0)
+                    + consumed
+                )
+                if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                    log.warning(
+                        "[call-source-alias-artifact] function=%#x target=%s decision=%s count=%d",
+                        getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                        _call_node_name_8616(call),
+                        CallsiteAliasArtifactDecision8616.PRUNE_BINARY_PUSH_EXPR_ALIAS.value,
+                        consumed,
+                    )
+                return consumed
+
             def _pop_duplicate_pre_call_stack_source_clobber_8616(call, summary, push_sources: tuple) -> bool:
                 def _debug_clobber_refuse(reason: str) -> bool:
                     if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
@@ -9381,14 +9561,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     return _debug_clobber_refuse("missing-call-summary-or-stack-probe")
                 if not isinstance(push_sources, tuple) or not push_sources:
                     return _debug_clobber_refuse("missing-push-sources")
-                source_offsets = {
-                    int(source[1])
-                    for source in push_sources
-                    if isinstance(source, tuple)
-                    and len(source) >= 2
-                    and source[0] == "bp"
-                    and isinstance(source[1], int)
-                }
+                source_offsets = set().union(
+                    *(_bp_offsets_from_push_source_8616(source) for source in push_sources)
+                )
                 if not source_offsets:
                     return _debug_clobber_refuse("missing-bp-source-offsets")
                 if not new_statements:
@@ -9436,20 +9611,25 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     if call is not None and not is_stack_probe_helper
                     else 0
                 )
+                source_alias_artifacts = (
+                    _pop_pre_call_source_alias_artifacts_8616(call, summary, push_arg_sources)
+                    if call is not None and not is_stack_probe_helper
+                    else 0
+                )
                 pre_clobber_removed = (
                     _pop_duplicate_pre_call_stack_source_clobber_8616(call, summary, push_arg_sources)
-                    if call is not None and not is_stack_probe_helper
+                    if call is not None and not is_stack_probe_helper and not source_alias_artifacts
                     else False
                 )
                 relocated_after_call = (
                     []
-                    if pre_clobber_removed
+                    if pre_clobber_removed or source_alias_artifacts
                     else _pop_post_call_stack_source_writes_8616(call, summary, push_arg_sources)
                     if call is not None and not is_stack_probe_helper
                     else []
                 )
                 new_statements.append(stmt)
-                if consumed_dirty_setup or pre_clobber_removed:
+                if consumed_dirty_setup or source_alias_artifacts or pre_clobber_removed:
                     changed = True
                 if relocated_after_call:
                     new_statements.extend(relocated_after_call)

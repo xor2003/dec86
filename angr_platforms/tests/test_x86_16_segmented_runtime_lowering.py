@@ -10,6 +10,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CForLoop,
     CFunctionCall,
     CStatements,
+    CTypeCast,
     CUnaryOp,
     CVariable,
 )
@@ -19,11 +20,14 @@ from capstone.x86_const import (
     X86_INS_ADC,
     X86_INS_ADD,
     X86_INS_CALL,
+    X86_INS_CDQ,
     X86_INS_DEC,
     X86_INS_INC,
     X86_INS_MOV,
     X86_INS_PUSH,
+    X86_INS_SAR,
     X86_INS_SHL,
+    X86_INS_SUB,
     X86_OP_IMM,
     X86_OP_MEM,
     X86_OP_REG,
@@ -37,6 +41,7 @@ from inertia_decompiler.recompile_check import check_c_recompiles_8616
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering.real_mode_linear import (
+    DirectStackMoveExpressionOp8616,
     DirectStackMoveSourceKind8616,
     _direct_stack_move_instruction_facts_8616,
     materialize_direct_global_incdec_instructions_8616,
@@ -580,6 +585,60 @@ def test_materialize_direct_stack_mov_shifted_stack_source_replaces_tagged_assig
     assert stmt.rhs.op == "Shl"
     assert stmt.rhs.lhs is src_cvar
     assert stmt.rhs.rhs.value == 1
+
+
+def test_materialize_direct_stack_mov_signed_half_stack_source_replaces_tagged_assignment():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-2, 2, base="bp", name="iParent", region=0x4010)
+    src_var = SimStackVariable(-4, 2, base="bp", name="i", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    src_cvar = CVariable(src_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[src_var] = src_cvar
+    bad_stmt = CAssignment(dst_cvar, _reg(project, "ax", codegen), codegen=codegen, tags={"ins_addr": 0x401A})
+    codegen.cfunc.statements.statements.append(bad_stmt)
+
+    load = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-4)),
+    )
+    sign_extend = SimpleNamespace(address=0x4013, id=X86_INS_CDQ, operands=())
+    subtract_sign = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_SUB,
+        operands=(_reg_operand(X86_REG_AX), _reg_operand(X86_REG_DX)),
+    )
+    signed_shift = SimpleNamespace(
+        address=0x4016,
+        id=X86_INS_SAR,
+        operands=(_reg_operand(X86_REG_AX), _imm_operand(1, size=1)),
+    )
+    store = SimpleNamespace(
+        address=0x401A,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, sign_extend, subtract_sign, signed_shift, store))),),
+    )
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    assert facts[0].source_kind is DirectStackMoveSourceKind8616.STACK_SLOT_EXPR
+    assert facts[0].source_op is DirectStackMoveExpressionOp8616.SIGNED_DIV2
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+    assert changed is True
+    stmt = codegen.cfunc.statements.statements[0]
+    assert stmt.lhs.variable is dst_var
+    assert isinstance(stmt.rhs, CBinaryOp)
+    assert stmt.rhs.op == "Div"
+    assert isinstance(stmt.rhs.lhs, CTypeCast)
+    assert stmt.rhs.lhs.dst_type.signed is True
+    assert stmt.rhs.lhs.expr is src_cvar
+    assert stmt.rhs.rhs.value == 2
 
 
 def test_materialize_direct_stack_mov_shifted_stack_source_inserts_before_following_nested_tagged_statement():
