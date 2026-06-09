@@ -12,36 +12,35 @@ MAX_OUTPUT_LINE=25
 export INERTIA_ENABLE_TAIL_VALIDATION=1
 export INERTIA_DISABLE_TIMING=1
 
-addrs=(
-  0x10010 # main
-  0x10f38 # Sleep
-  0x109e8 # PercolateUp
-  0x10970 # HeapSort
-  0x107b8 # Swaps
-  0x10768 # SwapBars
-  0x10678 # ReInitBars
-  0x10e70 # Beep
-  0x10ce0 # QuickSort
-  0x10c18 # ShellSort
-  0x10b50 # ExchangeSort
-  0x10a88 # PercolateDown
-  0x108d0 # BubbleSort
-  0x10808 # InsertionSort
-  0x106c8 # DrawBar
-  0x10560 # InitBars
-  0x10498 # DrawTime
-  0x102e0 # RunMenu
-  0x101f0 # DrawFrame
-  0x10060 # InitMenu
+entries=(
+  0x10010:main
+  0x10f38:Sleep
+  0x109e8:PercolateUp
+  0x10970:HeapSort
+  0x107b8:Swaps
+  0x10768:SwapBars
+  0x10678:ReInitBars
+  0x10e70:Beep
+  0x10ce0:QuickSort
+  0x10c18:ShellSort
+  0x10b50:ExchangeSort
+  0x10a88:PercolateDown
+  0x108d0:BubbleSort
+  0x10808:InsertionSort
+  0x106c8:DrawBar
+  0x10560:InitBars
+  0x10498:DrawTime
+  0x102e0:RunMenu
+  0x101f0:DrawFrame
+  0x10060:InitMenu
 )
 
 echo "function,addr,status,validation,tail"
-for addr in "${addrs[@]}"; do
+for entry in "${entries[@]}"; do
+  addr="${entry%%:*}"
+  name="${entry#*:}"
   log_file="${LOG_DIR}/${addr}.log"
   "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/decompile.py" --brief --alternate-source-c --timeout "$TIMEOUT_SECONDS" --addr "$addr" "$BINARY" >"$log_file" 2>&1 || true
-
-  name="$(rg -o '== function 0x[0-9a-fA-F]+ [A-Za-z0-9_]+' "$log_file" | awk '{print $4}' | head -n 1 || true)"
-  [ -z "$name" ] && name="unknown"
 
   if rg -q "Decompilation timeout" "$log_file"; then
     status="timeout"
