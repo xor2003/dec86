@@ -27,6 +27,7 @@ class CallsitePushSourceKind8616(Enum):
     BP_ADDRESS = "bp_addr"
     BP_INDEX_ADDRESS = "bp_index_addr"
     GLOBAL_VALUE = "global"
+    GLOBAL_INDEX_VALUE = "global_index"
     IMMEDIATE = "imm"
     EXPR = "expr"
     RETURN_REGISTER = "ret_reg"
@@ -702,6 +703,121 @@ def _source_from_lea_operand_8616(insn, operand) -> tuple | None:
     return _source_from_bp_mem_operand_8616(insn, operand, address=True)
 
 
+def _indexed_global_source_from_mov_operand_8616(insns: tuple, mov_idx: int, insn, operand) -> tuple | None:
+    mem = _operand_mem_value_8616(operand)
+    if mem is None:
+        return None
+    base = getattr(mem, "base", None)
+    disp = getattr(mem, "disp", None)
+    index = int(getattr(mem, "index", 0) or 0)
+    if not (isinstance(base, int) and isinstance(disp, int) and index == 0):
+        return None
+    base_name = _operand_reg_name(insn, type("_IndexedGlobalMemOperand", (), {"reg": base})())
+    if not isinstance(base_name, str) or not base_name or base_name in {"sp", "bp", "ss", "ds", "es", "cs"}:
+        return None
+
+    scan = mov_idx - 1
+    skipped = 0
+    ops: list[tuple[str, int]] = []
+    while scan >= 0 and skipped < 8:
+        prev = insns[scan]
+        mnemonic = _mnemonic(prev)
+        operands = _instruction_operands(prev)
+        if mnemonic == "mov" and len(operands) == 2 and _operand_reg_name(prev, operands[0]) == base_name:
+            base_source = _source_from_mov_operand(prev, operands[1])
+            if base_source is None:
+                return None
+            width = getattr(operand, "size", None)
+            return (
+                CallsitePushSourceKind8616.GLOBAL_INDEX_VALUE.value,
+                int(disp),
+                int(width) if isinstance(width, int) and width > 0 else 2,
+                base_source,
+                tuple(reversed(ops)),
+            )
+        if (
+            mnemonic in {"add", "sub", "shl", "shr"}
+            and len(operands) == 2
+            and _operand_reg_name(prev, operands[0]) == base_name
+        ):
+            value = _operand_imm_value(operands[1])
+            if not isinstance(value, int):
+                return None
+            op = {
+                "add": CallsitePushExprOp8616.ADD,
+                "sub": CallsitePushExprOp8616.SUB,
+                "shl": CallsitePushExprOp8616.SHL,
+                "shr": CallsitePushExprOp8616.SHR,
+            }[mnemonic]
+            ops.append((op.value, value))
+            scan -= 1
+            skipped += 1
+            continue
+        if _mnemonic(prev).startswith(("call", "push", "pop", "ret", "jmp")):
+            return None
+        if not _transparent_between_push_args_8616(prev):
+            return None
+        skipped += 1
+        scan -= 1
+    return None
+
+
+def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *, depth: int = 0) -> tuple | None:
+    if depth > 4 or reg_name in {"sp", "bp", "ss", "ds", "es", "cs"}:
+        return None
+    scan = idx - 1
+    skipped = 0
+    ops: list[tuple[str, int]] = []
+    source_regs = {reg_name}
+    while scan >= 0 and skipped < 8:
+        insn = insns[scan]
+        operands = _instruction_operands(insn)
+        mnemonic = _mnemonic(insn)
+        if reg_name == "ax" and mnemonic in {"cbw", "cwde"}:
+            source_regs.add("al")
+            scan -= 1
+            skipped += 1
+            continue
+        if mnemonic == "mov" and len(operands) == 2 and _operand_reg_name(insn, operands[0]) in source_regs:
+            rhs_reg = _operand_reg_name(insn, operands[1])
+            if isinstance(rhs_reg, str) and rhs_reg and rhs_reg not in source_regs:
+                base_source = _register_source_from_context_8616(insns, scan, rhs_reg, depth=depth + 1)
+            else:
+                base_source = _source_from_mov_operand(insn, operands[1])
+                if base_source is None:
+                    base_source = _indexed_global_source_from_mov_operand_8616(insns, scan, insn, operands[1])
+            if base_source is None:
+                return None
+            if not ops:
+                return base_source
+            return (CallsitePushSourceKind8616.EXPR.value, base_source, tuple(reversed(ops)))
+        if (
+            mnemonic in {"add", "sub", "shl", "shr"}
+            and len(operands) == 2
+            and _operand_reg_name(insn, operands[0]) == reg_name
+        ):
+            value = _operand_imm_value(operands[1])
+            if not isinstance(value, int):
+                return None
+            op = {
+                "add": CallsitePushExprOp8616.ADD,
+                "sub": CallsitePushExprOp8616.SUB,
+                "shl": CallsitePushExprOp8616.SHL,
+                "shr": CallsitePushExprOp8616.SHR,
+            }[mnemonic]
+            ops.append((op.value, value))
+            scan -= 1
+            skipped += 1
+            continue
+        if _mnemonic(insn).startswith(("call", "push", "pop", "ret", "jmp")):
+            return None
+        if not _transparent_between_push_args_8616(insn):
+            return None
+        skipped += 1
+        scan -= 1
+    return None
+
+
 def _return_register_push_source_from_context_8616(function, insns: tuple, idx: int, pushed_reg: str) -> tuple | None:
     if pushed_reg not in {"ax", "dx"}:
         return None
@@ -769,12 +885,20 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
         scan = idx - 1
         skipped = 0
         ops: list[tuple[str, int]] = []
+        source_regs = {pushed_reg}
         while scan >= 0 and skipped < 6:
             insn = insns[scan]
             operands = _instruction_operands(insn)
             mnemonic = _mnemonic(insn)
-            if mnemonic == "mov" and len(operands) == 2 and _operand_reg_name(insn, operands[0]) == pushed_reg:
+            if pushed_reg == "ax" and mnemonic in {"cbw", "cwde"}:
+                source_regs.add("al")
+                scan -= 1
+                skipped += 1
+                continue
+            if mnemonic == "mov" and len(operands) == 2 and _operand_reg_name(insn, operands[0]) in source_regs:
                 base_source = _source_from_mov_operand(insn, operands[1])
+                if base_source is None:
+                    base_source = _indexed_global_source_from_mov_operand_8616(insns, scan, insn, operands[1])
                 if base_source is None:
                     return None
                 if not ops:
@@ -784,6 +908,15 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
                 base_source = _source_from_lea_operand_8616(insn, operands[1])
                 if base_source is None:
                     return None
+                if (
+                    isinstance(base_source, tuple)
+                    and len(base_source) >= 4
+                    and base_source[0] == CallsitePushSourceKind8616.BP_INDEX_ADDRESS.value
+                    and isinstance(base_source[2], str)
+                ):
+                    index_source = _register_source_from_context_8616(insns, scan, base_source[2])
+                    if index_source is not None:
+                        base_source = (*base_source, index_source)
                 if not ops:
                     return base_source
                 return (CallsitePushSourceKind8616.EXPR.value, base_source, tuple(reversed(ops)))

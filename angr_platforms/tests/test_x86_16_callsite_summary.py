@@ -308,6 +308,43 @@ def test_callsite_summary_records_absolute_memory_push_source(monkeypatch):
     assert summary.push_arg_sources == (("global", 0x1234, 2),)
 
 
+def test_callsite_summary_records_ax_byte_indexed_global_push_source(monkeypatch):
+    reg_names = {1: "sp", 2: "ax", 3: "bx", 5: "bp", 6: "al"}
+    function = _function_with_block(
+        [
+            _Insn(
+                0x1000,
+                "mov",
+                [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=5, index=0, disp=4), size=2)],
+                reg_names=reg_names,
+            ),
+            _Insn(0x1003, "shl", [_Operand(reg=3), _Operand(imm=1)], reg_names=reg_names),
+            _Insn(
+                0x1005,
+                "mov",
+                [_Operand(reg=6), _Operand(mem=SimpleNamespace(base=3, index=0, disp=0x0B4C), size=1)],
+                reg_names=reg_names,
+            ),
+            _Insn(0x1009, "cwde"),
+            _Insn(0x100A, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
+            _Insn(0x100B, "call"),
+            _Insn(0x100E, "add", [_Operand(reg=1), _Operand(imm=2)], reg_names=reg_names),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x100B, 0x1544, 0x100E, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x100B)
+
+    assert summary.arg_count == 1
+    assert summary.arg_widths == (2,)
+    assert summary.push_arg_sources == (
+        ("global_index", 0x0B4C, 1, ("bp", 4), ((CallsitePushExprOp8616.SHL.value, 1),)),
+    )
+
+
 def test_callsite_summary_records_dx_ax_global_sub_borrow_push_sources(monkeypatch):
     reg_names = {1: "sp", 2: "ax", 3: "dx"}
     function = _function_with_block(
@@ -614,7 +651,7 @@ def test_callsite_summary_keeps_prior_pushes_before_indexed_lea_setup(monkeypatc
     assert summary.push_arg_sources == (
         ("bp", -46),
         ("imm", 32),
-        ("bp_index_addr", -44, "si", 1),
+        ("bp_index_addr", -44, "si", 1, ("global_index", 0xB4C, 2, ("bp", 4), (("shl", 1),))),
     )
 
 

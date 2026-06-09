@@ -5330,6 +5330,7 @@ class DecompilerPostprocessPassSpec:
     name: str
     func: Callable[..., bool]
     needs_project: bool
+    callsite_final_gate: bool = False
 
 
 def _dead_code_elimination_after_flag_prune_8616(codegen) -> bool:
@@ -6125,6 +6126,7 @@ def _build_decompiler_postprocess_passes():
             "_materialize_callsite_stack_arguments_final_8616",
             _calls._materialize_callsite_stack_arguments_8616,
             True,
+            callsite_final_gate=True,
         ),
         DecompilerPostprocessPassSpec(
             "_materialize_stable_stack_semantics_final_8616",
@@ -6165,6 +6167,7 @@ def _build_decompiler_postprocess_passes():
             "_normalize_call_target_names_final_8616",
             _calls._normalize_call_target_names_8616,
             False,
+            callsite_final_gate=True,
         ),
         DecompilerPostprocessPassSpec(
             "_prune_surplus_void_empty_return_guards_final_8616",
@@ -7782,7 +7785,18 @@ def _postprocess_run_pass_specs_8616(project, codegen, pass_specs, trace_func_ad
                 )
                 _ppsys.stderr.flush()
             step = (lambda spec=spec: spec.func(project, codegen)) if spec.needs_project else (lambda spec=spec: spec.func(codegen))
-            if not apply_step(spec.name, step):
+            had_callsite_final_gate = hasattr(codegen, "_inertia_callsite_final_gate_active_8616")
+            previous_callsite_final_gate = getattr(codegen, "_inertia_callsite_final_gate_active_8616", None)
+            codegen._inertia_callsite_final_gate_active_8616 = bool(spec.callsite_final_gate)
+            try:
+                keep_running = apply_step(spec.name, step)
+            finally:
+                if had_callsite_final_gate:
+                    codegen._inertia_callsite_final_gate_active_8616 = previous_callsite_final_gate
+                else:
+                    with contextlib.suppress(Exception):
+                        delattr(codegen, "_inertia_callsite_final_gate_active_8616")
+            if not keep_running:
                 break
             if codegen._inertia_postprocess_validation_failed:
                 break
@@ -9991,6 +10005,14 @@ def _decompile_8616(self):
             validation["changed"] = True
             validation["status"] = "changed"
             validation["summary_text"] = f"postprocess exception: {type(postprocess_exception).__name__}"
+        callsite_stats = getattr(self.codegen, "_inertia_callsite_materialization_stats", None)
+        callsite_mismatch_count = int(getattr(callsite_stats, "known_prototype_arg_mismatch_count", 0) or 0)
+        if callsite_mismatch_count > 0:
+            validation["changed"] = True
+            validation["status"] = "changed"
+            validation["summary_text"] = (
+                f"callsite materialization failed: known prototype argument mismatch count={callsite_mismatch_count}"
+            )
         validation_compare_elapsed = time.perf_counter() - validation_started
         validation_timings = {
             "collect_before_ms": round(before_collect_elapsed * 1000.0, 3),
@@ -10071,7 +10093,27 @@ def _decompile_8616(self):
                 "pre_postprocess_cfunc_snapshot": pre_postprocess_cfunc_snapshot,
                 "validation_timings": validation_timings,
                 "func_addr": func_addr,
+                "postprocess_exception": postprocess_exception,
+                "callsite_mismatch_count": callsite_mismatch_count,
             }
+            if postprocess_exception is not None or callsite_mismatch_count > 0:
+                self.codegen._inertia_postprocess_validation_failed = True
+                self.codegen._inertia_postprocess_validation_failure_pass = getattr(
+                    self.codegen,
+                    "_inertia_last_postprocess_pass",
+                    None,
+                )
+                self.codegen._inertia_postprocess_validation_failure_error = (
+                    repr(postprocess_exception)
+                    if postprocess_exception is not None
+                    else f"known prototype argument mismatch count={callsite_mismatch_count}"
+                )
+                log.error(
+                    "Postprocess validation failed due to final callsite invariant; refusing stable fallback: %s",
+                    validation["verdict"],
+                )
+                self.project._inertia_decompiler_stage = "postprocess_failed"
+                return
             _should_return = _handle_failed_postprocess_validation_8616(
                 self,
                 validation=validation,
