@@ -5,6 +5,9 @@ import logging
 import os
 import re
 import sys
+from collections.abc import MutableMapping
+from dataclasses import dataclass
+from enum import Enum
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -14,6 +17,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CExpressionStatement,
     CFunctionCall,
     CGoto,
+    CIndexedVariable,
     CLabel,
     CReturn,
     CStatements,
@@ -28,6 +32,7 @@ from angr.sim_type import (
     SimTypePointer,
     SimTypeShort,
 )
+from capstone.x86_const import X86_OP_MEM, X86_OP_REG
 
 try:
     from angr.analyses.typehoon import lifter as _typehoon_lifter
@@ -39,10 +44,16 @@ from .alias.alias_model import _stack_slot_identity_can_join, _stack_slot_identi
 from .analysis_helpers import preferred_known_helper_signature_decl
 from .annotations import (
     ANNOTATION_KEY,
+    _annotation_dict,
+    _c_decl_requires_opaque_typedefs_8616,
     _parse_c_prototype_8616,
+    _normalize_bp_disp,
     _source_decl_from_cod_source_lines,
+    _source_function_pointer_local_types_8616,
+    _typed_cod_spec_dict_8616,
     annotate_function,
 )
+from .cod_known_objects import known_cod_object_spec
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
     _iter_c_nodes_deep_8616,
@@ -55,7 +66,7 @@ from .decompiler_return_compat import x86_16_msvc_x87_scalar_stack_args
 
 def _source_annotation_lines_8616(func) -> tuple[str, ...]:
     info = getattr(func, "info", None)
-    annotations = info.get(ANNOTATION_KEY) if isinstance(info, dict) else None
+    annotations = info.get(ANNOTATION_KEY) if isinstance(info, MutableMapping) else None
     if not isinstance(annotations, dict):
         return ()
     return tuple(annotations.get("source_lines", ()) or ())
@@ -65,12 +76,12 @@ def _merge_source_annotations_if_missing_8616(target_func, source_func) -> bool:
     if target_func is None or source_func is None or target_func is source_func:
         return False
     source_info = getattr(source_func, "info", None)
-    source_annotations = source_info.get(ANNOTATION_KEY) if isinstance(source_info, dict) else None
+    source_annotations = source_info.get(ANNOTATION_KEY) if isinstance(source_info, MutableMapping) else None
     if not isinstance(source_annotations, dict):
         return False
     changed = False
     target_info = getattr(target_func, "info", None)
-    if not isinstance(target_info, dict):
+    if not isinstance(target_info, MutableMapping):
         target_func.info = {}
         target_info = target_func.info
     target_annotations = target_info.setdefault(
@@ -111,19 +122,53 @@ def _attach_project_cod_source_annotations_if_missing_8616(project, func_addr: i
             matched_candidate = candidate
             break
     source_lines = tuple(getattr(metadata, "source_lines", ()) or ()) if metadata is not None else ()
+    changed = False
+    stack_aliases = getattr(metadata, "stack_aliases", None) if metadata is not None else None
+    source_local_types = _source_function_pointer_local_types_8616(project, source_lines) if source_lines else {}
+    if isinstance(stack_aliases, dict) and stack_aliases:
+        typed_stack_aliases = {}
+        for bp_disp, alias in stack_aliases.items():
+            if not isinstance(bp_disp, int):
+                continue
+            spec = known_cod_object_spec(alias) if isinstance(alias, str) else None
+            source_type = source_local_types.get(alias) if isinstance(alias, str) else None
+            if source_type is not None:
+                typed_stack_aliases[bp_disp] = {"name": alias, "type": source_type}
+            else:
+                typed_stack_aliases[bp_disp] = _typed_cod_spec_dict_8616(spec) if spec is not None else alias
+        if typed_stack_aliases:
+            annotate_function(project, func_addr, bp_stack_vars=typed_stack_aliases)
+            annotations = _annotation_dict(func)
+            for bp_disp, spec in typed_stack_aliases.items():
+                entry = annotations["stack_vars"].setdefault(_normalize_bp_disp(bp_disp), {})
+                if isinstance(spec, str):
+                    entry["name"] = spec
+                elif isinstance(spec, dict):
+                    entry.update(spec)
+            changed = True
+            if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
+                print(
+                    "[dbg-x87-proto] "
+                    f"attach_project_cod_source merged_stack_offsets="
+                    f"{sorted(k for k in annotations.get('stack_vars', {}) if isinstance(k, int))} "
+                    f"func_id={id(func)} info_id={id(getattr(func, 'info', None))}",
+                    file=sys.stderr,
+                    flush=True,
+                )
     if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
         print(
             "[dbg-x87-proto] "
             f"attach_project_cod_source func={func_addr!r} "
             f"candidates={candidates!r} matched={matched_candidate!r} "
-            f"source_lines={len(source_lines)}",
+            f"source_lines={len(source_lines)} "
+            f"stack_aliases={len(stack_aliases) if isinstance(stack_aliases, dict) else 0}",
             file=sys.stderr,
             flush=True,
         )
     if not source_lines:
-        return False
+        return changed
     info = getattr(func, "info", None)
-    if not isinstance(info, dict):
+    if not isinstance(info, MutableMapping):
         func.info = {}
         info = func.info
     annotations = info.setdefault(
@@ -136,11 +181,12 @@ def _attach_project_cod_source_annotations_if_missing_8616(project, func_addr: i
         },
     )
     if not isinstance(annotations, dict) or tuple(annotations.get("source_lines", ()) or ()):
-        return False
+        return changed
     annotations["source_lines"] = source_lines
     annotations["source_return_lines"] = tuple(
         line.strip() for line in source_lines if re.match(r"^return\s+[^;]+;\s*$", line.strip())
     )
+    changed = True
     if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
         print(
             "[dbg-x87-proto] "
@@ -148,7 +194,7 @@ def _attach_project_cod_source_annotations_if_missing_8616(project, func_addr: i
             file=sys.stderr,
             flush=True,
         )
-    return True
+    return changed
 
 
 def _metadata_function_for_codegen_addr_8616(project, func_addr: int):
@@ -159,7 +205,7 @@ def _metadata_function_for_codegen_addr_8616(project, func_addr: int):
     if func is not None:
         info = getattr(func, "info", None)
         has_metadata = getattr(func, "prototype", None) is not None or (
-            isinstance(info, dict) and bool(info.get(ANNOTATION_KEY))
+            isinstance(info, MutableMapping) and bool(info.get(ANNOTATION_KEY))
         )
     if has_metadata:
         _attach_project_cod_source_annotations_if_missing_8616(project, func_addr, func)
@@ -181,7 +227,7 @@ def _metadata_function_for_codegen_addr_8616(project, func_addr: int):
             if rebased_func is not None:
                 info = getattr(rebased_func, "info", None)
                 if getattr(rebased_func, "prototype", None) is not None or (
-                    isinstance(info, dict) and bool(info.get(ANNOTATION_KEY))
+                    isinstance(info, MutableMapping) and bool(info.get(ANNOTATION_KEY))
                 ):
                     return rebased_func
     original_project = getattr(project, "_inertia_original_project", None)
@@ -436,6 +482,11 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
 
         if getattr(codegen, "cfunc", None) is None:
             return False
+        if getattr(codegen, "_inertia_return_selector_materialized_8616", False):
+            codegen._inertia_retaddr_prune_refused_selector_return_8616 = (
+                int(getattr(codegen, "_inertia_retaddr_prune_refused_selector_return_8616", 0) or 0) + 1
+            )
+            return False
 
         func_addr = getattr(codegen.cfunc, "addr", None)
         if func_addr is None:
@@ -521,6 +572,11 @@ def _normalize_function_prototype_arg_names_8616(project, codegen) -> bool:
 def _unify_positive_bp_arg_stack_variables_8616(project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
+    if getattr(codegen, "_inertia_return_selector_materialized_8616", False):
+        codegen._inertia_arg_stack_identity_unify_refused_selector_return_8616 = (
+            int(getattr(codegen, "_inertia_arg_stack_identity_unify_refused_selector_return_8616", 0) or 0) + 1
+        )
+        return False
 
     cfunc = codegen.cfunc
     arg_by_identity: dict[object, CVariable] = {}
@@ -545,6 +601,16 @@ def _unify_positive_bp_arg_stack_variables_8616(project, codegen) -> bool:
 
     changed = False
 
+    def _clone_arg_cvar_for_replacement_8616(cvar: CVariable) -> CVariable:
+        clone = CVariable(
+            cvar.variable,
+            variable_type=getattr(cvar, "variable_type", None),
+            codegen=getattr(cvar, "codegen", None),
+        )
+        with contextlib.suppress(Exception):
+            clone.tags = dict(getattr(cvar, "tags", {}) or {})
+        return clone
+
     def transform(node):
         if not isinstance(node, CVariable):
             return node
@@ -555,7 +621,7 @@ def _unify_positive_bp_arg_stack_variables_8616(project, codegen) -> bool:
         replacement = arg_by_identity.get(identity)
         if replacement is None or replacement is node:
             return node
-        return replacement
+        return _clone_arg_cvar_for_replacement_8616(replacement)
 
     if _replace_c_children_8616(cfunc.statements, transform):
         changed = True
@@ -920,6 +986,16 @@ def _source_return_shape_8616(source_return_lines) -> str | None:
     return None
 
 
+def _positive_stack_specs_are_normalized_for_codegen_8616(stack_specs, codegen) -> bool:
+    positive_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
+    if not positive_offsets or positive_offsets[0] != 2:
+        return False
+    # x86-16 near-call arguments start at BP+4. COD/sidecar aliases are stored
+    # normalized around the return address in this project, so a first positive
+    # alias at +2 must be materialized as BP+4 in codegen storage.
+    return True
+
+
 def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codegen: SimpleNamespace) -> bool:
     def _impl():
         if getattr(codegen, "cfunc", None) is None:
@@ -965,6 +1041,7 @@ def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codege
             prototype=prototype,
             arg_names=arg_names,
             source_pointer_flags=source_pointer_flags,
+            annotated_args=annotated_args,
         ):
             return True
 
@@ -1069,16 +1146,27 @@ def _type_size_bytes_8616(type_, *, default: int = 2) -> int:
 
 
 def _sync_arg_list_from_prototype_stack_layout_8616(
-    *, project, codegen, func, prototype, arg_names: list[str], source_pointer_flags: tuple[bool, ...] = ()
+    *,
+    project,
+    codegen,
+    func,
+    prototype,
+    arg_names: list[str],
+    source_pointer_flags: tuple[bool, ...] = (),
+    annotated_args: list[tuple[int, str | None]] | tuple[tuple[int, str | None], ...] = (),
 ) -> bool:
     def _impl():
         proto_args = list(getattr(prototype, "args", ()) or ())
         if not proto_args:
             return False
+        if len(source_pointer_flags) != len(proto_args):
+            return False
         original_proto_args = list(proto_args)
         x87_scalar_arg_types = _x87_scalar_stack_arg_types_8616(project, func, codegen=codegen)
         cfunc = getattr(codegen, "cfunc", None)
         if cfunc is None:
+            return False
+        if not callable(getattr(codegen, "next_idx", None)):
             return False
         func_addr = getattr(cfunc, "addr", None)
         variables_in_use = getattr(cfunc, "variables_in_use", None)
@@ -1093,8 +1181,15 @@ def _sync_arg_list_from_prototype_stack_layout_8616(
         desired_args = []
         expected_offsets: set[int] = set()
         offset = 4
+        annotated_offsets: tuple[int, ...] = ()
+        if len(annotated_args) == len(proto_args):
+            candidate_offsets = tuple(offset for offset, _name in annotated_args if isinstance(offset, int) and offset > 0)
+            if len(candidate_offsets) == len(proto_args) and tuple(sorted(candidate_offsets)) == candidate_offsets:
+                annotated_offsets = candidate_offsets
         changed = False
         for index, arg_type in enumerate(proto_args):
+            if annotated_offsets:
+                offset = annotated_offsets[index]
             scalar_type = x87_scalar_arg_types.get(offset)
             if scalar_type is not None:
                 arg_type = scalar_type
@@ -1111,6 +1206,10 @@ def _sync_arg_list_from_prototype_stack_layout_8616(
                     proto_args[index] = arg_type
                     changed = True
             width = max(2, _type_size_bytes_8616(arg_type))
+            if annotated_offsets and index + 1 < len(annotated_offsets):
+                annotated_width = annotated_offsets[index + 1] - offset
+                if annotated_width > 0:
+                    width = annotated_width
             expected_offsets.add(offset)
             name = arg_names[index] if index < len(arg_names) and isinstance(arg_names[index], str) else f"a{index}"
             cvar = stack_cvars_by_offset.get(offset)
@@ -1133,7 +1232,8 @@ def _sync_arg_list_from_prototype_stack_layout_8616(
                 cvar.variable_type = arg_type
                 changed = True
             desired_args.append(cvar)
-            offset += width
+            if not annotated_offsets:
+                offset += width
 
         first_arg_offset = min(expected_offsets) if expected_offsets else 4
         for variable in tuple(variables_in_use.keys()):
@@ -1178,13 +1278,15 @@ def _collect_stack_promotion_inputs_8616(func):
     def _impl():
         annotations = {}
         info = getattr(func, "info", None)
-        if isinstance(info, dict):
+        if isinstance(info, MutableMapping):
             maybe_annotations = info.get(ANNOTATION_KEY)
             if isinstance(maybe_annotations, dict):
                 annotations = maybe_annotations
         source_pointer_flags: tuple[bool, ...] = ()
         source_lines = annotations.get("source_lines", ()) if isinstance(annotations, dict) else ()
-        source_decl = _source_decl_from_cod_source_lines(source_lines) if source_lines else None
+        source_decl = (
+            _source_decl_from_cod_source_lines(source_lines, getattr(func, "name", None)) if source_lines else None
+        )
         if isinstance(source_decl, str) and source_decl:
             try:
                 _, parsed_proto, _ = _parse_c_prototype_8616(source_decl)
@@ -1208,6 +1310,8 @@ def _collect_stack_promotion_inputs_8616(func):
         stack_specs = annotations.get("stack_vars", {}) if isinstance(annotations, dict) else {}
         annotated_args: list[tuple[int, str | None]] = []
         if isinstance(stack_specs, dict):
+            positive_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
+            positive_specs_are_normalized = bool(positive_offsets) and positive_offsets[0] == 2
             for offset, spec in sorted(stack_specs.items(), key=lambda item: item[0]):
                 if not isinstance(offset, int) or offset <= 0:
                     continue
@@ -1218,15 +1322,16 @@ def _collect_stack_promotion_inputs_8616(func):
                     spec_name = spec.get("name")
                     if isinstance(spec_name, str) and spec_name:
                         name = spec_name
-                annotated_args.append((offset, name))
+                codegen_offset = offset + 2 if positive_specs_are_normalized else offset
+                annotated_args.append((codegen_offset, name))
         return annotations, source_pointer_flags, stack_specs, annotated_args
 
     return _impl()
 
 
-def _source_pointer_flags_from_lines_8616(source_lines) -> tuple[bool, ...]:
+def _source_pointer_flags_from_lines_8616(source_lines, function_name: str | None = None) -> tuple[bool, ...]:
     source_lines = tuple(source_lines or ())
-    source_decl = _source_decl_from_cod_source_lines(source_lines) if source_lines else None
+    source_decl = _source_decl_from_cod_source_lines(source_lines, function_name) if source_lines else None
     if not isinstance(source_decl, str) or not source_decl:
         return ()
     try:
@@ -1253,7 +1358,13 @@ def _source_pointer_flags_from_project_cod_metadata_8616(project, func_addr: int
             candidates.append(rebased)
     for candidate in candidates:
         metadata = metadata_by_addr.get(candidate)
-        flags = _source_pointer_flags_from_lines_8616(getattr(metadata, "source_lines", ()) if metadata is not None else ())
+        function_name = None
+        with contextlib.suppress(Exception):
+            function_name = getattr(project.kb.functions.function(addr=candidate, create=False), "name", None)
+        flags = _source_pointer_flags_from_lines_8616(
+            getattr(metadata, "source_lines", ()) if metadata is not None else (),
+            function_name,
+        )
         if flags:
             return flags
     return ()
@@ -1274,8 +1385,12 @@ def _source_decl_from_project_cod_metadata_8616(project, func_addr: int | None) 
             candidates.append(rebased)
     for candidate in candidates:
         metadata = metadata_by_addr.get(candidate)
+        function_name = None
+        with contextlib.suppress(Exception):
+            function_name = getattr(project.kb.functions.function(addr=candidate, create=False), "name", None)
         source_decl = _source_decl_from_cod_source_lines(
-            tuple(getattr(metadata, "source_lines", ()) or ()) if metadata is not None else ()
+            tuple(getattr(metadata, "source_lines", ()) or ()) if metadata is not None else (),
+            function_name,
         )
         if isinstance(source_decl, str) and source_decl:
             return source_decl
@@ -1288,6 +1403,364 @@ def _pointer_type_for_codegen_8616(codegen):
     if arch is not None and hasattr(pointer_type, "with_arch"):
         pointer_type = pointer_type.with_arch(arch)
     return pointer_type
+
+
+class PointerArgIndirectFactKind8616(Enum):
+    LOAD_WORD = "load_word"
+    STORE_WORD = "store_word"
+
+
+@dataclass(frozen=True, slots=True)
+class PointerArgIndirectFact8616:
+    kind: PointerArgIndirectFactKind8616
+    insn_addr: int
+    stack_offset: int
+    base_reg: str
+
+
+def _operand_reg_name_from_capstone_8616(insn, operand) -> str | None:
+    reg = getattr(operand, "reg", None)
+    if not isinstance(reg, int):
+        return None
+    reg_name = getattr(insn, "reg_name", None)
+    if not callable(reg_name):
+        return None
+    with contextlib.suppress(Exception):
+        name = reg_name(reg)
+        if isinstance(name, str) and name:
+            return name.lower()
+    return None
+
+
+def _operand_mem_base_name_from_capstone_8616(insn, operand) -> str | None:
+    if getattr(operand, "type", None) != X86_OP_MEM:
+        return None
+    mem = getattr(operand, "mem", None)
+    base_reg = getattr(mem, "base", None) if mem is not None else None
+    if not isinstance(base_reg, int):
+        return None
+    return _operand_reg_name_from_capstone_8616(insn, SimpleNamespace(reg=base_reg))
+
+
+def _bp_memory_displacement_from_capstone_8616(insn, operand) -> int | None:
+    if getattr(operand, "type", None) != X86_OP_MEM:
+        return None
+    mem = getattr(operand, "mem", None)
+    if mem is None:
+        return None
+    base = _operand_mem_base_name_from_capstone_8616(insn, operand)
+    if base != "bp":
+        return None
+    index_reg = getattr(mem, "index", None)
+    if isinstance(index_reg, int) and index_reg:
+        return None
+    disp = getattr(mem, "disp", None)
+    return disp if isinstance(disp, int) else None
+
+
+def _is_simple_reg_indirect_operand_8616(insn, operand, reg_name: str) -> bool:
+    if getattr(operand, "type", None) != X86_OP_MEM:
+        return False
+    mem = getattr(operand, "mem", None)
+    if mem is None:
+        return False
+    if _operand_mem_base_name_from_capstone_8616(insn, operand) != reg_name:
+        return False
+    index_reg = getattr(mem, "index", None)
+    disp = getattr(mem, "disp", None)
+    return not (isinstance(index_reg, int) and index_reg) and (disp is None or disp == 0)
+
+
+def _collect_pointer_arg_indirect_facts_8616(project, function, pointer_arg_offsets: set[int]) -> tuple[PointerArgIndirectFact8616, ...]:
+    if project is None or function is None or not pointer_arg_offsets:
+        return ()
+
+    facts: list[PointerArgIndirectFact8616] = []
+    seen: set[tuple[PointerArgIndirectFactKind8616, int, int]] = set()
+    reg_points_to_arg_offset: dict[str, int] = {}
+
+    for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+            insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        except Exception:
+            continue
+        for wrapped_insn in insns:
+            insn = getattr(wrapped_insn, "insn", wrapped_insn)
+            mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+            operands = tuple(getattr(insn, "operands", ()) or ())
+            insn_addr = int(getattr(wrapped_insn, "address", getattr(insn, "address", 0)) or 0)
+            if mnemonic != "mov" or len(operands) != 2:
+                dst_reg = (
+                    _operand_reg_name_from_capstone_8616(insn, operands[0])
+                    if operands and getattr(operands[0], "type", None) == X86_OP_REG
+                    else None
+                )
+                if dst_reg is not None:
+                    reg_points_to_arg_offset.pop(dst_reg, None)
+                continue
+
+            dst, src = operands
+            dst_reg = _operand_reg_name_from_capstone_8616(insn, dst) if getattr(dst, "type", None) == X86_OP_REG else None
+            src_reg = _operand_reg_name_from_capstone_8616(insn, src) if getattr(src, "type", None) == X86_OP_REG else None
+
+            if dst_reg is not None:
+                src_bp_disp = _bp_memory_displacement_from_capstone_8616(insn, src)
+                if src_bp_disp in pointer_arg_offsets:
+                    reg_points_to_arg_offset[dst_reg] = int(src_bp_disp)
+                    continue
+                if src_reg is not None and src_reg in reg_points_to_arg_offset:
+                    reg_points_to_arg_offset[dst_reg] = reg_points_to_arg_offset[src_reg]
+                    continue
+
+                for base_reg, stack_offset in tuple(reg_points_to_arg_offset.items()):
+                    if _is_simple_reg_indirect_operand_8616(insn, src, base_reg):
+                        key = (PointerArgIndirectFactKind8616.LOAD_WORD, insn_addr, stack_offset)
+                        if key not in seen:
+                            seen.add(key)
+                            facts.append(
+                                PointerArgIndirectFact8616(
+                                    PointerArgIndirectFactKind8616.LOAD_WORD,
+                                    insn_addr,
+                                    stack_offset,
+                                    base_reg,
+                                )
+                            )
+                        break
+                reg_points_to_arg_offset.pop(dst_reg, None)
+                continue
+
+            for base_reg, stack_offset in tuple(reg_points_to_arg_offset.items()):
+                if _is_simple_reg_indirect_operand_8616(insn, dst, base_reg):
+                    key = (PointerArgIndirectFactKind8616.STORE_WORD, insn_addr, stack_offset)
+                    if key not in seen:
+                        seen.add(key)
+                        facts.append(
+                            PointerArgIndirectFact8616(
+                                PointerArgIndirectFactKind8616.STORE_WORD,
+                                insn_addr,
+                                stack_offset,
+                                base_reg,
+                            )
+                        )
+                    break
+
+    return tuple(sorted(facts, key=lambda fact: fact.insn_addr))
+
+
+def _make_zero_indexed_pointer_arg_8616(codegen, cvar: CVariable):
+    index_type = SimTypeShort(False)
+    arch = getattr(getattr(codegen, "project", None), "arch", None)
+    if arch is not None and hasattr(index_type, "with_arch"):
+        index_type = index_type.with_arch(arch)
+    return CIndexedVariable(cvar, CConstant(0, index_type, codegen=codegen), codegen=codegen)
+
+
+def _assignment_lhs_accepts_pointer_load_value_8616(lhs) -> bool:
+    while isinstance(lhs, CTypeCast):
+        lhs = lhs.expr
+    if isinstance(lhs, CIndexedVariable):
+        return True
+    if isinstance(lhs, CUnaryOp) and lhs.op == "Dereference":
+        return True
+    if isinstance(lhs, CVariable):
+        return not isinstance(getattr(lhs, "variable_type", None), SimTypePointer)
+    return False
+
+
+def _statement_children_for_pointer_arg_materialization_8616(stmt) -> tuple[object, ...]:
+    children: list[object] = []
+    for attr in ("initializer", "iterator", "body", "else_node", "statements"):
+        child = getattr(stmt, attr, None)
+        if child is not None:
+            children.append(child)
+    for _cond, body in tuple(getattr(stmt, "condition_and_nodes", ()) or ()):
+        if body is not None:
+            children.append(body)
+    for _case, body in tuple(getattr(stmt, "cases", ()) or ()):
+        if body is not None:
+            children.append(body)
+    return tuple(children)
+
+
+def _iter_assignments_in_statement_order_8616(root, seen: set[int] | None = None):
+    if seen is None:
+        seen = set()
+    if root is None:
+        return
+    obj_id = id(root)
+    if obj_id in seen:
+        return
+    seen.add(obj_id)
+    if isinstance(root, CAssignment):
+        yield root
+        return
+    if isinstance(root, CStatements):
+        for stmt in tuple(getattr(root, "statements", ()) or ()):
+            yield from _iter_assignments_in_statement_order_8616(stmt, seen)
+        return
+    if isinstance(root, (list, tuple)):
+        for item in root:
+            yield from _iter_assignments_in_statement_order_8616(item, seen)
+        return
+    for child in _statement_children_for_pointer_arg_materialization_8616(root):
+        yield from _iter_assignments_in_statement_order_8616(child, seen)
+
+
+def _stack_offset_for_cvariable_8616(cvar) -> int | None:
+    if not isinstance(cvar, CVariable):
+        return None
+    for attr in ("variable", "unified_variable"):
+        variable = getattr(cvar, attr, None)
+        offset = getattr(variable, "offset", None)
+        if isinstance(variable, SimStackVariable) and isinstance(offset, int):
+            return offset
+    return None
+
+
+def _pointer_arg_offsets_for_codegen_8616(codegen) -> dict[int, CVariable]:
+    offsets: dict[int, CVariable] = {}
+    cfunc = getattr(codegen, "cfunc", None)
+    prototype_args = tuple(getattr(getattr(cfunc, "functy", None), "args", ()) or ())
+    for index, cvar in enumerate(tuple(getattr(cfunc, "arg_list", ()) or ())):
+        if not isinstance(cvar, CVariable):
+            continue
+        cvar_type = getattr(cvar, "variable_type", None)
+        proto_type = prototype_args[index] if index < len(prototype_args) else None
+        if not isinstance(cvar_type, SimTypePointer) and not isinstance(proto_type, SimTypePointer):
+            continue
+        offset = _stack_offset_for_cvariable_8616(cvar)
+        if isinstance(offset, int):
+            offsets[offset] = cvar
+    return offsets
+
+
+def _candidate_functions_for_pointer_arg_fact_scan_8616(project, codegen, func):
+    yielded: set[tuple[int, int]] = set()
+
+    def add(candidate_project, candidate_func):
+        if candidate_project is None or candidate_func is None:
+            return
+        key = (id(candidate_project), id(candidate_func))
+        if key in yielded:
+            return
+        yielded.add(key)
+        yield candidate_project, candidate_func
+
+    yield from add(project, getattr(codegen, "_func", None))
+    cfunc_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    if isinstance(cfunc_addr, int):
+        with contextlib.suppress(Exception):
+            yield from add(project, project.kb.functions.function(addr=cfunc_addr, create=False))
+    yield from add(project, func)
+
+    delta = getattr(project, "_inertia_original_linear_delta", None)
+    original_project = getattr(project, "_inertia_original_project", None)
+    if isinstance(delta, int) and original_project is not None and isinstance(cfunc_addr, int):
+        with contextlib.suppress(Exception):
+            yield from add(original_project, original_project.kb.functions.function(addr=cfunc_addr + delta, create=False))
+
+
+def _materialize_pointer_arg_indirect_loads_8616(project, codegen, func) -> bool:
+    pointer_args_by_offset = _pointer_arg_offsets_for_codegen_8616(codegen)
+    debug_pointer_indirect = os.environ.get("INERTIA_DEBUG_POINTER_ARG_INDIRECT") == "1"
+    if not pointer_args_by_offset:
+        setattr(codegen, "_inertia_pointer_arg_indirect_refused_8616", 0)
+        if debug_pointer_indirect:
+            print("[dbg-pointer-indirect] no pointer args", file=sys.stderr, flush=True)
+        return False
+
+    facts: tuple[PointerArgIndirectFact8616, ...] = ()
+    for scan_project, scan_func in _candidate_functions_for_pointer_arg_fact_scan_8616(project, codegen, func):
+        facts = _collect_pointer_arg_indirect_facts_8616(scan_project, scan_func, set(pointer_args_by_offset))
+        if debug_pointer_indirect:
+            print(
+                "[dbg-pointer-indirect] "
+                f"scan_project={id(scan_project)} func={getattr(scan_func, 'addr', None)!r} "
+                f"blocks={sorted(getattr(scan_func, 'block_addrs_set', ()) or ())} facts={facts!r}",
+                file=sys.stderr,
+                flush=True,
+            )
+        if facts:
+            break
+
+    load_facts = tuple(fact for fact in facts if fact.kind is PointerArgIndirectFactKind8616.LOAD_WORD)
+    setattr(codegen, "_inertia_pointer_arg_indirect_fact_count_8616", len(facts))
+    setattr(codegen, "_inertia_pointer_arg_indirect_load_fact_count_8616", len(load_facts))
+    if debug_pointer_indirect:
+        print(
+            "[dbg-pointer-indirect] "
+            f"pointer_offsets={sorted(pointer_args_by_offset)} load_facts={load_facts!r}",
+            file=sys.stderr,
+            flush=True,
+        )
+    if not load_facts:
+        return False
+
+    changed = False
+    fact_index = 0
+    refused = 0
+    materialized = 0
+    for stmt in _iter_assignments_in_statement_order_8616(getattr(codegen.cfunc, "statements", None)):
+        rhs = getattr(stmt, "rhs", None)
+        if debug_pointer_indirect:
+            rhs_var = getattr(rhs, "variable", None)
+            rhs_unified = getattr(rhs, "unified_variable", None)
+            print(
+                "[dbg-pointer-indirect] assignment "
+                f"lhs={type(getattr(stmt, 'lhs', None)).__name__} rhs={type(rhs).__name__} "
+                f"lhs_name={getattr(getattr(getattr(stmt, 'lhs', None), 'variable', None), 'name', None)!r} "
+                f"rhs_name={getattr(rhs_var, 'name', None)!r} "
+                f"rhs_var={type(rhs_var).__name__} rhs_offset={getattr(rhs_var, 'offset', None)!r} "
+                f"rhs_unified={type(rhs_unified).__name__} unified_offset={getattr(rhs_unified, 'offset', None)!r}",
+                file=sys.stderr,
+                flush=True,
+            )
+        if not isinstance(rhs, CVariable):
+            continue
+        offset = _stack_offset_for_cvariable_8616(rhs)
+        if not isinstance(offset, int):
+            continue
+        if offset not in pointer_args_by_offset:
+            continue
+        if not _assignment_lhs_accepts_pointer_load_value_8616(getattr(stmt, "lhs", None)):
+            refused += 1
+            if debug_pointer_indirect:
+                print(
+                    "[dbg-pointer-indirect] refused lhs "
+                    f"offset={offset} lhs={getattr(stmt, 'lhs', None)!r} rhs={rhs!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            continue
+        if fact_index >= len(load_facts) or load_facts[fact_index].stack_offset != offset:
+            refused += 1
+            if debug_pointer_indirect:
+                print(
+                    "[dbg-pointer-indirect] refused order "
+                    f"offset={offset} fact_index={fact_index} next_fact="
+                    f"{load_facts[fact_index] if fact_index < len(load_facts) else None!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            continue
+        stmt.rhs = _make_zero_indexed_pointer_arg_8616(codegen, pointer_args_by_offset[offset])
+        if debug_pointer_indirect:
+            print(
+                "[dbg-pointer-indirect] materialized "
+                f"offset={offset} fact={load_facts[fact_index]!r}",
+                file=sys.stderr,
+                flush=True,
+            )
+        fact_index += 1
+        materialized += 1
+        changed = True
+
+    if fact_index < len(load_facts):
+        refused += len(load_facts) - fact_index
+    setattr(codegen, "_inertia_pointer_arg_indirect_load_materialized_8616", materialized)
+    setattr(codegen, "_inertia_pointer_arg_indirect_refused_8616", refused)
+    return changed
 
 
 def _x87_scalar_stack_arg_types_8616(project, func, *, codegen=None) -> dict[int, object]:
@@ -1677,7 +2150,7 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
         shape = "void" if not has_value_return and source_shape is None else "scalar_ax"
 
         info = getattr(func, "info", None)
-        if isinstance(info, dict):
+        if isinstance(info, MutableMapping):
             return_info = info.setdefault("x86_16_return_shape", {})
             return_info["shape"] = shape
             return_info["tiny_function"] = tiny_function
@@ -1724,12 +2197,12 @@ def _collect_source_return_annotation_8616(func) -> tuple[tuple[str, ...], tuple
     source_return_lines: tuple[str, ...] = ()
     source_lines: tuple[str, ...] = ()
     info = getattr(func, "info", None)
-    if isinstance(info, dict):
+    if isinstance(info, MutableMapping):
         annotations = info.get(ANNOTATION_KEY)
         if isinstance(annotations, dict):
             source_return_lines = tuple(annotations.get("source_return_lines", ()) or ())
             source_lines = tuple(annotations.get("source_lines", ()) or ())
-    source_decl = _source_decl_from_cod_source_lines(source_lines) if source_lines else None
+    source_decl = _source_decl_from_cod_source_lines(source_lines, getattr(func, "name", None)) if source_lines else None
     if not (isinstance(source_decl, str) and source_decl):
         return source_return_lines, source_lines, False
     try:
@@ -1750,6 +2223,26 @@ def _function_has_void_return_prototype_8616(func) -> bool:
     if _is_void_return_type_8616(getattr(prototype, "returnty", None)):
         return True
     return _collect_source_return_annotation_8616(func)[2]
+
+
+def _codegen_has_void_return_evidence_8616(_project, codegen, func) -> bool:
+    cfunc = getattr(codegen, "cfunc", None)
+    for candidate in (
+        getattr(cfunc, "prototype", None),
+        getattr(cfunc, "functy", None),
+        getattr(getattr(codegen, "_func", None), "prototype", None),
+        getattr(getattr(codegen, "_inertia_current_function_8616", None), "prototype", None),
+        getattr(func, "prototype", None) if func is not None else None,
+    ):
+        if _is_void_return_type_8616(getattr(candidate, "returnty", None)):
+            return True
+    for candidate_func in (
+        getattr(codegen, "_inertia_current_function_8616", None),
+        func,
+    ):
+        if candidate_func is not None and _collect_source_return_annotation_8616(candidate_func)[2]:
+            return True
+    return False
 
 
 def _choose_return_type_for_shape_8616(
@@ -1779,15 +2272,17 @@ def _prune_void_function_return_values_8616(project, codegen) -> bool:
     if func_addr is None:
         return False
 
-    func = project.kb.functions.function(addr=func_addr, create=False)
+    func = getattr(codegen, "_inertia_current_function_8616", None)
     if func is None:
-        return False
+        with contextlib.suppress(Exception):
+            func = project.kb.functions.function(addr=func_addr, create=False)
 
-    if not _function_has_void_return_prototype_8616(func):
+    if not _codegen_has_void_return_evidence_8616(project, codegen, func):
         return False
 
     changed = False
-    for container in tuple(_iter_c_nodes_deep_8616(codegen.cfunc.statements)):
+    root = getattr(codegen.cfunc, "statements", None)
+    for container in tuple(node for node in (root, *_iter_c_nodes_deep_8616(root)) if isinstance(node, CStatements)):
         if not isinstance(container, CStatements):
             continue
         statements = list(getattr(container, "statements", ()) or ())
@@ -1810,7 +2305,9 @@ def _prune_void_function_return_values_8616(project, codegen) -> bool:
                     rewritten.append(CReturn(None, codegen=getattr(stmt, "codegen", codegen)))
                 local_changed = True
                 continue
+            stmt.retval = None
             rewritten.append(stmt)
+            local_changed = True
         if local_changed:
             container.statements = rewritten
             changed = True
@@ -1836,7 +2333,38 @@ def _apply_annotations_8616(project, codegen) -> bool:
         changed = False
         source_decl = _source_decl_from_project_cod_metadata_8616(project, func_addr)
         source_proto_applied = False
-        if isinstance(source_decl, str) and source_decl:
+        opaque_source_types = (
+            _c_decl_requires_opaque_typedefs_8616(source_decl) if isinstance(source_decl, str) and source_decl else False
+        )
+        if isinstance(source_decl, str) and source_decl and opaque_source_types:
+            with contextlib.suppress(Exception):
+                parsed_name, parsed_proto, _ = _parse_c_prototype_8616(source_decl)
+                current_proto = getattr(codegen.cfunc, "functy", None) or getattr(func, "prototype", None)
+                if parsed_proto is not None and current_proto is not None:
+                    source_arg_names = getattr(parsed_proto, "arg_names", None)
+                    new_proto = current_proto.__class__(
+                        list(getattr(current_proto, "args", ()) or ()),
+                        parsed_proto.returnty,
+                        arg_names=source_arg_names or getattr(current_proto, "arg_names", None),
+                        variadic=getattr(current_proto, "variadic", False),
+                    )
+                    arch = getattr(project, "arch", None)
+                    if arch is not None and hasattr(new_proto, "with_arch"):
+                        new_proto = new_proto.with_arch(arch)
+                    annotate_function(
+                        project,
+                        func_addr,
+                        name=getattr(func, "name", None) or parsed_name,
+                        prototype=new_proto,
+                    )
+                    refreshed = project.kb.functions.function(addr=func_addr, create=False)
+                    if refreshed is not None:
+                        func = refreshed
+                    if getattr(codegen, "cfunc", None) is not None:
+                        _set_codegen_prototype_8616(codegen, new_proto)
+                    source_proto_applied = True
+                    changed = True
+        elif isinstance(source_decl, str) and source_decl:
             with contextlib.suppress(Exception):
                 annotate_function(project, func_addr, name=getattr(func, "name", None), c_decl=source_decl)
                 refreshed = project.kb.functions.function(addr=func_addr, create=False)
@@ -1957,11 +2485,17 @@ def _apply_annotations_8616(project, codegen) -> bool:
             stack_vars_by_offset[offset] = best_cvar
 
         materialized_stack_cvars: dict[int, CVariable] = {}
+        positive_stack_spec_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
+        positive_specs_are_normalized = _positive_stack_specs_are_normalized_for_codegen_8616(stack_specs, codegen) and (
+            not stack_vars_by_offset or any((offset + 2) in stack_vars_by_offset for offset in positive_stack_spec_offsets)
+        )
 
         def _stack_spec_for_offset(offset: int):
             spec = stack_specs.get(offset)
             if spec is None and isinstance(offset, int) and offset < 0:
                 spec = stack_specs.get(offset + 2)
+            if spec is None and isinstance(offset, int) and offset < 0:
+                spec = stack_specs.get(offset - 2)
             return spec
 
         def _materialize_stack_cvar(offset: int, type_):
@@ -1987,7 +2521,8 @@ def _apply_annotations_8616(project, codegen) -> bool:
                 return None
 
             size = max((getattr(type_, "size", None) or 8) // 8, 1)
-            stack_var = SimStackVariable(offset, size, base="bp", name=name, region=func_addr)
+            stack_offset = offset + 2 if offset > 0 and positive_specs_are_normalized else offset
+            stack_var = SimStackVariable(stack_offset, size, base="bp", name=name, region=func_addr)
             vartype = type_ if type_ is not None else spec_type
             cvar = CVariable(stack_var, variable_type=vartype, codegen=codegen)
             materialized_stack_cvars[offset] = cvar
@@ -2006,6 +2541,10 @@ def _apply_annotations_8616(project, codegen) -> bool:
             return cvar
 
         def resolve_stack_cvar(offset: int):
+            if offset > 0 and positive_specs_are_normalized:
+                raw_arg = stack_vars_by_offset.get(offset + 2)
+                if raw_arg is not None:
+                    return raw_arg
             direct = stack_vars_by_offset.get(offset)
             if direct is not None:
                 return direct
@@ -2068,6 +2607,15 @@ def _apply_annotations_8616(project, codegen) -> bool:
         )
         if arg_list_synced:
             changed = True
+            changed |= _apply_annotation_rewrites_8616(
+                project=project,
+                codegen=codegen,
+                stack_vars_by_offset=stack_vars_by_offset,
+                global_spec_for=global_spec_for,
+                resolve_stack_cvar=resolve_stack_cvar,
+                materialize_stack_cvar=_materialize_stack_cvar,
+                stack_candidate_score=_stack_candidate_score,
+            )
 
         return changed
 
@@ -2083,6 +2631,9 @@ def _rename_stack_variables_from_specs_8616(
     name_owner_offsets: dict[str, int],
 ) -> bool:
     def _impl():
+        positive_spec_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
+        positive_specs_are_normalized = _positive_stack_specs_are_normalized_for_codegen_8616(stack_specs, codegen)
+
         def unique_stack_name(base_name: str | None) -> str | None:
             if not isinstance(base_name, str) or not base_name:
                 return None
@@ -2100,9 +2651,17 @@ def _rename_stack_variables_from_specs_8616(
                 helper_name = helper_arg_name_by_offset.get(offset)
                 if helper_name is not None:
                     return helper_name, None
+                if positive_specs_are_normalized:
+                    spec = stack_specs.get(offset - 2)
+                    if isinstance(spec, str):
+                        return spec, None
+                    if isinstance(spec, dict):
+                        return spec.get("name"), spec.get("type")
             spec = stack_specs.get(offset)
             if spec is None and isinstance(offset, int) and offset < 0:
                 spec = stack_specs.get(offset + 2)
+            if spec is None and isinstance(offset, int) and offset < 0:
+                spec = stack_specs.get(offset - 2)
             if isinstance(spec, str):
                 return spec, None
             if isinstance(spec, dict):
@@ -2131,22 +2690,25 @@ def _rename_stack_variables_from_specs_8616(
                     name = current
             current_name = getattr(variable, "name", None)
             if isinstance(current_name, str) and current_name and current_name == name:
-                used_stack_names.add(current_name)
-                name_owner_offsets[current_name] = (
-                    getattr(variable, "offset", 0) if isinstance(getattr(variable, "offset", None), int) else 0
-                )
-                unified = getattr(cvar, "unified_variable", None)
-                if unified is not None and getattr(unified, "name", None) != current_name:
-                    unified.name = current_name
-                    changed = True
-                if getattr(cvar, "name", None) != current_name:
-                    try:
-                        cvar.name = current_name
-                    except Exception:
-                        pass
-                    else:
+                offset = getattr(variable, "offset", None)
+                owner_offset = name_owner_offsets.get(current_name)
+                if current_name not in used_stack_names or owner_offset == offset:
+                    used_stack_names.add(current_name)
+                    name_owner_offsets[current_name] = offset if isinstance(offset, int) else 0
+                    unified = getattr(cvar, "unified_variable", None)
+                    if unified is not None and getattr(unified, "name", None) != current_name:
+                        unified.name = current_name
                         changed = True
-                continue
+                    if getattr(cvar, "name", None) != current_name:
+                        try:
+                            cvar.name = current_name
+                        except Exception:
+                            pass
+                        else:
+                            changed = True
+                    if vartype is not None and _apply_stack_arg_cvar_type_8616(codegen, cvar, vartype):
+                        changed = True
+                    continue
             if name is not None and name in used_stack_names:
                 owner_offset = name_owner_offsets.get(name)
                 offset = getattr(variable, "offset", None)
@@ -2167,8 +2729,7 @@ def _rename_stack_variables_from_specs_8616(
                 if getattr(variable, "name", None) != name:
                     variable.name = name
                     changed = True
-            if vartype is not None and getattr(cvar, "variable_type", None) != vartype:
-                cvar.variable_type = vartype
+            if vartype is not None and _apply_stack_arg_cvar_type_8616(codegen, cvar, vartype):
                 changed = True
         return changed
 
@@ -2184,19 +2745,58 @@ def _sync_arg_list_from_annotations_8616(
     promote_near_pointers: bool,
 ) -> bool:
     def _impl():
-        arg_offsets = [offset for offset in sorted(stack_specs) if isinstance(offset, int) and offset > 0]
+        raw_arg_offsets = [offset for offset in sorted(stack_specs) if isinstance(offset, int) and offset > 0]
+        specs_are_normalized = _positive_stack_specs_are_normalized_for_codegen_8616(stack_specs, codegen)
+        arg_offsets = [offset + 2 if specs_are_normalized else offset for offset in raw_arg_offsets]
+        raw_offset_by_codegen_offset = dict(zip(arg_offsets, raw_arg_offsets))
         if not arg_offsets:
             return False
         resolved_args = []
+        resolved_names: list[str | None] = []
+
+        def _name_from_stack_spec(offset: int) -> str | None:
+            spec = stack_specs.get(raw_offset_by_codegen_offset.get(offset, offset))
+            if isinstance(spec, str):
+                return spec
+            if isinstance(spec, dict):
+                name = spec.get("name")
+                return name if isinstance(name, str) and name else None
+            return None
+
+        def _apply_arg_name(cvar, name: str | None) -> bool:
+            if not isinstance(name, str) or not name:
+                return False
+            local_changed = False
+            variable = getattr(cvar, "variable", None)
+            if variable is not None and getattr(variable, "name", None) != name:
+                variable.name = name
+                local_changed = True
+            if getattr(cvar, "name", None) != name:
+                try:
+                    cvar.name = name
+                except Exception:
+                    pass
+                else:
+                    local_changed = True
+            unified = getattr(cvar, "unified_variable", None)
+            if unified is not None and getattr(unified, "name", None) != name:
+                unified.name = name
+                local_changed = True
+            return local_changed
+
+        name_changed = False
         for offset in arg_offsets:
             cvar = resolve_stack_cvar(offset)
             if isinstance(cvar, CVariable):
                 resolved_args.append(cvar)
+                spec_name = _name_from_stack_spec(offset)
+                resolved_names.append(spec_name)
+                name_changed = _apply_arg_name(cvar, spec_name) or name_changed
         if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
             print(
                 "[dbg-x87-proto] "
                 f"sync_annotations func={getattr(func, 'addr', None)!r} "
-                f"arg_offsets={arg_offsets} resolved={len(resolved_args)}",
+                f"arg_offsets={arg_offsets} resolved={len(resolved_args)} names={resolved_names!r}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -2266,7 +2866,9 @@ def _sync_arg_list_from_annotations_8616(
                 pointer_promoted = True
         desired_names = []
         for index in range(target_arg_count):
-            if index < len(resolved_args):
+            if index < len(resolved_names) and isinstance(resolved_names[index], str) and resolved_names[index]:
+                desired_names.append(resolved_names[index])
+            elif index < len(resolved_args):
                 desired_names.append(
                     getattr(getattr(resolved_args[index], "unified_variable", None), "name", None)
                     or resolved_args[index].name
@@ -2283,6 +2885,7 @@ def _sync_arg_list_from_annotations_8616(
             and all(existing is resolved for existing, resolved in zip(existing_args, resolved_args))
             and not pointer_promoted
             and not scalar_materialized
+            and not name_changed
         ):
             return False
         new_proto = current_proto.__class__(
@@ -2297,6 +2900,8 @@ def _sync_arg_list_from_annotations_8616(
         func.prototype = new_proto
         codegen.cfunc.functy = new_proto
         codegen.cfunc.arg_list = resolved_args
+        with contextlib.suppress(Exception):
+            setattr(codegen, "_inertia_codegen_decl_refresh_required_8616", True)
         return True
 
 
@@ -2315,6 +2920,7 @@ def _apply_annotation_rewrites_8616(
     def _impl():
         changed = False
         preferred_stack_cvars_by_identity: dict[object, CVariable] = {}
+        generated_arg_cvars_by_name: dict[str, CVariable] = {}
         for cvar in getattr(codegen.cfunc, "arg_list", ()) or ():
             if not isinstance(cvar, CVariable):
                 continue
@@ -2324,6 +2930,11 @@ def _apply_annotation_rewrites_8616(
             identity = _stack_slot_identity_for_variable(variable)
             if identity is not None:
                 preferred_stack_cvars_by_identity[identity] = cvar
+            offset = getattr(variable, "offset", None)
+            if isinstance(offset, int) and offset > 0:
+                generated_arg_cvars_by_name[f"arg_{offset}"] = cvar
+                if offset > 2:
+                    generated_arg_cvars_by_name[f"arg_{offset - 2}"] = cvar
         for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
             if not isinstance(variable, SimStackVariable):
                 continue
@@ -2346,6 +2957,15 @@ def _apply_annotation_rewrites_8616(
         def transform_stack_aliases(node):
             if not isinstance(node, CVariable):
                 return node
+            node_names = (
+                getattr(node, "name", None),
+                getattr(getattr(node, "variable", None), "name", None),
+                getattr(getattr(node, "unified_variable", None), "name", None),
+            )
+            for node_name in node_names:
+                replacement = generated_arg_cvars_by_name.get(node_name) if isinstance(node_name, str) else None
+                if replacement is not None and replacement is not node:
+                    return replacement
             variable = getattr(node, "variable", None)
             if not isinstance(variable, SimStackVariable):
                 return node

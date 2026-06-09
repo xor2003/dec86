@@ -8,7 +8,7 @@ def _default_recovery_timeout(configured_timeout: int, *, explicit_timeout: bool
     if configured_timeout <= 0:
         return 5
     if not explicit_timeout:
-        return min(12, max(5, configured_timeout))
+        return max(5, configured_timeout)
     return configured_timeout
 
 

@@ -4,12 +4,24 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CStatements
 
-from angr_platforms.X86_16.analysis_helpers import collect_neighbor_call_targets, resolve_direct_call_target_from_block
-from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.analysis_helpers import (
+    collect_neighbor_call_targets,
+    resolve_direct_call_target_from_block,
+    sanitize_direct_call_sites_8616,
+)
+from angr_platforms.X86_16.callsite_summary import CallsitePushExprOp8616, CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
+    CallArgSemanticKind8616,
     _attach_callsite_summaries_8616,
+    _call_arg_semantic_kind_8616,
     _lookup_callee_function_8616,
+    _mov_reg_imm_setup_matches_push_source_8616,
     _normalize_call_target_names_8616,
+    _ordered_callsite_pairs_8616,
+    _reg_expr_setup_matches_push_source_8616,
+    _refresh_callsite_summary_node_ids_8616,
+    _sidecar_label_for_target_8616,
+    _target_addr_is_recovered_function_entry_8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 
@@ -23,6 +35,161 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+
+
+class _Memory:
+    def __init__(self, data: bytes, base: int):
+        self._data = data
+        self._base = base
+
+    def load(self, addr: int, size: int) -> bytes:
+        start = addr - self._base
+        return self._data[start : start + size]
+
+
+def test_sanitize_direct_call_sites_prunes_proven_non_call_entry():
+    blocks = {
+        0x1005A: SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=(
+                    SimpleNamespace(address=0x1005A, mnemonic="push"),
+                    SimpleNamespace(address=0x10060, mnemonic="call"),
+                )
+            )
+        ),
+        0x10060: SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=(
+                    SimpleNamespace(address=0x10060, mnemonic="call"),
+                )
+            )
+        ),
+    }
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        factory=SimpleNamespace(block=lambda addr, opt_level=0: blocks[addr]),
+    )
+    function = SimpleNamespace(
+        project=project,
+        _call_sites={0x1005A: (0x5D2, None), 0x10060: (0x105D2, 0x10063)},
+    )
+
+    evidence = sanitize_direct_call_sites_8616(function)
+
+    assert evidence.raw_fact_count == 2
+    assert evidence.classified_fact_count == 2
+    assert evidence.materialized_count == 1
+    assert evidence.failure_count == 0
+    assert function._call_sites == {0x10060: (0x105D2, 0x10063)}
+
+
+def test_call_arg_semantic_kind_uses_cod_source_pointer_evidence(tmp_path):
+    cod_path = tmp_path / "TEST.COD"
+    cod_path.write_text(
+        "\n".join(
+            (
+                ";|*** void Swaps( BAR *bar1, BAR *bar2 )",
+                ";|*** void SwapBars( int iRow1, int iRow2 )",
+            )
+        ),
+        encoding="utf-8",
+    )
+    project = SimpleNamespace(_inertia_lst_metadata=SimpleNamespace(cod_path=cod_path))
+
+    assert (
+        _call_arg_semantic_kind_8616("Swaps", 0, project=project)
+        is CallArgSemanticKind8616.POINTER
+    )
+    assert (
+        _call_arg_semantic_kind_8616("Swaps", 1, project=project)
+        is CallArgSemanticKind8616.POINTER
+    )
+    assert (
+        _call_arg_semantic_kind_8616("SwapBars", 0, project=project)
+        is CallArgSemanticKind8616.VALUE
+    )
+
+
+def test_call_arg_semantic_kind_ignores_cod_source_call_when_reading_prototypes(tmp_path):
+    cod_path = tmp_path / "TEST.COD"
+    cod_path.write_text(
+        "\n".join(
+            (
+                ";|*** #define _outtextxy( ach, x, y )   { _settextposition( y, x ); \\",
+                ";|***                                     _outtext( ach ); }",
+            )
+        ),
+        encoding="utf-8",
+    )
+    project = SimpleNamespace(_inertia_lst_metadata=SimpleNamespace(cod_path=cod_path))
+
+    assert (
+        _call_arg_semantic_kind_8616("outtext", 0, project=project)
+        is CallArgSemanticKind8616.POINTER
+    )
+
+
+def test_mov_reg_imm_setup_matches_push_source_from_instruction_bytes():
+    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\xB8\x4C\x0B\x50\x31\xC0", 0x1000)))
+
+    assert _mov_reg_imm_setup_matches_push_source_8616(project, 0x1000, ("imm", 0x0B4C))
+    assert _mov_reg_imm_setup_matches_push_source_8616(project, 0x1003, ("imm", 0x0B4C))
+    assert not _mov_reg_imm_setup_matches_push_source_8616(project, 0x1000, ("imm", 0x1234))
+    assert not _mov_reg_imm_setup_matches_push_source_8616(project, 0x1004, ("imm", 0))
+
+
+def test_reg_expr_setup_matches_push_source_from_instruction_bytes():
+    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\x8B\x46\xFE\xD1\xE0\x05\x4C\x0B\x50", 0x1000)))
+    source = ("expr", ("bp", -2), (("shl", 1), ("add", 0x0B4C)))
+
+    assert _reg_expr_setup_matches_push_source_8616(project, 0x1008, source)
+    assert not _reg_expr_setup_matches_push_source_8616(project, 0x1008, ("expr", ("bp", -4), (("shl", 1),)))
+    assert not _reg_expr_setup_matches_push_source_8616(project, 0x1007, source)
+
+
+def test_reg_expr_setup_matches_dec_push_source_from_instruction_bytes():
+    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\x8B\x46\xFE\x48\x50", 0x1000)))
+    source = ("expr", ("bp", -2), (("sub", 1),))
+
+    assert _reg_expr_setup_matches_push_source_8616(project, 0x1004, source)
+    assert not _reg_expr_setup_matches_push_source_8616(project, 0x1004, ("expr", ("bp", -2), (("add", 1),)))
+
+
+def test_reg_expr_setup_matches_imul_ax_memory_push_source_from_instruction_bytes():
+    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\xB8\x3C\x00\xF7\x6E\x04\x50", 0x1000)))
+    source = ("expr", ("bp", 4), ((CallsitePushExprOp8616.MUL.value, 60),))
+
+    assert _reg_expr_setup_matches_push_source_8616(project, 0x1006, source)
+    assert not _reg_expr_setup_matches_push_source_8616(
+        project,
+        0x1006,
+        ("expr", ("bp", 6), ((CallsitePushExprOp8616.MUL.value, 60),)),
+    )
+    assert not _reg_expr_setup_matches_push_source_8616(
+        project,
+        0x1006,
+        ("expr", ("bp", 4), ((CallsitePushExprOp8616.MUL.value, 75),)),
+    )
+
+
+def test_sidecar_label_for_target_matches_unique_16bit_offset_for_linear_target():
+    project = SimpleNamespace(
+        _inertia_lst_metadata=SimpleNamespace(code_labels={0x0794: "_Swaps", 0x075B: "_SwapBars"}),
+        kb=SimpleNamespace(labels={}),
+    )
+
+    assert _sidecar_label_for_target_8616(project, 0x10794) == "Swaps"
+
+
+def test_sidecar_label_for_target_prefers_exact_target_over_delta_candidate():
+    labels = {0x10794: "_Swaps", 0x109E8: "_PercolateUp"}
+    project = SimpleNamespace(
+        _inertia_lst_metadata=SimpleNamespace(code_labels=labels),
+        _inertia_original_linear_delta=0x254,
+        kb=SimpleNamespace(labels={}),
+    )
+
+    assert _sidecar_label_for_target_8616(project, 0x10794) == "Swaps"
 
 
 def test_attach_callsite_summaries_sets_summary_and_binds_callee(monkeypatch):
@@ -174,6 +341,355 @@ def test_attach_callsite_summaries_prefers_call_tags_over_ast_zip_order(monkeypa
     assert second.callee_target == "InitBars"
     assert first.callee_func is callee_b
     assert first.callee_target == "DrawTime"
+
+
+def test_attach_callsite_summaries_does_not_shift_duplicate_target_names(monkeypatch):
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    first_memset = CFunctionCall("memset", None, [], tags={"ins_addr": 0x4012}, codegen=codegen)
+    second_memset = CFunctionCall("memset", None, [], tags={"ins_addr": 0x4020}, codegen=codegen)
+    root = CStatements([first_memset, second_memset], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    memset_func = SimpleNamespace(addr=0x2000, name="memset")
+    caller = SimpleNamespace(
+        addr=0x4010,
+        get_call_sites=lambda: [0x4012, 0x4020],
+    )
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, create=False, **_kwargs: (
+                caller if addr == 0x4010 else memset_func if addr == 0x2000 else None
+            )
+        ),
+        labels={},
+    )
+
+    def _summary_for_callsite(_function, callsite_addr):
+        return CallsiteSummary8616(
+            callsite_addr=callsite_addr,
+            target_addr=0x2000,
+            return_addr=callsite_addr + 3,
+            kind="direct_near",
+            arg_count=3,
+            arg_widths=(2, 2, 2),
+            stack_cleanup=6,
+            return_register="ax",
+            return_used=True,
+        )
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
+        _summary_for_callsite,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_metadata_for_function_8616",
+        lambda _project, _addr: SimpleNamespace(call_names=("memset", "settextcolor")),
+    )
+
+    changed = _attach_callsite_summaries_8616(project, codegen)
+
+    assert changed is True
+    assert memset_func.name == "memset"
+    assert first_memset.callee_func is memset_func
+    assert second_memset.callee_func is memset_func
+    assert first_memset.callee_target == "memset"
+    assert second_memset.callee_target == "memset"
+
+
+def test_attach_callsite_summaries_does_not_bind_unproved_source_name_to_known_target(monkeypatch):
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    first_memset = CFunctionCall("memset", None, [], tags={"ins_addr": 0x4012}, codegen=codegen)
+    second_memset = CFunctionCall("memset", None, [], tags={"ins_addr": 0x4020}, codegen=codegen)
+    root = CStatements([first_memset, second_memset], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    caller = SimpleNamespace(
+        addr=0x4010,
+        get_call_sites=lambda: [0x4012, 0x4020],
+    )
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, create=False, **_kwargs: caller if addr == 0x4010 else None
+        ),
+        labels={},
+    )
+
+    def _summary_for_callsite(_function, callsite_addr):
+        return CallsiteSummary8616(
+            callsite_addr=callsite_addr,
+            target_addr=0x2000,
+            return_addr=callsite_addr + 3,
+            kind="direct_near",
+            arg_count=3,
+            arg_widths=(2, 2, 2),
+            stack_cleanup=6,
+            return_register="ax",
+            return_used=True,
+        )
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
+        _summary_for_callsite,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_metadata_for_function_8616",
+        lambda _project, _addr: SimpleNamespace(call_names=("memset", "settextcolor")),
+    )
+
+    changed = _attach_callsite_summaries_8616(project, codegen)
+
+    assert changed is True
+    assert first_memset.callee_func is None
+    assert second_memset.callee_func is None
+    assert first_memset.callee_target == "memset"
+    assert second_memset.callee_target == "memset"
+
+
+def test_refresh_callsite_summaries_repairs_shifted_current_node_ids():
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    percolate_up = CFunctionCall("PercolateUp", None, [], tags={"ins_addr": 0x1025}, codegen=codegen)
+    swaps = CFunctionCall("Swaps", None, [], tags={"ins_addr": 0x1051}, codegen=codegen)
+    swap_bars = CFunctionCall("SwapBars", None, [], tags={"ins_addr": 0x105E}, codegen=codegen)
+    percolate_down = CFunctionCall("PercolateDown", None, [], tags={"ins_addr": 0x1069}, codegen=codegen)
+    root = CStatements([percolate_up, swaps, swap_bars, percolate_down], addr=0x1000, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root, body=root)
+
+    summary_up = CallsiteSummary8616(0x1025, 0x109E8, 0x1028, "direct_near", 1, (2,), 2, None, False)
+    summary_swaps = CallsiteSummary8616(0x1051, 0x10794, 0x1054, "direct_near", 2, (2, 2), 4, None, False)
+    summary_swap_bars = CallsiteSummary8616(0x105E, 0x10768, 0x1061, "direct_near", 2, (2, 2), 4, None, False)
+    summary_down = CallsiteSummary8616(0x1069, 0x10A61, 0x106C, "direct_near", 1, (2,), 2, None, False)
+    summary_map = {
+        id(percolate_up): summary_swaps,
+        id(swaps): summary_swap_bars,
+        id(swap_bars): summary_down,
+        id(percolate_down): summary_up,
+    }
+    codegen._inertia_callsite_summaries = summary_map
+
+    changed = _refresh_callsite_summary_node_ids_8616(codegen, summary_map)
+
+    assert changed is True
+    assert summary_map[id(percolate_up)] is summary_up
+    assert summary_map[id(swaps)] is summary_swaps
+    assert summary_map[id(swap_bars)] is summary_swap_bars
+    assert summary_map[id(percolate_down)] is summary_down
+
+
+def test_refresh_callsite_summaries_prefers_named_duplicate_callsite_node():
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    unknown_wrapper = CFunctionCall(None, None, [], tags={"ins_addr": 0x1025}, codegen=codegen)
+    percolate_up = CFunctionCall("PercolateUp", None, [], tags={"ins_addr": 0x1025}, codegen=codegen)
+    root = CStatements([unknown_wrapper, percolate_up], addr=0x1000, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root, body=root)
+
+    summary_up = CallsiteSummary8616(0x1025, 0x109E8, 0x1028, "direct_near", 1, (2,), 2, None, False)
+    summary_map = {0xDEADBEEF: summary_up}
+    codegen._inertia_callsite_summaries = summary_map
+
+    changed = _refresh_callsite_summary_node_ids_8616(codegen, summary_map)
+
+    assert changed is True
+    assert summary_map[id(percolate_up)] is summary_up
+    assert id(unknown_wrapper) not in summary_map
+
+
+def test_ordered_callsite_pairs_refuses_single_mismatched_named_node(monkeypatch):
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    generated_internal_call = CFunctionCall(
+        "sub_10079",
+        SimpleNamespace(addr=0x10079, name="sub_10079"),
+        [],
+        codegen=codegen,
+    )
+    root = CStatements([generated_internal_call], addr=0x1005A, codegen=codegen)
+    function = SimpleNamespace(addr=0x1005A, get_call_target=lambda _addr: 0x105D2)
+    callee = SimpleNamespace(addr=0x105D2, name="aNchkstk")
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, create=False, name=None: (
+                function if addr == 0x1005A else callee if addr == 0x105D2 else None
+            )
+        )
+    )
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
+        lambda _function, callsite_addr: CallsiteSummary8616(
+            callsite_addr=callsite_addr,
+            target_addr=0x105D2,
+            return_addr=0x10063,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=None,
+            return_register=None,
+            return_used=False,
+            stack_probe_helper=True,
+        ),
+    )
+
+    pairs = _ordered_callsite_pairs_8616(
+        project=project,
+        function=function,
+        root=root,
+        call_nodes=[generated_internal_call],
+        callsite_addrs=[0x10060],
+        node_callsite_addr_resolver=lambda _node: None,
+    )
+
+    assert pairs == []
+
+
+def test_ordered_callsite_pairs_refuses_tagged_stack_probe_for_normal_summary(monkeypatch):
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    stack_probe = CFunctionCall(
+        "aNchkstk",
+        SimpleNamespace(addr=0x11222, name="aNchkstk", block_addrs_set={0x11222}),
+        [],
+        tags={"ins_addr": 0x1025},
+        codegen=codegen,
+    )
+    root = CStatements([stack_probe], addr=0x1000, codegen=codegen)
+    function = SimpleNamespace(addr=0x1000, get_call_target=lambda _addr: 0x109E8)
+    percolate = SimpleNamespace(addr=0x109E8, name="PercolateUp", block_addrs_set={0x109E8})
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, create=False, name=None: (
+                function if addr == 0x1000 else percolate if addr == 0x109E8 else None
+            )
+        )
+    )
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
+        lambda _function, callsite_addr: CallsiteSummary8616(
+            callsite_addr=callsite_addr,
+            target_addr=0x109E8,
+            return_addr=0x1028,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+            stack_probe_helper=False,
+        ),
+    )
+
+    pairs = _ordered_callsite_pairs_8616(
+        project=project,
+        function=function,
+        root=root,
+        call_nodes=[stack_probe],
+        callsite_addrs=[0x1025],
+        node_callsite_addr_resolver=lambda node: node.tags.get("ins_addr"),
+    )
+
+    assert pairs == []
+
+
+def test_normalize_call_target_names_skips_source_stack_probe_for_normal_summary(monkeypatch):
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    call = CFunctionCall(None, None, [], codegen=codegen)
+    root = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    target = SimpleNamespace(addr=0x2000, name="UserFunc", block_addrs_set={0x2000})
+    function = SimpleNamespace(addr=0x4010, get_call_sites=lambda: [0x4012])
+
+    class _Functions:
+        def function(self, addr=None, create=False, name=None):
+            if addr == 0x4010:
+                return function
+            if addr == 0x2000 or name == "UserFunc":
+                return target
+            return None
+
+    project.kb = SimpleNamespace(functions=_Functions())
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x2000,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=None,
+            return_register=None,
+            return_used=False,
+            stack_probe_helper=False,
+        )
+    }
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
+        lambda _project, _func_addr: ("aNchkstk", "UserFunc"),
+    )
+
+    changed = _normalize_call_target_names_8616(codegen)
+
+    assert changed is True
+    assert call.callee_target == "UserFunc"
+    assert call.callee_func is target
+
+
+def test_function_pointer_stack_store_refuses_label_without_function_entry():
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            labels={1: "flsbuf"},
+            functions=SimpleNamespace(function=lambda addr=None, create=False: None),
+        )
+    )
+
+    assert _target_addr_is_recovered_function_entry_8616(project, 1) is False
+
+
+def test_function_pointer_stack_store_accepts_recovered_function_entry():
+    target = SimpleNamespace(addr=0x2000, name="Target", block_addrs_set={0x2000})
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            labels={0x2000: "Target"},
+            functions=SimpleNamespace(function=lambda addr=None, create=False: target if addr == 0x2000 else None),
+        )
+    )
+
+    assert _target_addr_is_recovered_function_entry_8616(project, 0x2000) is True
+
+
+def test_normalize_call_targets_refuses_source_order_stack_probe_without_summary(monkeypatch):
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    generated_internal_call = CFunctionCall(
+        "sub_10079",
+        SimpleNamespace(addr=0x10079, name="sub_10079"),
+        [],
+        codegen=codegen,
+    )
+    root = CStatements([generated_internal_call], addr=0x1005A, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x1005A, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {}
+    function = SimpleNamespace(addr=0x1005A, get_call_sites=lambda: [0x10060])
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, create=False, name=None: function if addr == 0x1005A else None
+        )
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
+        lambda _project, _func_addr: ("aNchkstk",),
+    )
+
+    changed = _normalize_call_target_names_8616(codegen)
+
+    assert changed is False
+    assert generated_internal_call.callee_target == "sub_10079"
+    assert generated_internal_call.callee_func.name == "sub_10079"
 
 
 def test_resolve_direct_call_target_rebases_exact_slice_linear_target():
@@ -648,6 +1164,41 @@ def test_callsite_stats_reject_known_prototype_arg_mismatch():
     stats = codegen._inertia_callsite_materialization_stats
     assert stats.known_prototype_arg_mismatch_count == 1
     assert stats.failure_count >= 1
+
+
+def test_callsite_stats_allow_variadic_known_helper_extra_args():
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    call = CFunctionCall(
+        "sprintf",
+        SimpleNamespace(addr=0x12BA, name="sprintf", block_addrs_set={0x12BA}),
+        [SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), SimpleNamespace()],
+        codegen=codegen,
+    )
+    root = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4050,
+            target_addr=0x12BA,
+            return_addr=0x4053,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 4, 2),
+            stack_cleanup=12,
+            return_register=None,
+            return_used=False,
+        )
+    }
+
+    changed = _normalize_call_target_names_8616(codegen)
+    stats = codegen._inertia_callsite_materialization_stats
+
+    assert changed is False
+    assert stats.call_arg_fact_count == 4
+    assert stats.call_arg_materialized_count == 4
+    assert stats.known_prototype_arg_mismatch_count == 0
+    assert stats.failure_count == 0
 
 
 def test_callsite_stats_ignore_summary_arg_facts_for_known_zero_arg_helper():

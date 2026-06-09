@@ -34,7 +34,7 @@ def test_recover_lst_function_uses_rebased_slice_for_high_exact_region(monkeypat
         def load(self, addr: int, size: int) -> bytes:
             assert addr == 0x109E8
             assert size == 0x79
-            return b"\x90" * size
+            return b"\x55\x8b\xec\xc3" + (b"\x40" * (size - 4))
 
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),

@@ -12,6 +12,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CMP16_EXE = REPO_ROOT / "examples" / "build_msc6" / "CMP16.EXE"
 CMP32_EXE = REPO_ROOT / "examples" / "build_msc6" / "COMP32.EXE"
 FPTR_EXE = REPO_ROOT / "examples" / "build_msc6" / "FPTR.EXE"
+SIMPLE_EXE = REPO_ROOT / "examples" / "build_msc6" / "SIMPLE.EXE"
+LOOPS_EXE = REPO_ROOT / "examples" / "build_msc6" / "LOOPS.EXE"
+POINT_EXE = REPO_ROOT / "examples" / "build_msc6" / "POINT.EXE"
+TYPES_EXE = REPO_ROOT / "examples" / "build_msc6" / "TYPES.EXE"
 CLI_PATH = REPO_ROOT / "decompile.py"
 RUNTIME_GATE_PATH = REPO_ROOT / "scripts" / "verify_msc_example_runtime_gate.py"
 KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
@@ -22,6 +26,7 @@ def _run_decompile_proc(
     function_name: str,
     *,
     proc_kind: str = "NEAR",
+    exe_path: Path = CMP16_EXE,
     timeout: int = 90,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
@@ -37,7 +42,7 @@ def _run_decompile_proc(
             proc_kind,
             "--timeout",
             "60",
-            str(CMP16_EXE),
+            str(exe_path),
         ],
         cwd=REPO_ROOT,
         capture_output=True,
@@ -81,10 +86,15 @@ def _extract_emitted_function_8616(output: str, function_name: str) -> str:
     emitted = output
     if "/* == c == */" in emitted:
         emitted = emitted.split("/* == c == */", 1)[-1]
-    signature = f"int {function_name}("
-    start = emitted.find(signature)
-    if start < 0:
+    signature_match = None
+    for match in re.finditer(rf"(?m)^[^\n;]*\b{re.escape(function_name)}\s*\([^;\n]*\)", emitted):
+        suffix = emitted[match.end() : match.end() + 128]
+        if "{" in suffix.split(";", 1)[0]:
+            signature_match = match
+            break
+    if signature_match is None:
         return ""
+    start = signature_match.start()
     function_text = emitted[start:]
     end = function_text.find("\n}\n")
     return function_text if end < 0 else function_text[: end + 3]
@@ -148,6 +158,60 @@ def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
     assert "in_window_i16(" in emitted_without_source_comments
 
 
+@pytest.mark.skipif(not SIMPLE_EXE.is_file(), reason="SIMPLE example binary is not available in this workspace.")
+def test_msc6_simple_switch_fold_direct_output_uses_source_argument_identity() -> None:
+    result = _run_decompile_proc("switch_fold", proc_kind="NEAR", exe_path=SIMPLE_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, "switch_fold")
+    assert emitted_body, combined
+    assert "int switch_fold(int x)" in emitted_body
+    assert "if (!x)" in emitted_body
+    assert "return x - 5;" in emitted_body
+    assert "return x + 20;" in emitted_body
+    assert "return x << 1;" in emitted_body
+    assert not re.search(r"\b(?:arg|local)_4\b", emitted_body), emitted_body
+
+
+@pytest.mark.skipif(not TYPES_EXE.is_file(), reason="TYPES example binary is not available in this workspace.")
+def test_msc6_scalar_add_sc_keeps_byte_arg_source_identity_through_cli_regeneration() -> None:
+    result = _run_decompile_proc("add_sc", proc_kind="NEAR", exe_path=TYPES_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+    assert "MS C 5.1 msc-dos syntax check failed" not in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, "add_sc")
+    assert emitted_body, combined
+    assert "signed char add_sc(signed char a, signed char b)" in emitted_body
+    assert "return b + a;" in emitted_body or "return a + b;" in emitted_body
+    assert not re.search(r"\b[A-Za-z_]\w*_[0-9]+\b", emitted_body), emitted_body
+
+
+@pytest.mark.skipif(not TYPES_EXE.is_file(), reason="TYPES example binary is not available in this workspace.")
+def test_msc6_scalar_sub_ulong_consumes_stack_probe_prologue_artifacts() -> None:
+    result = _run_decompile_proc("sub_ulong", proc_kind="NEAR", exe_path=TYPES_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+    assert "MS C 5.1 msc-dos syntax check failed" not in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, "sub_ulong")
+    assert emitted_body, combined
+    assert "unsigned long sub_ulong(unsigned long a, unsigned long b)" in emitted_body
+    assert "return a - b;" in emitted_body
+    assert "sub_105ba" not in emitted_body
+    assert "aNchkstk" not in emitted_body
+    assert "a = &" not in emitted_body
+    assert "v2" not in emitted_body
+    assert "vvar_2" not in emitted_body
+
+
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
 @pytest.mark.parametrize(
     ("function_name", "required_fragments"),
@@ -208,15 +272,114 @@ def test_msc6_cmp16_all_helper_functions_pass_tail_validation_and_msc_recompile(
         assert fragment in emitted_body, emitted_body
 
 
+@pytest.mark.skipif(not FPTR_EXE.is_file(), reason="FPTR example binary is not available in this workspace.")
+def test_msc6_fptr_select_and_apply_materializes_branch_function_pointer_targets() -> None:
+    result = _run_decompile_proc("select_and_apply", proc_kind="NEAR", exe_path=FPTR_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, "select_and_apply")
+    assert emitted_body, combined
+    assert "fn = inc_one;" in emitted_body
+    assert "fn = dec_one;" in emitted_body
+    assert "fn = which;" not in emitted_body
+    assert "return apply_twice(fn, value);" in emitted_body
+
+
+@pytest.mark.skipif(not FPTR_EXE.is_file(), reason="FPTR example binary is not available in this workspace.")
+@pytest.mark.parametrize(
+    ("function_name", "required_fragment"),
+    [
+        ("inc_one", "return value + 1;"),
+        ("dec_one", "return value - 1;"),
+    ],
+)
+def test_msc6_fptr_leaf_functions_materialize_terminal_ax_returns(
+    function_name: str,
+    required_fragment: str,
+) -> None:
+    result = _run_decompile_proc(function_name, proc_kind="NEAR", exe_path=FPTR_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, function_name)
+    assert emitted_body, combined
+    assert required_fragment in emitted_body
+    assert "return;" not in emitted_body
+
+
+@pytest.mark.skipif(not FPTR_EXE.is_file(), reason="FPTR example binary is not available in this workspace.")
+def test_msc6_fptr_apply_twice_consumes_stack_probe_call_artifacts() -> None:
+    result = _run_decompile_proc("apply_twice", proc_kind="NEAR", exe_path=FPTR_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, "apply_twice")
+    assert emitted_body, combined
+    assert "apply_twice(" in emitted_body
+    assert "fn" in emitted_body
+    assert "value" in emitted_body
+    assert emitted_body.count("fn(value)") == 2
+    assert "return value;" in emitted_body
+    assert "SEG_U" not in emitted_body
+    assert "local_2 =" not in emitted_body
+    assert "v2 = fn" not in emitted_body
+    assert "v4 =" not in emitted_body
+
+
+@pytest.mark.skipif(not LOOPS_EXE.is_file(), reason="LOOPS example binary is not available in this workspace.")
+def test_msc6_loops_nested_materializes_stack_counter_loop() -> None:
+    result = _run_decompile_proc("nested_loops", proc_kind="NEAR", exe_path=LOOPS_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, "nested_loops")
+    assert emitted_body, combined
+    assert "while (i < limit)" in emitted_body
+    assert "do" in emitted_body
+    assert "continue;" in emitted_body
+    assert "break;" in emitted_body
+    assert "return total;" in emitted_body
+    assert "stack_base" not in emitted_body
+    assert "SEG_U" not in emitted_body
+
+
+@pytest.mark.skipif(not POINT_EXE.is_file(), reason="POINT example binary is not available in this workspace.")
+def test_msc6_pointer_swap_preserves_loaded_temp_across_pointer_store() -> None:
+    result = _run_decompile_proc("swap_ptrs", proc_kind="NEAR", exe_path=POINT_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, "swap_ptrs")
+    assert emitted_body, combined
+    assert "left[0] = right[0];" in emitted_body
+    assert "right[0] = local_2;" in emitted_body or "right[0] = tmp;" in emitted_body
+    assert "right[0] = left[0];" not in emitted_body
+
+
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
 @pytest.mark.skipif(not KVIKDOS_PATH.is_file(), reason="kvikdos is not available in this workspace.")
 @pytest.mark.skipif(not MSC6_ROOT.is_dir(), reason="MS C 6 root is not available in this workspace.")
 @pytest.mark.parametrize(
     ("example_name", "exe_path"),
     [
+        ("simple_control", SIMPLE_EXE),
         ("cmp16", CMP16_EXE),
         ("cmp32", CMP32_EXE),
         ("fptr", FPTR_EXE),
+        ("loops_jumps", LOOPS_EXE),
+        ("pointer_memory", POINT_EXE),
+        ("scalar_types_io", TYPES_EXE),
     ],
 )
 def test_msc6_rebuilt_comparison_executable_runs_success_sentinel(

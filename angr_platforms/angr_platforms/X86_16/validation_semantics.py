@@ -20,7 +20,12 @@ _CALL_STMT_RE_8616 = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>.*)\)\s*;
 _SIMPLE_ASSIGN_RE_8616 = re.compile(
     r"^(?:[A-Za-z_]\w*(?:\s+|\s*\*\s*)+)?(?P<lhs>[A-Za-z_]\w*)\s*=\s*(?P<rhs>[^;]+)\s*;\s*$"
 )
-_PLACEHOLDER_STACK_RE_8616 = re.compile(r"(?<![A-Za-z0-9_])(?:&\s*)?(?:s_|arg_|stack_|vvar_|tmp_|ir_)\w*")
+_PLACEHOLDER_STACK_RE_8616 = re.compile(
+    r"(?<![A-Za-z0-9_])(?:&\s*)?"
+    r"(?:s_[0-9a-f]+|arg_[0-9a-f]*[a-f][0-9a-f]*|(?:stack_|vvar_|tmp_|ir_)\w*)"
+    r"(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 _RAW_STACK_NAME_RE_8616 = re.compile(r"(?<![A-Za-z0-9_])s_[0-9a-f]+(?![A-Za-z0-9_])", re.IGNORECASE)
 _IDENT_RE_8616 = re.compile(r"\b[A-Za-z_]\w*\b")
 
@@ -122,6 +127,11 @@ def _normalized_non_preprocessor_lines_8616(c_text: str) -> tuple[str, ...]:
             continue
         lines.append(line)
     return tuple(lines)
+
+
+def _strip_comments_for_placeholder_scan_8616(c_text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", "", str(c_text or ""), flags=re.DOTALL)
+    return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
 
 
 def _dangerous_segment_linearization_expr_8616(expr_text: str, tainted_names: set[str]) -> bool:
@@ -251,8 +261,9 @@ def validate_known_call_semantics_8616(
 
 def assert_known_call_semantics_8616(c_text: str, *, function_addr: int | None = None) -> None:
     report = validate_known_call_semantics_8616(c_text, function_addr=function_addr)
-    if _RAW_STACK_NAME_RE_8616.search(str(c_text or "")) is not None or _PLACEHOLDER_STACK_RE_8616.search(
-        str(c_text or "")
+    semantic_text = _strip_comments_for_placeholder_scan_8616(c_text)
+    if _RAW_STACK_NAME_RE_8616.search(semantic_text) is not None or _PLACEHOLDER_STACK_RE_8616.search(
+        semantic_text
     ) is not None:
         raise PipelineHardError(
             "function leaked unresolved stack locals into final C",

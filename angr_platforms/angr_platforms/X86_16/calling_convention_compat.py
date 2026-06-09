@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from enum import Enum
+
 from angr.analyses.calling_convention import calling_convention as _cc_analysis
 from angr.analyses.calling_convention import fact_collector as _cc_fact_collector
 from angr.analyses.calling_convention import utils as _cc_utils
@@ -10,7 +12,15 @@ from pyvex.stmt import Put
 
 from .simos_86_16 import SimCC8616MSCsmall
 
-__all__ = ["apply_x86_16_calling_convention_compatibility"]
+__all__ = [
+    "apply_x86_16_calling_convention_compatibility",
+    "apply_x86_16_wide_stack_prototype_evidence",
+]
+
+
+class _WideReturnEvidence8616(Enum):
+    NONE = 0
+    DX_AX_TERMINAL_ARITH = 1
 
 
 def _has_explicit_arg_names_8616(prototype) -> bool:
@@ -43,10 +53,103 @@ def _count_ax_dx_puts_8616(irsb, arch) -> int:
     return count
 
 
+def _iter_function_blocks_8616(project, function):
+    for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
+        try:
+            yield project.factory.block(int(block_addr), opt_level=0)
+        except SimTranslationError:
+            continue
+
+
+def _capstone_reg_name_8616(insn, reg_id: int) -> str:
+    try:
+        return str(insn.reg_name(reg_id)).lower()
+    except Exception:
+        return ""
+
+
+def _instruction_writes_reg_8616(insn, reg_name: str) -> bool:
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if not operands:
+        return False
+    first = operands[0]
+    if int(getattr(first, "type", -1)) != 1:
+        return False
+    return _capstone_reg_name_8616(insn, int(getattr(first, "reg", 0) or 0)) == reg_name
+
+
+def _terminal_wide_return_evidence_8616(project, function) -> _WideReturnEvidence8616:
+    """Detect a terminal DX:AX producer without relying on source names."""
+    terminal_dx_ops = {"adc", "sbb", "mov"}
+    for block in _iter_function_blocks_8616(project, function):
+        insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        if not insns:
+            continue
+        last_ax_idx = None
+        last_dx_idx = None
+        last_dx_mnemonic = None
+        for idx, insn in enumerate(insns):
+            if _instruction_writes_reg_8616(insn, "ax"):
+                last_ax_idx = idx
+            if _instruction_writes_reg_8616(insn, "dx"):
+                last_dx_idx = idx
+                last_dx_mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+        if last_ax_idx is None or last_dx_idx is None:
+            continue
+        if last_dx_idx <= last_ax_idx:
+            continue
+        if last_dx_mnemonic in terminal_dx_ops:
+            return _WideReturnEvidence8616.DX_AX_TERMINAL_ARITH
+    return _WideReturnEvidence8616.NONE
+
+
+def _bp_word_load_offsets_from_instructions_8616(project, function) -> tuple[int, ...]:
+    offsets: set[int] = set()
+    for block in _iter_function_blocks_8616(project, function):
+        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+            for operand in tuple(getattr(insn, "operands", ()) or ()):
+                if int(getattr(operand, "type", -1)) != 3:
+                    continue
+                if int(getattr(operand, "size", 0) or 0) != 2:
+                    continue
+                mem = getattr(operand, "mem", None)
+                if mem is None or not getattr(mem, "base", None):
+                    continue
+                if _capstone_reg_name_8616(insn, int(mem.base)) != "bp":
+                    continue
+                disp = int(getattr(mem, "disp", 0) or 0)
+                if 0x8000 <= disp <= 0xFFFF:
+                    disp -= 0x10000
+                if disp >= 4:
+                    offsets.add(disp)
+    return tuple(sorted(offsets))
+
+
+def _wide_stack_arg_count_from_offsets_8616(offsets: tuple[int, ...]) -> int:
+    remaining = set(offsets)
+    count = 0
+    offset = 4
+    while offset in remaining and offset + 2 in remaining:
+        count += 1
+        offset += 4
+    return count
+
+
+def _wide_stack_arg_prototype_from_function_8616(project, function, *, signed: bool = True):
+    evidence = _terminal_wide_return_evidence_8616(project, function)
+    if evidence is _WideReturnEvidence8616.NONE:
+        return None
+    arg_count = _wide_stack_arg_count_from_offsets_8616(_bp_word_load_offsets_from_instructions_8616(project, function))
+    if arg_count <= 0:
+        return None
+    wide_ty = SimTypeLong(signed=signed).with_arch(project.arch)
+    return SimCC8616MSCsmall(project.arch), SimTypeFunction([wide_ty] * arg_count, wide_ty).with_arch(project.arch)
+
+
 def _guess_retval_type_8616(self, cc, ret_val_size):
     def _impl():
         ret_type = _guess_retval_type_8616._orig(self, cc, ret_val_size)
-        if self.project.arch.bits != 16 or ret_type is None:
+        if getattr(self.project.arch, "name", None) != "86_16" or ret_type is None:
             return ret_type
         if getattr(ret_type, "__class__", None).__name__ != "SimTypeShort":
             return ret_type
@@ -81,8 +184,12 @@ def _guess_retval_type_8616(self, cc, ret_val_size):
 
 def _promote_wide_stack_return_to_wide_arg_8616(self, prototype):
     def _impl():
-        if self.project.arch.bits != 16 or prototype is None:
+        if getattr(self.project.arch, "name", None) != "86_16" or prototype is None:
             return prototype
+        wide_stack_proto = _wide_stack_arg_prototype_from_function_8616(self.project, self._function)
+        if wide_stack_proto is not None:
+            _cc, promoted = wide_stack_proto
+            return promoted
         if len(prototype.args) == 0 and isinstance(prototype.returnty, SimTypeLong):
             block_addrs = sorted(getattr(self._function, "block_addrs_set", ()) or ())
             if block_addrs:
@@ -124,6 +231,10 @@ def _promote_wide_stack_return_to_wide_arg_8616(self, prototype):
 
 
 def _fallback_wide_stack_return_prototype_8616(self):
+    wide_stack_proto = _wide_stack_arg_prototype_from_function_8616(self.project, self._function)
+    if wide_stack_proto is not None:
+        return wide_stack_proto
+
     block_addrs = sorted(getattr(self._function, "block_addrs_set", ()) or ())
     if not block_addrs:
         return None
@@ -144,8 +255,11 @@ def _fallback_wide_stack_return_prototype_8616(self):
 
 
 def _set_function_prototype_8616(function, cc, prototype) -> tuple[object, object]:
-    if getattr(function, "prototype", None) is not None and _has_explicit_arg_names_8616(function.prototype):
-        return cc, function.prototype
+    existing = getattr(function, "prototype", None)
+    if existing is not None and (
+        _has_explicit_arg_names_8616(existing) or not bool(getattr(function, "is_prototype_guessed", True))
+    ):
+        return cc, existing
     if prototype is not None and getattr(prototype, "_arch", None) is None:
         try:
             prototype = prototype.with_arch(function.project.arch)
@@ -159,6 +273,22 @@ def _set_function_prototype_8616(function, cc, prototype) -> tuple[object, objec
         except Exception:
             pass
     return cc, prototype
+
+
+def apply_x86_16_wide_stack_prototype_evidence(project, function) -> bool:
+    if getattr(getattr(project, "arch", None), "name", None) != "86_16":
+        return False
+    existing = getattr(function, "prototype", None)
+    if existing is not None and (
+        _has_explicit_arg_names_8616(existing) or not bool(getattr(function, "is_prototype_guessed", True))
+    ):
+        return False
+    inferred = _wide_stack_arg_prototype_from_function_8616(project, function)
+    if inferred is None:
+        return False
+    cc, prototype = inferred
+    _set_function_prototype_8616(function, cc, prototype)
+    return True
 
 
 def apply_x86_16_calling_convention_compatibility() -> None:

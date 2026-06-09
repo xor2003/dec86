@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import os
+
 import claripy
 import networkx
 from angr.analyses.reaching_definitions import rd_state as _rd_state
@@ -103,6 +106,13 @@ def apply_x86_16_typehoon_compatibility() -> None:
                 constraint_set_degradation_threshold=constraint_set_degradation_threshold,
                 stackvar_max_sizes=stackvar_max_sizes,
             )
+
+        threshold_raw = os.environ.get("INERTIA_X86_16_TYPEHOON_DEGRADE_THRESHOLD", "").strip()
+        if threshold_raw:
+            with contextlib.suppress(ValueError):
+                constraint_set_degradation_threshold = max(1, int(threshold_raw, 0))
+        else:
+            constraint_set_degradation_threshold = min(int(constraint_set_degradation_threshold), 32)
 
         self.bits = bits
         self._constraints = constraints

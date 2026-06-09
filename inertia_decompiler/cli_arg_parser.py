@@ -93,8 +93,8 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=120,
-        help="Analysis timeout in seconds. Defaults to 120.",
+        default=60,
+        help="Analysis timeout in seconds. Defaults to 60.",
     )
     parser.add_argument(
         "--window",

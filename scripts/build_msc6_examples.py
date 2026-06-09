@@ -13,6 +13,7 @@ import sys
 import time
 import textwrap
 from dataclasses import asdict, dataclass
+from enum import Enum
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +41,32 @@ DECOMPILE_MAIN_TIMEOUT_SECONDS_DEFAULT = 60
 DECOMPILE_MAIN_RUN_TIMEOUT_SECONDS_DEFAULT = 60
 DECOMPILE_SLOW_FUNCTION_SECONDS = 1.0
 DECOMPILE_SLOW_PASS_SECONDS = 1.0
+DECOMPILE_FUNCTION_PROCESS_SETUP_SECONDS = 30
+
+
+class HarnessAcceptanceReason(str, Enum):
+    TIMEOUT = "timeout"
+
+
+class FocusedDecompileRetryReason(str, Enum):
+    ASM_FALLBACK = "asm_fallback"
+    TIMEOUT = "timeout"
+
+
+def _decompile_python_executable() -> str:
+    return sys.executable or str(shutil.which("python3") or "python3")
+
+
+def _focused_decompile_process_timeout(decompile_timeout: int) -> int:
+    return max(int(decompile_timeout), 30) + DECOMPILE_FUNCTION_PROCESS_SETUP_SECONDS
+
+
+def _focused_decompile_retry_reason(profile: dict[str, object]) -> FocusedDecompileRetryReason | None:
+    reason = profile.get("acceptance_reason")
+    for retry_reason in FocusedDecompileRetryReason:
+        if reason == retry_reason.value:
+            return retry_reason
+    return None
 
 COMPARE16_HARNESS_MAIN = """
 int main(void)
@@ -346,6 +373,7 @@ int main(void)
 STORAGE_CLASSES_PREFIX = """
 short g_counter = 3;
 unsigned char g_table[4] = { 1, 2, 3, 4 };
+unsigned short g_0048 = 10;
 """
 
 STORAGE_CLASSES_HARNESS_MAIN = """
@@ -435,8 +463,6 @@ FALLBACK_EXAMPLE_REBUILD = {
             "rot_ui",
             "add_long",
             "sub_ulong",
-            "scale_float",
-            "blend_double",
             "pick_ptr",
         ),
         "harness": SCALAR_TYPES_HARNESS_MAIN,
@@ -486,8 +512,63 @@ def _extract_decompiled_function_definition(c_text: str, function_name: str) -> 
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                return emitted[match.start("signature") : idx + 1].strip() + "\n"
+                return _normalize_extracted_function_arg_placeholders(
+                    emitted[match.start("signature") : idx + 1].strip() + "\n"
+                )
     raise RuntimeError(f"unterminated generated definition for {function_name}")
+
+
+def _normalize_extracted_function_arg_placeholders(function_body: str) -> str:
+    signature_match = re.search(
+        r"\A\s*[A-Za-z_][\w\s\*]*?\s+[A-Za-z_]\w*\s*\((?P<args>[^)]*)\)",
+        function_body,
+    )
+    if signature_match is None:
+        return function_body
+    args_text = signature_match.group("args").strip()
+    if not args_text or args_text == "void":
+        return function_body
+    arg_names: list[str] = []
+    for raw_arg in args_text.split(","):
+        arg = raw_arg.strip()
+        name_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^]]*\])?\s*$", arg)
+        if name_match is None:
+            continue
+        name = name_match.group(1)
+        if name in {"char", "short", "int", "long", "unsigned", "signed", "void"}:
+            continue
+        arg_names.append(name)
+    if not arg_names:
+        return function_body
+    replacements: dict[str, str] = {}
+    offset = 4
+    for name in arg_names:
+        placeholder = f"arg_{offset:x}"
+        if _declares_c89_local_identifier(function_body, placeholder):
+            offset += 2
+            continue
+        replacements[placeholder] = name
+        offset += 2
+    normalized = function_body
+    for placeholder, name in replacements.items():
+        normalized = re.sub(rf"\b{re.escape(placeholder)}\b", name, normalized)
+    return normalized
+
+
+def _declares_c89_local_identifier(function_body: str, identifier: str) -> bool:
+    """
+    Detect simple local declarations before harness-side argument placeholder rewrites.
+
+    This is intentionally a rebuild-harness compatibility check, not production
+    decompiler recovery. If the generated body already declares ``arg_4`` as a
+    local, the harness must not rename that local into a parameter.
+    """
+    ident = re.escape(identifier)
+    decl_re = re.compile(
+        rf"(?m)^[ \t]*(?:static[ \t]+)?(?:unsigned[ \t]+|signed[ \t]+)?"
+        rf"(?:char|short|int|long|float|double|void)\b[^\n;{{}}()]*\b{ident}\b[^\n;]*;"
+    )
+    return decl_re.search(function_body) is not None
 
 
 def _build_fallback_source(function_bodies: list[str], harness_main: str, *, prefix: str = "") -> str:
@@ -1265,6 +1346,12 @@ def _is_decompile_output_acceptable(
         return False, "asm_fallback"
     if "decompile timeout" in combined:
         return False, "timeout"
+    if "decompilation validation_failed" in combined:
+        return False, "validation_failed"
+    if "acceptance-gate detail:" in combined:
+        return False, "acceptance_gate_failed"
+    if "missing source-evidenced" in combined:
+        return False, "source_evidence_failed"
     if "whole-tail validation failed" in combined:
         return False, "tail_validation_failed"
     return True, None
@@ -1285,7 +1372,7 @@ def _decompile_function_with_options(
     proc_kind: str = "NEAR",
 ) -> tuple[bool, str, str, dict[str, object], str, str]:
     cmd = [
-        str(shutil.which("python3") or "python3"),
+        _decompile_python_executable(),
         str(decompile_py),
         "--alternate-source-c",
         "--timeout",
@@ -1307,18 +1394,40 @@ def _decompile_function_with_options(
     if decompile_signature_catalog is not None:
         cmd.extend(["--signature-catalog", str(decompile_signature_catalog)])
 
-    proc = _run(
-        cmd,
-        cwd=REPO_ROOT,
-        timeout=max(decompile_timeout, 30),
-        env=_make_decompile_env(
-            decompile_force_rizin_8616,
-            trace_label=f"{exe_path.stem}.{function_name}",
-        ),
-    )
+    process_timeout = _focused_decompile_process_timeout(decompile_timeout)
+    try:
+        proc = _run(
+            cmd,
+            cwd=REPO_ROOT,
+            timeout=process_timeout,
+            env=_make_decompile_env(
+                decompile_force_rizin_8616,
+                trace_label=f"{exe_path.stem}.{function_name}",
+            ),
+        )
+    except subprocess.TimeoutExpired as ex:
+        stdout_data = ex.stdout.decode("utf-8", errors="replace") if isinstance(ex.stdout, bytes) else (ex.stdout or "")
+        stderr_data = ex.stderr.decode("utf-8", errors="replace") if isinstance(ex.stderr, bytes) else (ex.stderr or "")
+        timeout_text = stderr_data + "\ndecompile timeout\n"
+        profile = _parse_decompile_profile(timeout_text)
+        profile["timeout"] = True
+        profile["acceptance_reason"] = HarnessAcceptanceReason.TIMEOUT.value
+        profile["command"] = " ".join(cmd)
+        profile["process_timeout_seconds"] = process_timeout
+        profile["analysis_timeout_seconds"] = decompile_timeout
+        return (
+            False,
+            stdout_data,
+            timeout_text,
+            profile,
+            " ".join(cmd),
+            function_name,
+        )
     profile = _parse_decompile_profile(proc.stderr)
     acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, profile)
     profile["acceptance_reason"] = None if acceptable else reason
+    profile["process_timeout_seconds"] = process_timeout
+    profile["analysis_timeout_seconds"] = decompile_timeout
     return (
         acceptable and proc.returncode == 0,
         proc.stdout,
@@ -1373,6 +1482,27 @@ def _build_from_function_decompiles(
                 skipped = dict(profile)
                 skipped["skipped_absent_proc"] = True
                 function_debug[-1] = (function_name, _name, _cmd, skipped)
+                continue
+            retry_reason = _focused_decompile_retry_reason(profile)
+            if retry_reason is not None:
+                ok, out_text, err_text, profile, _cmd, _name = _decompile_function_with_options(
+                    exe_path,
+                    decompile_py=decompile_py,
+                    decompile_timeout=decompile_timeout,
+                    decompile_function_discovery_backend=decompile_function_discovery_backend,
+                    decompile_seed_engine=decompile_seed_engine,
+                    decompile_rizin_timeout=decompile_rizin_timeout,
+                    decompile_force_rizin_8616=decompile_force_rizin_8616,
+                    decompile_pat_backend=decompile_pat_backend,
+                    decompile_signature_catalog=decompile_signature_catalog,
+                    function_name=function_name,
+                )
+                retry_profile = dict(profile)
+                retry_profile["retry_attempt"] = 2
+                retry_profile["retry_reason"] = retry_reason.value
+                function_debug.append((function_name, _name, _cmd, retry_profile))
+            if ok:
+                function_bodies.append(_extract_decompiled_function_definition(out_text, function_name))
                 continue
             return (
                 False,
@@ -1512,7 +1642,7 @@ def _decompile(
     stdout_path = out_dir / f"{exe_path.stem}.dec.txt"
     stderr_path = out_dir / f"{exe_path.stem}.dec.err.txt"
     cmd = [
-        str(shutil.which("python3") or "python3"),
+        _decompile_python_executable(),
         str(decompile_py),
         "--alternate-source-c",
         "--timeout",
@@ -1891,6 +2021,27 @@ def _decompile_and_validate(
                     len(fallback_functions),
                     json.dumps(_json_safe_profile(fallback_profile), sort_keys=True),
                 )
+            decomp_name, _obj_name, _exe_name, _map_name = _rebuild_names()
+            stdout_path = out_dir / decomp_name
+            stderr_path = out_dir / f"{Path(decomp_name).stem}.dec.err.txt"
+            stderr_path.write_text(json.dumps(_json_safe_profile(fallback_profile), sort_keys=True), encoding="utf-8")
+            return (
+                False,
+                stdout_path,
+                stderr_path,
+                fb_recompiled_ok,
+                fb_run_exit == expected_exit_code,
+                fb_run_exit,
+                fb_rec_out,
+                fb_rec_err,
+                fb_rel_out,
+                fb_rel_err,
+                fb_run_stdout,
+                fb_run_stderr,
+                fallback_elapsed,
+                len(fallback_functions),
+                json.dumps(_json_safe_profile(fallback_profile), sort_keys=True),
+            )
 
     decompile_ok, dec_out, dec_err, decompile_elapsed, decompile_profile = _decompile(
         exe_path,

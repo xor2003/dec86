@@ -746,6 +746,16 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.int_imm8()
 
     def int_imm8(self) -> None:
+        if self.instr.imm8 in (0x34, 0x35, 0x38, 0x39):
+            # Microsoft C's x87 emulator replaces ESC opcodes with INT helpers:
+            # 34h=D8, 35h=D9, 38h=DC, 39h=DD. The ModR/M payload still describes
+            # the original FPU memory operand, so lift it as the same harmless FPU
+            # escape used for hardware x87 bytes.
+            self.esc()
+            return
+        if self.instr.imm8 == 0x3D:
+            self.wait()
+            return
         next_ip = self.emu.get_ip() + self.emu.constant(self.instr.size, Type.int_16)
         self.emu.lifter_instruction.put(next_ip.cast_to(Type.int_32), "ip_at_syscall")
         # Model real-mode interrupts as synthetic call targets so CFG/decompilation

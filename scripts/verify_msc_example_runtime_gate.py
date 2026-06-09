@@ -180,8 +180,147 @@ int main(void)
 }
 """
 
+SIMPLE_CONTROL_HARNESS_MAIN = """
+int main(void)
+{
+    int a;
+    int b;
+    int c;
+
+    a = classify(7);
+    b = sum_to(6);
+    c = switch_fold(2);
+    if (classify(-4) != -1) {
+        return 1;
+    }
+    if (classify(0) != 0) {
+        return 2;
+    }
+    if (a != 1) {
+        return 3;
+    }
+    if (b != 3) {
+        return 4;
+    }
+    if (c != 22) {
+        return 5;
+    }
+    return 255;
+}
+"""
+
+LOOPS_JUMPS_HARNESS_MAIN = """
+int main(void)
+{
+    if (nested_loops(5) != 42) {
+        return 1;
+    }
+    if (goto_accumulate(4) != 14) {
+        return 2;
+    }
+    return 255;
+}
+"""
+
+
+POINTER_MEMORY_HARNESS_MAIN = """
+int main(void)
+{
+    unsigned char bytes[8];
+    unsigned short words[4];
+    int a;
+    int b;
+
+    fill_bytes(bytes, 3, 8);
+    words[0] = 10;
+    words[1] = 20;
+    words[2] = 30;
+    words[3] = 40;
+    a = 5;
+    b = 9;
+    swap_ptrs(&a, &b);
+    if (bytes[2] != 3) {
+        return 1;
+    }
+    if (sum_words(words, 4) != 100) {
+        return 2;
+    }
+    if (a != 9 || b != 5) {
+        return 3;
+    }
+    return 255;
+}
+"""
+
+
+SCALAR_TYPES_HARNESS_MAIN = """
+int main(void)
+{
+    char text1[4];
+    char text2[4];
+    char *picked;
+    int total;
+
+    text1[0] = 'A';
+    text1[1] = 0;
+    text2[0] = 'B';
+    text2[1] = 0;
+    picked = pick_ptr(text1, text2, 0);
+    total = add_sc(1, 2);
+    total += mix_uc(7, 3);
+    total += sub_ss(9, 4);
+    total += mul_us(3, 5);
+    total += add_int(10, 20);
+    total += rot_ui(9U);
+    total += (int)add_long(1000L, 2000L);
+    total += (int)sub_ulong(90UL, 30UL);
+    if (add_sc(1, 2) != 3) {
+        return 1;
+    }
+    if (mix_uc(7, 3) != (unsigned char)13) {
+        return 2;
+    }
+    if (sub_ss(9, 4) != 5) {
+        return 3;
+    }
+    if (mul_us(3, 5) != 15) {
+        return 4;
+    }
+    if (add_int(10, 20) != 30) {
+        return 5;
+    }
+    if (rot_ui(9U) != 18U) {
+        return 6;
+    }
+    if (add_long(1000L, 2000L) != 3000L) {
+        return 7;
+    }
+    if (sub_ulong(90UL, 30UL) != 60UL) {
+        return 8;
+    }
+    if (picked[0] != 'B') {
+        return 9;
+    }
+    if (total == 0) {
+        return 10;
+    }
+    return 255;
+}
+"""
+
 
 EXAMPLES: dict[str, ExampleSpec] = {
+    "simple_control": ExampleSpec(
+        name="simple_control",
+        exe=DEFAULT_BUILD_DIR / "SIMPLE.EXE",
+        output_stem="SIMPLERT",
+        functions=(
+            FunctionSpec("classify", proc_kind="NEAR"),
+            FunctionSpec("sum_to", proc_kind="NEAR"),
+            FunctionSpec("switch_fold", proc_kind="NEAR"),
+        ),
+        harness_main=SIMPLE_CONTROL_HARNESS_MAIN,
+    ),
     "cmp16": ExampleSpec(
         name="cmp16",
         exe=DEFAULT_BUILD_DIR / "CMP16.EXE",
@@ -220,6 +359,44 @@ EXAMPLES: dict[str, ExampleSpec] = {
             FunctionSpec("select_and_apply", proc_kind="NEAR"),
         ),
         harness_main=FPTR_HARNESS_MAIN,
+    ),
+    "loops_jumps": ExampleSpec(
+        name="loops_jumps",
+        exe=DEFAULT_BUILD_DIR / "LOOPS.EXE",
+        output_stem="LOOPSRT",
+        functions=(
+            FunctionSpec("nested_loops", proc_kind="NEAR"),
+            FunctionSpec("goto_accumulate", proc_kind="NEAR"),
+        ),
+        harness_main=LOOPS_JUMPS_HARNESS_MAIN,
+    ),
+    "pointer_memory": ExampleSpec(
+        name="pointer_memory",
+        exe=DEFAULT_BUILD_DIR / "POINT.EXE",
+        output_stem="POINTRT",
+        functions=(
+            FunctionSpec("fill_bytes", proc_kind="NEAR"),
+            FunctionSpec("sum_words", proc_kind="NEAR"),
+            FunctionSpec("swap_ptrs", proc_kind="NEAR"),
+        ),
+        harness_main=POINTER_MEMORY_HARNESS_MAIN,
+    ),
+    "scalar_types_io": ExampleSpec(
+        name="scalar_types_io",
+        exe=DEFAULT_BUILD_DIR / "TYPES.EXE",
+        output_stem="TYPESRT",
+        functions=(
+            FunctionSpec("add_sc", proc_kind="NEAR"),
+            FunctionSpec("mix_uc", proc_kind="NEAR"),
+            FunctionSpec("sub_ss", proc_kind="NEAR"),
+            FunctionSpec("mul_us", proc_kind="NEAR"),
+            FunctionSpec("add_int", proc_kind="NEAR"),
+            FunctionSpec("rot_ui", proc_kind="NEAR"),
+            FunctionSpec("add_long", proc_kind="NEAR"),
+            FunctionSpec("sub_ulong", proc_kind="NEAR"),
+            FunctionSpec("pick_ptr", proc_kind="NEAR"),
+        ),
+        harness_main=SCALAR_TYPES_HARNESS_MAIN,
     ),
 }
 
@@ -299,7 +476,7 @@ def _find_function_definition(c_text: str, function_name: str) -> str:
     emitted = c_text.split("/* == c == */", 1)[-1] if "/* == c == */" in c_text else c_text
     name_re = re.escape(function_name)
     signature_re = re.compile(
-        rf"(?m)^(?P<signature>(?:unsigned\s+)?(?:int|long|short|char|void)\s+\**{name_re}\s*\([^;{{}}]*\))\s*\n+\s*\{{"
+        rf"(?m)^(?P<signature>(?:(?:signed|unsigned)\s+)?(?:int|long|short|char|void)\s+\**\s*{name_re}\s*\([^;{{}}]*\))\s*\n+\s*\{{"
     )
     match = signature_re.search(emitted)
     if match is None:

@@ -12,7 +12,7 @@ LIFE_EXE = REPO_ROOT / "LIFE.EXE"
 
 def test_life_rand_never_reports_ir_shaped_output_as_success() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
     cfg = project.analyses.CFGFast(
         normalize=True,
         data_references=True,
@@ -42,7 +42,7 @@ def test_life_rand_never_reports_ir_shaped_output_as_success() -> None:
 
 def test_life_main_does_not_use_verbatim_source_sidecar() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
     cfg = project.analyses.CFGFast(
         normalize=True,
         data_references=True,
@@ -72,7 +72,7 @@ def test_life_main_does_not_use_verbatim_source_sidecar() -> None:
 
 def test_life_exit_refuses_ir_shaped_codegen_as_success() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
     cfg = project.analyses.CFGFast(
         normalize=True,
         data_references=True,
@@ -99,7 +99,7 @@ def test_life_exit_refuses_ir_shaped_codegen_as_success() -> None:
 
 def test_life_exit_nonoptimized_fallback_refuses_ir_shaped_output() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
 
     outcome = decompile._try_decompile_non_optimized_slice(
         project,
@@ -118,7 +118,7 @@ def test_life_exit_nonoptimized_fallback_refuses_ir_shaped_output() -> None:
 
 def test_life_pause_screen_does_not_use_verbatim_source_sidecar() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
     cfg = project.analyses.CFGFast(
         normalize=True,
         data_references=True,
@@ -147,7 +147,7 @@ def test_life_pause_screen_does_not_use_verbatim_source_sidecar() -> None:
 
 def test_life_timer_does_not_use_verbatim_source_sidecar() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
     cfg = project.analyses.CFGFast(
         normalize=True,
         data_references=True,
@@ -176,7 +176,7 @@ def test_life_timer_does_not_use_verbatim_source_sidecar() -> None:
 
 def test_life_rand_dist_does_not_use_verbatim_source_sidecar() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project, allow_peer_exe=False)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
     cfg = project.analyses.CFGFast(
         normalize=True,
         data_references=True,

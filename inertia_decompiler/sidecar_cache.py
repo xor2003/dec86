@@ -22,6 +22,7 @@ _SOURCE_FORMAT_DROP_TOKENS = {
     "local_pat",
     "peer_exe",
 }
+_SIDECAR_METADATA_PARSER_CACHE_VERSION = 3
 
 
 def _visible_source_format(source_format: str | None) -> str:
@@ -103,6 +104,7 @@ def sidecar_metadata_cache_key(
 ) -> dict[str, object] | None:
     extra: dict[str, object] = {
         "pat_backend": pat_backend or "",
+        "parser_version": _SIDECAR_METADATA_PARSER_CACHE_VERSION,
     }
     signature_fingerprint = _cache_file_fingerprint(signature_catalog)
     if signature_fingerprint is not None:

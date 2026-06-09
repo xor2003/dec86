@@ -14,23 +14,116 @@ def run_typed_widening_pass_8616(
     coalesce_direct_ss_local_word_statements,
     coalesce_segmented_word_store_statements,
     copy_propagation_fn=None,
+    promote_stack_slots_from_instruction_widths=None,
 ) -> bool:
     """
     Execute widening-owned passes in deterministic order.
 
     Order:
-    1. Word-store coalescing (SROA-like)
-    2. Copy propagation (EarlyCSE-like)
-    3. Load/store folding (GVN-like)
+    1. Stack-slot width promotion from instruction evidence
+    2. Word-store coalescing (SROA-like)
+    3. Copy propagation (EarlyCSE-like)
+    4. Load/store folding (GVN-like)
 
     This pass is the widening ownership boundary: callers provide typed helpers,
     widening decides pass ordering and changed-state aggregation.
     """
     changed = False
+    if promote_stack_slots_from_instruction_widths is not None:
+        changed = promote_stack_slots_from_instruction_widths(project, codegen) or changed
     changed = coalesce_direct_ss_local_word_statements(project, codegen) or changed
     changed = coalesce_segmented_word_store_statements(project, codegen) or changed
     if copy_propagation_fn is not None:
         changed = copy_propagation_fn(codegen) or changed
+    return changed
+
+
+def collect_bp_stack_access_widths_from_instructions_8616(project, codegen) -> dict[int, int]:
+    """Collect BP-relative stack slot widths directly from decoded instructions."""
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return {}
+
+    kb = getattr(project, "kb", None)
+    functions = getattr(kb, "functions", None)
+    function = None
+    if functions is not None:
+        try:
+            function = functions.function(addr=int(func_addr), create=False)
+        except Exception:
+            function = None
+
+    block_addrs = tuple(sorted(getattr(function, "block_addrs", ()) or ()))
+    if not block_addrs:
+        block_addrs = (int(func_addr),)
+
+    widths: dict[int, int] = {}
+    for block_addr in block_addrs:
+        try:
+            block = project.factory.block(int(block_addr), opt_level=0)
+        except Exception:
+            continue
+        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
+            for operand in tuple(getattr(insn, "operands", ()) or ()):
+                if int(getattr(operand, "type", -1)) != 3 or getattr(operand, "mem", None) is None:
+                    continue
+                mem = operand.mem
+                if not getattr(mem, "base", None):
+                    continue
+                try:
+                    base_name = str(insn.reg_name(mem.base)).lower()
+                except Exception:
+                    continue
+                if base_name != "bp":
+                    continue
+                size = int(getattr(operand, "size", 0) or 0)
+                if size <= 0:
+                    continue
+                disp = int(getattr(mem, "disp", 0) or 0)
+                if 0x8000 <= disp <= 0xFFFF:
+                    disp -= 0x10000
+                widths[disp] = max(widths.get(disp, 0), size)
+    return widths
+
+
+def promote_stack_slots_from_instruction_widths_8616(
+    project,
+    codegen,
+    *,
+    resolve_stack_cvar_at_offset,
+    promote_direct_stack_cvariable,
+    stack_type_for_size,
+) -> bool:
+    """Promote existing stack C variables when instruction evidence proves a wider slot."""
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+    promoted = 0
+    widths = collect_bp_stack_access_widths_from_instructions_8616(project, codegen)
+    for offset, size in sorted(widths.items()):
+        if size <= 1:
+            continue
+        cvar = resolve_stack_cvar_at_offset(codegen, offset, preferred_size=size)
+        variable = getattr(cvar, "variable", None)
+        if variable is None or getattr(variable, "offset", None) != offset:
+            continue
+        target_type = stack_type_for_size(size)
+        if promote_direct_stack_cvariable(codegen, cvar, size, target_type):
+            changed = True
+            promoted += 1
+
+    if widths:
+        try:
+            codegen._inertia_stack_width_instruction_fact_count = int(
+                getattr(codegen, "_inertia_stack_width_instruction_fact_count", 0) or 0
+            ) + len(widths)
+            codegen._inertia_stack_width_instruction_materialized_count = int(
+                getattr(codegen, "_inertia_stack_width_instruction_materialized_count", 0) or 0
+            ) + promoted
+        except Exception:
+            pass
     return changed
 
 

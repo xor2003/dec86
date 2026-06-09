@@ -19,13 +19,14 @@ from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePo
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from .analysis_helpers import patch_direct_call_sites, preferred_known_helper_signature_decl
+from .annotations import _parse_c_prototype_8616
 from .callee_name_normalization import normalize_callee_name_8616
 from .callsite_stack_metadata import (
     _generic_stack_carrier_keys_8616,
     _stack_carrier_key_8616,
     prune_materialized_callsite_segment_metadata_8616,
 )
-from .callsite_summary import summarize_x86_16_callsite
+from .callsite_summary import CallsitePushExprOp8616, summarize_x86_16_callsite
 from .cod_extract import extract_cod_proc_metadata
 from .decompiler_postprocess import _normalize_arg_names_8616
 from .decompiler_postprocess_utils import (
@@ -39,6 +40,7 @@ from .decompiler_postprocess_utils import (
     _same_c_expression_8616,
 )
 from .lowering.real_mode_linear import _stack_offset_from_expr_8616
+from .lowering.real_mode_linear import match_stable_ds_es_linear_global_access_8616
 from .lowering.stack_lowering_from_facts import (
     _materialize_stack_cvar_at_offset as _materialize_stack_cvar_at_offset_from_facts_8616,
 )
@@ -59,6 +61,7 @@ __all__ = [
     "_recover_missing_direct_calls_from_evidence_8616",
     "_materialize_stdlib_call_chains_8616",
     "_materialize_callsite_stack_arguments_8616",
+    "replay_callsite_stack_arguments_after_regeneration_8616",
     "_materialize_callsite_prototypes_8616",
     "_normalize_call_target_names_8616",
 ]
@@ -159,7 +162,10 @@ def _sync_cfunc_root_statements_8616(cfunc, root, root_statements) -> None:
             if hasattr(root, "statements"):
                 with contextlib.suppress(Exception):
                     cfunc.body = root
-            if isinstance(cfunc_statements, (list, tuple)) and cfunc_statements is not root_statements:
+            if cfunc_statements is not root and hasattr(root, "c_repr_chunks"):
+                with contextlib.suppress(Exception):
+                    cfunc.statements = root
+            elif isinstance(cfunc_statements, (list, tuple)) and cfunc_statements is not root_statements:
                 cfunc.statements = list(root_statements) if isinstance(cfunc_statements, list) else tuple(root_statements)
             if cfunc_body is not None and isinstance(body_statements, (list, tuple)) and body_statements is not root_statements:
                 cfunc_body.statements = list(root_statements) if isinstance(body_statements, list) else tuple(root_statements)
@@ -507,7 +513,7 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             _sync_cfunc_root_statements_8616(cfunc, root, updated_statements)
             if debug_enabled:
                 cfunc_calls = []
-                cfunc_root_now = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+                cfunc_root_now = _structured_root_8616(cfunc)
                 for node in _iter_c_nodes_deep_8616(cfunc_root_now):
                     if isinstance(node, CFunctionCall):
                         cfunc_calls.append(_call_node_name_8616(node))
@@ -551,7 +557,7 @@ def _prepare_call_recovery_context_8616(project, codegen, *, debug_enabled: bool
             if debug_enabled:
                 log.warning("[call-recover] context=%s skip=no-cfunc codegen_id=%#x", context_tag, id(codegen))
             return None
-        root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+        root = _structured_root_8616(cfunc)
         root_statements = getattr(root, "statements", None)
         if not isinstance(root_statements, (list, tuple)):
             if debug_enabled:
@@ -765,6 +771,10 @@ class CallsiteMaterializationStats:
     has_push_arg_evidence_count: int = 0
     no_push_arg_evidence_count: int = 0
     source_proven_stack_probe_count: int = 0
+    byte_merge_raw_fact_count: int = 0
+    byte_merge_classified_fact_count: int = 0
+    byte_merge_materialized_count: int = 0
+    byte_merge_refused_count: int = 0
     failure_count: int = 0
     known_prototype_arg_mismatches: list[dict[str, object]] = field(default_factory=list)
 
@@ -775,7 +785,21 @@ class CallArgSemanticKind8616(Enum):
     VALUE = "value"
 
 
+class CallArityMode8616(Enum):
+    UNKNOWN = "unknown"
+    EXACT = "exact"
+    MINIMUM = "minimum"
+
+
+@dataclass(frozen=True, slots=True)
+class CallArityContract8616:
+    count: int | None
+    mode: CallArityMode8616 = CallArityMode8616.UNKNOWN
+
+
 _KNOWN_HELPER_ARG_KIND_CACHE_8616: dict[str, dict[int, CallArgSemanticKind8616]] = {}
+_SOURCE_ARG_KIND_CACHE_8616: dict[tuple[str, int, int, str], dict[int, CallArgSemanticKind8616]] = {}
+_SOURCE_ARG_WIDTH_CACHE_8616: dict[tuple[str, int, int, str], tuple[int, ...] | None] = {}
 
 
 def _ensure_callsite_materialization_stats_8616(codegen) -> CallsiteMaterializationStats:
@@ -816,10 +840,33 @@ def _sync_callsite_materialization_stats_8616(codegen) -> CallsiteMaterializatio
         "has_push_arg_evidence_count",
         "no_push_arg_evidence_count",
         "source_proven_stack_probe_count",
+        "byte_merge_raw_fact_count",
+        "byte_merge_classified_fact_count",
+        "byte_merge_materialized_count",
+        "byte_merge_refused_count",
         "failure_count",
     ):
         raw[key] = int(getattr(stats, key, 0) or 0)
     return stats
+
+
+def _record_stack_probe_helper_target_fingerprints_8616(codegen, *, summary=None, call=None) -> None:
+    target_addrs: set[int] = set()
+    target_addr = getattr(summary, "target_addr", None) if summary is not None else None
+    if isinstance(target_addr, int):
+        target_addrs.add(target_addr)
+    callee_func = getattr(call, "callee_func", None) if call is not None else None
+    callee_addr = getattr(callee_func, "addr", None)
+    if isinstance(callee_addr, int):
+        target_addrs.add(callee_addr)
+    if not target_addrs:
+        return
+    fingerprints = set(getattr(codegen, "_inertia_stack_probe_helper_target_fingerprints_8616", ()) or ())
+    for target in target_addrs:
+        for candidate in (target, target & 0xFFFF):
+            fingerprints.add(f"addr:{candidate:#x}")
+            fingerprints.add(f"name:addr:{candidate:#x}")
+    codegen._inertia_stack_probe_helper_target_fingerprints_8616 = tuple(sorted(fingerprints))
 
 
 def _is_stack_probe_call_name_8616(name: str | None) -> bool:
@@ -838,7 +885,7 @@ def _is_stack_probe_call_name_8616(name: str | None) -> bool:
     }
 
 
-def _lookup_callee_function_8616(project, target_addr: int, *, allow_containing: bool = False):
+def _lookup_callee_function_8616(project, target_addr: int, *, allow_containing: bool = True):
     def _iter_functions(candidate_project):
         functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
         if functions is None:
@@ -951,7 +998,59 @@ def _candidate_linear_target_addrs_8616(project, target_addr: int) -> tuple[int,
 
 def _sidecar_label_for_target_8616(project, target_addr: int) -> str | None:
     def _impl():
-        candidates: list[str] = []
+        if project is None or not isinstance(target_addr, int):
+            return None
+
+        def _normalized_label(label: object) -> str | None:
+            if not isinstance(label, str) or not label:
+                return None
+            normalized = normalize_callee_name_8616(label.lstrip("_"))
+            if isinstance(normalized, str) and normalized and not normalized.startswith("sub_"):
+                return normalized
+            return None
+
+        def _label_maps():
+            original_project = getattr(project, "_inertia_original_project", None)
+            for candidate_project in (project, original_project):
+                if candidate_project is None:
+                    continue
+                for labels in (
+                    getattr(getattr(candidate_project, "_inertia_lst_metadata", None), "code_labels", None),
+                    getattr(getattr(candidate_project, "kb", None), "labels", None),
+                ):
+                    if labels is not None:
+                        yield labels
+
+        label_maps = tuple(_label_maps())
+        if not label_maps:
+            return None
+
+        def _exact_label(addr: int) -> str | None:
+            for labels in label_maps:
+                label = getattr(labels, "get", lambda _addr: None)(addr)
+                normalized = _normalized_label(label)
+                if normalized is not None:
+                    return normalized
+            return None
+
+        def _unique_offset_label(offset: int) -> str | None:
+            matches: set[str] = set()
+            for labels in label_maps:
+                items = getattr(labels, "items", None)
+                if not callable(items):
+                    continue
+                try:
+                    iterable = tuple(items())
+                except Exception:
+                    continue
+                for label_addr, label_name in iterable:
+                    if not isinstance(label_addr, int) or (label_addr & 0xFFFF) != offset:
+                        continue
+                    normalized = _normalized_label(label_name)
+                    if normalized is not None:
+                        matches.add(normalized)
+            return next(iter(matches)) if len(matches) == 1 else None
+
         lookup_addrs = {target_addr}
         original_project = getattr(project, "_inertia_original_project", None)
         original_delta = getattr(project, "_inertia_original_linear_delta", None)
@@ -961,69 +1060,20 @@ def _sidecar_label_for_target_8616(project, target_addr: int) -> str | None:
             if rebased >= 0:
                 lookup_addrs.add(rebased)
 
-        for lookup_addr in sorted(lookup_addrs):
-            for labels in (
-                getattr(getattr(project, "_inertia_lst_metadata", None), "code_labels", None),
-                getattr(getattr(project, "kb", None), "labels", None),
-            ):
-                if labels is None:
-                    continue
-                label = getattr(labels, "get", lambda _addr: None)(lookup_addr)
-                if isinstance(label, str) and label:
-                    candidates.append(label)
-                if isinstance(target_addr, int) and 0 <= target_addr <= 0xFFFF:
-                    items = getattr(labels, "items", None)
-                    if callable(items):
-                        near_matches = []
-                        try:
-                            iterable = tuple(items())
-                        except Exception:
-                            iterable = ()
-                        for label_addr, label_name in iterable:
-                            if (
-                                isinstance(label_addr, int)
-                                and (label_addr & 0xFFFF) == target_addr
-                                and isinstance(label_name, str)
-                                and label_name
-                            ):
-                                near_matches.append(label_name)
-                        if len(near_matches) == 1:
-                            candidates.append(near_matches[0])
-
-        if original_project is not None and isinstance(original_delta, int):
-            for lookup_addr in sorted(lookup_addrs):
-                for labels in (
-                    getattr(getattr(original_project, "_inertia_lst_metadata", None), "code_labels", None),
-                    getattr(getattr(original_project, "kb", None), "labels", None),
-                ):
-                    if labels is None:
-                        continue
-                    label = getattr(labels, "get", lambda _addr: None)(lookup_addr)
-                    if isinstance(label, str) and label:
-                        candidates.append(label)
-                    if isinstance(target_addr, int) and 0 <= target_addr <= 0xFFFF:
-                        items = getattr(labels, "items", None)
-                        if callable(items):
-                            near_matches = []
-                            try:
-                                iterable = tuple(items())
-                            except Exception:
-                                iterable = ()
-                            for label_addr, label_name in iterable:
-                                if (
-                                    isinstance(label_addr, int)
-                                    and (label_addr & 0xFFFF) == target_addr
-                                    and isinstance(label_name, str)
-                                    and label_name
-                                ):
-                                    near_matches.append(label_name)
-                            if len(near_matches) == 1:
-                                candidates.append(near_matches[0])
-
-        for label in candidates:
-            normalized = normalize_callee_name_8616(label.lstrip("_"))
-            if isinstance(normalized, str) and normalized and not normalized.startswith("sub_"):
-                return normalized
+        exact_target = _exact_label(target_addr)
+        if exact_target is not None:
+            return exact_target
+        target_offset = _unique_offset_label(target_addr & 0xFFFF)
+        if target_offset is not None:
+            return target_offset
+        for lookup_addr in sorted(lookup_addrs - {target_addr}):
+            exact_rebased = _exact_label(lookup_addr)
+            if exact_rebased is not None:
+                return exact_rebased
+        for lookup_addr in sorted(lookup_addrs - {target_addr}):
+            offset_rebased = _unique_offset_label(lookup_addr & 0xFFFF)
+            if offset_rebased is not None:
+                return offset_rebased
         return None
 
     return _impl()
@@ -1054,11 +1104,204 @@ def _target_addr_matches_near_or_linear_8616(candidate_addr: int, target_addr: i
     return False
 
 
-def _expected_arg_count_for_known_callee_8616(name: str) -> int | None:
+def _target_addr_is_recovered_function_entry_8616(project, target_addr: int) -> bool:
+    if project is None or not isinstance(target_addr, int):
+        return False
+    if _lookup_callee_function_8616(project, target_addr, allow_containing=False) is not None:
+        return True
+    if _sidecar_label_for_target_8616(project, target_addr) is not None:
+        return True
+    candidate_addrs = _candidate_linear_target_addrs_8616(project, target_addr)
+    for candidate_project in (project, getattr(project, "_inertia_original_project", None)):
+        functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
+        lookup = getattr(functions, "function", None)
+        if not callable(lookup):
+            continue
+        for candidate_addr in candidate_addrs:
+            with contextlib.suppress(Exception):
+                function = lookup(addr=candidate_addr, create=False)
+            if function is None:
+                continue
+            start_addr = getattr(function, "addr", None)
+            if isinstance(start_addr, int) and start_addr == candidate_addr:
+                return True
+    return False
+
+
+def _candidate_projects_and_addrs_for_insn_8616(project, ins_addr: int | None) -> tuple[tuple[object, int], ...]:
+    if project is None or not isinstance(ins_addr, int):
+        return ()
+    original_project = getattr(project, "_inertia_original_project", None)
+    original_delta = getattr(project, "_inertia_original_linear_delta", None)
+    projects = tuple(candidate for candidate in (project, original_project) if candidate is not None)
+    addrs = {ins_addr}
+    if isinstance(original_delta, int):
+        addrs.add(ins_addr + original_delta)
+    return tuple((candidate_project, addr) for candidate_project in projects for addr in sorted(addrs))
+
+
+def _mov_reg_imm_setup_matches_push_source_8616(project, ins_addr: int | None, source) -> bool:
+    if not (isinstance(source, tuple) and len(source) >= 2 and source[0] == "imm" and isinstance(source[1], int)):
+        return False
+    expected = int(source[1]) & 0xFFFF
+
+    def _mov_reg_imm_at(candidate_project, addr: int) -> int | None:
+        try:
+            raw = bytes(candidate_project.loader.memory.load(addr, 3))
+        except Exception:
+            return None
+        if len(raw) < 3:
+            return None
+        opcode = raw[0]
+        if not 0xB8 <= opcode <= 0xBF:
+            return None
+        imm16 = int.from_bytes(raw[1:3], "little")
+        if imm16 != expected:
+            return None
+        return opcode - 0xB8
+
+    for candidate_project, candidate_ins_addr in _candidate_projects_and_addrs_for_insn_8616(project, ins_addr):
+        reg = _mov_reg_imm_at(candidate_project, candidate_ins_addr)
+        if reg is not None:
+            return True
+        reg = _mov_reg_imm_at(candidate_project, candidate_ins_addr - 3)
+        if reg is None:
+            continue
+        try:
+            push = bytes(candidate_project.loader.memory.load(candidate_ins_addr, 1))
+        except Exception:
+            continue
+        if len(push) != 1:
+            continue
+        opcode = push[0]
+        if not 0x50 <= opcode <= 0x57:
+            continue
+        if opcode - 0x50 == reg:
+            return True
+    return False
+
+
+def _reg_expr_setup_matches_push_source_8616(project, ins_addr: int | None, source) -> bool:
+    if not (
+        isinstance(source, tuple)
+        and len(source) == 3
+        and source[0] == "expr"
+        and isinstance(source[1], tuple)
+        and len(source[1]) >= 2
+        and source[1][0] == "bp"
+        and isinstance(source[1][1], int)
+        and isinstance(source[2], tuple)
+    ):
+        return False
+    bp_offset = int(source[1][1])
+    ops = tuple(source[2])
+    if not all(isinstance(op_name, str) and isinstance(op_value, int) for op_name, op_value in ops):
+        return False
+    if not -0x80 <= bp_offset <= 0x7F:
+        return False
+
+    if len(ops) == 1 and ops[0][0] == CallsitePushExprOp8616.MUL.value:
+        factor = int(ops[0][1]) & 0xFFFF
+        expected = bytes((0xB8, factor & 0xFF, (factor >> 8) & 0xFF, 0xF7, 0x6E, bp_offset & 0xFF, 0x50))
+        for candidate_project, candidate_ins_addr in _candidate_projects_and_addrs_for_insn_8616(project, ins_addr):
+            start = candidate_ins_addr - len(expected) + 1
+            try:
+                actual = bytes(candidate_project.loader.memory.load(start, len(expected)))
+            except Exception:
+                continue
+            if actual == expected:
+                return True
+        return False
+
+    def _setup_byte_variants_for_reg(reg: int) -> tuple[bytes, ...]:
+        variants = [bytearray((0x8B, 0x40 | (reg << 3) | 0x06, bp_offset & 0xFF))]
+        for op_name, op_value in ops:
+            op_value &= 0xFFFF
+            next_variants: list[bytearray] = []
+            if op_name == CallsitePushExprOp8616.SHL.value:
+                for raw in variants:
+                    if op_value == 1:
+                        next_variants.append(bytearray(raw + bytearray((0xD1, 0xE0 | reg))))
+                    elif op_value <= 0xFF:
+                        next_variants.append(bytearray(raw + bytearray((0xC1, 0xE0 | reg, op_value))))
+            elif op_name == CallsitePushExprOp8616.SHR.value:
+                for raw in variants:
+                    if op_value == 1:
+                        next_variants.append(bytearray(raw + bytearray((0xD1, 0xE8 | reg))))
+                    elif op_value <= 0xFF:
+                        next_variants.append(bytearray(raw + bytearray((0xC1, 0xE8 | reg, op_value))))
+            elif op_name == CallsitePushExprOp8616.ADD.value:
+                for raw in variants:
+                    if reg == 0:
+                        next_variants.append(bytearray(raw + bytearray((0x05, op_value & 0xFF, (op_value >> 8) & 0xFF))))
+                    else:
+                        next_variants.append(
+                            bytearray(raw + bytearray((0x81, 0xC0 | reg, op_value & 0xFF, (op_value >> 8) & 0xFF)))
+                        )
+                    if op_value == 1:
+                        next_variants.append(bytearray(raw + bytearray((0x40 | reg,))))
+            elif op_name == CallsitePushExprOp8616.SUB.value:
+                for raw in variants:
+                    if reg == 0:
+                        next_variants.append(bytearray(raw + bytearray((0x2D, op_value & 0xFF, (op_value >> 8) & 0xFF))))
+                    else:
+                        next_variants.append(
+                            bytearray(raw + bytearray((0x81, 0xE8 | reg, op_value & 0xFF, (op_value >> 8) & 0xFF)))
+                        )
+                    if op_value == 1:
+                        next_variants.append(bytearray(raw + bytearray((0x48 | reg,))))
+            else:
+                return ()
+            if not next_variants:
+                return ()
+            variants = next_variants
+        for raw in variants:
+            raw.append(0x50 | reg)
+        return tuple(bytes(raw) for raw in variants)
+
+    for candidate_project, candidate_ins_addr in _candidate_projects_and_addrs_for_insn_8616(project, ins_addr):
+        for reg in range(8):
+            for expected in _setup_byte_variants_for_reg(reg):
+                start = candidate_ins_addr - len(expected) + 1
+                try:
+                    actual = bytes(candidate_project.loader.memory.load(start, len(expected)))
+                except Exception:
+                    continue
+                if actual == expected:
+                    return True
+    return False
+
+
+def _signature_arg_parts_and_variadic_8616(decl: str) -> tuple[tuple[str, ...], bool] | None:
+    def _impl():
+        m = re.search(r"\((?P<args>[^)]*)\)", decl)
+        arg_text = m.group("args").strip() if m is not None else ""
+        if not arg_text or arg_text == "void":
+            return ((), False)
+        parts = tuple(part.strip() for part in arg_text.split(",") if part.strip())
+        if parts and parts[-1] == "...":
+            return (parts[:-1], True)
+        return (parts, False)
+
+    return _impl()
+
+
+def _known_callee_arity_contract_8616(name: str) -> CallArityContract8616:
     def _impl():
         normalized = normalize_callee_name_8616(name)
         if not isinstance(normalized, str):
-            return None
+            return CallArityContract8616(None)
+
+        decl = preferred_known_helper_signature_decl(normalized)
+        if isinstance(decl, str):
+            parsed = _signature_arg_parts_and_variadic_8616(decl)
+            if parsed is not None:
+                parts, variadic = parsed
+                return CallArityContract8616(
+                    len(parts),
+                    CallArityMode8616.MINIMUM if variadic else CallArityMode8616.EXACT,
+                )
+
         table = {
             "aNchkstk": 0,
             "__aNchkstk": 0,
@@ -1093,21 +1336,35 @@ def _expected_arg_count_for_known_callee_8616(name: str) -> int | None:
             "_DrawTime": 1,
         }
         if normalized in table:
-            return table[normalized]
-        decl = preferred_known_helper_signature_decl(normalized)
-        if isinstance(decl, str):
-            m = re.search(r"\((?P<args>[^)]*)\)", decl)
-            arg_text = m.group("args").strip() if m is not None else ""
-            if not arg_text or arg_text == "void":
-                return 0
-            parts = [part.strip() for part in arg_text.split(",") if part.strip()]
-            # Variadic declarations encode minimum required arguments before `...`.
-            if parts and parts[-1] == "...":
-                parts = parts[:-1]
-            return len(parts)
-        return None
+            return CallArityContract8616(table[normalized], CallArityMode8616.EXACT)
+        return CallArityContract8616(None)
 
     return _impl()
+
+
+def _expected_arg_count_for_known_callee_8616(name: str) -> int | None:
+    return _known_callee_arity_contract_8616(name).count
+
+
+def _call_arity_contract_allows_count_8616(contract: CallArityContract8616, actual_count: int) -> bool:
+    if not isinstance(contract.count, int):
+        return True
+    if contract.mode is CallArityMode8616.EXACT:
+        return actual_count == contract.count
+    if contract.mode is CallArityMode8616.MINIMUM:
+        return actual_count >= contract.count
+    return True
+
+
+def _semantic_call_name_from_summary_8616(project, summary, fallback_name: str | None) -> str | None:
+    if summary is not None:
+        target_addr = getattr(summary, "target_addr", None)
+        if isinstance(target_addr, int):
+            sidecar_name = normalize_callee_name_8616(_sidecar_label_for_target_8616(project, target_addr))
+            if isinstance(sidecar_name, str) and sidecar_name and not sidecar_name.startswith("sub_"):
+                return sidecar_name
+    normalized = normalize_callee_name_8616(fallback_name) if isinstance(fallback_name, str) else None
+    return normalized if isinstance(normalized, str) and normalized else fallback_name
 
 
 def _expected_arg_count_for_call_8616(
@@ -1163,18 +1420,194 @@ def _known_default_args_for_missing_8616(name: str, codegen) -> tuple | None:
     return tuple(structured_c.CConstant(value, SimTypeShort(False), codegen=codegen) for value in values)
 
 
-def _callee_expects_pointer_arg_8616(name: str, arg_index: int) -> bool:
+def _source_arg_kind_from_part_8616(part: str) -> CallArgSemanticKind8616:
+    text = part.strip()
+    if not text or text == "..." or text == "void":
+        return CallArgSemanticKind8616.UNKNOWN
+    if "*" in text or "[" in text:
+        return CallArgSemanticKind8616.POINTER
+    return CallArgSemanticKind8616.VALUE
+
+
+def _source_signature_prefix_looks_declaration_8616(prefix: str) -> bool:
+    text = prefix.strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if "#define" in lowered or any(token in lowered for token in ("=", "{", "}", "return ")):
+        return False
+    declaration_tokens = {
+        "char",
+        "const",
+        "enum",
+        "extern",
+        "far",
+        "int",
+        "long",
+        "near",
+        "short",
+        "signed",
+        "static",
+        "struct",
+        "union",
+        "unsigned",
+        "void",
+    }
+    words = {word for word in re.split(r"[^A-Za-z_]+", lowered) if word}
+    return bool(words & declaration_tokens)
+
+
+def _split_c_arg_parts_8616(args_text: str) -> tuple[str, ...]:
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in args_text:
+        if char in "([{":
+            depth += 1
+        elif char in ")]}" and depth > 0:
+            depth -= 1
+        if char == "," and depth == 0:
+            part = "".join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+            continue
+        current.append(char)
+    part = "".join(current).strip()
+    if part:
+        parts.append(part)
+    return tuple(parts)
+
+
+def _source_call_arg_semantic_kind_8616(
+    project,
+    callee: str,
+    arg_index: int,
+    *,
+    cod_path_hint=None,
+) -> CallArgSemanticKind8616:
+    if not isinstance(callee, str) or not callee:
+        return CallArgSemanticKind8616.UNKNOWN
+    normalized = normalize_callee_name_8616(callee)
+    if not isinstance(normalized, str) or not normalized:
+        return CallArgSemanticKind8616.UNKNOWN
+    cod_paths: list[object] = []
+    if cod_path_hint:
+        cod_paths.append(cod_path_hint)
+    project_variants = (project, getattr(project, "_inertia_original_project", None))
+    for candidate_project in project_variants:
+        lst_metadata = getattr(candidate_project, "_inertia_lst_metadata", None)
+        cod_path = getattr(lst_metadata, "cod_path", None)
+        if not cod_path:
+            continue
+        cod_paths.append(cod_path)
+    for cod_path in cod_paths:
+        try:
+            path = Path(cod_path)
+            stat = path.stat()
+        except Exception:
+            continue
+        cache_key = (
+            str(path),
+            int(getattr(stat, "st_mtime_ns", 0) or 0),
+            int(getattr(stat, "st_size", 0) or 0),
+            normalized,
+        )
+        cached = _SOURCE_ARG_KIND_CACHE_8616.get(cache_key)
+        if cached is None:
+            cached = {}
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                text = ""
+            wanted = {
+                item
+                for item in (
+                    normalize_callee_name_8616(normalized),
+                    normalize_callee_name_8616(normalized.lstrip("_")),
+                    normalize_callee_name_8616(f"_{normalized.lstrip('_')}"),
+                )
+                if isinstance(item, str) and item
+            }
+            signature_re = re.compile(
+                r";\|\*\*\*\s+(?P<prefix>[^()\n;]*?)\b(?P<name>_?[A-Za-z]\w*)\s*\((?P<args>[^)]*)\)"
+            )
+            for match in signature_re.finditer(text):
+                matched_name = normalize_callee_name_8616(match.group("name"))
+                if matched_name not in wanted:
+                    continue
+                if not _source_signature_prefix_looks_declaration_8616(match.group("prefix")):
+                    continue
+                args_text = match.group("args").strip()
+                if not args_text or args_text == "void":
+                    break
+                for idx, part in enumerate(_split_c_arg_parts_8616(args_text)):
+                    kind = _source_arg_kind_from_part_8616(part)
+                    if kind is not CallArgSemanticKind8616.UNKNOWN:
+                        cached[idx] = kind
+                break
+            _SOURCE_ARG_KIND_CACHE_8616[cache_key] = cached
+        kind = cached.get(arg_index, CallArgSemanticKind8616.UNKNOWN)
+        if kind is not CallArgSemanticKind8616.UNKNOWN:
+            return kind
+    return CallArgSemanticKind8616.UNKNOWN
+
+
+def _prototype_call_arg_semantic_kind_8616(prototype, arg_index: int) -> CallArgSemanticKind8616:
+    args = getattr(prototype, "args", None)
+    if not isinstance(args, (list, tuple)) or not (0 <= arg_index < len(args)):
+        return CallArgSemanticKind8616.UNKNOWN
+    arg_type = args[arg_index]
+    if isinstance(arg_type, SimTypePointer):
+        return CallArgSemanticKind8616.POINTER
+    if arg_type is not None:
+        return CallArgSemanticKind8616.VALUE
+    return CallArgSemanticKind8616.UNKNOWN
+
+
+def _callee_expects_pointer_arg_8616(
+    name: str,
+    arg_index: int,
+    *,
+    project=None,
+    prototype=None,
+    cod_path_hint=None,
+) -> bool:
     normalized = normalize_callee_name_8616(name)
     if not isinstance(normalized, str):
         return False
-    return _call_arg_semantic_kind_8616(normalized, arg_index) is CallArgSemanticKind8616.POINTER
+    return (
+        _call_arg_semantic_kind_8616(
+            normalized,
+            arg_index,
+            project=project,
+            prototype=prototype,
+            cod_path_hint=cod_path_hint,
+        )
+        is CallArgSemanticKind8616.POINTER
+    )
 
 
-def _call_arg_semantic_kind_8616(callee: str, arg_index: int) -> CallArgSemanticKind8616:
+def _call_arg_semantic_kind_8616(
+    callee: str,
+    arg_index: int,
+    *,
+    project=None,
+    prototype=None,
+    cod_path_hint=None,
+) -> CallArgSemanticKind8616:
     def _impl():
         normalized = normalize_callee_name_8616(callee)
         if not isinstance(normalized, str):
             return CallArgSemanticKind8616.UNKNOWN
+        source_kind = _source_call_arg_semantic_kind_8616(
+            project,
+            normalized,
+            arg_index,
+            cod_path_hint=cod_path_hint,
+        )
+        if source_kind is not CallArgSemanticKind8616.UNKNOWN:
+            return source_kind
         cached = _KNOWN_HELPER_ARG_KIND_CACHE_8616.get(normalized)
         if cached is None:
             cached = {}
@@ -1192,7 +1625,10 @@ def _call_arg_semantic_kind_8616(callee: str, arg_index: int) -> CallArgSemantic
                         )
                         cached[idx] = kind
             _KNOWN_HELPER_ARG_KIND_CACHE_8616[normalized] = cached
-        return cached.get(arg_index, CallArgSemanticKind8616.UNKNOWN)
+        helper_kind = cached.get(arg_index, CallArgSemanticKind8616.UNKNOWN)
+        if helper_kind is not CallArgSemanticKind8616.UNKNOWN:
+            return helper_kind
+        return _prototype_call_arg_semantic_kind_8616(prototype, arg_index)
 
     return _impl()
 
@@ -1458,6 +1894,59 @@ def _call_node_matches_summary_8616(project, node, summary) -> bool:
     return _impl()
 
 
+def _call_node_can_take_summary_8616(_project, node, summary) -> bool:
+    if summary is None:
+        return True
+    call_name = _call_node_name_8616(node)
+    if _call_name_is_unknown_8616(call_name):
+        return True
+    node_is_stack_probe = _is_stack_probe_call_name_8616(call_name)
+    summary_is_stack_probe = bool(getattr(summary, "stack_probe_helper", False))
+    summary_has_stack_probe_shape = (
+        int(getattr(summary, "arg_count", 0) or 0) == 0 and getattr(summary, "stack_cleanup", None) is None
+    )
+    if node_is_stack_probe:
+        return summary_is_stack_probe or summary_has_stack_probe_shape
+    if summary_is_stack_probe:
+        return False
+    return True
+
+
+def _next_source_call_name_for_summary_8616(
+    source_call_names: tuple[str, ...], source_call_idx: int, summary, project=None
+) -> tuple[str | None, int]:
+    summary_is_stack_probe = bool(getattr(summary, "stack_probe_helper", False)) if summary is not None else False
+    summary_has_stack_probe_shape = (
+        summary is not None
+        and int(getattr(summary, "arg_count", 0) or 0) == 0
+        and getattr(summary, "stack_cleanup", None) is None
+    )
+    target_addr = getattr(summary, "target_addr", None) if summary is not None else None
+    if project is not None and isinstance(target_addr, int) and not summary_is_stack_probe:
+        scan_idx = source_call_idx
+        while scan_idx < len(source_call_names):
+            candidate = source_call_names[scan_idx]
+            if _is_stack_probe_call_name_8616(candidate):
+                if summary_has_stack_probe_shape:
+                    return candidate, scan_idx + 1
+                scan_idx += 1
+                continue
+            if _source_name_matches_target_8616(project, target_addr, candidate):
+                return candidate, scan_idx + 1
+            scan_idx += 1
+        return None, source_call_idx
+    while source_call_idx < len(source_call_names):
+        candidate = source_call_names[source_call_idx]
+        if (
+            summary_is_stack_probe
+            or not _is_stack_probe_call_name_8616(candidate)
+            or summary_has_stack_probe_shape
+        ):
+            return candidate, source_call_idx + 1
+        source_call_idx += 1
+    return None, source_call_idx
+
+
 def _source_name_matches_target_8616(project, target_addr: int | None, expected_source_name: str | None) -> bool:
     if not isinstance(expected_source_name, str) or not expected_source_name:
         return False
@@ -1507,7 +1996,7 @@ def _align_cod_call_names_8616(project, codegen) -> bool:
         if not cod_call_names:
             return False
 
-        root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+        root = _structured_root_8616(cfunc)
         call_nodes = [
             node
             for node in _iter_c_nodes_deep_8616(root)
@@ -1540,17 +2029,25 @@ def _align_cod_call_names_8616(project, codegen) -> bool:
             summary_arg_count = int(getattr(summary, "arg_count", 0) or 0) if summary is not None else 0
             matched_cod_idx = None
             replacement = None
+            summary_is_stack_probe = bool(getattr(summary, "stack_probe_helper", False)) if summary is not None else False
             for candidate_idx in range(cod_idx, len(cod_call_names)):
                 candidate = cod_call_names[candidate_idx]
                 if not isinstance(candidate, str) or not candidate or candidate.startswith("sub_"):
+                    continue
+                if _is_stack_probe_call_name_8616(candidate) and not summary_is_stack_probe:
                     continue
                 if _source_name_matches_target_8616(project, target_addr, candidate):
                     matched_cod_idx = candidate_idx
                     replacement = candidate
                     break
             if matched_cod_idx is None and cod_idx < len(cod_call_names) and summary is not None:
-                candidate = cod_call_names[cod_idx]
-                expected_arity = _expected_arg_count_for_known_callee_8616(candidate)
+                candidate, candidate_idx = _next_source_call_name_for_summary_8616(
+                    cod_call_names,
+                    cod_idx,
+                    summary,
+                    project=project,
+                )
+                expected_arity = _expected_arg_count_for_known_callee_8616(candidate) if candidate is not None else None
                 current_arity = len(tuple(getattr(node, "args", ()) or ()))
                 if (
                     isinstance(candidate, str)
@@ -1560,7 +2057,7 @@ def _align_cod_call_names_8616(project, codegen) -> bool:
                     and expected_arity >= 0
                     and (summary_arg_count == expected_arity or current_arity == expected_arity)
                 ):
-                    matched_cod_idx = cod_idx
+                    matched_cod_idx = candidate_idx - 1
                     replacement = candidate
             if matched_cod_idx is None or replacement is None:
                 continue
@@ -1592,9 +2089,12 @@ def _normalize_call_target_names_8616(codegen) -> bool:
 
         project = getattr(codegen, "project", None)
         changed = False
-        allow_call_target_rewrites = bool(int(os.environ.get("INERTIA_ENABLE_CALLSITE_TARGET_REWRITES", "0")))
+        allow_call_target_rewrites = os.environ.get(
+            "INERTIA_ENABLE_CALLSITE_TARGET_REWRITES",
+            "1",
+        ).strip().lower() not in {"0", "false", "no", "off"}
         stats = _ensure_callsite_materialization_stats_8616(codegen)
-        root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+        root = _structured_root_8616(cfunc)
         summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
         if not isinstance(summary_map, dict):
             summary_map = {}
@@ -1615,9 +2115,13 @@ def _normalize_call_target_names_8616(codegen) -> bool:
             is_stack_probe_helper = bool(getattr(summary, "stack_probe_helper", False)) if summary is not None else False
             if summary is not None and is_stack_probe_helper and _summary_proves_stack_probe_call_8616(summary, node=node):
                 expected_source_name = "aNchkstk"
-            elif summary is not None and not is_stack_probe_helper and source_call_idx < len(source_call_names):
-                expected_source_name = source_call_names[source_call_idx]
-                source_call_idx += 1
+            elif summary is not None and not is_stack_probe_helper:
+                expected_source_name, source_call_idx = _next_source_call_name_for_summary_8616(
+                    source_call_names,
+                    source_call_idx,
+                    summary,
+                    project=project,
+                )
             target_addr = getattr(summary, "target_addr", None) if summary is not None else None
             summary_arg_count = int(getattr(summary, "arg_count", 0) or 0) if summary is not None else 0
             summary_stack_cleanup = getattr(summary, "stack_cleanup", None) if summary is not None else None
@@ -1639,8 +2143,73 @@ def _normalize_call_target_names_8616(codegen) -> bool:
         if _align_cod_call_names_8616(project, codegen):
             changed = True
 
+        if _repair_callsite_args_before_final_stats_8616(project, codegen, root, summary_map):
+            changed = True
+
         _finalize_callsite_materialization_stats_8616(codegen)
         return changed
+
+    return _impl()
+
+
+def _repair_callsite_args_before_final_stats_8616(project, codegen, root, summary_map: dict[int, object]) -> bool:
+    def _impl():
+        debug_materialization = bool(os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"))
+        if getattr(codegen, "_inertia_callsite_arg_pre_final_stats_active_8616", False):
+            return False
+        if not isinstance(summary_map, dict) or not summary_map:
+            return False
+        _refresh_callsite_summary_node_ids_8616(codegen, summary_map)
+        if not _has_callsite_arg_materialization_gap_8616(root, summary_map):
+            if debug_materialization:
+                log.warning(
+                    "[call-pre-final-repair] function=%#x reason=no-gap",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                )
+            return False
+        codegen._inertia_callsite_arg_pre_final_stats_active_8616 = True
+        try:
+            changed = bool(_materialize_callsite_stack_arguments_8616(project, codegen))
+        finally:
+            codegen._inertia_callsite_arg_pre_final_stats_active_8616 = False
+        if changed:
+            _refresh_callsite_summary_node_ids_8616(codegen, summary_map)
+        if debug_materialization:
+            log.warning(
+                "[call-pre-final-repair] function=%#x changed=%s",
+                getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                changed,
+            )
+        return changed
+
+    return _impl()
+
+
+def _has_callsite_arg_materialization_gap_8616(root, summary_map: dict[int, object]) -> bool:
+    def _impl():
+        for node in _iter_c_nodes_deep_8616(root):
+            if not isinstance(node, CFunctionCall) or _is_runtime_segment_helper_call_8616(node):
+                continue
+            summary = summary_map.get(id(node))
+            if summary is None or bool(getattr(summary, "stack_probe_helper", False)):
+                continue
+            summary_arg_count = int(getattr(summary, "arg_count", 0) or 0)
+            push_sources = tuple(getattr(summary, "push_arg_sources", ()) or ())
+            if summary_arg_count <= 0 and not push_sources:
+                continue
+            call_name = _call_node_name_8616(node)
+            known_count = _expected_arg_count_for_known_callee_8616(call_name) if call_name else None
+            expected_count = _expected_arg_count_for_call_8616(
+                summary_arg_count,
+                known_arg_count=known_count,
+                prototype_arg_count=None,
+            )
+            if not (isinstance(expected_count, int) and expected_count > 0):
+                continue
+            current_count = len(tuple(getattr(node, "args", ()) or ()))
+            if current_count != expected_count:
+                return True
+        return False
 
     return _impl()
 
@@ -1830,7 +2399,7 @@ def _prefer_expected_source_name_8616(
     summary_arg_count: int,
 ) -> bool:
     def _impl():
-        expected_arity = _expected_arg_count_for_known_callee_8616(expected_source_name)
+        expected_arity_contract = _known_callee_arity_contract_8616(expected_source_name)
         current_call_name = _call_node_name_8616(node)
         current_arity = len(tuple(getattr(node, "args", ()) or ()))
         current_expected_arity = (
@@ -1841,16 +2410,16 @@ def _prefer_expected_source_name_8616(
         callsite_arity = summary_arg_count if summary_arg_count > 0 else current_arity
         source_name_proved = _source_name_matches_target_8616(project, target_addr, expected_source_name)
         if not (
-            isinstance(expected_arity, int)
-            and expected_arity >= 0
-            and callsite_arity == expected_arity
+            isinstance(expected_arity_contract.count, int)
+            and expected_arity_contract.count >= 0
+            and _call_arity_contract_allows_count_8616(expected_arity_contract, callsite_arity)
             and isinstance(current_call_name, str)
             and current_call_name
             and current_call_name != expected_source_name
             and source_name_proved
             and (
                 current_expected_arity is None
-                or current_expected_arity != expected_arity
+                or current_expected_arity != expected_arity_contract.count
                 or current_expected_arity == callsite_arity
             )
         ):
@@ -1929,9 +2498,13 @@ def _finalize_callsite_materialization_stats_8616(codegen) -> CallsiteMaterializ
                 getattr(previous, "consumed_outgoing_stack_placeholder_count", 0) or 0
             ),
             stale_target_rejected_count=int(getattr(previous, "stale_target_rejected_count", 0) or 0),
+            byte_merge_raw_fact_count=int(getattr(previous, "byte_merge_raw_fact_count", 0) or 0),
+            byte_merge_classified_fact_count=int(getattr(previous, "byte_merge_classified_fact_count", 0) or 0),
+            byte_merge_materialized_count=int(getattr(previous, "byte_merge_materialized_count", 0) or 0),
+            byte_merge_refused_count=int(getattr(previous, "byte_merge_refused_count", 0) or 0),
         )
         cfunc = getattr(codegen, "cfunc", None)
-        root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+        root = _structured_root_8616(cfunc)
         summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
         if not isinstance(summary_map, dict):
             summary_map = {}
@@ -1947,9 +2520,12 @@ def _finalize_callsite_materialization_stats_8616(codegen) -> CallsiteMaterializ
             if summary is None or bool(getattr(summary, "stack_probe_helper", False)):
                 continue
             expected_source_name = None
-            if source_call_idx < len(source_call_names):
-                expected_source_name = source_call_names[source_call_idx]
-                source_call_idx += 1
+            expected_source_name, source_call_idx = _next_source_call_name_for_summary_8616(
+                source_call_names,
+                source_call_idx,
+                summary,
+                project=project,
+            )
             _accumulate_callsite_materialization_stats_8616(
                 stats=stats,
                 node=node,
@@ -2015,7 +2591,8 @@ def _accumulate_callsite_materialization_stats_8616(*, stats, node, summary, exp
                     call_name = _call_node_name_8616(node)
                     if isinstance(expected_source_name, str) and call_name == expected_source_name:
                         stats.call_target_materialized_count += 1
-        known_arg_count = _expected_arg_count_for_known_callee_8616(_call_node_name_8616(node) or "")
+        known_arity_contract = _known_callee_arity_contract_8616(_call_node_name_8616(node) or "")
+        known_arg_count = known_arity_contract.count
         arg_fact_count = int(getattr(summary, "arg_count", 0) or 0)
         if known_arg_count == 0:
             arg_fact_count = 0
@@ -2023,9 +2600,8 @@ def _accumulate_callsite_materialization_stats_8616(*, stats, node, summary, exp
             stats.call_arg_fact_count += arg_fact_count
             materialized_args = tuple(getattr(node, "args", ()) or ())
             stats.call_arg_materialized_count += min(arg_fact_count, len(materialized_args))
-        expected_arg_count = known_arg_count
         actual_arg_count = len(tuple(getattr(node, "args", ()) or ()))
-        if expected_arg_count is not None and actual_arg_count != expected_arg_count:
+        if not _call_arity_contract_allows_count_8616(known_arity_contract, actual_arg_count):
             stats.known_prototype_arg_mismatch_count += 1
             stats.failure_count += 1
             stats.known_prototype_arg_mismatches.append(
@@ -2033,7 +2609,8 @@ def _accumulate_callsite_materialization_stats_8616(*, stats, node, summary, exp
                     "call": _call_node_name_8616(node),
                     "callsite_addr": getattr(summary, "callsite_addr", None),
                     "target_addr": target_addr,
-                    "expected_arg_count": expected_arg_count,
+                    "expected_arg_count": known_arg_count,
+                    "expected_arg_mode": known_arity_contract.mode.value,
                     "actual_arg_count": actual_arg_count,
                     "summary_arg_count": int(getattr(summary, "arg_count", 0) or 0),
                     "stack_probe_helper": bool(getattr(summary, "stack_probe_helper", False)),
@@ -2053,14 +2630,10 @@ def _cod_source_call_names_8616(project, func_addr: int) -> tuple[str, ...]:
         # diverge from emitted binary calls (e.g. GetRandom vs rand) and must not
         # drive call-floor materialization.
         names: list[str] = []
-        seen: set[str] = set()
         for raw_name in getattr(cod_metadata, "call_names", ()) or ():
             normalized = normalize_callee_name_8616(raw_name)
             if not (isinstance(normalized, str) and normalized and not normalized.startswith("sub_")):
                 continue
-            if normalized in seen:
-                continue
-            seen.add(normalized)
             names.append(normalized)
         if names:
             return tuple(names)
@@ -2070,9 +2643,6 @@ def _cod_source_call_names_8616(project, func_addr: int) -> tuple[str, ...]:
             normalized = normalize_callee_name_8616(item[0])
             if not (isinstance(normalized, str) and normalized and not normalized.startswith("sub_")):
                 continue
-            if normalized in seen:
-                continue
-            seen.add(normalized)
             names.append(normalized)
         return tuple(names)
 
@@ -2109,34 +2679,8 @@ def _cod_source_call_names_for_symbol_8616(project, symbol_name: str | None) -> 
 
 def _cod_source_prototype_arg_count_8616(project, symbol_name: str | None) -> int | None:
     def _impl():
-        if not isinstance(symbol_name, str) or not symbol_name:
-            return None
-        lst_metadata = getattr(project, "_inertia_lst_metadata", None)
-        cod_path = getattr(lst_metadata, "cod_path", None)
-        if not cod_path:
-            return None
-        try:
-            text = Path(cod_path).read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            return None
-        wanted = {
-            normalize_callee_name_8616(candidate)
-            for candidate in (symbol_name, symbol_name.lstrip("_"), f"_{symbol_name.lstrip('_')}")
-            if candidate
-        }
-        wanted = {item for item in wanted if isinstance(item, str) and item}
-        if not wanted:
-            return None
-        signature_re = re.compile(r";\|\*\*\*\s+[^()\n;]+\b(?P<name>_?[A-Za-z]\w*)\s*\((?P<args>[^)]*)\)")
-        for match in signature_re.finditer(text):
-            normalized_name = normalize_callee_name_8616(match.group("name"))
-            if normalized_name not in wanted:
-                continue
-            args_text = match.group("args").strip()
-            if not args_text or args_text == "void":
-                return 0
-            return len([part for part in args_text.split(",") if part.strip() and part.strip() != "..."])
-        return None
+        widths = _source_prototype_arg_widths_8616(project, symbol_name)
+        return len(widths) if widths is not None else None
 
     return _impl()
 
@@ -2170,6 +2714,104 @@ def _safe_type_size_bits_8616(type_, project=None) -> int | None:
             bits = getattr(bound, "size", None)
             if isinstance(bits, int) and bits > 0:
                 return bits
+    return None
+
+
+def _prototype_arg_widths_8616(project, prototype) -> tuple[int, ...] | None:
+    args = getattr(prototype, "args", None)
+    if not isinstance(args, (list, tuple)):
+        return None
+    widths: list[int] = []
+    for arg_type in args:
+        bits = _safe_type_size_bits_8616(arg_type, project)
+        if not isinstance(bits, int) or bits <= 0:
+            return None
+        widths.append(max(1, (bits + 7) // 8))
+    return tuple(widths)
+
+
+def _known_helper_prototype_arg_widths_8616(project, symbol_name: str | None) -> tuple[int, ...] | None:
+    normalized = normalize_callee_name_8616(symbol_name)
+    if not isinstance(normalized, str) or not normalized:
+        return None
+    decl = preferred_known_helper_signature_decl(normalized)
+    if not isinstance(decl, str) or not decl:
+        return None
+    with contextlib.suppress(Exception):
+        _name, prototype, _arg_names = _parse_c_prototype_8616(decl)
+        return _prototype_arg_widths_8616(project, prototype)
+    return None
+
+
+def _source_prototype_arg_widths_8616(
+    project,
+    symbol_name: str | None,
+    *,
+    cod_path_hint=None,
+) -> tuple[int, ...] | None:
+    if not isinstance(symbol_name, str) or not symbol_name:
+        return None
+    normalized = normalize_callee_name_8616(symbol_name)
+    if not isinstance(normalized, str) or not normalized:
+        return None
+
+    cod_paths: list[object] = []
+    if cod_path_hint:
+        cod_paths.append(cod_path_hint)
+    project_variants = (project, getattr(project, "_inertia_original_project", None))
+    for candidate_project in project_variants:
+        lst_metadata = getattr(candidate_project, "_inertia_lst_metadata", None)
+        cod_path = getattr(lst_metadata, "cod_path", None)
+        if cod_path:
+            cod_paths.append(cod_path)
+
+    wanted = {
+        item
+        for item in (
+            normalize_callee_name_8616(normalized),
+            normalize_callee_name_8616(normalized.lstrip("_")),
+            normalize_callee_name_8616(f"_{normalized.lstrip('_')}"),
+        )
+        if isinstance(item, str) and item
+    }
+    if not wanted:
+        return None
+
+    signature_re = re.compile(r";\|\*\*\*\s+(?P<prefix>[^()\n;]*?)\b(?P<name>_?[A-Za-z]\w*)\s*\((?P<args>[^)]*)\)")
+    for cod_path in cod_paths:
+        try:
+            path = Path(cod_path)
+            stat = path.stat()
+        except Exception:
+            continue
+        cache_key = (
+            str(path),
+            int(getattr(stat, "st_mtime_ns", 0) or 0),
+            int(getattr(stat, "st_size", 0) or 0),
+            normalized,
+        )
+        if cache_key in _SOURCE_ARG_WIDTH_CACHE_8616:
+            return _SOURCE_ARG_WIDTH_CACHE_8616[cache_key]
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            text = ""
+        widths: tuple[int, ...] | None = None
+        for match in signature_re.finditer(text):
+            matched_name = normalize_callee_name_8616(match.group("name"))
+            if matched_name not in wanted:
+                continue
+            prefix = match.group("prefix")
+            if not _source_signature_prefix_looks_declaration_8616(prefix):
+                continue
+            decl = f"{prefix.strip()} {match.group('name')}({match.group('args').strip()});"
+            with contextlib.suppress(Exception):
+                _name, prototype, _arg_names = _parse_c_prototype_8616(decl)
+                widths = _prototype_arg_widths_8616(project, prototype)
+            break
+        _SOURCE_ARG_WIDTH_CACHE_8616[cache_key] = widths
+        if widths is not None:
+            return widths
     return None
 
 
@@ -2259,7 +2901,7 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
         patch_direct_call_sites(function)
         names_changed = _align_cod_call_names_8616(project, codegen)
 
-        root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+        root = _structured_root_8616(cfunc)
         call_nodes = [
             node
             for node in _iter_c_nodes_deep_8616(root)
@@ -2280,7 +2922,10 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
             return value if isinstance(value, int) else None
 
         changed = bool(names_changed)
-        allow_call_target_rewrites = bool(int(os.environ.get("INERTIA_ENABLE_CALLSITE_TARGET_REWRITES", "0")))
+        allow_call_target_rewrites = os.environ.get(
+            "INERTIA_ENABLE_CALLSITE_TARGET_REWRITES",
+            "1",
+        ).strip().lower() not in {"0", "false", "no", "off"}
         stats = _ensure_callsite_materialization_stats_8616(codegen)
         summary_map = dict(getattr(codegen, "_inertia_callsite_summaries", {}) or {})
         source_call_names = _cod_source_call_names_8616(project, func_addr)
@@ -2348,9 +2993,13 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
                     getattr(summary, "push_arg_sources", None),
                 )
             expected_source_name = None
-            if not bool(getattr(summary, "stack_probe_helper", False)) and source_call_idx < len(source_call_names):
-                expected_source_name = source_call_names[source_call_idx]
-                source_call_idx += 1
+            if source_call_idx < len(source_call_names):
+                expected_source_name, source_call_idx = _next_source_call_name_for_summary_8616(
+                    source_call_names,
+                    source_call_idx,
+                    summary,
+                    project=project,
+                )
             changed |= _apply_callsite_summary_to_node_8616(
                 project=project,
                 codegen=codegen,
@@ -2487,7 +3136,10 @@ def _ordered_callsite_pairs_8616(*, project, function, root, call_nodes, callsit
                 continue
             summary = summarize_x86_16_callsite(function, callsite_addr)
             chosen_index = None
-            if summary is not None:
+            if len(matched_nodes) == 1:
+                if _call_node_can_take_summary_8616(project, matched_nodes[0], summary):
+                    chosen_index = 0
+            elif summary is not None:
                 for idx, node in enumerate(matched_nodes):
                     if _call_node_matches_summary_8616(project, node, summary):
                         chosen_index = idx
@@ -2599,6 +3251,7 @@ def _apply_callsite_summary_to_node_8616(
         if upgraded_summary is not active_summary:
             active_summary = upgraded_summary
             stats.source_proven_stack_probe_count += 1
+            _record_stack_probe_helper_target_fingerprints_8616(codegen, summary=active_summary, call=node)
             normalized_probe_name = normalize_callee_name_8616(expected_source_name) or "aNchkstk"
             if getattr(node, "callee_func", None) is not None:
                 node.callee_func = None
@@ -2612,6 +3265,8 @@ def _apply_callsite_summary_to_node_8616(
             record_callsite_summary_fact_8616(codegen, active_summary, node_id=id(node), attached=True)
         target_addr = getattr(active_summary, "target_addr", None)
         if not isinstance(target_addr, int):
+            return changed
+        if bool(getattr(active_summary, "stack_probe_helper", False)):
             return changed
         callee_func = getattr(node, "callee_func", None)
         candidate = _lookup_callee_function_8616(project, target_addr)
@@ -2658,6 +3313,18 @@ def _apply_callsite_summary_to_node_8616(
             changed = True
         if (
             isinstance(expected_source_name, str)
+            and expected_source_name
+            and sidecar_label is None
+            and callee_func is not None
+            and _function_matches_target_addr_8616(callee_func, target_addr)
+            and _source_name_matches_target_8616(project, target_addr, expected_source_name)
+            and not _callee_names_match_8616(callee_name, expected_source_name)
+        ):
+            callee_func.name = expected_source_name
+            callee_name = normalize_callee_name_8616(expected_source_name)
+            changed = True
+        if (
+            isinstance(expected_source_name, str)
             and callee_func is not None
             and _source_name_matches_target_8616(project, target_addr, expected_source_name)
             and callee_name != expected_source_name
@@ -2676,6 +3343,16 @@ def _apply_callsite_summary_to_node_8616(
         ):
             node.callee_target = expected_source_name
             changed = True
+        elif (
+            callee_name is None
+            and isinstance(expected_source_name, str)
+            and expected_source_name
+            and sidecar_label is None
+            and not isinstance(target_addr, int)
+            and getattr(node, "callee_target", None) != expected_source_name
+        ):
+            node.callee_target = expected_source_name
+            changed = True
         elif _rename_call_node_from_sidecar_8616(project, node):
             changed = True
         return changed
@@ -2686,7 +3363,7 @@ def _apply_callsite_summary_to_node_8616(
 def _refresh_callsite_summary_node_ids_8616(codegen, summary_map: dict[int, object]) -> bool:
     def _impl():
         cfunc = getattr(codegen, "cfunc", None)
-        root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+        root = _structured_root_8616(cfunc)
         if root is None:
             return False
 
@@ -2705,50 +3382,90 @@ def _refresh_callsite_summary_node_ids_8616(codegen, summary_map: dict[int, obje
             for node in _iter_c_nodes_deep_8616(root)
             if isinstance(node, CFunctionCall) and not _is_runtime_segment_helper_call_8616(node)
         ]
-        nodes_by_callsite: dict[int, CFunctionCall] = {}
+        nodes_by_callsite: dict[int, list[CFunctionCall]] = {}
+        current_nodes_by_id: dict[int, CFunctionCall] = {}
+        node_callsite_by_id: dict[int, int] = {}
         current_node_ids: set[int] = set()
         for node in call_nodes:
-            current_node_ids.add(id(node))
+            node_id = id(node)
+            current_node_ids.add(node_id)
+            current_nodes_by_id[node_id] = node
             callsite_addr = _node_callsite_addr(node)
-            if isinstance(callsite_addr, int) and callsite_addr not in nodes_by_callsite:
-                nodes_by_callsite[callsite_addr] = node
+            if isinstance(callsite_addr, int):
+                node_callsite_by_id[node_id] = callsite_addr
+                nodes_by_callsite.setdefault(callsite_addr, []).append(node)
 
+        def _node_for_callsite_summary(callsite_addr: int, summary) -> CFunctionCall | None:
+            candidates = nodes_by_callsite.get(callsite_addr, [])
+            if not candidates:
+                return None
+            viable = [node for node in candidates if _call_node_can_take_summary_8616(project, node, summary)]
+            if not viable:
+                return None
+            if len(viable) == 1:
+                return viable[0]
+            target_matches = [node for node in viable if _call_node_matches_summary_8616(project, node, summary)]
+            if len(target_matches) == 1:
+                return target_matches[0]
+            named_viable = [node for node in viable if not _call_name_is_unknown_8616(_call_node_name_8616(node))]
+            if len(named_viable) == 1:
+                return named_viable[0]
+            return None
+
+        project = getattr(codegen, "project", None)
         changed = False
-        refreshed = dict(summary_map)
+        refreshed: dict[int, object] = {}
+        stale_items: list[tuple[int, object]] = []
         for node_id, summary in tuple(summary_map.items()):
-            if node_id in current_node_ids:
+            node = current_nodes_by_id.get(node_id)
+            if node is None:
+                stale_items.append((node_id, summary))
                 continue
+            summary_callsite = getattr(summary, "callsite_addr", None)
+            node_callsite = node_callsite_by_id.get(node_id)
+            if (
+                isinstance(summary_callsite, int)
+                and isinstance(node_callsite, int)
+                and summary_callsite != node_callsite
+            ):
+                stale_items.append((node_id, summary))
+                changed = True
+                continue
+            if not _call_node_can_take_summary_8616(project, node, summary):
+                stale_items.append((node_id, summary))
+                changed = True
+                continue
+            refreshed[node_id] = summary
+
+        unresolved_stale_items: list[tuple[int, object]] = []
+        for node_id, summary in stale_items:
             callsite_addr = getattr(summary, "callsite_addr", None)
             if not isinstance(callsite_addr, int):
+                unresolved_stale_items.append((node_id, summary))
                 continue
-            node = nodes_by_callsite.get(callsite_addr)
+            node = _node_for_callsite_summary(callsite_addr, summary)
             if node is None:
+                unresolved_stale_items.append((node_id, summary))
                 continue
-            refreshed[id(node)] = summary
-            refreshed.pop(node_id, None)
+            target_node_id = id(node)
+            if target_node_id in refreshed:
+                changed = True
+                continue
+            refreshed[target_node_id] = summary
             changed = True
-
-        if changed:
-            codegen._inertia_callsite_summaries = refreshed
-            summary_map.clear()
-            summary_map.update(refreshed)
-            return True
 
         # Fallback remap lane: when callsite tags are unavailable after AST
         # rewrites, rebind summaries only when the current call node still matches
         # the summary target/name evidence. Unknown means refuse; do not zip stale
         # summaries by order because that can manufacture wrong call semantics.
-        stale_items: list[tuple[int, object]] = [
-            (node_id, summary) for node_id, summary in tuple(summary_map.items()) if node_id not in current_node_ids
-        ]
-        if not stale_items:
-            return False
-        if not all(isinstance(getattr(summary, "callsite_addr", None), int) for _, summary in stale_items):
-            return False
-        project = getattr(codegen, "project", None)
+        if not all(isinstance(getattr(summary, "callsite_addr", None), int) for _, summary in unresolved_stale_items):
+            unresolved_stale_items = []
         available_nodes = [node for node in call_nodes if id(node) not in refreshed]
         rebound = dict(refreshed)
-        for old_node_id, summary in sorted(stale_items, key=lambda item: int(getattr(item[1], "callsite_addr", 0))):
+        for old_node_id, summary in sorted(
+            unresolved_stale_items,
+            key=lambda item: int(getattr(item[1], "callsite_addr", 0)),
+        ):
             matched_idx = None
             for idx, node in enumerate(available_nodes):
                 if _call_node_matches_summary_8616(project, node, summary):
@@ -2761,7 +3478,9 @@ def _refresh_callsite_summary_node_ids_8616(codegen, summary_map: dict[int, obje
             rebound[id(node)] = summary
 
         if rebound == refreshed:
-            return False
+            if not changed and refreshed == summary_map:
+                return False
+            rebound = refreshed
         codegen._inertia_callsite_summaries = rebound
         summary_map.clear()
         summary_map.update(rebound)
@@ -2814,7 +3533,7 @@ def _materialize_callsite_prototypes_8616(project, codegen) -> bool:
         prototype_decls: list[str] = []
         seen_decls: set[str] = set(getattr(codegen, "_inertia_callsite_prototype_decls", ()) or ())
         changed = False
-        root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None)
+        root = _structured_root_8616(cfunc)
         for node in _iter_c_nodes_deep_8616(root):
             if not isinstance(node, CFunctionCall):
                 continue
@@ -3068,6 +3787,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         return False
     func_addr = getattr(cfunc, "addr", None)
     cod_metadata = _cod_metadata_for_function_8616(project, func_addr) if isinstance(func_addr, int) else None
+    cod_path_hint = getattr(cod_metadata, "cod_path", None) if cod_metadata is not None else None
     summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
     if not isinstance(summary_map, dict):
         summary_map = {}
@@ -3108,6 +3828,16 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         node = expr
         while isinstance(node, CTypeCast):
             node = node.expr
+        if isinstance(node, CFunctionCall):
+            helper_name = getattr(node, "callee_target", None)
+            if isinstance(helper_name, str):
+                helper_name = helper_name.upper()
+                if helper_name == "SEG_U8":
+                    return 1
+                if helper_name == "SEG_U16":
+                    return 2
+                if helper_name == "SEG_U32":
+                    return 4
         type_ = getattr(node, "type", None)
         bits = _safe_type_size_bits_8616(type_, getattr(codegen, "project", None))
         arch = getattr(getattr(codegen, "project", None), "arch", None)
@@ -3120,23 +3850,94 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return size
         return 2
 
+    def _canonical_segment_register_name_8616(name: object) -> str | None:
+        if not isinstance(name, str):
+            return None
+        base = name.strip().lower().split("#", 1)[0]
+        return base if base in {"cs", "ds", "es", "ss"} else None
+
+    def _segment_register_name_from_expr_8616(expr) -> str | None:
+        node = expr
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        variable = getattr(node, "variable", None)
+        name = getattr(variable, "name", None) or getattr(node, "name", None)
+        canonical_name = _canonical_segment_register_name_8616(name)
+        if canonical_name is not None:
+            return canonical_name
+        if isinstance(variable, SimRegisterVariable):
+            reg = getattr(variable, "reg", None)
+            reg_name = getattr(getattr(project, "arch", None), "register_names", {}).get(reg)
+            canonical_reg_name = _canonical_segment_register_name_8616(reg_name)
+            if canonical_reg_name is not None:
+                return canonical_reg_name
+        return None
+
     def _is_segment_register_value_expr(expr) -> bool:
         node = expr
         while isinstance(node, CTypeCast):
             node = node.expr
         if isinstance(node, CBinaryOp) and node.op in {"Shr", "Shl", "And", "Or"}:
             return _is_segment_register_value_expr(node.lhs)
-        variable = getattr(node, "variable", None)
-        name = getattr(variable, "name", None) or getattr(node, "name", None)
-        if isinstance(name, str) and name.lower() in {"cs", "ds", "es", "ss"}:
-            return True
-        return False
+        return _segment_register_name_from_expr_8616(node) is not None
 
     def _is_call_arg_count_evidence_tuple(source) -> bool:
         if not isinstance(source, tuple) or len(source) < 2:
             return False
-        if source[0] not in {"bp", "imm", "sp", "ss", "ds", "cs", "es", "dx", "ax", "bx", "cx", "dx", "di", "si", "di", "si"}:
+        if source[0] not in {
+            "bp",
+            "bp_addr",
+            "bp_index_addr",
+            "global",
+            "imm",
+            "expr",
+            "ret_reg",
+            "seg",
+            "sp",
+            "ss",
+            "ds",
+            "cs",
+            "es",
+            "dx",
+            "ax",
+            "bx",
+            "cx",
+            "di",
+            "si",
+        }:
             return False
+        if source[0] == "seg":
+            return isinstance(source[1], str) and source[1].lower() in {"cs", "ds", "es", "ss"}
+        if source[0] == "bp_index_addr":
+            return (
+                len(source) >= 4
+                and isinstance(source[1], int)
+                and isinstance(source[2], str)
+                and isinstance(source[3], int)
+            )
+        if source[0] == "expr":
+            return (
+                len(source) == 3
+                and isinstance(source[1], tuple)
+                and _is_call_arg_count_evidence_tuple(source[1])
+                and isinstance(source[2], tuple)
+                and all(
+                    isinstance(op, tuple)
+                    and len(op) == 2
+                    and op[0]
+                    in {
+                        CallsitePushExprOp8616.ADC.value,
+                        CallsitePushExprOp8616.ADD.value,
+                        CallsitePushExprOp8616.SBB.value,
+                        CallsitePushExprOp8616.SUB.value,
+                        CallsitePushExprOp8616.SHL.value,
+                        CallsitePushExprOp8616.SHR.value,
+                        CallsitePushExprOp8616.MUL.value,
+                    }
+                    and isinstance(op[1], int)
+                    for op in source[2]
+                )
+            )
         return isinstance(source[1], int)
 
     def _fallback_call_arg_count_8616(
@@ -3237,10 +4038,17 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     def _is_c_ast_node(value) -> bool:
         return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
 
-    def _clone_c_ast_tree(node):
+    def _clone_c_ast_tree(node, memo: dict[int, object] | None = None):
         if not _is_c_ast_node(node):
             return node
+        if memo is None:
+            memo = {}
+        marker = id(node)
+        existing = memo.get(marker)
+        if existing is not None:
+            return existing
         cloned = copy(node)
+        memo[marker] = cloned
         for attr in (
             "lhs",
             "rhs",
@@ -3257,16 +4065,162 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 continue
             value = getattr(cloned, attr, None)
             if _is_c_ast_node(value):
-                setattr(cloned, attr, _clone_c_ast_tree(value))
+                setattr(cloned, attr, _clone_c_ast_tree(value, memo))
         for attr in ("args", "operands"):
             if not hasattr(cloned, attr):
                 continue
             items = getattr(cloned, attr, None)
             if not isinstance(items, (list, tuple)):
                 continue
-            rebuilt = [_clone_c_ast_tree(item) if _is_c_ast_node(item) else item for item in items]
+            rebuilt = [_clone_c_ast_tree(item, memo) if _is_c_ast_node(item) else item for item in items]
             setattr(cloned, attr, tuple(rebuilt) if isinstance(items, tuple) else rebuilt)
         return cloned
+
+    def _c_ast_node_count_limited(node, *, limit: int = 128) -> int:
+        seen: set[int] = set()
+
+        def walk(current) -> int:
+            if not _is_c_ast_node(current):
+                return 0
+            marker = id(current)
+            if marker in seen:
+                return 0
+            seen.add(marker)
+            total = 1
+            for attr in (
+                "lhs",
+                "rhs",
+                "expr",
+                "operand",
+                "condition",
+                "cond",
+                "iftrue",
+                "iffalse",
+                "index",
+            ):
+                if total > limit or not hasattr(current, attr):
+                    continue
+                total += walk(getattr(current, attr, None))
+            for attr in ("args", "operands"):
+                if total > limit or not hasattr(current, attr):
+                    continue
+                items = getattr(current, attr, None)
+                if not isinstance(items, (list, tuple)):
+                    continue
+                for item in items:
+                    total += walk(item)
+                    if total > limit:
+                        break
+            return total
+
+        return walk(node)
+
+    def _c_ast_contains_identity_8616(node, target, *, max_nodes: int = 2048) -> bool:
+        target_id = id(target)
+        stack = [node]
+        seen: set[int] = set()
+        visited = 0
+        while stack:
+            current = stack.pop()
+            if current is None:
+                continue
+            while isinstance(current, CTypeCast):
+                current = current.expr
+            if not _is_c_ast_node(current):
+                continue
+            marker = id(current)
+            if marker == target_id:
+                return True
+            if marker in seen:
+                continue
+            seen.add(marker)
+            visited += 1
+            if visited > max_nodes:
+                return True
+            for attr in (
+                "lhs",
+                "rhs",
+                "expr",
+                "operand",
+                "condition",
+                "cond",
+                "iftrue",
+                "iffalse",
+                "body",
+                "retval",
+                "variable",
+                "index",
+            ):
+                if not hasattr(current, attr):
+                    continue
+                child = getattr(current, attr, None)
+                if child is not None:
+                    stack.append(child)
+            for attr in ("args", "operands", "statements"):
+                if not hasattr(current, attr):
+                    continue
+                items = getattr(current, attr, None)
+                if isinstance(items, (list, tuple)):
+                    stack.extend(item for item in items if item is not None)
+        return False
+
+    def _c_ast_has_cycle_or_too_complex_8616(node, *, max_nodes: int = 4096, max_depth: int = 256) -> bool:
+        active: set[int] = set()
+        complete: set[int] = set()
+        visited = 0
+
+        def _children(current):
+            for attr in (
+                "lhs",
+                "rhs",
+                "expr",
+                "operand",
+                "condition",
+                "cond",
+                "iftrue",
+                "iffalse",
+                "body",
+                "retval",
+                "variable",
+                "index",
+            ):
+                if hasattr(current, attr):
+                    child = getattr(current, attr, None)
+                    if child is not None:
+                        yield child
+            for attr in ("args", "operands", "statements"):
+                if not hasattr(current, attr):
+                    continue
+                items = getattr(current, attr, None)
+                if isinstance(items, (list, tuple)):
+                    yield from (item for item in items if item is not None)
+
+        def _walk(current, depth: int) -> bool:
+            nonlocal visited
+            while isinstance(current, CTypeCast):
+                current = current.expr
+            if not _is_c_ast_node(current):
+                return False
+            marker = id(current)
+            if marker in active:
+                return True
+            if marker in complete:
+                return False
+            if depth > max_depth:
+                return True
+            active.add(marker)
+            visited += 1
+            if visited > max_nodes:
+                active.discard(marker)
+                return True
+            for child in _children(current):
+                if _walk(child, depth + 1):
+                    return True
+            active.discard(marker)
+            complete.add(marker)
+            return False
+
+        return _walk(node, 0)
 
     def _resolve_recent_value_assignment(expr, statements_prefix: list):
         if not (_is_plain_register_value_expr(expr) or _is_outgoing_stack_value_carrier_expr(expr)):
@@ -3290,14 +4244,23 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 return rhs, stmt_idx
         return None, None
 
-    def _expr_contains_plain_register_uses(expr) -> bool:
+    def _expr_contains_plain_register_uses(expr, *, max_nodes: int = 1024) -> bool:
         stack = [expr]
+        seen: set[int] = set()
+        visited = 0
         while stack:
             node = stack.pop()
             if node is None:
                 continue
             while isinstance(node, CTypeCast):
                 node = node.expr
+            marker = id(node)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            visited += 1
+            if visited > max_nodes:
+                return True
             if _is_plain_register_value_expr(node) or _is_outgoing_stack_value_carrier_expr(node):
                 return True
             for attr in ("lhs", "rhs", "operand", "expr", "condition", "iftrue", "iffalse", "variable", "index"):
@@ -3311,6 +4274,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         return False
 
     def _resolve_register_carriers_in_expr(expr, statements_prefix: list, seen_keys: set | None = None):
+        if _c_ast_node_count_limited(expr, limit=512) > 512:
+            codegen._inertia_call_arg_register_resolution_refused_complex_8616 = (
+                int(getattr(codegen, "_inertia_call_arg_register_resolution_refused_complex_8616", 0) or 0) + 1
+            )
+            return None
         if not _expr_contains_plain_register_uses(expr):
             return expr
 
@@ -3956,9 +4924,18 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return lookup(addr=func_addr, create=False)
         return None
 
+    fnptr_store_evidence_cache_8616: dict[int, list[tuple[int, object]]] | None = None
+
     def _function_pointer_stack_store_evidence_8616() -> dict[int, list[tuple[int, object]]]:
         function = _function_for_current_cfunc_8616()
         block_addrs = tuple(sorted(getattr(function, "block_addrs_set", ()) or ()))
+        debug_fnptr = bool(os.environ.get("INERTIA_DEBUG_FUNCTION_POINTER_STORES"))
+        if debug_fnptr:
+            log.warning(
+                "[fnptr-scan] func=%#x blocks=%r",
+                getattr(cfunc, "addr", 0) or 0,
+                tuple(hex(addr) for addr in block_addrs),
+            )
         evidence: dict[int, list[tuple[int, object]]] = {}
         seen_stores: set[tuple[int, int, int]] = set()
         for block_addr in block_addrs:
@@ -3976,8 +4953,20 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     if store_key in seen_stores:
                         continue
                     seen_stores.add(store_key)
+                    if debug_fnptr:
+                        log.warning(
+                            "[fnptr-store-candidate] func=%#x block=%#x insn=%#x offset=%r imm=%#x recovered_entry=%r",
+                            getattr(cfunc, "addr", 0) or 0,
+                            block_addr,
+                            insn_addr,
+                            offset,
+                            imm,
+                            _target_addr_is_recovered_function_entry_8616(project, imm),
+                        )
+                    if not _target_addr_is_recovered_function_entry_8616(project, imm):
+                        continue
                     symbol = _near_function_symbol_expr_8616(imm)
-                    if os.environ.get("INERTIA_DEBUG_FUNCTION_POINTER_STORES"):
+                    if debug_fnptr:
                         log.warning(
                             "[fnptr-store] func=%#x block=%#x insn=%#x offset=%r imm=%#x symbol=%r",
                             getattr(cfunc, "addr", 0) or 0,
@@ -3998,6 +4987,12 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 for imm in [int(getattr(getattr(symbol, "variable", None), "addr", 0) or 0)]
             ]
         return ordered
+
+    def _cached_function_pointer_stack_store_evidence_8616() -> dict[int, list[tuple[int, object]]]:
+        nonlocal fnptr_store_evidence_cache_8616
+        if fnptr_store_evidence_cache_8616 is None:
+            fnptr_store_evidence_cache_8616 = _function_pointer_stack_store_evidence_8616()
+        return fnptr_store_evidence_cache_8616
 
     def _bp_stack_store_counts_8616() -> Counter[int]:
         function = _function_for_current_cfunc_8616()
@@ -4059,7 +5054,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         return None, None
 
     def _replace_stack_code_pointer_assignments_8616(root) -> bool:
-        evidence = _function_pointer_stack_store_evidence_8616()
+        evidence = _cached_function_pointer_stack_store_evidence_8616()
         if not evidence:
             return False
         bp_stack_store_counts = _bp_stack_store_counts_8616()
@@ -4584,15 +5579,18 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             del statements[call_idx]
         return True
 
-    def _segment_register_expr(seg_name: str):
-        register = getattr(getattr(project, "arch", None), "registers", {}).get(seg_name.lower())
+    def _register_expr_from_name_8616(reg_name: str):
+        register = getattr(getattr(project, "arch", None), "registers", {}).get(reg_name.lower())
         if not isinstance(register, tuple) or not register:
             return None
         return structured_c.CVariable(
-            SimRegisterVariable(register[0], 2, name=seg_name.lower()),
+            SimRegisterVariable(register[0], 2, name=reg_name.lower()),
             variable_type=_word_type_8616(project),
             codegen=codegen,
         )
+
+    def _segment_register_expr(seg_name: str):
+        return _register_expr_from_name_8616(seg_name)
 
     def _plain_stack_slot_address_offset(node) -> int | None:
         term_root = node
@@ -4666,6 +5664,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         expr, *, stack_bindings=None, pointer_arg: bool = False
     ) -> tuple[object, int]:
         replacements = 0
+        replacement_cache: dict[int, object] = {}
         debug_materialization = bool(os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"))
 
         def transform(node):
@@ -4675,9 +5674,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 displacement = _plain_bp_stack_load_offset(node)
             if displacement is None:
                 plain_slot_offset = _plain_stack_slot_address_offset(node)
-                if isinstance(plain_slot_offset, int) and (
-                    not pointer_arg
-                    or _node_contains_placeholder_stack_8616(node)
+                if isinstance(plain_slot_offset, int) and pointer_arg and (
+                    _node_contains_placeholder_stack_8616(node)
                     or _node_contains_stable_named_stack_value_8616(node)
                 ):
                     displacement = plain_slot_offset
@@ -4686,6 +5684,12 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             replacement = None
             if isinstance(stack_bindings, dict):
                 replacement = stack_bindings.get(displacement)
+                if replacement is not None and _c_ast_node_count_limited(replacement, limit=128) > 128:
+                    codegen._inertia_call_arg_complex_stack_binding_inline_refused_8616 = (
+                        int(getattr(codegen, "_inertia_call_arg_complex_stack_binding_inline_refused_8616", 0) or 0)
+                        + 1
+                    )
+                    replacement = None
             if replacement is None:
                 replacement = _stack_cvar_for_offset(displacement)
             if replacement is None:
@@ -4700,7 +5704,12 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     node,
                     replacement,
                 )
-            return _clone_c_ast_tree(replacement)
+            key = int(displacement)
+            cached = replacement_cache.get(key)
+            if cached is None:
+                cached = _clone_c_ast_tree(replacement)
+                replacement_cache[key] = cached
+            return cached
 
         rewritten = _clone_c_ast_tree(expr)
         for _ in range(3):
@@ -4716,12 +5725,19 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         return rewritten, replacements
 
     def _materialize_pointer_arg_8616(expr, *, target_name: str, arg_index: int):
-        if not _callee_expects_pointer_arg_8616(target_name, arg_index):
+        if not _callee_expects_pointer_arg_8616(
+            target_name,
+            arg_index,
+            project=project,
+            cod_path_hint=cod_path_hint,
+        ):
             return expr, False
         node = expr
         while isinstance(node, CTypeCast):
             node = node.expr
         if isinstance(node, CFunctionCall) and getattr(node, "callee_target", None) in {"SEG_PTR", "MK_FP"}:
+            return expr, False
+        if isinstance(node, CUnaryOp) and getattr(node, "op", None) in {"Reference", "AddressOf"}:
             return expr, False
         ds_expr = _segment_register_expr("ds")
         if ds_expr is None:
@@ -4740,24 +5756,116 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             True,
         )
 
-    def _direct_expr_from_push_source_8616(source, *, call_name: str | None, arg_index: int):
+    def _direct_expr_from_push_source_8616(
+        source,
+        *,
+        call_name: str | None,
+        arg_index: int,
+        materialize_pointer: bool = True,
+    ):
         if not isinstance(source, tuple) or len(source) < 2:
             return None
         source_kind, source_value = source[0], source[1]
         if source_kind == "bp" and isinstance(source_value, int):
-            return _stack_cvar_for_offset(source_value, allow_best_match=False)
+            expr = _stack_cvar_for_offset(source_value, allow_best_match=False)
+            if expr is None or not materialize_pointer:
+                return expr
+            pointer_expr, _pointer_materialized = _materialize_pointer_arg_8616(
+                expr,
+                target_name=call_name or "",
+                arg_index=arg_index,
+            )
+            return pointer_expr
+        if source_kind == "bp_addr" and isinstance(source_value, int):
+            expr = _stack_cvar_for_offset(source_value, allow_best_match=False)
+            if expr is None:
+                expr = _stack_cvar_for_offset(source_value, allow_best_match=True)
+            if expr is None:
+                return None
+            return CUnaryOp("Reference", expr, codegen=codegen)
+        if source_kind == "bp_index_addr" and isinstance(source_value, int) and len(source) >= 4:
+            index_reg = source[2]
+            scale = source[3]
+            if not isinstance(index_reg, str) or not isinstance(scale, int):
+                return None
+            expr = _stack_cvar_for_offset(source_value, allow_best_match=False)
+            if expr is None:
+                expr = _stack_cvar_for_offset(source_value, allow_best_match=True)
+            index_expr = _register_expr_from_name_8616(index_reg)
+            if expr is None or index_expr is None:
+                return None
+            if scale != 1:
+                index_expr = CBinaryOp(
+                    "Mul",
+                    index_expr,
+                    structured_c.CConstant(scale, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                )
+            return CBinaryOp(
+                "Add",
+                CUnaryOp("Reference", expr, codegen=codegen),
+                index_expr,
+                codegen=codegen,
+            )
+        if source_kind == "seg" and isinstance(source_value, str):
+            seg_expr = _segment_register_expr(source_value.lower())
+            return seg_expr
+        if source_kind == "global" and isinstance(source_value, int):
+            ds_expr = _segment_register_expr("ds")
+            if ds_expr is None:
+                return None
+            width = source[2] if len(source) >= 3 else 2
+            helper = "SEG_U8" if width == 1 else "SEG_U16" if width == 2 else "SEG_U32" if width == 4 else None
+            if helper is None:
+                return None
+            return structured_c.CFunctionCall(
+                helper,
+                None,
+                [ds_expr, structured_c.CConstant(source_value, SimTypeShort(False), codegen=codegen)],
+                codegen=codegen,
+            )
+        if source_kind == "ret_reg" and isinstance(source_value, int) and len(source) >= 3:
+            reg_name = source[2]
+            if not isinstance(reg_name, str) or reg_name.lower() not in {"ax", "dx"}:
+                return None
+            return _register_expr_from_name_8616(reg_name.lower())
         if source_kind == "imm" and isinstance(source_value, int):
-            return structured_c.CConstant(source_value, SimTypeShort(False), codegen=codegen)
+            expr = structured_c.CConstant(source_value, SimTypeShort(False), codegen=codegen)
+            if not materialize_pointer:
+                return expr
+            pointer_expr, _pointer_materialized = _materialize_pointer_arg_8616(
+                expr,
+                target_name=call_name or "",
+                arg_index=arg_index,
+            )
+            return pointer_expr
         if source_kind == "expr" and len(source) == 3 and isinstance(source_value, tuple):
-            expr = _direct_expr_from_push_source_8616(source_value, call_name=call_name, arg_index=arg_index)
+            expr = _direct_expr_from_push_source_8616(
+                source_value,
+                call_name=call_name,
+                arg_index=arg_index,
+                materialize_pointer=False,
+            )
             if expr is None:
                 return None
             for op_name, op_value in source[2]:
                 if not isinstance(op_name, str) or not isinstance(op_value, int):
                     return None
-                if op_name not in {"add", "sub", "shl", "shr"}:
+                if op_name not in {
+                    CallsitePushExprOp8616.ADD.value,
+                    CallsitePushExprOp8616.SUB.value,
+                    CallsitePushExprOp8616.SHL.value,
+                    CallsitePushExprOp8616.SHR.value,
+                    CallsitePushExprOp8616.MUL.value,
+                }:
                     return None
-                c_op = {"add": "Add", "sub": "Sub", "shl": "Shl", "shr": "Shr"}[op_name]
+                c_op = {
+                    CallsitePushExprOp8616.ADD.value: "Add",
+                    CallsitePushExprOp8616.SUB.value: "Sub",
+                    CallsitePushExprOp8616.SHL.value: "Shl",
+                    CallsitePushExprOp8616.SHR.value: "Shr",
+                    CallsitePushExprOp8616.MUL.value: "Mul",
+                }[op_name]
                 lhs_expr = expr
                 if c_op == "Shr":
                     lhs_node = lhs_expr
@@ -4773,15 +5881,237 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     structured_c.CConstant(op_value, SimTypeShort(False), codegen=codegen),
                     codegen=codegen,
                 )
-            return expr
+            if not materialize_pointer:
+                return expr
+            pointer_expr, _pointer_materialized = _materialize_pointer_arg_8616(
+                expr,
+                target_name=call_name or "",
+                arg_index=arg_index,
+            )
+            return pointer_expr
         return None
 
-    def _node_contains_stable_named_stack_value_8616(node) -> bool:
+    def _push_source_width_8616(source) -> int | None:
+        if not isinstance(source, tuple) or len(source) < 2:
+            return None
+        if len(source) >= 3 and isinstance(source[2], int) and source[2] > 0:
+            return int(source[2])
+        if source[0] in {"bp", "imm", "expr", "ret_reg", "global", "ax", "bx", "cx", "dx", "di", "si"}:
+            return 2
+        return None
+
+    def _push_sources_total_width_8616(sources: tuple) -> int | None:
+        if not isinstance(sources, tuple) or not sources:
+            return None
+        total = 0
+        for source in sources:
+            width = _push_source_width_8616(source)
+            if not isinstance(width, int):
+                return None
+            total += width
+        return total
+
+    def _prototype_widths_account_for_push_sources_8616(widths: tuple[int, ...] | None, sources: tuple) -> bool:
+        if not widths or not isinstance(sources, tuple) or not sources:
+            return False
+        source_total = _push_sources_total_width_8616(sources)
+        return isinstance(source_total, int) and source_total == sum(max(2, int(width)) for width in widths)
+
+    def _global_word_source_info_8616(source) -> tuple[int, tuple[tuple[str, int], ...]] | None:
+        if not isinstance(source, tuple) or len(source) < 2:
+            return None
+        source_kind = source[0]
+        if source_kind == "global" and isinstance(source[1], int):
+            width = source[2] if len(source) >= 3 else 2
+            if int(width) != 2:
+                return None
+            return int(source[1]), ()
+        if (
+            source_kind == "expr"
+            and len(source) == 3
+            and isinstance(source[1], tuple)
+            and isinstance(source[2], tuple)
+        ):
+            base = _global_word_source_info_8616(source[1])
+            if base is None:
+                return None
+            if not all(
+                isinstance(op, tuple)
+                and len(op) == 2
+                and isinstance(op[0], str)
+                and isinstance(op[1], int)
+                for op in source[2]
+            ):
+                return None
+            return base[0], tuple((op[0], int(op[1])) for op in source[2])
+        return None
+
+    def _global_u32_expr_8616(low_addr: int):
+        ds_expr = _segment_register_expr("ds")
+        if ds_expr is None:
+            return None
+        return structured_c.CFunctionCall(
+            "SEG_U32",
+            None,
+            [ds_expr, structured_c.CConstant(int(low_addr), SimTypeShort(False), codegen=codegen)],
+            codegen=codegen,
+        )
+
+    def _combine_word_pair_push_sources_8616(low_source, high_source):
+        low_info = _global_word_source_info_8616(low_source)
+        high_info = _global_word_source_info_8616(high_source)
+        if low_info is None or high_info is None:
+            return None
+        low_addr, low_ops = low_info
+        high_addr, high_ops = high_info
+        if high_addr != low_addr + 2:
+            return None
+        base = _global_u32_expr_8616(low_addr)
+        if base is None:
+            return None
+        if not low_ops and not high_ops:
+            return base
+        if len(low_ops) != 1 or len(high_ops) != 1:
+            return None
+        low_op, low_value = low_ops[0]
+        high_op, high_value = high_ops[0]
+        if high_value != 0:
+            return None
+        if low_op == CallsitePushExprOp8616.SUB.value and high_op == CallsitePushExprOp8616.SBB.value:
+            return CBinaryOp(
+                "Sub",
+                base,
+                structured_c.CConstant(low_value, _summary_type_8616(project, 4), codegen=codegen),
+                codegen=codegen,
+            )
+        if low_op == CallsitePushExprOp8616.ADD.value and high_op == CallsitePushExprOp8616.ADC.value:
+            return CBinaryOp(
+                "Add",
+                base,
+                structured_c.CConstant(low_value, _summary_type_8616(project, 4), codegen=codegen),
+                codegen=codegen,
+            )
+        return None
+
+    def _combine_word_pair_scalar_arg_8616(low_expr, high_expr, low_source=None, high_source=None):
+        combined_from_sources = _combine_word_pair_push_sources_8616(low_source, high_source)
+        if combined_from_sources is not None:
+            return combined_from_sources
+        if (
+            isinstance(low_source, tuple)
+            and isinstance(high_source, tuple)
+            and len(low_source) >= 3
+            and len(high_source) >= 3
+            and low_source[0] == "global"
+            and high_source[0] == "global"
+            and isinstance(low_source[1], int)
+            and isinstance(high_source[1], int)
+            and int(low_source[2]) == 2
+            and int(high_source[2]) == 2
+            and int(high_source[1]) == int(low_source[1]) + 2
+        ):
+            ds_expr = _segment_register_expr("ds")
+            if ds_expr is not None:
+                return structured_c.CFunctionCall(
+                    "SEG_U32",
+                    None,
+                    [ds_expr, structured_c.CConstant(int(low_source[1]), SimTypeShort(False), codegen=codegen)],
+                    codegen=codegen,
+                )
+
+        long_type = _summary_type_8616(project, 4)
+        high_long = CTypeCast(None, long_type, _clone_c_ast_tree(high_expr), codegen=codegen)
+        low_long = CTypeCast(None, long_type, _clone_c_ast_tree(low_expr), codegen=codegen)
+        shifted_high = CBinaryOp(
+            "Shl",
+            high_long,
+            structured_c.CConstant(16, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+        return CBinaryOp("Or", low_long, shifted_high, codegen=codegen)
+
+    def _logical_args_from_push_sources_by_expected_widths_8616(
+        ordered_sources: list,
+        *,
+        expected_arg_widths: tuple[int, ...] | None,
+        call_name: str | None,
+    ) -> list | None:
+        if not expected_arg_widths or not ordered_sources:
+            return None
+        logical_args: list = []
+        source_idx = 0
+        for arg_idx, width in enumerate(expected_arg_widths):
+            width = max(2, int(width))
+            word_count = 2 if width == 4 else 1 if width <= 2 else 0
+            if word_count <= 0 or source_idx + word_count > len(ordered_sources):
+                return None
+            if word_count == 1:
+                expr = _direct_expr_from_push_source_8616(
+                    ordered_sources[source_idx],
+                    call_name=call_name,
+                    arg_index=arg_idx,
+                )
+                if expr is None:
+                    return None
+                logical_args.append(expr)
+                source_idx += 1
+                continue
+            combined = _combine_word_pair_push_sources_8616(
+                ordered_sources[source_idx],
+                ordered_sources[source_idx + 1],
+            )
+            if combined is None:
+                return None
+            logical_args.append(combined)
+            source_idx += 2
+        if source_idx != len(ordered_sources):
+            return None
+        return logical_args
+
+    def _group_scalar_args_by_expected_widths_8616(
+        values: list,
+        *,
+        expected_arg_widths: tuple[int, ...] | None,
+        push_sources: tuple = (),
+    ) -> list | None:
+        if not expected_arg_widths or len(values) <= len(expected_arg_widths):
+            return None
+        grouped: list = []
+        value_idx = 0
+        for width in expected_arg_widths:
+            width = max(2, int(width))
+            word_count = 2 if width == 4 else 1 if width <= 2 else 0
+            if word_count <= 0 or value_idx + word_count > len(values):
+                return None
+            if word_count == 1:
+                grouped.append(_clone_c_ast_tree(values[value_idx]))
+                value_idx += 1
+                continue
+            low_expr = values[value_idx]
+            high_expr = values[value_idx + 1]
+            low_source = push_sources[value_idx] if value_idx < len(push_sources) else None
+            high_source = push_sources[value_idx + 1] if value_idx + 1 < len(push_sources) else None
+            grouped.append(_combine_word_pair_scalar_arg_8616(low_expr, high_expr, low_source, high_source))
+            value_idx += 2
+        if value_idx != len(values):
+            return None
+        return grouped
+
+    def _node_contains_stable_named_stack_value_8616(node, *, max_nodes: int = 1024) -> bool:
         stack = [node]
+        seen: set[int] = set()
+        visited = 0
         while stack:
             current = stack.pop()
             while isinstance(current, CTypeCast):
                 current = current.expr
+            marker = id(current)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            visited += 1
+            if visited > max_nodes:
+                return False
             if _is_stable_named_stack_value_expr_8616(current):
                 return True
             for attr in ("lhs", "rhs", "operand", "expr", "condition", "iftrue", "iffalse", "variable", "index"):
@@ -4794,12 +6124,21 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     stack.extend(item for item in items if item is not None)
         return False
 
-    def _node_contains_placeholder_stack_8616(node) -> bool:
+    def _node_contains_placeholder_stack_8616(node, *, max_nodes: int = 1024) -> bool:
         stack = [node]
+        seen: set[int] = set()
+        visited = 0
         while stack:
             current = stack.pop()
             while isinstance(current, CTypeCast):
                 current = current.expr
+            marker = id(current)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            visited += 1
+            if visited > max_nodes:
+                return True
             if isinstance(current, structured_c.CFakeVariable) and getattr(current, "name", None) == "stack_base":
                 return True
             if isinstance(current, structured_c.CVariable):
@@ -4825,9 +6164,18 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     stack.extend(item for item in items if item is not None)
         return False
 
-    def _debug_expr_8616(node):
+    def _debug_expr_8616(node, seen: set[int] | None = None, depth: int = 0):
+        if seen is None:
+            seen = set()
+        if depth > 64:
+            return "<depth-limit>"
+        marker = id(node)
+        if marker in seen:
+            return "<cycle>"
+        if _is_c_ast_node(node):
+            seen.add(marker)
         if isinstance(node, CTypeCast):
-            return f"Cast({_debug_expr_8616(node.expr)})"
+            return f"Cast({_debug_expr_8616(node.expr, seen, depth + 1)})"
         if isinstance(node, structured_c.CVariable):
             variable = getattr(node, "variable", None)
             name = getattr(variable, "name", None) or getattr(node, "name", None) or "var"
@@ -4839,25 +6187,39 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 return f"{name}#{reg}"
             return name
         if isinstance(node, structured_c.CIndexedVariable):
-            return f"Index({_debug_expr_8616(node.variable)},{_debug_expr_8616(node.index)})"
+            return (
+                f"Index({_debug_expr_8616(node.variable, seen, depth + 1)},"
+                f"{_debug_expr_8616(node.index, seen, depth + 1)})"
+            )
         if isinstance(node, structured_c.CConstant):
             return repr(getattr(node, "value", None))
         if isinstance(node, CUnaryOp):
-            return f"{node.op}({_debug_expr_8616(node.operand)})"
+            return f"{node.op}({_debug_expr_8616(node.operand, seen, depth + 1)})"
         if isinstance(node, CBinaryOp):
-            return f"{node.op}({_debug_expr_8616(node.lhs)},{_debug_expr_8616(node.rhs)})"
+            return f"{node.op}({_debug_expr_8616(node.lhs, seen, depth + 1)},{_debug_expr_8616(node.rhs, seen, depth + 1)})"
         if isinstance(node, CFunctionCall):
             name = (
                 getattr(node, "callee_target", None)
                 or getattr(getattr(node, "callee_func", None), "name", None)
                 or "call"
             )
-            return f"{name}({','.join(_debug_expr_8616(arg) for arg in (getattr(node, 'args', ()) or ()))})"
+            return (
+                f"{name}("
+                f"{','.join(_debug_expr_8616(arg, seen, depth + 1) for arg in (getattr(node, 'args', ()) or ()))})"
+            )
         return node.__class__.__name__
 
-    def _call_arg_semantic_key_8616(node):
+    def _call_arg_semantic_key_8616(node, seen: set[int] | None = None, depth: int = 0):
+        if depth > 128:
+            return None
         while isinstance(node, CTypeCast):
             node = node.expr
+        if seen is None:
+            seen = set()
+        marker = id(node)
+        if marker in seen:
+            return None
+        seen.add(marker)
         if isinstance(node, structured_c.CConstant):
             value = getattr(node, "value", None)
             return ("const", int(value)) if isinstance(value, int) else None
@@ -4873,23 +6235,28 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             name = getattr(variable, "name", None) or getattr(node, "name", None)
             return ("var", str(name)) if isinstance(name, str) and name else None
         if isinstance(node, CUnaryOp):
-            operand_key = _call_arg_semantic_key_8616(node.operand)
+            operand_key = _call_arg_semantic_key_8616(node.operand, seen, depth + 1)
             return ("unary", node.op, operand_key) if operand_key is not None else None
         if isinstance(node, CBinaryOp):
-            lhs_key = _call_arg_semantic_key_8616(node.lhs)
-            rhs_key = _call_arg_semantic_key_8616(node.rhs)
+            lhs_key = _call_arg_semantic_key_8616(node.lhs, seen, depth + 1)
+            rhs_key = _call_arg_semantic_key_8616(node.rhs, seen, depth + 1)
             if lhs_key is None or rhs_key is None:
                 return None
             return ("binary", node.op, lhs_key, rhs_key)
         if isinstance(node, CFunctionCall):
-            arg_keys = tuple(_call_arg_semantic_key_8616(arg) for arg in getattr(node, "args", ()) or ())
+            arg_keys = tuple(_call_arg_semantic_key_8616(arg, seen, depth + 1) for arg in getattr(node, "args", ()) or ())
             if any(key is None for key in arg_keys):
                 return None
             return ("call", getattr(node, "callee_target", None), arg_keys)
         return None
 
     def _arg_semantic_quality_8616(arg_name: str | None, arg_index: int, node) -> int:
-        kind = _call_arg_semantic_kind_8616(arg_name or "", arg_index)
+        kind = _call_arg_semantic_kind_8616(
+            arg_name or "",
+            arg_index,
+            project=project,
+            cod_path_hint=cod_path_hint,
+        )
         raw = node
         while isinstance(raw, CTypeCast):
             raw = raw.expr
@@ -4928,11 +6295,26 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         *,
         call_name: str | None = None,
         stack_bindings: dict[int, object] | None = None,
+        preserve_register_arg_indices: set[int] | None = None,
+        expected_arg_widths: tuple[int, ...] | None = None,
+        push_sources: tuple = (),
     ):
         if not rhs_values:
             return None
         debug_materialization = bool(os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"))
         normalized = []
+        preserved_register_indices = preserve_register_arg_indices or set()
+
+        def _debug_normalize_refuse(reason: str, expr=None):
+            if debug_materialization:
+                log.warning(
+                    "[call-normalize-refuse] function=%#x target=%s reason=%s expr=%s",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                    call_name,
+                    reason,
+                    _debug_expr_8616(expr) if expr is not None else None,
+                )
+            return None
 
         def _expr_int_constants(node) -> set[int]:
             values: set[int] = set()
@@ -4987,11 +6369,255 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 return None
             return matches[0][1]
 
+        def _constant_int_value(node) -> int | None:
+            while isinstance(node, CTypeCast):
+                node = node.expr
+            if isinstance(node, structured_c.CConstant):
+                value = getattr(node, "value", None)
+                return int(value) if isinstance(value, int) else None
+            return None
+
+        def _strip_arg_casts(node):
+            while isinstance(node, CTypeCast):
+                node = node.expr
+            return node
+
+        def _is_stale_high_byte_mask(node) -> bool:
+            node = _strip_arg_casts(node)
+            if not isinstance(node, CBinaryOp) or node.op != "And":
+                return False
+            return _constant_int_value(node.lhs) == 0xFF00 or _constant_int_value(node.rhs) == 0xFF00
+
+        def _byte_merge_low_source(expr):
+            node = _strip_arg_casts(expr)
+            if not isinstance(node, CBinaryOp) or node.op != "Or":
+                return None
+            for maybe_high, maybe_low in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+                if _is_stale_high_byte_mask(maybe_high):
+                    stats.byte_merge_raw_fact_count += 1
+                    return maybe_low
+            return None
+
+        def _expr_contains_non_segment_register_uses(node) -> bool:
+            stack = [node]
+            while stack:
+                current = stack.pop()
+                if current is None:
+                    continue
+                current = _strip_arg_casts(current)
+                if _is_plain_register_value_expr(current):
+                    return True
+                for attr in ("lhs", "rhs", "operand", "expr", "condition", "iftrue", "iffalse", "variable", "index"):
+                    child = getattr(current, attr, None)
+                    if child is not None:
+                        stack.append(child)
+                for attr in ("args", "operands"):
+                    items = getattr(current, attr, None)
+                    if isinstance(items, (list, tuple)):
+                        stack.extend(item for item in items if item is not None)
+            return False
+
+        def _is_proven_byte_value_source(node) -> bool:
+            node = _strip_arg_casts(node)
+            if isinstance(node, CFunctionCall) and getattr(node, "callee_target", None) == "SEG_U8":
+                return True
+            if _arg_width_from_expr(node) == 1:
+                return True
+            access = match_stable_ds_es_linear_global_access_8616(node, project, codegen)
+            if access is None:
+                return False
+            width = getattr(access, "width", None)
+            if width == 1:
+                return True
+            # The exact `Or(And(stale_word, 0xff00), deref)` shape is produced
+            # when a byte load into the low half of a word carrier lost its
+            # width annotation. Structured C defaults untyped dereferences to a
+            # word, so the stable real-mode dereference proof is the evidence;
+            # this helper is only called after the stale-high-byte shape matched.
+            return isinstance(node, CUnaryOp) and node.op == "Dereference"
+
+        def _resolve_byte_merge_low_source(expr, prefix: list):
+            low_source = _byte_merge_low_source(expr)
+            if low_source is None:
+                return None
+            if _expr_contains_non_segment_register_uses(low_source):
+                resolved_low = _resolve_register_carriers_in_expr(low_source, prefix)
+                if resolved_low is None:
+                    resolved_low = _recent_dirty_value_rhs(low_source, prefix)
+            else:
+                resolved_low = low_source
+            if resolved_low is None:
+                stats.byte_merge_refused_count += 1
+                if debug_materialization:
+                    log.warning(
+                        "[call-byte-merge-refuse] function=%#x target=%s reason=low-source-unresolved low=%s",
+                        getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                        call_name,
+                        _debug_expr_8616(low_source),
+                    )
+                return None
+            if _expr_contains_non_segment_register_uses(resolved_low):
+                stats.byte_merge_refused_count += 1
+                if debug_materialization:
+                    log.warning(
+                        "[call-byte-merge-refuse] function=%#x target=%s reason=low-source-registers low=%s",
+                        getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                        call_name,
+                        _debug_expr_8616(resolved_low),
+                    )
+                return None
+            if _node_contains_placeholder_stack_8616(resolved_low):
+                stats.byte_merge_refused_count += 1
+                if debug_materialization:
+                    log.warning(
+                        "[call-byte-merge-refuse] function=%#x target=%s reason=low-source-placeholder-stack low=%s",
+                        getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                        call_name,
+                        _debug_expr_8616(resolved_low),
+                    )
+                return None
+            if not _is_proven_byte_value_source(resolved_low):
+                stats.byte_merge_refused_count += 1
+                if debug_materialization:
+                    log.warning(
+                        "[call-byte-merge-refuse] function=%#x target=%s reason=low-source-not-byte low=%s width=%r",
+                        getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                        call_name,
+                        _debug_expr_8616(resolved_low),
+                        _arg_width_from_expr(resolved_low),
+                    )
+                return None
+            stats.byte_merge_classified_fact_count += 1
+            stats.byte_merge_materialized_count += 1
+            if debug_materialization:
+                log.warning(
+                    "[call-byte-merge] function=%#x target=%s low=%s",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                    call_name,
+                    _debug_expr_8616(resolved_low),
+                )
+            return resolved_low
+
+        def _is_stack_address_arg_expr_8616(expr) -> bool:
+            node = _strip_arg_casts(expr)
+            if not isinstance(node, CUnaryOp) or getattr(node, "op", None) not in {"Reference", "AddressOf"}:
+                return False
+            operand = _strip_arg_casts(getattr(node, "operand", None))
+            variable = getattr(operand, "variable", None)
+            return isinstance(variable, SimStackVariable)
+
+        def _is_index_register_expr_8616(expr) -> bool:
+            node = _strip_arg_casts(expr)
+            if _is_plain_register_value_expr(node):
+                return True
+            if isinstance(node, CBinaryOp) and getattr(node, "op", None) == "Mul":
+                return (
+                    _is_plain_register_value_expr(getattr(node, "lhs", None))
+                    and _constant_int_value(getattr(node, "rhs", None)) is not None
+                ) or (
+                    _is_plain_register_value_expr(getattr(node, "rhs", None))
+                    and _constant_int_value(getattr(node, "lhs", None)) is not None
+                )
+            return False
+
+        def _is_stack_address_index_arg_expr_8616(expr) -> bool:
+            node = _strip_arg_casts(expr)
+            if not isinstance(node, CBinaryOp) or getattr(node, "op", None) not in {"Add", "Sub"}:
+                return False
+            lhs = _strip_arg_casts(getattr(node, "lhs", None))
+            rhs = _strip_arg_casts(getattr(node, "rhs", None))
+            return (_is_stack_address_arg_expr_8616(lhs) and _is_index_register_expr_8616(rhs)) or (
+                getattr(node, "op", None) == "Add"
+                and _is_index_register_expr_8616(lhs)
+                and _is_stack_address_arg_expr_8616(rhs)
+            )
+
+        def _group_single_far_pointer_arg_8616(values: list) -> list | None:
+            logical_arg_count = _expected_arg_count_for_known_callee_8616(call_name or "")
+            if logical_arg_count != 1 or len(values) != 2:
+                return None
+            if not _callee_expects_pointer_arg_8616(
+                call_name or "",
+                0,
+                project=project,
+                cod_path_hint=cod_path_hint,
+            ):
+                return None
+
+            segment_idx = None
+            segment_name = None
+            for idx, value in enumerate(values):
+                name = _segment_register_name_from_expr_8616(value)
+                if name is None:
+                    continue
+                if segment_idx is not None:
+                    return None
+                segment_idx = idx
+                segment_name = name
+            if segment_idx is None or segment_name is None:
+                return None
+            offset_idx = 1 - segment_idx
+            offset_expr = _clone_c_ast_tree(values[offset_idx])
+
+            if segment_name == "ss" and _is_stack_address_arg_expr_8616(offset_expr):
+                return [offset_expr]
+
+            segment_expr = _segment_register_expr(segment_name)
+            if segment_expr is None:
+                return None
+            target = str(
+                getattr(getattr(codegen, "project", None), "_inertia_c_target", "portable-flat")
+                or "portable-flat"
+            )
+            helper = "SEG_PTR" if target == "portable-flat" else "MK_FP"
+            return [
+                structured_c.CFunctionCall(
+                    helper,
+                    None,
+                    [segment_expr, offset_expr],
+                    codegen=codegen,
+                )
+            ]
+
+        grouped_pointer_args = _group_single_far_pointer_arg_8616(list(rhs_values))
+        if grouped_pointer_args is not None:
+            stats.pointer_arg_materialized_count += 1
+            if debug_materialization:
+                log.warning(
+                    "[call-far-pointer] function=%#x target=%s args=%s grouped=%s",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                    call_name,
+                    tuple(_debug_expr_8616(arg) for arg in rhs_values),
+                    tuple(_debug_expr_8616(arg) for arg in grouped_pointer_args),
+                )
+            return grouped_pointer_args
+
+        grouped_scalar_args = _group_scalar_args_by_expected_widths_8616(
+            list(rhs_values),
+            expected_arg_widths=expected_arg_widths,
+            push_sources=push_sources,
+        )
+        if grouped_scalar_args is not None:
+            rhs_values = grouped_scalar_args
+            source_indices = [-1] * len(rhs_values)
+
         if len(source_indices) != len(rhs_values):
             source_indices = [-1] * len(rhs_values)
-        for rhs, source_idx in zip(rhs_values, source_indices):
+        for arg_idx, (rhs, source_idx) in enumerate(zip(rhs_values, source_indices)):
+            byte_merge_resolved = False
             if _is_segment_register_value_expr(rhs):
-                return None
+                return _debug_normalize_refuse("segment-register-rhs", rhs)
+            if arg_idx in preserved_register_indices and _expr_contains_plain_register_uses(rhs):
+                normalized.append(_clone_c_ast_tree(rhs))
+                continue
+            if _callee_expects_pointer_arg_8616(
+                call_name or "",
+                len(normalized),
+                project=project,
+                cod_path_hint=cod_path_hint,
+            ) and _is_stack_address_index_arg_expr_8616(rhs):
+                normalized.append(_clone_c_ast_tree(rhs))
+                continue
             if not _expr_contains_plain_register_uses(rhs):
                 normalized.append(_clone_c_ast_tree(rhs))
                 continue
@@ -5050,6 +6676,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                                 _debug_expr_8616(rhs_stmt),
                                 _assignment_lhs_writes_memory(lhs),
                             )
+            if resolved is None:
+                byte_resolved = _resolve_byte_merge_low_source(rhs, prefix)
+                if byte_resolved is not None:
+                    resolved = byte_resolved
+                    byte_merge_resolved = True
             raw_expr = _clone_c_ast_tree(rhs)
             raw_node = raw_expr
             while isinstance(raw_node, CTypeCast):
@@ -5057,7 +6688,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             if resolved is None and not (
                 isinstance(raw_node, CFunctionCall) and getattr(raw_node, "callee_target", None) in {"SEG_PTR", "MK_FP"}
             ):
-                return None
+                return _debug_normalize_refuse("unresolved-register-carrier", rhs)
             expr = _clone_c_ast_tree(resolved) if resolved is not None else raw_expr
             if isinstance(expr, CFunctionCall) and getattr(expr, "callee_target", None) in {"SEG_PTR", "MK_FP"}:
                 helper_args = list(getattr(expr, "args", ()) or ())
@@ -5090,12 +6721,33 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     helper_args[1] = rewritten_offset
                     expr.args = helper_args
             if _is_segment_register_value_expr(expr) or _expr_contains_plain_register_uses(expr):
-                return None
+                byte_merge_stack_index_ok = (
+                    byte_merge_resolved
+                    and not _is_segment_register_value_expr(expr)
+                    and not _expr_contains_non_segment_register_uses(expr)
+                    and not _node_contains_placeholder_stack_8616(expr)
+                )
+                byte_helper_stack_index_ok = (
+                    isinstance(expr, CFunctionCall)
+                    and getattr(expr, "callee_target", None) == "SEG_U8"
+                    and not _expr_contains_non_segment_register_uses(expr)
+                    and not _node_contains_placeholder_stack_8616(expr)
+                )
+                if not (byte_merge_stack_index_ok or byte_helper_stack_index_ok):
+                    return _debug_normalize_refuse("unresolved-normalized-register", expr)
             normalized.append(expr)
         for idx, expr in enumerate(tuple(normalized)):
             source_idx = source_indices[idx] if idx < len(source_indices) else -1
             prefix = statements[: source_idx + 1] if isinstance(source_idx, int) and source_idx >= 0 else statements
-            pointer_arg = _callee_expects_pointer_arg_8616(call_name or "", idx)
+            pointer_arg = _callee_expects_pointer_arg_8616(
+                call_name or "",
+                idx,
+                project=project,
+                cod_path_hint=cod_path_hint,
+            )
+            if pointer_arg and _is_stack_address_index_arg_expr_8616(expr):
+                normalized[idx] = _clone_c_ast_tree(expr)
+                continue
             rewritten, replacement_count = _normalize_bp_slot_value_arg_8616(
                 expr,
                 stack_bindings=stack_bindings,
@@ -5116,34 +6768,91 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         )
                     if resolved_rewritten is not None:
                         rewritten = _clone_c_ast_tree(resolved_rewritten)
-            pointer_expr, pointer_materialized = _materialize_pointer_arg_8616(
-                rewritten,
-                target_name=call_name or "",
-                arg_index=idx,
-            )
+            if pointer_arg and _is_stack_address_index_arg_expr_8616(rewritten):
+                pointer_expr, pointer_materialized = rewritten, False
+            else:
+                pointer_expr, pointer_materialized = _materialize_pointer_arg_8616(
+                    rewritten,
+                    target_name=call_name or "",
+                    arg_index=idx,
+                )
             if pointer_expr is None:
-                return None
+                return _debug_normalize_refuse("pointer-materialization-failed", rewritten)
             if pointer_materialized:
                 stats.pointer_arg_materialized_count += 1
             normalized[idx] = pointer_expr
         return normalized
 
-    def _normalize_existing_call_args_8616(call, statements: list, *, call_name: str | None) -> bool:
+    def _normalize_existing_call_args_8616(
+        call,
+        statements: list,
+        *,
+        call_name: str | None,
+        push_arg_sources: tuple = (),
+    ) -> bool:
         args = tuple(getattr(call, "args", ()) or ())
         if not args:
             return False
+        preserve_return_register_indices: set[int] = set()
+        if isinstance(push_arg_sources, tuple) and len(push_arg_sources) == len(args):
+            ordered_sources = list(reversed(push_arg_sources)) if len(push_arg_sources) > 1 else list(push_arg_sources)
+            preserve_return_register_indices = {
+                idx
+                for idx, source in enumerate(ordered_sources)
+                if isinstance(source, tuple)
+                and len(source) >= 3
+                and source[0] == "ret_reg"
+                and isinstance(source[2], str)
+                and source[2].lower() in {"ax", "dx"}
+            }
         normalized_args = _normalize_materialized_call_args(
             list(args),
             [-1] * len(args),
             statements,
             call_name=call_name,
+            preserve_register_arg_indices=preserve_return_register_indices,
         )
         if normalized_args is None:
             return False
+        if len(tuple(normalized_args)) != len(args):
+            has_unresolved_arg = False
+            for arg in args:
+                node = arg
+                while isinstance(node, CTypeCast):
+                    node = node.expr
+                if (
+                    _node_contains_placeholder_stack_8616(node)
+                    or _expr_contains_plain_register_uses(node)
+                    or _plain_bp_stack_load_offset(node) is not None
+                    or _plain_stack_slot_address_offset(node) is not None
+                ):
+                    has_unresolved_arg = True
+                    break
+            if not has_unresolved_arg:
+                return False
         if tuple(normalized_args) == args:
             return False
-        _set_materialized_call_args(call, normalized_args, call_name=call_name)
-        return True
+        return _set_materialized_call_args(call, normalized_args, call_name=call_name)
+
+    def _normalize_near_function_pointer_call_arg_8616(arg):
+        node = arg
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        if not isinstance(node, CFunctionCall) or getattr(node, "callee_target", None) not in {"SEG_PTR", "MK_FP"}:
+            return arg, False
+        call_args = tuple(getattr(node, "args", ()) or ())
+        if len(call_args) != 2:
+            return arg, False
+        offset_expr = call_args[1]
+        offset = _stack_offset_from_cvar_8616(offset_expr)
+        if not isinstance(offset, int):
+            return arg, False
+        if offset not in _cached_function_pointer_stack_store_evidence_8616():
+            return arg, False
+        codegen._inertia_fnptr_call_arg_segptr_unwrapped_8616 = (
+            int(getattr(codegen, "_inertia_fnptr_call_arg_segptr_unwrapped_8616", 0) or 0) + 1
+        )
+        return _clone_c_ast_tree(offset_expr), True
 
     def _set_materialized_call_args(call, args, *, call_name: str | None, force_replace: bool = False):
         def _protected_call_arg_state():
@@ -5154,7 +6863,29 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return protected
 
         args_before = tuple(getattr(call, "args", ()) or ())
-        args_after = tuple(args)
+        normalized_args_after = []
+        for arg in tuple(args):
+            normalized_arg, _changed_arg = _normalize_near_function_pointer_call_arg_8616(arg)
+            normalized_args_after.append(normalized_arg)
+        args_after = tuple(normalized_args_after)
+        if any(_c_ast_has_cycle_or_too_complex_8616(arg) for arg in args_after):
+            codegen._inertia_call_arg_cyclic_or_complex_refused_8616 = (
+                int(getattr(codegen, "_inertia_call_arg_cyclic_or_complex_refused_8616", 0) or 0) + 1
+            )
+            return False
+        if any(_c_ast_contains_identity_8616(arg, call) for arg in args_after):
+            codegen._inertia_call_arg_self_reference_refused_8616 = (
+                int(getattr(codegen, "_inertia_call_arg_self_reference_refused_8616", 0) or 0) + 1
+            )
+            return False
+        args_equal = len(args_before) == len(args_after) and all(
+            _same_c_expression_8616(before, after)
+            or (
+                _call_arg_semantic_key_8616(before) is not None
+                and _call_arg_semantic_key_8616(before) == _call_arg_semantic_key_8616(after)
+            )
+            for before, after in zip(args_before, args_after)
+        )
         if args_before and not force_replace:
             before_score = sum(_arg_semantic_quality_8616(call_name, idx, arg) for idx, arg in enumerate(args_before))
             after_score = sum(_arg_semantic_quality_8616(call_name, idx, arg) for idx, arg in enumerate(args_after))
@@ -5169,17 +6900,30 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         tuple(_debug_expr_8616(arg) for arg in args_before),
                         tuple(_debug_expr_8616(arg) for arg in args_after),
                     )
-                return
+                return False
         if not args_before and len(args_after) > 1:
             stats.push_order_reversed_count += 1
-        call.args = list(args_after)
         protected = _protected_call_arg_state()
+        if force_replace or len(args_after) != len(args_before):
+            call_id = id(call)
+            for key in list(protected):
+                if (
+                    isinstance(key, tuple)
+                    and len(key) == 2
+                    and key[0] == call_id
+                    and isinstance(key[1], int)
+                ):
+                    del protected[key]
         for idx, arg in enumerate(args_after):
             key = (id(call), idx)
             score = _arg_semantic_quality_8616(call_name, idx, arg)
             current = protected.get(key)
             if not isinstance(current, tuple) or len(current) != 2 or score >= int(current[1]):
                 protected[key] = (_clone_c_ast_tree(arg), score)
+        if args_equal:
+            return False
+        call.args = list(args_after)
+        codegen._inertia_callsite_args_ast_materialized_8616 = True
         log.debug(
             "callarg-normalized function=%#x target=%s args_before=%s args_after=%s",
             getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
@@ -5195,6 +6939,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 tuple(_debug_expr_8616(arg) for arg in args_before),
                 tuple(_debug_expr_8616(arg) for arg in args_after),
             )
+        return True
 
     def _prototype_arg_count(call) -> int | None:
         callee_func = getattr(call, "callee_func", None)
@@ -5203,6 +6948,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         if isinstance(args, (list, tuple)):
             return len(args)
         return None
+
+    def _prototype_arg_widths_for_call_8616(call) -> tuple[int, ...] | None:
+        callee_func = getattr(call, "callee_func", None)
+        return _prototype_arg_widths_8616(project, getattr(callee_func, "prototype", None))
 
     def _is_stable_named_stack_value_expr_8616(expr) -> bool:
         node = expr
@@ -5221,7 +6970,13 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return False
         return True
 
-    def _call_args_need_rematerialization_8616(call, push_arg_sources=()) -> bool:
+    def _call_args_need_rematerialization_8616(
+        call,
+        push_arg_sources=(),
+        *,
+        semantic_call_name: str | None = None,
+        expected_arg_widths: tuple[int, ...] | None = None,
+    ) -> bool:
         args = tuple(getattr(call, "args", ()) or ())
         if not args:
             if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
@@ -5263,17 +7018,49 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     return True
         if (
             isinstance(push_arg_sources, tuple)
-            and len(push_arg_sources) == len(args)
+            and (
+                len(push_arg_sources) == len(args)
+                or _prototype_widths_account_for_push_sources_8616(expected_arg_widths, push_arg_sources)
+            )
             and any(source is not None for source in push_arg_sources)
         ):
             ordered_sources = list(reversed(push_arg_sources)) if len(push_arg_sources) > 1 else list(push_arg_sources)
-            expected_args = [
-                _direct_expr_from_push_source_8616(
-                    source, call_name=getattr(call, "callee_target", None), arg_index=idx
+            expected_args = (
+                _logical_args_from_push_sources_by_expected_widths_8616(
+                    ordered_sources,
+                    expected_arg_widths=expected_arg_widths,
+                    call_name=semantic_call_name or getattr(call, "callee_target", None),
                 )
-                for idx, source in enumerate(ordered_sources)
-            ]
+                or [
+                    _direct_expr_from_push_source_8616(
+                        source,
+                        call_name=semantic_call_name or getattr(call, "callee_target", None),
+                        arg_index=idx,
+                    )
+                    for idx, source in enumerate(ordered_sources)
+                ]
+            )
             if all(expected is not None for expected in expected_args):
+                preserve_return_register_indices = {
+                    idx
+                    for idx, source in enumerate(ordered_sources)
+                    if isinstance(source, tuple)
+                    and len(source) >= 3
+                    and source[0] == "ret_reg"
+                    and isinstance(source[2], str)
+                    and source[2].lower() in {"ax", "dx"}
+                }
+                normalized_expected_args = _normalize_materialized_call_args(
+                    expected_args,
+                    [-1] * len(expected_args),
+                    [],
+                    call_name=semantic_call_name or getattr(call, "callee_target", None),
+                    preserve_register_arg_indices=preserve_return_register_indices,
+                    expected_arg_widths=expected_arg_widths,
+                    push_sources=tuple(ordered_sources),
+                )
+                if normalized_expected_args is not None:
+                    expected_args = normalized_expected_args
                 expected_keys = tuple(_call_arg_semantic_key_8616(expected) for expected in expected_args)
                 actual_keys = tuple(_call_arg_semantic_key_8616(arg) for arg in args)
                 if all(key is not None for key in expected_keys) and all(key is not None for key in actual_keys):
@@ -5366,7 +7153,14 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         existing_count = getattr(summary, "arg_count", None)
         existing_widths = tuple(getattr(summary, "arg_widths", ()) or ())
         floor_count = existing_count if isinstance(existing_count, int) and existing_count >= 0 else 0
-        next_count = max(len(arg_widths_live), floor_count)
+        live_width_sum = sum(width for width in arg_widths_live if isinstance(width, int) and width > 0)
+        existing_width_sum = sum(width for width in existing_widths if isinstance(width, int) and width > 0)
+        stack_cleanup = getattr(summary, "stack_cleanup", None)
+        live_width_covers_physical_pushes = bool(args) and live_width_sum > 0 and (
+            live_width_sum == existing_width_sum
+            or (isinstance(stack_cleanup, int) and stack_cleanup > 0 and live_width_sum == stack_cleanup)
+        )
+        next_count = len(arg_widths_live) if live_width_covers_physical_pushes else max(len(arg_widths_live), floor_count)
         if len(arg_widths_live) < next_count:
             padded = list(arg_widths_live)
             while len(padded) < next_count:
@@ -5859,10 +7653,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     def _is_outgoing_segment_return_store_statement(stmt, *, stack_probe_seen: bool = False) -> bool:
         if not stack_probe_seen:
             return False
-        candidates = _iter_assignment_nodes(stmt)
-        if not candidates:
+        assignment = _top_level_assignment_node_8616(stmt)
+        if assignment is None:
             return False
-        lhs, rhs = _assignment_lhs_rhs(candidates[-1])
+        lhs, rhs = _assignment_lhs_rhs(assignment)
         if lhs is None or rhs is None:
             return False
         segment_name, _offset_terms = _match_real_mode_segmented_store_shape_8616(lhs, project)
@@ -5894,10 +7688,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     def _is_stack_probe_frame_artifact_store_statement(stmt) -> bool:
         if _statement_contains_call(stmt):
             return False
-        candidates = _iter_assignment_nodes(stmt)
-        if not candidates:
+        assignment = _top_level_assignment_node_8616(stmt)
+        if assignment is None:
             return False
-        lhs, _rhs = _assignment_lhs_rhs(candidates[-1])
+        lhs, _rhs = _assignment_lhs_rhs(assignment)
         if lhs is None:
             return False
         segment_name, offset_terms = _match_real_mode_segmented_store_shape_8616(lhs, project)
@@ -6139,48 +7933,192 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         ins_addr = tags.get("ins_addr")
         return ins_addr if isinstance(ins_addr, int) else None
 
-    def _is_consumed_materialized_call_arg_setup_assignment_8616(statements: list, idx: int) -> bool:
-        if idx + 1 >= len(statements):
+    def _expr_matches_push_source_value_8616(expr, source) -> bool:
+        node = expr
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        if not isinstance(source, tuple) or len(source) < 2:
             return False
+        source_kind, source_value = source[0], source[1]
+        if source_kind == "bp" and isinstance(source_value, int):
+            return _stack_variable_offset_8616(node) == int(source_value)
+        if source_kind == "imm" and isinstance(source_value, int):
+            return _constant_int_value_8616(node) == (int(source_value) & 0xFFFF)
+        if not (source_kind == "expr" and len(source) == 3 and isinstance(source_value, tuple)):
+            return False
+        ops = source[2]
+        if not isinstance(ops, tuple):
+            return False
+        current = node
+        for op_name, op_value in reversed(ops):
+            while isinstance(current, CTypeCast):
+                current = current.expr
+            if not isinstance(op_name, str) or not isinstance(op_value, int):
+                return False
+            if not isinstance(current, CBinaryOp):
+                return False
+            c_op = getattr(current, "op", None)
+            lhs = getattr(current, "lhs", None)
+            rhs = getattr(current, "rhs", None)
+            rhs_value = _constant_int_value_8616(rhs)
+            lhs_value = _constant_int_value_8616(lhs)
+            wanted = int(op_value) & 0xFFFF
+            if op_name == CallsitePushExprOp8616.ADD.value:
+                if c_op != "Add":
+                    return False
+                if rhs_value == wanted:
+                    current = lhs
+                elif lhs_value == wanted:
+                    current = rhs
+                else:
+                    return False
+            elif op_name == CallsitePushExprOp8616.SUB.value:
+                if c_op != "Sub" or rhs_value != wanted:
+                    return False
+                current = lhs
+            elif op_name == CallsitePushExprOp8616.SHL.value:
+                if c_op == "Shl" and rhs_value == wanted:
+                    current = lhs
+                elif c_op == "Mul" and rhs_value == ((1 << wanted) & 0xFFFF):
+                    current = lhs
+                elif c_op == "Mul" and lhs_value == ((1 << wanted) & 0xFFFF):
+                    current = rhs
+                else:
+                    return False
+            elif op_name == CallsitePushExprOp8616.SHR.value:
+                if c_op != "Shr" or rhs_value != wanted:
+                    return False
+                current = lhs
+            elif op_name == CallsitePushExprOp8616.MUL.value:
+                if c_op != "Mul":
+                    return False
+                if rhs_value == wanted:
+                    current = lhs
+                elif lhs_value == wanted:
+                    current = rhs
+                else:
+                    return False
+            else:
+                return False
+        return _expr_matches_push_source_value_8616(current, source_value)
+
+    def _is_consumed_materialized_call_arg_setup_assignment_8616(statements: list, idx: int) -> bool:
+        def _debug_refuse(reason: str) -> bool:
+            if os.environ.get("INERTIA_DEBUG_STACK_PROBE_ARTIFACTS_VERBOSE"):
+                log.warning("[call-arg-setup-prune] refuse idx=%d reason=%s", idx, reason)
+            return False
+
+        if idx + 1 >= len(statements):
+            return _debug_refuse("no-next-statement")
         assignment = _top_level_assignment_node_8616(statements[idx])
         if assignment is None or _statement_contains_call(assignment):
-            return False
+            return _debug_refuse("not-pure-assignment")
         lhs, rhs = _assignment_lhs_rhs(assignment)
         if lhs is None or rhs is None or _statement_contains_call(rhs):
-            return False
-        lhs_offset = _stack_variable_offset_8616(lhs)
-        if lhs_offset is None or lhs_offset <= 0:
-            return False
+            return _debug_refuse("missing-lhs-rhs-or-rhs-call")
         next_call = _call_from_statement(statements[idx + 1])
         if next_call is None:
-            return False
+            return _debug_refuse("next-not-call")
         summary = summary_map.get(id(next_call))
         if summary is None or bool(getattr(summary, "stack_probe_helper", False)):
-            return False
+            return _debug_refuse("missing-summary-or-stack-probe")
         callsite_addr = getattr(summary, "callsite_addr", None)
         setup_ins_addr = _assignment_ins_addr_8616(assignment)
         if not isinstance(callsite_addr, int) or not isinstance(setup_ins_addr, int):
-            return False
-        # A consumed push/setup instruction for a near 16-bit call is immediately
-        # before the call. Wider gaps can be real source-level stores and must stay.
-        if not (0 < callsite_addr - setup_ins_addr <= 4):
-            return False
+            return _debug_refuse("missing-callsite-or-ins-addr")
+        setup_gap = callsite_addr - setup_ins_addr
+        # Byte-proven register setup can appear before later argument pushes in
+        # a multi-argument call. Keep a small outgoing-argument window here; the
+        # actual deletion still requires matching push-source and instruction bytes.
+        if not (0 < setup_gap <= 16):
+            return _debug_refuse(f"ins-gap:{setup_gap}")
         push_sources = getattr(summary, "push_arg_sources", None)
         if not isinstance(push_sources, tuple) or not push_sources:
-            return False
+            return _debug_refuse("missing-push-sources")
+
+        rhs_value = _constant_int_value_8616(rhs)
+        imm_source_matches = (
+            tuple(
+                source
+                for source in push_sources
+                if isinstance(source, tuple)
+                and len(source) >= 2
+                and source[0] == "imm"
+                and isinstance(source[1], int)
+                and isinstance(rhs_value, int)
+                and (int(source[1]) & 0xFFFF) == (rhs_value & 0xFFFF)
+                and _mov_reg_imm_setup_matches_push_source_8616(project, setup_ins_addr, source)
+            )
+            if isinstance(rhs_value, int)
+            else ()
+        )
+        if (
+            isinstance(rhs_value, int)
+            and imm_source_matches
+        ):
+            return True
+        if os.environ.get("INERTIA_DEBUG_STACK_PROBE_ARTIFACTS_VERBOSE") and isinstance(rhs_value, int):
+            log.warning(
+                "[call-arg-setup-prune] imm-setup-check idx=%d rhs=%#x lhs_memory=%s setup=%r "
+                "matches=%r push_sources=%r",
+                idx,
+                rhs_value,
+                _assignment_lhs_writes_memory(lhs),
+                setup_ins_addr,
+                imm_source_matches,
+                push_sources,
+            )
+
+        expr_source_matches = tuple(
+            source
+            for source in push_sources
+            if _expr_matches_push_source_value_8616(rhs, source)
+            and _reg_expr_setup_matches_push_source_8616(project, setup_ins_addr, source)
+        )
+        if expr_source_matches:
+            return True
+        if os.environ.get("INERTIA_DEBUG_STACK_PROBE_ARTIFACTS_VERBOSE"):
+            expr_diagnostics = tuple(
+                (
+                    source,
+                    _expr_matches_push_source_value_8616(rhs, source),
+                    _reg_expr_setup_matches_push_source_8616(project, setup_ins_addr, source),
+                )
+                for source in push_sources
+                if isinstance(source, tuple) and source and source[0] == "expr"
+            )
+            if expr_diagnostics:
+                log.warning(
+                    "[call-arg-setup-prune] expr-setup-check idx=%d rhs=%s setup=%r diagnostics=%r",
+                    idx,
+                    _debug_expr_8616(rhs),
+                    setup_ins_addr,
+                    expr_diagnostics,
+                )
+
+        lhs_offset = _stack_variable_offset_8616(lhs)
+        if lhs_offset is None or lhs_offset <= 0:
+            return _debug_refuse(
+                "lhs-not-positive-stack-slot "
+                f"push_sources={push_sources!r} setup={setup_ins_addr!r} "
+                f"delta={getattr(project, '_inertia_original_linear_delta', None)!r} "
+                f"has_original={getattr(project, '_inertia_original_project', None) is not None}"
+            )
+        if setup_gap > 4:
+            return _debug_refuse(f"stack-slot-ins-gap:{setup_gap}")
         source_offsets = {
             int(source[1])
             for source in push_sources
             if isinstance(source, tuple) and len(source) >= 2 and source[0] == "bp" and isinstance(source[1], int)
         }
         if lhs_offset not in source_offsets:
-            return False
+            return _debug_refuse("lhs-offset-not-source")
         lhs_key = _c_variable_identity_key_8616(lhs)
         if lhs_key is None:
-            return False
+            return _debug_refuse("missing-lhs-key")
         args = tuple(getattr(next_call, "args", ()) or ())
         if not any(_c_variable_identity_key_8616(arg) == lhs_key for arg in args):
-            return False
+            return _debug_refuse("lhs-not-call-arg")
         return True
 
     def _prune_stack_probe_frame_artifacts(
@@ -6189,7 +8127,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         stack_probe_seen: bool,
         allow_setup_assignment_prune: bool,
     ) -> list:
-        if not stack_probe_seen:
+        if not stack_probe_seen and not prune_consumed_arg_stores:
             return statements
         helper_or_helper_zone_active = bool(stack_probe_seen)
         pruned = []
@@ -6718,6 +8656,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             if not isinstance(node, CFunctionCall):
                 continue
             call_name = _call_node_name_8616(node) or ""
+            summary = summary_map.get(id(node)) if isinstance(summary_map, dict) else None
+            semantic_call_name = _semantic_call_name_from_summary_8616(project, summary, call_name) or call_name
             current_args = list(getattr(node, "args", ()) or ())
             if not current_args:
                 continue
@@ -6728,9 +8668,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if not isinstance(protected_entry, tuple) or len(protected_entry) != 2:
                     continue
                 protected_arg, protected_score = protected_entry
-                current_score = _arg_semantic_quality_8616(call_name, idx, current_arg)
+                current_score = _arg_semantic_quality_8616(semantic_call_name, idx, current_arg)
                 if current_score < int(protected_score):
-                    summary = summary_map.get(id(node)) if isinstance(summary_map, dict) else None
                     push_sources = getattr(summary, "push_arg_sources", ()) if summary is not None else ()
                     source_idx = idx
                     if isinstance(push_sources, tuple) and len(push_sources) > 1:
@@ -6749,6 +8688,32 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         # Keep source-evidenced immediates (e.g. first arg 0)
                         # instead of restoring higher-scored stack carriers.
                         continue
+                    if isinstance(push_sources, tuple) and source_idx >= 0 and source_idx < len(push_sources):
+                        expected_arg = None
+                        source_widths = _source_prototype_arg_widths_8616(project, semantic_call_name)
+                        known_widths = _known_helper_prototype_arg_widths_8616(project, semantic_call_name)
+                        expected_widths = source_widths or known_widths
+                        if _prototype_widths_account_for_push_sources_8616(expected_widths, push_sources):
+                            ordered_sources = list(reversed(push_sources)) if len(push_sources) > 1 else list(push_sources)
+                            grouped_args = _logical_args_from_push_sources_by_expected_widths_8616(
+                                ordered_sources,
+                                expected_arg_widths=expected_widths,
+                                call_name=semantic_call_name,
+                            )
+                            if grouped_args is not None and idx < len(grouped_args):
+                                expected_arg = grouped_args[idx]
+                        if expected_arg is None:
+                            expected_arg = _direct_expr_from_push_source_8616(
+                                push_sources[source_idx],
+                                call_name=semantic_call_name,
+                                arg_index=idx,
+                            )
+                        if expected_arg is not None and _call_arg_semantic_key_8616(
+                            current_arg
+                        ) == _call_arg_semantic_key_8616(expected_arg):
+                            # Exact push-source evidence is stronger than the
+                            # readability score used for protected arg restore.
+                            continue
                     current_args[idx] = _clone_c_ast_tree(protected_arg)
                     updated = True
             if updated:
@@ -6824,6 +8789,108 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 break
             return needed <= 0
 
+        def _rhs_is_safe_to_relocate_after_call_8616(rhs) -> bool:
+            if _statement_contains_call(rhs):
+                return False
+            for node in (rhs, *_iter_c_nodes_deep_8616(rhs)):
+                if isinstance(node, CFunctionCall):
+                    return False
+                if isinstance(node, CUnaryOp) and getattr(node, "op", None) == "Dereference":
+                    return False
+                variable = getattr(node, "variable", None)
+                if isinstance(variable, SimMemoryVariable) and not isinstance(variable, SimStackVariable):
+                    return False
+            return True
+
+        def _pop_post_call_stack_source_writes_8616(call, summary, push_sources: tuple) -> list:
+            def _debug_relocate_refuse(reason: str) -> list:
+                if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                    log.warning(
+                        "[call-post-write-relocate] refuse function=%#x target=%s reason=%s",
+                        getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                        _call_node_name_8616(call),
+                        reason,
+                    )
+                return []
+
+            if call is None or summary is None or bool(getattr(summary, "stack_probe_helper", False)):
+                return _debug_relocate_refuse("missing-call-summary-or-stack-probe")
+            callsite_addr = getattr(summary, "callsite_addr", None)
+            if not isinstance(callsite_addr, int):
+                return _debug_relocate_refuse("missing-callsite")
+            source_offsets = {
+                int(source[1])
+                for source in push_sources
+                if isinstance(source, tuple)
+                and len(source) >= 2
+                and source[0] == "bp"
+                and isinstance(source[1], int)
+            }
+            if not source_offsets:
+                return _debug_relocate_refuse("missing-bp-source-offsets")
+
+            relocated_reversed: list = []
+            last_refusal = "no-suffix"
+            last_debug_shape = ""
+            while new_statements:
+                candidate = new_statements[-1]
+                last_debug_shape = f"shape={_debug_node_shape_8616(candidate)} tags={getattr(candidate, 'tags', None)!r}"
+                if _statement_contains_call(candidate):
+                    last_refusal = "suffix-is-call"
+                    break
+                assignment = _top_level_assignment_node_8616(candidate)
+                if assignment is None or _statement_contains_call(assignment):
+                    last_refusal = "suffix-not-pure-assignment"
+                    break
+                lhs, rhs = _assignment_lhs_rhs(assignment)
+                last_debug_shape = (
+                    f"shape={_debug_node_shape_8616(candidate)} "
+                    f"assign_shape={_debug_node_shape_8616(assignment)} "
+                    f"lhs={_debug_expr_8616(lhs)} rhs={_debug_expr_8616(rhs)} "
+                    f"tags={getattr(assignment, 'tags', None)!r}/{getattr(candidate, 'tags', None)!r}"
+                )
+                if lhs is None or rhs is None:
+                    last_refusal = "suffix-missing-lhs-rhs"
+                    break
+                lhs_offset = _stack_variable_offset_8616(lhs)
+                if lhs_offset is None and _assignment_lhs_writes_memory(lhs):
+                    last_refusal = "suffix-memory-lhs"
+                    break
+                if lhs_offset not in source_offsets:
+                    last_refusal = f"suffix-lhs-offset:{lhs_offset!r}"
+                    break
+                ins_addr = _assignment_ins_addr_8616(assignment)
+                if not isinstance(ins_addr, int):
+                    ins_addr = _assignment_ins_addr_8616(candidate)
+                if not isinstance(ins_addr, int) or ins_addr <= callsite_addr:
+                    last_refusal = f"suffix-ins-order:{ins_addr!r}<={callsite_addr!r}"
+                    break
+                if not _rhs_is_safe_to_relocate_after_call_8616(rhs):
+                    last_refusal = "suffix-impure-rhs"
+                    break
+                relocated_reversed.append(new_statements.pop())
+
+            if not relocated_reversed:
+                detail = f"no-relocatable-suffix:{last_refusal}"
+                if last_debug_shape:
+                    detail = f"{detail} {last_debug_shape}"
+                return _debug_relocate_refuse(detail)
+            relocated = list(reversed(relocated_reversed))
+            codegen._inertia_callsite_post_call_stack_source_writes_relocated_8616 = (
+                int(getattr(codegen, "_inertia_callsite_post_call_stack_source_writes_relocated_8616", 0) or 0)
+                + len(relocated)
+            )
+            if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                log.warning(
+                    "[call-post-write-relocate] function=%#x target=%s callsite=%#x count=%d offsets=%r",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                    _call_node_name_8616(call),
+                    callsite_addr,
+                    len(relocated),
+                    tuple(sorted(source_offsets)),
+                )
+            return relocated
+
         while i < len(statements):
             stmt = statements[i]
             if _is_outgoing_segment_return_store_statement(stmt, stack_probe_seen=stack_probe_seen):
@@ -6840,14 +8907,47 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             arg_count = getattr(summary, "arg_count", None) if summary is not None else None
             summary_arg_count = arg_count if isinstance(arg_count, int) else None
             call_name = _call_node_name_8616(call) if call is not None else None
-            prototype_arg_count = _prototype_arg_count(call) if call is not None else None
+            semantic_call_name = _semantic_call_name_from_summary_8616(project, summary, call_name)
+            prototype_arg_widths = _prototype_arg_widths_for_call_8616(call) if call is not None else None
+            source_prototype_arg_widths = (
+                _source_prototype_arg_widths_8616(
+                    project,
+                    semantic_call_name or call_name,
+                    cod_path_hint=cod_path_hint,
+                )
+                if call is not None
+                else None
+            )
+            known_prototype_arg_widths = (
+                _known_helper_prototype_arg_widths_8616(project, semantic_call_name or call_name)
+                if call is not None
+                else None
+            )
+            effective_prototype_arg_widths = (
+                source_prototype_arg_widths or prototype_arg_widths or known_prototype_arg_widths
+            )
+            prototype_arg_count = (
+                len(effective_prototype_arg_widths)
+                if effective_prototype_arg_widths is not None
+                else _prototype_arg_count(call)
+                if call is not None
+                else None
+            )
             cod_prototype_arg_count = (
-                _cod_source_prototype_arg_count_8616(project, call_name)
+                _cod_source_prototype_arg_count_8616(project, semantic_call_name or call_name)
                 if call is not None and summary_arg_count is None and prototype_arg_count is None
                 else None
             )
-            normalized_call_name = normalize_callee_name_8616(call_name) if isinstance(call_name, str) else None
-            known_arg_count = _expected_arg_count_for_known_callee_8616(call_name or "") if call is not None else None
+            normalized_call_name = (
+                normalize_callee_name_8616(semantic_call_name or call_name)
+                if isinstance(semantic_call_name or call_name, str)
+                else None
+            )
+            known_arg_count = (
+                _expected_arg_count_for_known_callee_8616(semantic_call_name or call_name or "")
+                if call is not None
+                else None
+            )
             if known_arg_count is None and isinstance(normalized_call_name, str) and normalized_call_name:
                 known_arg_count = _expected_arg_count_for_known_callee_8616(normalized_call_name)
             if known_arg_count is None and isinstance(cod_prototype_arg_count, int):
@@ -6858,6 +8958,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 is_stack_probe_helper = True
             if is_stack_probe_helper:
                 stack_probe_seen = True
+                _record_stack_probe_helper_target_fingerprints_8616(codegen, summary=summary, call=call)
                 typed_stack_probe_fact = typed_stack_probe_facts.get(id(call)) if call is not None else None
                 helper_return_space = getattr(summary, "helper_return_space", None)
                 helper_return_space = helper_return_space.lower() if isinstance(helper_return_space, str) else None
@@ -6872,6 +8973,188 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     i += 1
                     continue
                 ensure_stack_probe_fact_stats_8616(codegen)["stack_probe_calls_refused"] += 1
+
+            def _assignment_semantic_copy_key_8616(candidate):
+                assignment = _top_level_assignment_node_8616(candidate)
+                if assignment is None or _statement_contains_call(assignment):
+                    return None
+                lhs, rhs = _assignment_lhs_rhs(assignment)
+                if lhs is None or rhs is None:
+                    return None
+                if _assignment_lhs_writes_memory(lhs) and _stack_variable_offset_8616(lhs) is None:
+                    return None
+                if not _rhs_is_safe_to_relocate_after_call_8616(rhs):
+                    return None
+                lhs_key = _c_variable_identity_key_8616(lhs)
+                rhs_key = _c_variable_identity_key_8616(rhs)
+                if lhs_key is None:
+                    return None
+                return lhs_key, rhs_key, lhs, rhs
+
+            def _expr_contains_dirty_carrier_8616(expr) -> bool:
+                for node in (expr, *_iter_c_nodes_deep_8616(expr)):
+                    if node.__class__.__name__ == "CDirtyExpression":
+                        return True
+                return False
+
+            def _pop_consumed_callsite_dirty_setup_assignments_8616(call, summary, push_sources: tuple) -> int:
+                def _debug_dirty_refuse(reason: str) -> int:
+                    if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                        log.warning(
+                            "[call-dirty-setup-consume] refuse function=%#x target=%s reason=%s",
+                            getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                            _call_node_name_8616(call),
+                            reason,
+                        )
+                    return 0
+
+                if call is None or summary is None or bool(getattr(summary, "stack_probe_helper", False)):
+                    return _debug_dirty_refuse("missing-call-summary-or-stack-probe")
+                callsite_addr = getattr(summary, "callsite_addr", None)
+                if not isinstance(callsite_addr, int):
+                    return _debug_dirty_refuse("missing-callsite")
+                if not isinstance(push_sources, tuple) or not push_sources:
+                    return _debug_dirty_refuse("missing-push-sources")
+                if not tuple(getattr(call, "args", ()) or ()):
+                    return _debug_dirty_refuse("missing-materialized-args")
+
+                consumed = 0
+                while new_statements and consumed < 8:
+                    candidate = new_statements[-1]
+                    if _statement_contains_call(candidate):
+                        break
+                    assignment = _top_level_assignment_node_8616(candidate)
+                    if assignment is None or _statement_contains_call(assignment):
+                        break
+                    lhs, rhs = _assignment_lhs_rhs(assignment)
+                    if lhs is None or rhs is None:
+                        break
+                    if not _expr_contains_dirty_carrier_8616(lhs):
+                        break
+                    ins_addr = _assignment_ins_addr_8616(assignment)
+                    if not isinstance(ins_addr, int):
+                        ins_addr = _assignment_ins_addr_8616(candidate)
+                    if ins_addr != callsite_addr:
+                        break
+                    if not _rhs_is_safe_to_relocate_after_call_8616(rhs):
+                        break
+                    new_statements.pop()
+                    consumed += 1
+
+                if consumed <= 0:
+                    return _debug_dirty_refuse("no-consumable-suffix")
+                codegen._inertia_callsite_dirty_setup_assignments_consumed_8616 = (
+                    int(getattr(codegen, "_inertia_callsite_dirty_setup_assignments_consumed_8616", 0) or 0) + consumed
+                )
+                if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                    log.warning(
+                        "[call-dirty-setup-consume] function=%#x target=%s callsite=%#x count=%d",
+                        getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                        _call_node_name_8616(call),
+                        callsite_addr,
+                        consumed,
+                    )
+                return consumed
+
+            def _call_args_reference_identity_8616(call_node, identity_key) -> bool:
+                if call_node is None or identity_key is None:
+                    return False
+                for arg in tuple(getattr(call_node, "args", ()) or ()):
+                    if _c_variable_identity_key_8616(arg) == identity_key:
+                        return True
+                    if _statement_references_variable_identity_8616(arg, identity_key):
+                        return True
+                return False
+
+            def _pop_duplicate_pre_call_stack_source_clobber_8616(call, summary, push_sources: tuple) -> bool:
+                def _debug_clobber_refuse(reason: str) -> bool:
+                    if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                        log.warning(
+                            "[call-pre-source-clobber] refuse function=%#x target=%s reason=%s",
+                            getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                            _call_node_name_8616(call),
+                            reason,
+                        )
+                    return False
+
+                if call is None or summary is None or bool(getattr(summary, "stack_probe_helper", False)):
+                    return _debug_clobber_refuse("missing-call-summary-or-stack-probe")
+                if not isinstance(push_sources, tuple) or not push_sources:
+                    return _debug_clobber_refuse("missing-push-sources")
+                source_offsets = {
+                    int(source[1])
+                    for source in push_sources
+                    if isinstance(source, tuple)
+                    and len(source) >= 2
+                    and source[0] == "bp"
+                    and isinstance(source[1], int)
+                }
+                if not source_offsets:
+                    return _debug_clobber_refuse("missing-bp-source-offsets")
+                if not new_statements:
+                    return _debug_clobber_refuse("missing-predecessor")
+                if i + 1 >= len(statements):
+                    return _debug_clobber_refuse("missing-post-call-copy")
+
+                pre_key = _assignment_semantic_copy_key_8616(new_statements[-1])
+                post_key = _assignment_semantic_copy_key_8616(statements[i + 1])
+                if pre_key is None or post_key is None:
+                    return _debug_clobber_refuse("missing-copy-key")
+                pre_lhs_key, pre_rhs_key, pre_lhs, pre_rhs = pre_key
+                post_lhs_key, post_rhs_key, _post_lhs, post_rhs = post_key
+                lhs_offset = _stack_variable_offset_8616(pre_lhs)
+                if lhs_offset not in source_offsets:
+                    return _debug_clobber_refuse(f"lhs-not-push-source:{lhs_offset!r}")
+                if pre_lhs_key != post_lhs_key:
+                    return _debug_clobber_refuse("lhs-copy-mismatch")
+                if pre_rhs_key is not None and post_rhs_key is not None:
+                    rhs_matches = pre_rhs_key == post_rhs_key
+                else:
+                    rhs_matches = _same_c_expression_8616(pre_rhs, post_rhs)
+                if not rhs_matches:
+                    return _debug_clobber_refuse("rhs-copy-mismatch")
+                if not _call_args_reference_identity_8616(call, pre_lhs_key):
+                    return _debug_clobber_refuse("lhs-not-call-arg")
+
+                new_statements.pop()
+                codegen._inertia_callsite_pre_call_source_clobbers_pruned_8616 = (
+                    int(getattr(codegen, "_inertia_callsite_pre_call_source_clobbers_pruned_8616", 0) or 0) + 1
+                )
+                if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                    log.warning(
+                        "[call-pre-source-clobber] pruned function=%#x target=%s lhs_offset=%r",
+                        getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                        _call_node_name_8616(call),
+                        lhs_offset,
+                    )
+                return True
+
+            def _append_call_statement_with_relocated_writes_8616() -> None:
+                nonlocal changed
+                consumed_dirty_setup = (
+                    _pop_consumed_callsite_dirty_setup_assignments_8616(call, summary, push_arg_sources)
+                    if call is not None and not is_stack_probe_helper
+                    else 0
+                )
+                pre_clobber_removed = (
+                    _pop_duplicate_pre_call_stack_source_clobber_8616(call, summary, push_arg_sources)
+                    if call is not None and not is_stack_probe_helper
+                    else False
+                )
+                relocated_after_call = (
+                    []
+                    if pre_clobber_removed
+                    else _pop_post_call_stack_source_writes_8616(call, summary, push_arg_sources)
+                    if call is not None and not is_stack_probe_helper
+                    else []
+                )
+                new_statements.append(stmt)
+                if consumed_dirty_setup or pre_clobber_removed:
+                    changed = True
+                if relocated_after_call:
+                    new_statements.extend(relocated_after_call)
+                    changed = True
+
             # A typed stack-probe fact is strong evidence for a helper-returned SS
             # address. If no typed fact exists, direct segmented SS stores before the
             # call remain valid evidence and the generic stack-arg backtracker must
@@ -6884,6 +9167,15 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 known_arg_count=known_arg_count,
                 prototype_arg_count=prototype_arg_count,
             )
+            expected_arg_widths = effective_prototype_arg_widths
+            if (
+                expected_arg_widths is not None
+                and isinstance(prototype_arg_count, int)
+                and isinstance(summary_arg_count, int)
+                and prototype_arg_count < summary_arg_count
+                and _prototype_widths_account_for_push_sources_8616(expected_arg_widths, push_arg_sources)
+            ):
+                expected_arg_count = prototype_arg_count
             if _apply_indirect_callsite_type_8616(call, summary, expected_arg_count):
                 changed = True
             has_strong_direct_push_sources = (
@@ -6920,16 +9212,29 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 push_arg_sources=push_arg_sources,
             )
             rematerialize_call_args = (
-                _call_args_need_rematerialization_8616(call, push_arg_sources=push_arg_sources)
+                _call_args_need_rematerialization_8616(
+                    call,
+                    push_arg_sources=push_arg_sources,
+                    semantic_call_name=semantic_call_name,
+                    expected_arg_widths=expected_arg_widths,
+                )
                 if call is not None
                 else False
             )
             if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION") and call is not None:
                 log.warning(
-                    "[call-summary] function=%#x target=%s expected_arg_count=%r push_arg_sources=%r",
+                    "[call-summary] function=%#x target=%s semantic=%s callsite=%r summary_target=%r expected_arg_count=%r "
+                    "prototype_widths=%r source_widths=%r known_widths=%r effective_widths=%r push_arg_sources=%r",
                     getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
                     call_name,
+                    semantic_call_name,
+                    getattr(summary, "callsite_addr", None) if summary is not None else None,
+                    getattr(summary, "target_addr", None) if summary is not None else None,
                     expected_arg_count,
+                    prototype_arg_widths,
+                    source_prototype_arg_widths,
+                    known_prototype_arg_widths,
+                    effective_prototype_arg_widths,
                     push_arg_sources,
                 )
             if os.environ.get("INERTIA_DEBUG_PERCOLATEUP_CALLSITE") and call is not None and call_name == "PercolateUp":
@@ -6965,13 +9270,16 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 isinstance(expected_arg_count, int)
                 and expected_arg_count > 0
                 and isinstance(push_arg_sources, tuple)
-                and len(push_arg_sources) == expected_arg_count
+                and (
+                    len(push_arg_sources) == expected_arg_count
+                    or _prototype_widths_account_for_push_sources_8616(expected_arg_widths, push_arg_sources)
+                )
                 and any(source is not None for source in push_arg_sources)
             )
             has_safe_non_stack_fallback = (
                 isinstance(expected_arg_count, int)
                 and expected_arg_count > 0
-                and _known_default_args_for_missing_8616(call_name or "", codegen) is not None
+                and _known_default_args_for_missing_8616(semantic_call_name or call_name or "", codegen) is not None
             )
             # Do not destructively clear existing call args when inferred arg-count
             # drops to zero. Zero can be an unproven placeholder; preserving current
@@ -6995,7 +9303,12 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             if (
                 call is not None
                 and tuple(getattr(call, "args", ()) or ())
-                and _normalize_existing_call_args_8616(call, new_statements, call_name=call_name)
+                and _normalize_existing_call_args_8616(
+                    call,
+                    new_statements,
+                    call_name=semantic_call_name or call_name,
+                    push_arg_sources=push_arg_sources,
+                )
             ):
                 _refresh_summary_arg_shape(call, summary)
                 changed = True
@@ -7021,10 +9334,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if direct_stack_arg is None:
                     direct_stack_arg = _stack_cvar_for_offset(src_off, allow_best_match=True)
                 if direct_stack_arg is not None:
-                    _set_materialized_call_args(
+                    args_changed = _set_materialized_call_args(
                         call,
                         [_clone_c_ast_tree(direct_stack_arg)],
-                        call_name=call_name,
+                        call_name=semantic_call_name or call_name,
                         force_replace=True,
                     )
                     while new_statements and _is_outgoing_stack_arg_segment_placeholder_store_statement(
@@ -7034,12 +9347,14 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         new_statements.pop()
                         stats.consumed_outgoing_stack_placeholder_count += 1
                         changed = True
-                    record_stack_arg_materialization_8616(codegen, 1)
+                    if args_changed:
+                        record_stack_arg_materialization_8616(codegen, 1)
                     _refresh_summary_arg_shape(call, summary)
-                    changed = True
+                    if args_changed:
+                        changed = True
                     if _apply_call_return_store_destination_8616(stmt, call, summary):
                         changed = True
-                    new_statements.append(stmt)
+                    _append_call_statement_with_relocated_writes_8616()
                     i += 1
                     continue
             if (
@@ -7052,7 +9367,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 strict_arg_shape_applied = False
                 if (
                     isinstance(push_arg_sources, tuple)
-                    and len(push_arg_sources) == expected_arg_count
+                    and (
+                        len(push_arg_sources) == expected_arg_count
+                        or _prototype_widths_account_for_push_sources_8616(expected_arg_widths, push_arg_sources)
+                    )
                     and any(source is not None for source in push_arg_sources)
                 ):
                     ordered_push_sources = (
@@ -7076,34 +9394,53 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                             direct_args.append(_clone_c_ast_tree(cvar))
                             direct_bindings[source_value] = _clone_c_ast_tree(cvar)
                     else:
-                        direct_args = [
-                            _direct_expr_from_push_source_8616(source, call_name=call_name, arg_index=idx)
-                            for idx, source in enumerate(ordered_push_sources)
-                        ]
+                        direct_args = (
+                            _logical_args_from_push_sources_by_expected_widths_8616(
+                                ordered_push_sources,
+                                expected_arg_widths=expected_arg_widths,
+                                call_name=semantic_call_name or call_name,
+                            )
+                            or [
+                                _direct_expr_from_push_source_8616(
+                                    source,
+                                    call_name=semantic_call_name or call_name,
+                                    arg_index=idx,
+                                )
+                                for idx, source in enumerate(ordered_push_sources)
+                            ]
+                        )
                     if all(arg is not None for arg in direct_args):
+                        preserve_return_register_indices = {
+                            idx
+                            for idx, source in enumerate(ordered_push_sources)
+                            if isinstance(source, tuple)
+                            and len(source) >= 3
+                            and source[0] == "ret_reg"
+                            and isinstance(source[2], str)
+                            and source[2].lower() in {"ax", "dx"}
+                        }
                         normalized_args = _normalize_materialized_call_args(
                             direct_args,
                             [-1] * len(direct_args),
                             new_statements,
-                            call_name=call_name,
+                            call_name=semantic_call_name or call_name,
                             stack_bindings=direct_bindings or None,
+                            preserve_register_arg_indices=preserve_return_register_indices,
+                            expected_arg_widths=expected_arg_widths,
+                            push_sources=tuple(ordered_push_sources),
                         )
                         if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                            _set_materialized_call_args(
+                            args_changed = _set_materialized_call_args(
                                 call,
                                 normalized_args,
-                                call_name=call_name,
-                                force_replace=all(
-                                    isinstance(source, tuple)
-                                    and len(source) >= 2
-                                    and source[0] == "bp"
-                                    and isinstance(source[1], int)
-                                    for source in push_arg_sources
-                                ),
+                                call_name=semantic_call_name or call_name,
+                                force_replace=True,
                             )
-                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                            if args_changed:
+                                record_stack_arg_materialization_8616(codegen, len(normalized_args))
                             _refresh_summary_arg_shape(call, summary)
-                            changed = True
+                            if args_changed:
+                                changed = True
                             strict_arg_shape_applied = True
                 if not strict_arg_shape_applied and len(new_statements) >= expected_arg_count:
                     if (
@@ -7126,13 +9463,13 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                                 candidate_rhs,
                                 candidate_indices,
                                 new_statements,
-                                call_name=call_name,
+                                call_name=semantic_call_name or call_name,
                             )
                             if all(rhs is not None for rhs in candidate_rhs)
                             else None
                         )
                         if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                            _set_materialized_call_args(call, normalized_args, call_name=call_name)
+                            _set_materialized_call_args(call, normalized_args, call_name=semantic_call_name or call_name)
                             record_stack_arg_materialization_8616(codegen, len(normalized_args))
                             _record_prunable_segment_metadata_ids(
                                 call,
@@ -7185,7 +9522,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         expanded_rhs,
                         consumed_indices,
                         new_statements,
-                        call_name=call_name,
+                        call_name=semantic_call_name or call_name,
                     )
                     if (
                         normalized_args is not None
@@ -7193,7 +9530,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         and len(normalized_args) >= expected_arg_count
                         and _all_arg_exprs_are_non_segment_registers(normalized_args)
                     ):
-                        _set_materialized_call_args(call, normalized_args, call_name=call_name)
+                        _set_materialized_call_args(call, normalized_args, call_name=semantic_call_name or call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         if prune_consumed_arg_stores:
@@ -7218,10 +9555,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         typed_rhs,
                         consumed_indices,
                         new_statements,
-                        call_name=call_name,
+                        call_name=semantic_call_name or call_name,
                     )
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(call, normalized_args, call_name=call_name)
+                        _set_materialized_call_args(call, normalized_args, call_name=semantic_call_name or call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         if prune_consumed_arg_stores:
@@ -7252,10 +9589,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         backtracked_rhs,
                         consumed_indices,
                         new_statements,
-                        call_name=call_name,
+                        call_name=semantic_call_name or call_name,
                     )
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(call, normalized_args, call_name=call_name)
+                        _set_materialized_call_args(call, normalized_args, call_name=semantic_call_name or call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         if prune_consumed_arg_stores:
@@ -7273,13 +9610,13 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                             list(inline_rhs),
                             list(range(max(0, i - len(inline_rhs)), i)),
                             new_statements,
-                            call_name=call_name,
+                            call_name=semantic_call_name or call_name,
                         )
                         if inline_rhs is not None
                         else None
                     )
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(call, normalized_args, call_name=call_name)
+                        _set_materialized_call_args(call, normalized_args, call_name=semantic_call_name or call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
@@ -7299,10 +9636,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         carrier_rhs,
                         consumed_indices,
                         new_statements,
-                        call_name=call_name,
+                        call_name=semantic_call_name or call_name,
                     )
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(call, normalized_args, call_name=call_name)
+                        _set_materialized_call_args(call, normalized_args, call_name=semantic_call_name or call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         if prune_consumed_arg_stores:
                             _delete_consumed_indices_8616(new_statements, consumed_indices)
@@ -7328,10 +9665,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         candidate_rhs,
                         consumed_indices,
                         new_statements,
-                        call_name=call_name,
+                        call_name=semantic_call_name or call_name,
                     )
                     if normalized_args is not None and not _is_segment_register_value_expr(normalized_args[0]):
-                        _set_materialized_call_args(call, [normalized_args[0]], call_name=call_name)
+                        _set_materialized_call_args(call, [normalized_args[0]], call_name=semantic_call_name or call_name)
                         record_stack_arg_materialization_8616(codegen, 1)
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         if prune_consumed_arg_stores:
@@ -7341,14 +9678,14 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         strict_arg_shape_applied = True
                 if (
                     not strict_arg_shape_applied
-                    and call_name is not None
+                    and (semantic_call_name is not None or call_name is not None)
                     and isinstance(expected_arg_count, int)
                     and expected_arg_count > 0
                     and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
                 ):
-                    default_args = _known_default_args_for_missing_8616(call_name, codegen)
+                    default_args = _known_default_args_for_missing_8616(semantic_call_name or call_name, codegen)
                     if default_args is not None and len(default_args) == expected_arg_count:
-                        _set_materialized_call_args(call, list(default_args), call_name=call_name)
+                        _set_materialized_call_args(call, list(default_args), call_name=semantic_call_name or call_name)
                         record_stack_arg_materialization_8616(codegen, len(default_args))
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
@@ -7371,25 +9708,29 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                             list(reversed(push_arg_sources)) if len(push_arg_sources) > 1 else list(push_arg_sources)
                         )
                         direct_args = [
-                            _direct_expr_from_push_source_8616(source, call_name=call_name, arg_index=idx)
+                            _direct_expr_from_push_source_8616(
+                                source,
+                                call_name=semantic_call_name or call_name,
+                                arg_index=idx,
+                            )
                             for idx, source in enumerate(ordered_push_sources)
                         ]
                         if all(arg is not None for arg in direct_args):
                             fallback_args = tuple(direct_args)
                     if fallback_args is None:
-                        fallback_args = _known_default_args_for_missing_8616(call_name or "", codegen)
+                        fallback_args = _known_default_args_for_missing_8616(semantic_call_name or call_name or "", codegen)
                 if (
                     fallback_args is not None
                     and isinstance(expected_arg_count, int)
                     and len(fallback_args) == expected_arg_count
                 ):
-                    _set_materialized_call_args(call, list(fallback_args), call_name=call_name)
+                    _set_materialized_call_args(call, list(fallback_args), call_name=semantic_call_name or call_name)
                     record_stack_arg_materialization_8616(codegen, len(fallback_args))
                     _refresh_summary_arg_shape(call, summary)
                     changed = True
                     if _apply_call_return_store_destination_8616(stmt, call, summary):
                         changed = True
-                    new_statements.append(stmt)
+                    _append_call_statement_with_relocated_writes_8616()
                     i += 1
                     continue
                 want_arg_count = 0
@@ -7415,7 +9756,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     candidate_rhs,
                     consumed_indices,
                     new_statements,
-                    call_name=call_name,
+                    call_name=semantic_call_name or call_name,
                 )
                 if (
                     normalized_args is not None
@@ -7428,7 +9769,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         )
                     )
                 ):
-                    _set_materialized_call_args(call, normalized_args, call_name=call_name)
+                    _set_materialized_call_args(call, normalized_args, call_name=semantic_call_name or call_name)
                     record_stack_arg_materialization_8616(codegen, len(normalized_args))
                     _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                     if prune_consumed_arg_stores:
@@ -7438,7 +9779,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 else:
                     if want_arg_count <= 0:
                         i += 1
-                        new_statements.append(stmt)
+                        _append_call_statement_with_relocated_writes_8616()
                         continue
                     inline_rhs = _extract_inline_stack_store_args(stmt, call, 1)
                     normalized_args = (
@@ -7446,7 +9787,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                             list(inline_rhs),
                             [max(i - 1, 0)],
                             new_statements,
-                            call_name=call_name,
+                            call_name=semantic_call_name or call_name,
                         )
                         if inline_rhs
                         else None
@@ -7462,13 +9803,16 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         )
                     )
                     ):
-                        _set_materialized_call_args(call, [normalized_args[0]], call_name=call_name)
+                        _set_materialized_call_args(call, [normalized_args[0]], call_name=semantic_call_name or call_name)
                         record_stack_arg_materialization_8616(codegen, 1)
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
             if _apply_call_return_store_destination_8616(stmt, call, summary):
                 changed = True
-            new_statements.append(stmt)
+            if call is not None:
+                _append_call_statement_with_relocated_writes_8616()
+            else:
+                new_statements.append(stmt)
             i += 1
         if os.environ.get("INERTIA_DEBUG_STACK_PROBE_ARTIFACTS"):
             log.warning(
@@ -7578,9 +9922,63 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             set_materialized_call_args_fn=_set_materialized_call_args,
             refresh_summary_arg_shape_fn=_refresh_summary_arg_shape,
         )
+        changed |= _conservative_call_arg_seed_8616(
+            root=root,
+            summary_map=summary_map,
+            codegen=codegen,
+            has_unverified_non_ss_stack_probe=has_unverified_non_ss_stack_probe,
+            call_name_fn=_call_node_name_8616,
+            expected_arg_count_fn=_expected_arg_count_for_known_callee_8616,
+            known_default_args_fn=_known_default_args_for_missing_8616,
+            direct_expr_from_push_source_fn=_direct_expr_from_push_source_8616,
+            normalize_materialized_call_args_fn=_normalize_materialized_call_args,
+            all_arg_exprs_are_non_segment_registers_fn=_all_arg_exprs_are_non_segment_registers,
+            set_materialized_call_args_fn=_set_materialized_call_args,
+            refresh_summary_arg_shape_fn=_refresh_summary_arg_shape,
+            call_args_need_rematerialization_fn=_call_args_need_rematerialization_8616,
+        )
         if _restore_protected_call_args_8616(root):
             changed = True
+        if changed:
+            _sync_cfunc_root_statements_8616(cfunc, root, getattr(root, "statements", None))
     codegen._inertia_materialized_callsite_metadata_ids = materialized_callsite_metadata_ids
     if prune_materialized_callsite_segment_metadata_8616(project, codegen):
         changed = True
+    return changed
+
+
+def replay_callsite_stack_arguments_after_regeneration_8616(project, codegen) -> bool:
+    """Replay source/summary-backed call argument materialization after text regeneration.
+
+    angr's ``regenerate_text()`` may rebuild the structured C tree from older
+    codegen state. Callsite materialization is evidence-backed by persisted
+    callsite summaries, so replaying it immediately after regeneration keeps the
+    emitted tree aligned with the validated semantic tree without using rendered
+    C text as input.
+    """
+
+    if getattr(codegen, "_inertia_callsite_arg_regen_replay_active_8616", False):
+        return False
+    project = project or getattr(codegen, "project", None)
+    arch_name = getattr(getattr(project, "arch", None), "name", None)
+    if arch_name != "86_16":
+        return False
+    summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
+    if not isinstance(summary_map, dict) or not summary_map:
+        return False
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    codegen._inertia_callsite_arg_regen_replay_active_8616 = True
+    try:
+        changed = bool(_materialize_callsite_stack_arguments_8616(project, codegen))
+    finally:
+        codegen._inertia_callsite_arg_regen_replay_active_8616 = False
+
+    count_attr = "_inertia_callsite_arg_regen_replay_count_8616"
+    changed_attr = "_inertia_callsite_arg_regen_replay_changed_count_8616"
+    setattr(codegen, count_attr, int(getattr(codegen, count_attr, 0) or 0) + 1)
+    if changed:
+        setattr(codegen, changed_attr, int(getattr(codegen, changed_attr, 0) or 0) + 1)
+        codegen._inertia_codegen_decl_refresh_required_8616 = True
     return changed

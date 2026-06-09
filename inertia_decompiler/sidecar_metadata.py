@@ -29,6 +29,22 @@ from inertia_decompiler.sidecar_parsers import (
 from inertia_decompiler.telemetry import trace_function
 
 
+def _find_sibling_sidecar(binary: Path, suffix: str) -> Path | None:
+    direct = binary.with_suffix(suffix)
+    if direct.exists():
+        return direct
+    try:
+        siblings = sorted(binary.parent.iterdir(), key=lambda path: path.name.lower())
+    except OSError:
+        return None
+    wanted_stem = binary.stem.lower()
+    wanted_suffix = suffix.lower()
+    for sibling in siblings:
+        if sibling.stem.lower() == wanted_stem and sibling.suffix.lower() == wanted_suffix:
+            return sibling
+    return None
+
+
 def _signature_matched_code_addrs(metadata: LSTMetadata | None) -> frozenset[int]:
     if metadata is None:
         return frozenset()
@@ -39,13 +55,16 @@ def _signature_matched_code_addrs(metadata: LSTMetadata | None) -> frozenset[int
 def _visible_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
     if metadata is None:
         return {}
+    code_labels = getattr(metadata, "code_labels", None)
+    if not isinstance(code_labels, dict):
+        return {}
     skipped = _signature_matched_code_addrs(metadata)
     if not skipped:
-        return dict(metadata.code_labels)
+        return dict(code_labels)
     cod_proc_addrs = set((getattr(metadata, "cod_proc_kinds", None) or {}).keys())
     return {
         addr: name
-        for addr, name in metadata.code_labels.items()
+        for addr, name in code_labels.items()
         if addr not in skipped or addr in cod_proc_addrs
     }
 
@@ -57,12 +76,15 @@ def _recovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
     signature_addrs = _signature_matched_code_addrs(metadata)
     if not signature_addrs:
         return labels
+    code_labels = getattr(metadata, "code_labels", None)
+    if not isinstance(code_labels, dict):
+        return labels
     for addr in sorted(signature_addrs):
         if addr in labels:
             continue
         if _lst_code_region(metadata, addr) is None:
             continue
-        name = metadata.code_labels.get(addr)
+        name = code_labels.get(addr)
         if name is not None:
             labels[addr] = name
     return labels
@@ -75,9 +97,9 @@ def _load_ida_map_sidecar(
     data_labels: dict[int, str],
     source_formats: list[str],
 ) -> dict[str, int]:
-    map_path = binary.with_suffix(".map")
+    map_path = _find_sibling_sidecar(binary, ".map")
     segment_offsets: dict[str, int] = {}
-    if not map_path.exists():
+    if map_path is None:
         return segment_offsets
     try:
         ida_code, ida_data, segment_offsets = _parse_ida_map_metadata(map_path, load_base_linear=load_base_linear)
@@ -101,8 +123,8 @@ def _load_lst_sidecar(
     source_formats: list[str],
 ) -> None:
     def _impl():
-        lst_path = binary.with_suffix(".lst")
-        if not lst_path.exists():
+        lst_path = _find_sibling_sidecar(binary, ".lst")
+        if lst_path is None:
             return
         try:
             metadata = extract_lst_metadata(lst_path)
@@ -144,8 +166,8 @@ def _load_idc_inc_sidecars(
     struct_names: list[str],
     source_formats: list[str],
 ) -> None:
-    idc_path = binary.with_suffix(".idc")
-    if idc_path.exists():
+    idc_path = _find_sibling_sidecar(binary, ".idc")
+    if idc_path is not None:
         try:
             idc_code, idc_data = _parse_idc_metadata(idc_path)
             if idc_code or idc_data:
@@ -154,8 +176,8 @@ def _load_idc_inc_sidecars(
                 source_formats.append("ida_idc")
         except Exception as exc:
             print(f"[dbg] failed to parse IDC file {idc_path}: {exc}")
-    inc_path = binary.with_suffix(".inc")
-    if inc_path.exists():
+    inc_path = _find_sibling_sidecar(binary, ".inc")
+    if inc_path is not None:
         try:
             struct_names.extend(_parse_inc_struct_names(inc_path))
             source_formats.append("ida_inc")
@@ -240,8 +262,8 @@ def _load_cod_mzre_flair_sidecars(
     def _impl():
         cod_path: Path | None = None
         signature_code_addrs: set[int] = set()
-        sibling_cod_path = binary.with_suffix(".COD")
-        if sibling_cod_path.exists():
+        sibling_cod_path = _find_sibling_sidecar(binary, ".cod")
+        if sibling_cod_path is not None:
             try:
                 cod_anchor_labels = dict(code_labels)
                 cod_anchor_labels.update(codeview_code)
@@ -253,11 +275,48 @@ def _load_cod_mzre_flair_sidecars(
                 )
                 cod_listing = _reconcile_cod_listing_with_codeview(cod_listing, codeview_code, codeview_ranges)
                 if cod_listing.code_labels or cod_listing.code_ranges or cod_listing.proc_kinds:
+                    existing_by_name: dict[str, list[int]] = {}
+                    for existing_addr, existing_name in code_labels.items():
+                        existing_by_name.setdefault(existing_name.lstrip("_"), []).append(existing_addr)
                     for addr, name in cod_listing.code_labels.items():
+                        normalized = name.lstrip("_")
+                        span = cod_listing.code_ranges.get(addr)
+                        matching_entries = [
+                            existing_addr
+                            for existing_addr in existing_by_name.get(normalized, ())
+                            if existing_addr <= addr
+                        ]
+                        precise_entries = [
+                            existing_addr
+                            for existing_addr in matching_entries
+                            if existing_addr in code_ranges or existing_addr in codeview_code
+                        ]
+                        if precise_entries and span is not None:
+                            public_start = max(precise_entries)
+                            existing_span = code_ranges.get(public_start)
+                            public_span = (public_start, span[1])
+                            if existing_span is None or existing_span[1] < public_span[1]:
+                                code_ranges[public_start] = public_span
+                            proc_kind = cod_listing.proc_kinds.get(addr)
+                            if proc_kind is not None:
+                                cod_proc_kinds.setdefault(public_start, proc_kind)
+                            continue
+                        if matching_entries:
+                            public_start = max(matching_entries)
+                            if span is not None and public_start not in code_ranges:
+                                public_span = (public_start, int(span[1]))
+                                if public_span[1] > public_span[0]:
+                                    code_ranges.setdefault(public_start, public_span)
+                            proc_kind = cod_listing.proc_kinds.get(addr)
+                            if proc_kind is not None:
+                                cod_proc_kinds.setdefault(public_start, proc_kind)
+                            continue
                         code_labels.setdefault(addr, name)
-                    for addr, span in cod_listing.code_ranges.items():
-                        code_ranges.setdefault(addr, span)
-                    cod_proc_kinds.update(cod_listing.proc_kinds)
+                        if span is not None:
+                            code_ranges.setdefault(addr, span)
+                        proc_kind = cod_listing.proc_kinds.get(addr)
+                        if proc_kind is not None:
+                            cod_proc_kinds.setdefault(addr, proc_kind)
                     cod_path = sibling_cod_path
                     source_formats.append("cod_listing")
             except Exception as exc:
@@ -421,16 +480,20 @@ def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | N
 def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: int | None) -> str | None:
     if metadata is None or addr is None:
         return None
-    lookup_addr = addr if metadata.absolute_addrs else addr - code_base if code_base is not None else None
+    absolute_addrs = getattr(metadata, "absolute_addrs", True)
+    lookup_addr = addr if absolute_addrs else addr - code_base if code_base is not None else None
     if lookup_addr is None:
         return None
-    label = metadata.code_labels.get(lookup_addr)
+    code_labels = getattr(metadata, "code_labels", None)
+    if not isinstance(code_labels, dict):
+        return None
+    label = code_labels.get(lookup_addr)
     if label is not None:
         return label
     region = _lst_code_region(metadata, lookup_addr)
     if region is None:
         return None
-    return metadata.code_labels.get(region[0])
+    return code_labels.get(region[0])
 
 
 def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[int, int] | None:
@@ -441,9 +504,13 @@ def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[in
         span = code_ranges.get(addr)
         if span is not None:
             return span
-        for start, span in code_ranges.items():
-            if start <= addr < span[1]:
-                return span
+        containing_spans = [
+            (start, span)
+            for start, span in code_ranges.items()
+            if start <= addr < span[1]
+        ]
+        if containing_spans:
+            return max(containing_spans, key=lambda item: item[0])[1]
         # Fallback: derive a bounded span from ordered code labels when explicit
         # code_ranges are unavailable/incomplete for this address.
         code_labels = getattr(metadata, "code_labels", None) or {}
@@ -451,6 +518,8 @@ def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[in
             return None
         ordered = sorted(int(k) for k in code_labels.keys() if isinstance(k, int))
         if not ordered:
+            return None
+        if not (ordered[0] <= addr <= ordered[-1]):
             return None
         start = None
         end = None

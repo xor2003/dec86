@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _PostprocessValidationDeltaKind8616,
     _classify_postprocess_validation_delta_8616,
+    _is_callsite_stack_argument_materialization_delta_8616,
     _is_jcc_call_return_condition_rebinding_delta_8616,
+    _is_jcc_condition_materialization_validation_delta_8616,
     _restore_codegen_inertia_metadata_8616,
     _snapshot_codegen_inertia_metadata_8616,
     _snapshot_codegen_cfunc,
@@ -45,16 +49,83 @@ class _CtypesLikeMetadata:
         raise ValueError("ctypes objects containing pointers cannot be pickled")
 
 
+class _DeepcopyPoisonMetadata:
+    def __deepcopy__(self, memo):
+        raise AssertionError("metadata snapshot should not deep-copy arbitrary objects")
+
+
 class _StatementNodeWithCtypesMetadata:
     def __init__(self, metadata):
         self.metadata = metadata
         self.values = [1]
 
 
-def test_postprocess_snapshot_requires_independent_statement_copy():
-    snapshot = _snapshot_codegen_cfunc(_FakeCodegen(_FakeCFunc(_UncopyableStatements())))
+class _FakeFunctions:
+    def __init__(self, names_by_addr):
+        self._names_by_addr = dict(names_by_addr)
 
-    assert snapshot is None
+    def function(self, addr, create=False):
+        del create
+        name = self._names_by_addr.get(addr)
+        return SimpleNamespace(name=name) if name is not None else None
+
+
+def _fake_project_with_functions(names_by_addr):
+    return SimpleNamespace(kb=SimpleNamespace(functions=_FakeFunctions(names_by_addr)))
+
+
+def _jcc_condition_materialization_validation(*, helper="addr:0x11222", global_token="global:0xbab"):
+    return {
+        "before": {
+            "helper_calls": (),
+            "global_writes": ("global:0xbaa",),
+        },
+        "after": {
+            "helper_calls": (helper,),
+            "global_writes": ("global:0xbaa", global_token),
+        },
+        "delta": {
+            "helper_calls": {
+                "added": (helper,),
+                "removed": (),
+            },
+            "global_writes": {
+                "added": (global_token,),
+                "removed": (),
+            },
+        },
+    }
+
+
+def _callsite_materialization_codegen():
+    return SimpleNamespace(_inertia_callsite_materialization_stats=SimpleNamespace(call_arg_materialized_count=2))
+
+
+def _callsite_global_precision_validation(*, global_token="global:0xbab"):
+    return {
+        "before": {
+            "global_writes": ("global:0xbaa",),
+        },
+        "after": {
+            "global_writes": ("global:0xbaa", global_token),
+        },
+        "delta": {
+            "global_writes": {
+                "added": (global_token,),
+                "removed": (),
+            },
+        },
+    }
+
+
+def test_postprocess_snapshot_uses_manual_fallback_for_uncopyable_statement_container():
+    cfunc = _FakeCFunc(_UncopyableStatements())
+
+    snapshot = _snapshot_codegen_cfunc(_FakeCodegen(cfunc))
+
+    assert snapshot is not None
+    assert snapshot.statements is not cfunc.statements
+    assert snapshot._inertia_validation_snapshot_fallback == "manual"
 
 
 def test_postprocess_snapshot_does_not_share_statement_tree():
@@ -164,6 +235,77 @@ def test_jcc_call_return_condition_delta_refuses_without_consumed_rebinding_evid
     assert _is_jcc_call_return_condition_rebinding_delta_8616(codegen, validation) is False
 
 
+def test_jcc_condition_materialization_delta_accepts_stack_probe_and_high_byte_precision_churn():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_semantic_condition_materialized_count = 2
+    project = _fake_project_with_functions({0x11222: "aNchkstk"})
+
+    assert (
+        _is_jcc_condition_materialization_validation_delta_8616(
+            project,
+            codegen,
+            _jcc_condition_materialization_validation(),
+        )
+        is True
+    )
+
+
+def test_jcc_condition_materialization_delta_refuses_without_consumed_condition_evidence():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    project = _fake_project_with_functions({0x11222: "aNchkstk"})
+
+    assert (
+        _is_jcc_condition_materialization_validation_delta_8616(
+            project,
+            codegen,
+            _jcc_condition_materialization_validation(),
+        )
+        is False
+    )
+
+
+def test_jcc_condition_materialization_delta_refuses_non_stack_probe_helper():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_semantic_condition_materialized_count = 1
+    project = _fake_project_with_functions({0x11222: "printf"})
+
+    assert (
+        _is_jcc_condition_materialization_validation_delta_8616(
+            project,
+            codegen,
+            _jcc_condition_materialization_validation(),
+        )
+        is False
+    )
+
+
+def test_jcc_condition_materialization_delta_refuses_unrelated_global_write():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_semantic_condition_materialized_count = 1
+    project = _fake_project_with_functions({0x11222: "aNchkstk"})
+
+    assert (
+        _is_jcc_condition_materialization_validation_delta_8616(
+            project,
+            codegen,
+            _jcc_condition_materialization_validation(global_token="global:0xbc0"),
+        )
+        is False
+    )
+
+
+def test_callsite_materialization_delta_accepts_adjacent_global_precision_churn():
+    validation = _callsite_global_precision_validation(global_token="global:0xbab")
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(_callsite_materialization_codegen(), validation) is True
+
+
+def test_callsite_materialization_delta_refuses_unrelated_global_write():
+    validation = _callsite_global_precision_validation(global_token="global:0xbc0")
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(_callsite_materialization_codegen(), validation) is False
+
+
 def test_postprocess_metadata_restore_removes_rejected_return_chain_evidence():
     codegen = _FakeCodegen(_FakeCFunc([]))
     codegen._inertia_return_chain_flattened_8616 = False
@@ -197,3 +339,18 @@ def test_postprocess_metadata_restore_removes_rejected_return_chain_evidence():
         )
         is _PostprocessValidationDeltaKind8616.BLOCKING
     )
+
+
+def test_postprocess_metadata_snapshot_rolls_back_top_level_containers_without_deepcopying_objects():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    marker = _DeepcopyPoisonMetadata()
+    codegen._inertia_example_metadata = {"items": [marker], "count": 1}
+
+    snapshot = _snapshot_codegen_inertia_metadata_8616(codegen)
+    codegen._inertia_example_metadata["items"].append("mutated")
+    codegen._inertia_example_metadata["count"] = 2
+
+    _restore_codegen_inertia_metadata_8616(codegen, snapshot)
+
+    assert codegen._inertia_example_metadata["items"] == [marker]
+    assert codegen._inertia_example_metadata["count"] == 1

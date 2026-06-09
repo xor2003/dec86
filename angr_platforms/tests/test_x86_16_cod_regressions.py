@@ -8,6 +8,8 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
 
+from angr import ailment
+from angr.ailment.expression import BasePointerOffset
 import decompile
 import pytest
 from angr.analyses.decompiler.return_maker import ReturnMaker
@@ -15,13 +17,20 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.calling_conventions import SimRegArg
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from inertia_decompiler import cli_c_ast_rewrites as _cli_c_ast_rewrites
 from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
 
+from angr_platforms.X86_16 import decompiler_postprocess_stage as _postprocess_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.cod_extract import extract_cod_proc_metadata
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
 from angr_platforms.X86_16.decompiler_postprocess_utils import _replace_c_children_8616
-from angr_platforms.X86_16.decompiler_return_compat import apply_x86_16_decompiler_return_compatibility
+from angr_platforms.X86_16.decompiler_postprocess_stage import _materialize_missing_terminal_ax_return_8616
+from angr_platforms.X86_16.decompiler_return_compat import (
+    _infer_x86_16_c_return_value_from_ax_8616,
+    _resolve_codegen_prototype_8616,
+    apply_x86_16_decompiler_return_compatibility,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -1069,6 +1078,484 @@ def test_decompiler_return_compat_refuses_stack_base_return_register():
         assert calls, "expected fallback path"
     finally:
         ReturnMaker._handle_Return = original_handle_return
+
+
+def test_decompiler_return_compat_infers_ax_stack_load_without_prototype():
+    original_handle_return = ReturnMaker._handle_Return
+
+    def fake_handle_return(_self, _stmt_idx, _stmt, _block):
+        return "fallback"
+
+    class _FakeGraph:
+        def __init__(self, block):
+            self._block = block
+
+        def nodes(self):
+            return [self._block]
+
+        def predecessors(self, _node):
+            return []
+
+    try:
+        ReturnMaker._handle_Return = fake_handle_return
+        apply_x86_16_decompiler_return_compatibility()
+
+        arch = Arch86_16()
+        bp = ailment.Expr.Register(1, None, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
+        two = ailment.Expr.Const(2, None, 2, 16, ins_addr=0x100B4)
+        bp_minus_two = ailment.Expr.BinaryOp(3, "Sub", [bp, two], bits=16, ins_addr=0x100B4)
+        stack_load = ailment.Expr.Load(4, bp_minus_two, 2, arch.memory_endness, ins_addr=0x100B4)
+        ax = ailment.Expr.Register(5, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
+        assignment = ailment.Stmt.Assignment(6, ax, stack_load, ins_addr=0x100B4)
+        ret_stmt = ailment.Stmt.Return(7, [], ins_addr=0x100BF)
+        block = SimpleNamespace(statements=[assignment, ret_stmt])
+        function = SimpleNamespace(addr=0x1000, prototype=None, calling_convention=None)
+        fake_self = SimpleNamespace(
+            function=function,
+            graph=_FakeGraph(block),
+            arch=arch,
+            _next_atom=lambda: 99,
+            _new_block=None,
+        )
+
+        result = ReturnMaker._handle_Return(fake_self, 1, ret_stmt, block)
+
+        assert isinstance(result, ailment.Stmt.Return)
+        assert len(result.ret_exprs) == 1
+        retval = result.ret_exprs[0]
+        assert isinstance(retval, ailment.Expr.Load)
+        assert isinstance(retval.addr, BasePointerOffset)
+        assert retval.addr.offset == -2
+        assert getattr(function, "_inertia_return_compat_ax_materialized_count", 0) == 1
+    finally:
+        ReturnMaker._handle_Return = original_handle_return
+
+
+def test_decompiler_return_compat_refuses_ax_inference_for_source_proven_void():
+    original_handle_return = ReturnMaker._handle_Return
+    calls: list[tuple[int, object, object]] = []
+
+    def fake_handle_return(_self, stmt_idx, stmt, block):
+        calls.append((stmt_idx, stmt, block))
+        return "fallback"
+
+    class _FakeGraph:
+        def __init__(self, block):
+            self._block = block
+
+        def nodes(self):
+            return [self._block]
+
+        def predecessors(self, _node):
+            return []
+
+    try:
+        ReturnMaker._handle_Return = fake_handle_return
+        apply_x86_16_decompiler_return_compatibility()
+
+        arch = Arch86_16()
+        value = ailment.Expr.Const(1, None, 75, 16, ins_addr=0x10517)
+        ax = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
+        assignment = ailment.Stmt.Assignment(3, ax, value, ins_addr=0x10517)
+        ret_stmt = ailment.Stmt.Return(4, [], ins_addr=0x10553)
+        block = SimpleNamespace(statements=[assignment, ret_stmt])
+        function = SimpleNamespace(
+            addr=0x1000,
+            prototype=SimpleNamespace(returnty=SimTypeBottom(label="void")),
+            calling_convention=None,
+        )
+        fake_self = SimpleNamespace(
+            function=function,
+            graph=_FakeGraph(block),
+            arch=arch,
+            _next_atom=lambda: 99,
+            _new_block=None,
+        )
+
+        result = ReturnMaker._handle_Return(fake_self, 1, ret_stmt, block)
+
+        assert result == "fallback"
+        assert calls == [(1, ret_stmt, block)]
+        assert getattr(function, "_inertia_return_compat_ax_materialized_count", 0) == 0
+        assert getattr(function, "_inertia_return_compat_void_refused_count", 0) == 1
+    finally:
+        ReturnMaker._handle_Return = original_handle_return
+
+
+def test_decompiler_return_compat_resolves_codegen_prototype_from_kb():
+    prototype = SimpleNamespace(returnty=SimTypeBottom(label="void"))
+    kb_func = SimpleNamespace(prototype=prototype)
+
+    class _Functions:
+        def function(self, *, addr, create=False):
+            assert create is False
+            return kb_func if addr == 0x1000 else None
+
+    cfunc = SimpleNamespace(addr=0x1000, functy=SimpleNamespace(returnty=None), prototype=None)
+    project = SimpleNamespace(kb=SimpleNamespace(functions=_Functions()))
+    codegen_func = SimpleNamespace(prototype=SimpleNamespace(returnty=None), project=project)
+    codegen = SimpleNamespace(
+        _func=codegen_func,
+        cfunc=cfunc,
+        project=None,
+    )
+
+    resolved_func, resolved_prototype = _resolve_codegen_prototype_8616(codegen)
+
+    assert resolved_func is codegen_func
+    assert resolved_prototype is prototype
+    assert codegen_func.prototype is prototype
+    assert cfunc.prototype is prototype
+    assert cfunc.functy is prototype
+    assert kb_func._inertia_return_compat_codegen_prototype_resolved_count == 1
+
+
+def test_missing_terminal_ax_return_refuses_source_proven_void_over_incomplete_codegen_proto():
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1)
+    cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements([], codegen=c_codegen),
+        functy=SimpleNamespace(returnty=None),
+        prototype=None,
+    )
+    function = SimpleNamespace(prototype=SimpleNamespace(returnty=SimTypeBottom(label="void")))
+    project = SimpleNamespace(kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function)))
+    codegen = SimpleNamespace(cfunc=cfunc, _inertia_current_function_8616=function)
+
+    changed = _materialize_missing_terminal_ax_return_8616(project, codegen)
+
+    assert changed is False
+    assert getattr(codegen, "_inertia_missing_terminal_ax_return_refused_void_8616", 0) == 1
+    assert cfunc.statements.statements == []
+
+
+def test_ast_void_return_prune_preserves_call_side_effects_and_drops_values():
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    call = structured_c.CFunctionCall("Sleep", None, [], codegen=c_codegen)
+    root = structured_c.CStatements(
+        [
+            structured_c.CReturn(call, codegen=c_codegen),
+            structured_c.CReturn(
+                structured_c.CConstant(75, SimTypeShort(False), codegen=c_codegen),
+                codegen=c_codegen,
+            ),
+        ],
+        codegen=c_codegen,
+    )
+    codegen = SimpleNamespace(
+        _func=SimpleNamespace(prototype=SimpleNamespace(returnty=SimTypeBottom(label="void"))),
+        cfunc=SimpleNamespace(
+            functy=SimpleNamespace(returnty=None),
+            prototype=None,
+            statements=root,
+        )
+    )
+
+    changed = _cli_c_ast_rewrites._prune_void_function_return_values(codegen)
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert isinstance(statements[0], structured_c.CExpressionStatement)
+    assert statements[0].expr is call
+    assert isinstance(statements[1], structured_c.CReturn)
+    assert statements[1].retval is None
+
+
+def test_void_empty_return_guard_prune_requires_surplus_over_real_jcc_budget(monkeypatch):
+    c_codegen = SimpleNamespace(
+        next_idx=lambda _name: 1,
+        project=SimpleNamespace(arch=Arch86_16()),
+        cstyle_null_cmp=False,
+    )
+    real_cond = structured_c.CVariable(
+        SimRegisterVariable(0x10, 2, name="real_cond"),
+        variable_type=SimTypeShort(False),
+        codegen=c_codegen,
+    )
+    artifact_cond = structured_c.CBinaryOp(
+        "Shr",
+        structured_c.CVariable(
+            SimRegisterVariable(0x12, 2, name="mul_tmp"),
+            variable_type=SimTypeShort(False),
+            codegen=c_codegen,
+        ),
+        structured_c.CConstant(15, SimTypeShort(False), codegen=c_codegen),
+        codegen=c_codegen,
+    )
+    artifact_cond.tags = {"ins_addr": 0x2000, "vex_block_addr": 0x1FF0}
+    real_if = structured_c.CIfElse(
+        [
+            (
+                real_cond,
+                structured_c.CStatements(
+                    [
+                        structured_c.CFunctionCall("Sleep", None, [], codegen=c_codegen),
+                        structured_c.CReturn(None, codegen=c_codegen),
+                    ],
+                    codegen=c_codegen,
+                ),
+            )
+        ],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=c_codegen,
+    )
+    artifact_if = structured_c.CIfElse(
+        [
+            (
+                artifact_cond,
+                structured_c.CStatements(
+                    [structured_c.CReturn(None, codegen=c_codegen)],
+                    codegen=c_codegen,
+                ),
+            )
+        ],
+        else_node=structured_c.CStatements([], codegen=c_codegen),
+        cstyle_ifs=True,
+        codegen=c_codegen,
+    )
+    tail_call = structured_c.CFunctionCall("Beep", None, [], codegen=c_codegen)
+    root = structured_c.CStatements([real_if, artifact_if, tail_call], codegen=c_codegen)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            functy=SimpleNamespace(returnty=SimTypeShort(False)),
+            prototype=None,
+            statements=root,
+        ),
+        _inertia_current_function_8616=SimpleNamespace(prototype=SimpleNamespace(returnty=SimTypeBottom(label="void"))),
+    )
+    monkeypatch.setattr(_postprocess_stage, "_real_conditional_branch_count_for_codegen_8616", lambda *_args: 1)
+    project = SimpleNamespace(
+        factory=SimpleNamespace(
+            block=lambda *_args, **_kwargs: SimpleNamespace(
+                capstone=SimpleNamespace(insns=(SimpleNamespace(mnemonic="imul"),))
+            )
+        )
+    )
+
+    changed = _postprocess_stage._prune_surplus_void_empty_return_guards_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [real_if, tail_call]
+    assert getattr(codegen, "_inertia_void_empty_return_guard_candidates_8616", 0) == 1
+    assert getattr(codegen, "_inertia_void_empty_return_guard_pruned_8616", 0) == 1
+    assert (
+        getattr(codegen, "_inertia_void_empty_return_guard_decision_8616", None)
+        == _postprocess_stage._VoidEmptyReturnGuardDecision8616.PRUNE.value
+    )
+
+
+def test_void_empty_return_guard_void_evidence_from_source_annotation():
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            functy=SimpleNamespace(returnty=SimTypeShort(False)),
+            prototype=None,
+            statements=structured_c.CStatements([], codegen=c_codegen),
+        ),
+        _inertia_current_function_8616=SimpleNamespace(
+            info={"x86_16_annotations": {"source_lines": ("void DrawTime(int iCurrentRow)",)}}
+        ),
+    )
+
+    assert _postprocess_stage._codegen_has_explicit_void_return_8616(SimpleNamespace(), codegen) is True
+
+
+def test_void_empty_return_guard_prunes_surplus_non_jcc_noop_if(monkeypatch):
+    c_codegen = SimpleNamespace(
+        next_idx=lambda _name: 1,
+        project=SimpleNamespace(arch=Arch86_16()),
+        cstyle_null_cmp=False,
+    )
+    real_cond = structured_c.CVariable(
+        SimRegisterVariable(0x10, 2, name="real_cond"),
+        variable_type=SimTypeShort(False),
+        codegen=c_codegen,
+    )
+    artifact_cond = structured_c.CVariable(
+        SimRegisterVariable(0x12, 2, name="mul_tmp"),
+        variable_type=SimTypeShort(False),
+        codegen=c_codegen,
+    )
+    artifact_cond.tags = {"ins_addr": 0x2000, "vex_block_addr": 0x1FF0}
+    real_if = structured_c.CIfElse(
+        [
+            (
+                real_cond,
+                structured_c.CStatements([structured_c.CFunctionCall("Sleep", None, [], codegen=c_codegen)], codegen=c_codegen),
+            )
+        ],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=c_codegen,
+    )
+    artifact_if = structured_c.CIfElse(
+        [
+            (
+                artifact_cond,
+                structured_c.CStatements(
+                    [
+                        structured_c.CStatements([], codegen=c_codegen),
+                        structured_c.CStatements([], codegen=c_codegen),
+                    ],
+                    codegen=c_codegen,
+                ),
+            )
+        ],
+        else_node=structured_c.CStatements([], codegen=c_codegen),
+        cstyle_ifs=True,
+        codegen=c_codegen,
+    )
+    tail_call = structured_c.CFunctionCall("Beep", None, [], codegen=c_codegen)
+    root = structured_c.CStatements([real_if, artifact_if, tail_call], codegen=c_codegen)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            functy=SimpleNamespace(returnty=SimTypeShort(False)),
+            prototype=None,
+            statements=root,
+        ),
+        _inertia_current_function_8616=SimpleNamespace(prototype=SimpleNamespace(returnty=SimTypeBottom(label="void"))),
+    )
+    monkeypatch.setattr(_postprocess_stage, "_real_conditional_branch_count_for_codegen_8616", lambda *_args: 1)
+    project = SimpleNamespace(
+        factory=SimpleNamespace(
+            block=lambda *_args, **_kwargs: SimpleNamespace(
+                capstone=SimpleNamespace(insns=(SimpleNamespace(mnemonic="imul"),))
+            )
+        )
+    )
+
+    changed = _postprocess_stage._prune_surplus_void_empty_return_guards_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [real_if, tail_call]
+    assert getattr(codegen, "_inertia_void_empty_return_guard_noop_pruned_8616", 0) == 1
+
+
+def test_empty_return_branch_refuses_ordered_value_for_non_jcc_condition_tag(monkeypatch):
+    c_codegen = SimpleNamespace(
+        next_idx=lambda _name: 1,
+        project=SimpleNamespace(arch=Arch86_16()),
+        cstyle_null_cmp=False,
+    )
+    real_cond = structured_c.CVariable(
+        SimRegisterVariable(0x10, 2, name="real_cond"),
+        variable_type=SimTypeShort(False),
+        codegen=c_codegen,
+    )
+    artifact_cond = structured_c.CVariable(
+        SimRegisterVariable(0x12, 2, name="mul_tmp"),
+        variable_type=SimTypeShort(False),
+        codegen=c_codegen,
+    )
+    artifact_cond.tags = {"ins_addr": 0x2000, "vex_block_addr": 0x1FF0}
+    real_if = structured_c.CIfElse(
+        [
+            (
+                real_cond,
+                structured_c.CStatements(
+                    [structured_c.CFunctionCall("Sleep", None, [], codegen=c_codegen)],
+                    codegen=c_codegen,
+                ),
+            )
+        ],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=c_codegen,
+    )
+    artifact_body = structured_c.CStatements([], codegen=c_codegen)
+    artifact_if = structured_c.CIfElse(
+        [(artifact_cond, artifact_body)],
+        else_node=structured_c.CStatements([], codegen=c_codegen),
+        cstyle_ifs=True,
+        codegen=c_codegen,
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            statements=structured_c.CStatements([real_if, artifact_if], codegen=c_codegen),
+        )
+    )
+    project = SimpleNamespace(
+        factory=SimpleNamespace(
+            block=lambda *_args, **_kwargs: SimpleNamespace(
+                capstone=SimpleNamespace(insns=(SimpleNamespace(address=0x2000, mnemonic="imul"),))
+            )
+        )
+    )
+    monkeypatch.setattr(_postprocess_stage, "_ordered_conditional_return_values_8616", lambda *_args: [75])
+
+    changed = _postprocess_stage._materialize_empty_if_return_branches_8616(project, codegen)
+
+    assert changed is False
+    assert artifact_body.statements == []
+    assert codegen._inertia_empty_return_branch_stats_8616["candidates"] == 1
+    assert codegen._inertia_empty_return_branch_stats_8616["materialized"] == 0
+
+
+def test_decompiler_return_compat_infers_c_return_value_from_terminal_ax_stack_load():
+    class _FakeGraph:
+        def __init__(self, block):
+            self._block = block
+
+        def nodes(self):
+            return [self._block]
+
+    arch = Arch86_16()
+    bp = ailment.Expr.Register(1, None, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
+    two = ailment.Expr.Const(2, None, 2, 16, ins_addr=0x100B4)
+    bp_minus_two = ailment.Expr.BinaryOp(3, "Sub", [bp, two], bits=16, ins_addr=0x100B4)
+    stack_load = ailment.Expr.Load(4, bp_minus_two, 2, arch.memory_endness, ins_addr=0x100B4)
+    ax = ailment.Expr.Register(5, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
+    assignment = ailment.Stmt.Assignment(6, ax, stack_load, ins_addr=0x100B4)
+    ret_stmt = ailment.Stmt.Return(7, [], ins_addr=0x100BF)
+    block = SimpleNamespace(statements=[assignment, ret_stmt])
+    function = SimpleNamespace(
+        addr=0x1000,
+        graph=_FakeGraph(block),
+        info={"x86_16_annotations": {"stack_vars": {-4: {"name": "mask"}}}},
+    )
+    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), _func=function, next_idx=lambda _name: 1)
+    mask_var = SimStackVariable(-4, 2, base="bp", name="mask", region=0x1000)
+    mask_cvar = structured_c.CVariable(mask_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(variables_in_use={mask_var: mask_cvar}, unified_local_vars={})
+
+    retval = _infer_x86_16_c_return_value_from_ax_8616(codegen)
+
+    assert retval is mask_cvar
+    assert getattr(function, "_inertia_return_compat_c_ast_materialized_count", 0) == 1
+
+
+def test_decompiler_return_compat_uses_latest_ail_insn_when_c_return_has_no_ail_return():
+    class _FakeGraph:
+        def __init__(self, block):
+            self._block = block
+
+        def nodes(self):
+            return [self._block]
+
+    arch = Arch86_16()
+    bp = ailment.Expr.Register(1, None, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
+    two = ailment.Expr.Const(2, None, 2, 16, ins_addr=0x100B4)
+    bp_minus_two = ailment.Expr.BinaryOp(3, "Sub", [bp, two], bits=16, ins_addr=0x100B4)
+    stack_load = ailment.Expr.Load(4, bp_minus_two, 2, arch.memory_endness, ins_addr=0x100B4)
+    ax = ailment.Expr.Register(5, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
+    assignment = ailment.Stmt.Assignment(6, ax, stack_load, ins_addr=0x100B4)
+    sp = ailment.Expr.Register(7, None, arch.registers["sp"][0], 16, reg_name="sp", ins_addr=0x100BF)
+    epilogue = ailment.Stmt.Assignment(8, sp, sp, ins_addr=0x100BF)
+    block = SimpleNamespace(statements=[assignment, epilogue])
+    function = SimpleNamespace(addr=0x1000, graph=None, info={})
+    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), _func=function, ail_graph=_FakeGraph(block), next_idx=lambda _name: 1)
+    mask_var = SimStackVariable(-4, 2, base="bp", name="mask", region=0x1000)
+    mask_cvar = structured_c.CVariable(mask_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(variables_in_use={mask_var: mask_cvar}, unified_local_vars={})
+
+    retval = _infer_x86_16_c_return_value_from_ax_8616(codegen)
+
+    assert retval is mask_cvar
 
 
 def test_duplicate_word_increment_shift_expr_collapses_to_word_increment():
@@ -2882,6 +3369,50 @@ def test_materialize_missing_stack_local_declarations_adds_live_stack_slots():
     assert local_var in codegen.cfunc.unified_local_vars
     assert codegen.cfunc.unified_local_vars[local_var] == {(local_cvar, local_cvar.variable_type)}
     assert arg_var not in codegen.cfunc.unified_local_vars
+
+
+def test_materialize_missing_stack_local_declarations_syncs_live_stack_name_to_existing_declaration():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    decl_var = SimStackVariable(-4, 2, base="bp", name="local_4", region=0x1000)
+    live_var = SimStackVariable(-4, 2, base="bp", name="goal", region=0x1000)
+    decl_cvar = structured_c.CVariable(decl_var, variable_type=SimTypeShort(False), codegen=codegen)
+    live_cvar = structured_c.CVariable(live_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        statements=structured_c.CStatements(
+            [
+                structured_c.CAssignment(
+                    live_cvar,
+                    structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                )
+            ],
+            codegen=codegen,
+        ),
+        unified_local_vars={decl_var: {(decl_cvar, decl_cvar.variable_type)}},
+        variables_in_use={
+            decl_var: decl_cvar,
+            live_var: live_cvar,
+        },
+        sort_local_vars=lambda: None,
+    )
+
+    changed = decompile._materialize_missing_stack_local_declarations(codegen)
+
+    assert changed is True
+    assert decl_var.name == "goal"
+    assert getattr(decl_cvar, "name", None) == "goal"
+    assert codegen._inertia_stack_declaration_name_synced_count_8616 == 1
 
 
 def test_materialize_missing_stack_local_declarations_skips_arg_slot_aliases():

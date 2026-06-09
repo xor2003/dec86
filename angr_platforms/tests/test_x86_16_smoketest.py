@@ -331,6 +331,32 @@ def test_esc_memory_form_lifts_as_a_harmless_fpu_escape():
     assert "LDle:I8" in vex_text
 
 
+def test_msvc_emulated_x87_interrupt_consumes_modrm_operand():
+    # MS C can encode `fwait; fld dword ptr [bp+8]` as `int 35h` plus the
+    # original D9 ModR/M payload. The frontend must consume the operand bytes
+    # as one non-control-flow instruction, not decode them as integer opcodes.
+    project = _project_from_bytes(bytes.fromhex("cd354608c3"))
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Ret"
+    assert block.vex.size == 5
+    assert "Ijk_Call" not in vex_text
+    assert "LDle:I8" in vex_text
+
+
+def test_msvc_emulated_x87_wait_is_not_an_interrupt_call():
+    project = _project_from_bytes(bytes.fromhex("cd3dc3"))
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Ret"
+    assert block.vex.size == 3
+    assert "Ijk_Call" not in vex_text
+
+
 def test_rep_movsb_decompiles_without_double_negation():
     project = _project_from_bytes(bytes.fromhex("b90200f3a4c3"))  # mov cx,2; rep movsb; ret
 

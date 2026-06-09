@@ -73,7 +73,8 @@ def _segment_reg_name(node, project, *, project_rewrite_cache):
     if key in cache:
         return cache[key]
 
-    result = project.arch.register_names.get(_register_offset_for_node_8616(node))
+    reg_offset = _register_offset_for_node_8616(node)
+    result = project.arch.register_names.get(reg_offset) if isinstance(reg_offset, int) else None
     cache[key] = result
     return result
 
@@ -87,7 +88,10 @@ def _register_offset_for_node_8616(node) -> int | None:
     if type(node).__name__ == "CDirtyExpression":
         dirty = getattr(node, "dirty", None)
         for attr in ("reg_offset", "reg"):
-            reg = getattr(dirty, attr, None)
+            try:
+                reg = getattr(dirty, attr, None)
+            except (TypeError, ValueError):
+                continue
             if isinstance(reg, int):
                 return int(reg)
     return None

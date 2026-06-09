@@ -137,6 +137,10 @@ def test_layer_headers_present_on_migrated_modules() -> None:
 def test_widening_entrypoint_runs_subpasses_in_fixed_order() -> None:
     calls: list[str] = []
 
+    def _widths(_project, _codegen) -> bool:
+        calls.append("widths")
+        return True
+
     def _direct(_project, _codegen) -> bool:
         calls.append("direct")
         return False
@@ -150,6 +154,7 @@ def test_widening_entrypoint_runs_subpasses_in_fixed_order() -> None:
         object(),
         coalesce_direct_ss_local_word_statements=_direct,
         coalesce_segmented_word_store_statements=_segmented,
+        promote_stack_slots_from_instruction_widths=_widths,
     )
     assert changed is True
-    assert calls == ["direct", "segmented"]
+    assert calls == ["widths", "direct", "segmented"]

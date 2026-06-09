@@ -3,7 +3,9 @@ from __future__ import annotations
 import contextlib
 import re
 
-from angr.sim_type import SimTypeFunction
+from collections.abc import MutableMapping
+
+from angr.sim_type import SimTypeFunction, SimTypePointer
 from angr.utils.library import convert_cproto_to_py
 
 from .analysis_helpers import preferred_known_helper_signature_decl, seed_calling_conventions
@@ -19,17 +21,100 @@ _PROTO_EMIT_TYPEDEFS_8616 = (
     "typedef unsigned long time_t;",
 )
 
+_C_TYPE_KEYWORDS_8616 = {
+    "char",
+    "const",
+    "double",
+    "enum",
+    "extern",
+    "float",
+    "int",
+    "long",
+    "register",
+    "short",
+    "signed",
+    "static",
+    "struct",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+}
+
+
+def _opaque_typedef_headers_for_c_decl_8616(c_decl: str) -> tuple[str, ...]:
+    match = re.match(
+        r"^\s*(?P<ret>.*?)\b(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*;?\s*$",
+        c_decl,
+    )
+    if match is None:
+        return ()
+    function_name = match.group("name")
+    candidate_type_names: set[str] = set()
+    chunks = [match.group("ret")]
+    chunks.extend(part.strip() for part in match.group("args").split(",") if part.strip() and part.strip() != "void")
+    for chunk_index, chunk in enumerate(chunks):
+        cleaned = re.sub(r"\[[^\]]*\]", " ", chunk.replace("*", " "))
+        tokens = re.findall(r"[A-Za-z_]\w*", cleaned)
+        if not tokens:
+            continue
+        if chunk_index > 0 and len(tokens) > 1:
+            tokens = tokens[:-1]
+        for index, token in enumerate(tokens):
+            if token == function_name or token in _C_TYPE_KEYWORDS_8616:
+                continue
+            if index > 0 and tokens[index - 1] in {"struct", "union", "enum"}:
+                continue
+            candidate_type_names.add(token)
+    return tuple(f"typedef unsigned short {name};" for name in sorted(candidate_type_names))
+
+
+def _converted_c_prototype_or_none_8616(source: str):
+    converted = convert_cproto_to_py(source)
+    if len(converted) >= 2 and converted[1] is not None:
+        return converted
+    return None
+
+
+def _c_decl_requires_opaque_typedefs_8616(c_decl: str) -> bool:
+    normalized_decl = _normalize_c_decl_text(c_decl)
+    try:
+        if _converted_c_prototype_or_none_8616(normalized_decl) is not None:
+            return False
+    except Exception:
+        pass
+    for typedef_header in _PROTO_EMIT_TYPEDEFS_8616:
+        try:
+            if _converted_c_prototype_or_none_8616(f"{typedef_header}\n{normalized_decl}") is not None:
+                return False
+        except Exception:
+            pass
+    return bool(_opaque_typedef_headers_for_c_decl_8616(normalized_decl))
+
 
 def _parse_c_prototype_8616(c_decl: str) -> Tuple[str, SimTypeFunction, str]:
     normalized_decl = _normalize_c_decl_text(c_decl)
     try:
-        return convert_cproto_to_py(normalized_decl)
+        converted = _converted_c_prototype_or_none_8616(normalized_decl)
+        if converted is not None:
+            return converted
     except Exception:
         pass
 
     for typedef_header in _PROTO_EMIT_TYPEDEFS_8616:
         try:
-            return convert_cproto_to_py(f"{typedef_header}\n{normalized_decl}")
+            converted = _converted_c_prototype_or_none_8616(f"{typedef_header}\n{normalized_decl}")
+            if converted is not None:
+                return converted
+        except Exception:
+            pass
+
+    opaque_headers = _opaque_typedef_headers_for_c_decl_8616(normalized_decl)
+    if opaque_headers:
+        try:
+            converted = _converted_c_prototype_or_none_8616("\n".join((*opaque_headers, normalized_decl)))
+            if converted is not None:
+                return converted
         except Exception:
             pass
 
@@ -37,7 +122,11 @@ def _parse_c_prototype_8616(c_decl: str) -> Tuple[str, SimTypeFunction, str]:
 
 
 def _annotation_dict(function):
-    return function.info.setdefault(
+    info = getattr(function, "info", None)
+    if not isinstance(info, MutableMapping):
+        function.info = {}
+        info = function.info
+    return info.setdefault(
         ANNOTATION_KEY,
         {
             "stack_vars": {},
@@ -91,11 +180,13 @@ def _normalize_c_decl_text(c_decl: str) -> str:
     return normalized
 
 
-def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...]) -> str | None:
+def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...], function_name: str | None = None) -> str | None:
     decl_re = re.compile(
-        r"^(?P<prefix>(?:(?:extern|static|inline|const|volatile|unsigned|signed|struct|union|enum|long|short|int|char|_Bool|[A-Za-z_]\w*)|\s|\*)+)"
-        r"\s+[A-Za-z_][\w$?@]*\s*\([^()]*\)\s*(?:\{|;)?\s*$"
+        r"^(?P<prefix>(?:(?:extern|static|inline|const|volatile|unsigned|signed|struct|union|enum|long|short|int|char|_Bool|[A-Za-z_]\w*)|\s|\*)+?)"
+        r"\s*(?P<name>[A-Za-z_][\w$?@]*)\s*\([^()]*\)\s*(?:\{|;)?\s*$"
     )
+    target_name = function_name.lstrip("_") if isinstance(function_name, str) and function_name else None
+    first_decl: str | None = None
     for line in source_lines:
         stripped = line.strip()
         if not stripped or stripped == "}":
@@ -105,12 +196,18 @@ def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...]) -> str | N
         if "(" not in stripped or ")" not in stripped:
             continue
         header = stripped[:-1].rstrip() if stripped.endswith("{") else stripped
-        if decl_re.match(header) is None:
+        match = decl_re.match(header)
+        if match is None:
             continue
         if not header.endswith(";"):
             header = f"{header};"
-        return header
-    return None
+        if first_decl is None:
+            first_decl = header
+        if target_name is not None and match.group("name").lstrip("_") == target_name:
+            return header
+        if target_name is None:
+            return header
+    return first_decl if target_name is None else None
 
 
 def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name: str | None) -> str | None:
@@ -135,6 +232,35 @@ def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name:
                 continue
             return decl_match.group("args")
         return None
+
+    return _impl()
+
+
+def _source_function_pointer_local_types_8616(project, source_lines: tuple[str, ...]) -> dict[str, SimTypePointer]:
+    def _impl():
+        local_types: dict[str, SimTypePointer] = {}
+        fp_decl_re = re.compile(
+            r"^\s*(?P<ret>.+?)\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)\s*\((?P<args>[^;]*)\)\s*;\s*$"
+        )
+        for raw_line in tuple(source_lines or ()):
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith((";", "//")):
+                continue
+            match = fp_decl_re.match(stripped)
+            if match is None:
+                continue
+            name = match.group("name")
+            fake_decl = f"{match.group('ret').strip()} __inertia_fp({match.group('args').strip()});"
+            try:
+                _parsed_name, function_type, _ = _parse_c_prototype_8616(fake_decl)
+            except Exception:
+                continue
+            if function_type is None:
+                continue
+            function_type = function_type.with_arch(project.arch)
+            pointer_type = SimTypePointer(function_type).with_arch(project.arch)
+            local_types[name] = pointer_type
+        return local_types
 
     return _impl()
 
@@ -332,10 +458,11 @@ def _apply_source_prototype_annotations_8616(project, func_addr: int, func, sour
         annotations = _annotation_dict(func)
         annotations["source_lines"] = source_lines
         annotations["source_return_lines"] = tuple(line.strip() for line in source_lines if re.match(r"^return\s+[^;]+;\s*$", line.strip()))
-        source_decl = _source_decl_from_cod_source_lines(source_lines)
+        source_decl = _source_decl_from_cod_source_lines(source_lines, getattr(func, "name", None))
         if source_decl is None:
             return changed
         current_proto = getattr(func, "prototype", None)
+        opaque_source_types = _c_decl_requires_opaque_typedefs_8616(source_decl)
         try:
             parsed_name, parsed_proto, _ = _parse_c_prototype_8616(source_decl)
         except Exception:
@@ -344,32 +471,36 @@ def _apply_source_prototype_annotations_8616(project, func_addr: int, func, sour
         else:
             if parsed_proto is not None:
                 parsed_proto = parsed_proto.with_arch(project.arch)
+        active_proto = current_proto
         if current_proto is not None and parsed_proto is not None:
             current_args = list(getattr(current_proto, "args", ()) or ())
             parsed_args = list(getattr(parsed_proto, "args", ()) or ())
             if len(current_args) == len(parsed_args):
+                merged_args = current_args if opaque_source_types else parsed_args
                 with contextlib.suppress(ValueError):
+                    active_proto = current_proto.__class__(
+                        merged_args,
+                        parsed_proto.returnty,
+                        arg_names=getattr(current_proto, "arg_names", None),
+                        variadic=getattr(current_proto, "variadic", False),
+                    ).with_arch(project.arch)
                     annotate_function(
                         project,
                         func_addr,
                         name=getattr(func, "name", None) or parsed_name,
-                        prototype=current_proto.__class__(
-                            current_args,
-                            parsed_proto.returnty,
-                            arg_names=getattr(current_proto, "arg_names", None),
-                            variadic=getattr(current_proto, "variadic", False),
-                        ).with_arch(project.arch),
+                        prototype=active_proto,
                     )
                     changed = True
-        elif parsed_proto is not None:
+        elif parsed_proto is not None and not opaque_source_types:
             with contextlib.suppress(ValueError):
                 annotate_function(project, func_addr, name=getattr(func, "name", None) or parsed_name, c_decl=source_decl)
                 changed = True
-        if current_proto is not None:
+                active_proto = getattr(func, "prototype", parsed_proto)
+        if active_proto is not None:
             source_arg_names = _split_source_arg_names_8616(_source_args_from_cod_source_lines(source_lines, getattr(func, "name", None)))
-            if source_arg_names and len(source_arg_names) == len(getattr(current_proto, "args", ()) or ()):
+            if source_arg_names and len(source_arg_names) == len(getattr(active_proto, "args", ()) or ()):
                 with contextlib.suppress(ValueError):
-                    annotate_function(project, func_addr, name=getattr(func, "name", None), prototype=current_proto, arg_names=source_arg_names)
+                    annotate_function(project, func_addr, name=getattr(func, "name", None), prototype=active_proto, arg_names=source_arg_names)
                     changed = True
         return changed
 
@@ -403,14 +534,20 @@ def apply_x86_16_metadata_annotations(
 
         if func_addr is not None and cod_metadata is not None:
             stack_aliases = getattr(cod_metadata, "stack_aliases", None) or {}
+            source_lines = tuple(getattr(cod_metadata, "source_lines", ()) or ())
+            source_local_types = _source_function_pointer_local_types_8616(project, source_lines) if source_lines else {}
             if stack_aliases:
                 typed_stack_aliases = {}
                 for bp_disp, alias in stack_aliases.items():
                     spec = known_cod_object_spec(alias)
-                    if spec is None:
+                    source_type = source_local_types.get(alias) if isinstance(alias, str) else None
+                    if source_type is not None:
+                        typed_stack_aliases[bp_disp] = {"name": alias, "type": source_type}
+                    elif spec is None:
                         typed_stack_aliases[bp_disp] = alias
                         continue
-                    typed_stack_aliases[bp_disp] = _typed_cod_spec_dict_8616(spec)
+                    else:
+                        typed_stack_aliases[bp_disp] = _typed_cod_spec_dict_8616(spec)
                 annotate_function(project, func_addr, bp_stack_vars=typed_stack_aliases)
                 changed = True
 

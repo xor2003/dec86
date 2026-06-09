@@ -60,6 +60,17 @@ _NON_FUNCTION_CODE_PREFIXES = (
     "endif_",
 )
 _CONTROL_FLOW_LABEL_TOKENS = ("cond", "else", "loop", "next", "break", "continue", "endif", "out", "inner", "openok")
+_IDA_MAP_CODE_CLASSES = {"CODE", "ENDCODE"}
+_IDA_MAP_DATA_CLASSES = {
+    "BEGDATA",
+    "BSS",
+    "CONST",
+    "DATA",
+    "ENDDATA",
+    "FAR_DATA",
+    "MSG",
+    "STACK",
+}
 
 
 def _label_looks_like_code(name: str) -> bool:
@@ -113,9 +124,9 @@ def _parse_ida_map_metadata(
         name = match.group(3)
         linear = load_base_linear + (segment << 4) + offset
         segment_class = segment_classes.get(segment)
-        if segment_class == "CODE":
+        if segment_class in _IDA_MAP_CODE_CLASSES:
             code_labels.setdefault(linear, name.lstrip("_"))
-        elif segment_class in {"DATA", "BSS", "STACK"}:
+        elif segment_class in _IDA_MAP_DATA_CLASSES:
             data_labels.setdefault(linear, name)
         elif _label_looks_like_code(name):
             code_labels.setdefault(linear, name.lstrip("_"))
@@ -270,6 +281,35 @@ def _parse_cod_sidecar_metadata(
         base_candidates: dict[int, int] = {}
         delta_candidates: dict[int, int] = {}
         normalized_existing = {name.lstrip("_"): addr for addr, name in existing.items()}
+
+        def _cod_entry_pattern(entries: list[dict[str, object]]) -> tuple[int | None, ...]:
+            pattern: list[int | None] = []
+            concrete = 0
+            for entry in entries:
+                entry_bytes = entry.get("bytes")
+                if not isinstance(entry_bytes, (bytes, bytearray)) or not entry_bytes:
+                    continue
+                first = int(entry_bytes[0])
+                if first in {0xE8, 0xE9} and len(entry_bytes) >= 3:
+                    pattern.extend((first, None, None))
+                    concrete += 1
+                elif first == 0x9A and len(entry_bytes) >= 5:
+                    pattern.extend((first, None, None, None, None))
+                    concrete += 1
+                else:
+                    pattern.extend(int(byte) for byte in entry_bytes)
+                    concrete += len(entry_bytes)
+                if len(pattern) >= 24 and concrete >= 12:
+                    break
+            return tuple(pattern) if len(pattern) >= 12 and concrete >= 8 else ()
+
+        def _memory_matches_cod_pattern(memory_obj, candidate: int, pattern: tuple[int | None, ...]) -> bool:
+            try:
+                observed = bytes(memory_obj.load(candidate, len(pattern)))
+            except Exception:
+                return False
+            return all(expected is None or observed[idx] == expected for idx, expected in enumerate(pattern))
+
         for offset, name in metadata.code_labels.items():
             existing_addr = normalized_existing.get(name.lstrip("_"))
             if existing_addr is None:
@@ -285,29 +325,13 @@ def _parse_cod_sidecar_metadata(
                         entries = extract_cod_function_entries(cod_path, name, proc_kind)
                     except Exception:
                         continue
-                    prefix = bytearray()
-                    for entry in entries:
-                        entry_bytes = entry.get("bytes")
-                        if not isinstance(entry_bytes, (bytes, bytearray)):
-                            continue
-                        for idx, byte in enumerate(entry_bytes):
-                            if idx + 2 < len(entry_bytes) and byte in {0xE8, 0xE9, 0x9A}:
-                                break
-                            prefix.append(byte)
-                            if len(prefix) >= 6:
-                                break
-                        if len(prefix) >= 6:
-                            break
-                    if len(prefix) < 3:
+                    pattern = _cod_entry_pattern(entries)
+                    if not pattern:
                         continue
                     expected = load_base_linear + offset
                     for delta in range(-0x20, 0x21):
                         candidate = expected + delta
-                        try:
-                            observed = bytes(memory.load(candidate, len(prefix)))
-                        except Exception:
-                            continue
-                        if observed == bytes(prefix):
+                        if _memory_matches_cod_pattern(memory, candidate, pattern):
                             delta_candidates[delta] = delta_candidates.get(delta, 0) + 1
                             break
         cod_linear_base = load_base_linear

@@ -1114,6 +1114,8 @@ class Instruction_ANY(Instruction):
         return self.start, self.cs.insn_name(), [str(i) for i in self.cs.operands]
 
     def ends_block(self):
+        if self.cs.mnemonic == "int":
+            return getattr(self.instr, "control_flow_class", "interrupt") == "interrupt"
         return self.cs.mnemonic in self._BLOCK_TERMINATORS
 
 

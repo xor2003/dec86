@@ -22,6 +22,10 @@ STACK_PROBE_FACT_STAT_KEYS = (
     "consumed_outgoing_stack_placeholder_count",
     "stale_target_rejected_count",
     "known_prototype_arg_mismatch_count",
+    "byte_merge_raw_fact_count",
+    "byte_merge_classified_fact_count",
+    "byte_merge_materialized_count",
+    "byte_merge_refused_count",
     "failure_count",
 )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 
 
@@ -149,15 +150,25 @@ def _summarize_capstone_insn_8616(insn) -> InsnSummary8616:
 
 
 def _function_instruction_summaries_8616(project, function) -> list[InsnSummary8616]:
-    summaries: list[InsnSummary8616] = []
-    for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
-        try:
-            block = project.factory.block(block_addr)
-        except Exception:
-            continue
-        for insn in getattr(getattr(block, "capstone", None), "insns", ()) or ():
-            summaries.append(_summarize_capstone_insn_8616(insn.insn))
-    return summaries
+    # This recognizer only needs Capstone operands. Using project.factory.block()
+    # here invokes the full x86-16 lifter for every block and can dominate
+    # decompilation time for functions that do not match this narrow pattern.
+    return _linear_instruction_summaries_8616(project, function, max_size=0x300)
+
+
+def _capstone_instruction_summaries_from_bytes_8616(project, addr: int, code: bytes) -> list[InsnSummary8616]:
+    if not code:
+        return []
+    capstone = getattr(getattr(project, "arch", None), "capstone", None)
+    if capstone is None:
+        return []
+    with contextlib.suppress(Exception):
+        capstone.detail = True
+    try:
+        insns = tuple(capstone.disasm(code, addr))
+    except Exception:
+        return []
+    return [_summarize_capstone_insn_8616(insn) for insn in insns]
 
 
 def _linear_instruction_summaries_8616(project, function, *, max_size: int = 0x180) -> list[InsnSummary8616]:
@@ -169,18 +180,10 @@ def _linear_instruction_summaries_8616(project, function, *, max_size: int = 0x1
         size = max_size
     size = max(1, min(int(size), max_size))
     try:
-        block = project.factory.block(addr, size=size)
+        code = bytes(project.loader.memory.load(addr, size))
     except Exception:
         return []
-    try:
-        capstone_block = block.capstone
-    except Exception:
-        return []
-    try:
-        capstone_insns = getattr(capstone_block, "insns", ())
-    except Exception:
-        return []
-    return [_summarize_capstone_insn_8616(insn.insn) for insn in capstone_insns or ()]
+    return _capstone_instruction_summaries_from_bytes_8616(project, addr, code)
 
 
 def recover_counted_stack_loop_c_8616(project, function) -> str | None:

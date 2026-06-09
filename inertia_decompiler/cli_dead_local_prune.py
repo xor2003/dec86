@@ -175,12 +175,39 @@ def _prune_dead_local_assignments(
         rhs_args = tuple(normalized_call_arg_key(arg) for arg in getattr(rhs_call, "args", ()) or ())
         return lhs_args == rhs_args
 
+    def statement_may_diverge_control_flow(stmt) -> bool:
+        control_flow_types = (
+            structured_c.CBreak,
+            structured_c.CContinue,
+            structured_c.CDoWhileLoop,
+            structured_c.CForLoop,
+            structured_c.CGoto,
+            structured_c.CIfBreak,
+            structured_c.CIfElse,
+            structured_c.CReturn,
+            structured_c.CWhileLoop,
+        )
+        return isinstance(stmt, control_flow_types)
+
     changed = False
     dropped_unread_only = False
+    seen_prune_nodes: set[int] = set()
+    prune_visit_count = 0
+    max_prune_visits = 20000
 
     def prune(node) -> None:
-        nonlocal changed, dropped_unread_only
+        nonlocal changed, dropped_unread_only, prune_visit_count
         if not structured_codegen_node(node):
+            return
+        marker = id(node)
+        if marker in seen_prune_nodes:
+            return
+        seen_prune_nodes.add(marker)
+        prune_visit_count += 1
+        if prune_visit_count > max_prune_visits:
+            codegen._inertia_dead_local_prune_walk_refused_complex_8616 = (
+                int(getattr(codegen, "_inertia_dead_local_prune_walk_refused_complex_8616", 0) or 0) + 1
+            )
             return
 
         if isinstance(node, structured_c.CStatements):
@@ -203,6 +230,8 @@ def _prune_dead_local_assignments(
                     for key in list(pending_assignment_indices):
                         if key in stmt_reads:
                             pending_assignment_indices.pop(key, None)
+                if statement_may_diverge_control_flow(stmt):
+                    pending_assignment_indices.clear()
                 if (
                     isinstance(stmt, structured_c.CAssignment)
                     and isinstance(stmt.lhs, structured_c.CVariable)

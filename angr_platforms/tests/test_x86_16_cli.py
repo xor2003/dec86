@@ -56,7 +56,7 @@ from omf_pat import (
 from signature_catalog import build_signature_catalog, match_signature_catalog
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
+from angr_platforms.X86_16.cod_extract import CODProcMetadata, extract_cod_listing_metadata
 from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
 from angr_platforms.X86_16.fast_tracer import trace_16bit_seed_candidates
 from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
@@ -145,6 +145,41 @@ def test_codegen_render_refresh_signal_is_structured_and_consumed():
 
     cli_decompilation._clear_codegen_render_refresh_8616(codegen)
     assert cli_decompilation._codegen_requires_render_refresh_8616(codegen) is False
+
+
+def test_source_call_arity_score_rejects_stale_sleep_arity():
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("Sleep",),
+        call_sources=(
+            ("Sleep", "Sleep( clPause - 75L )"),
+            ("Sleep", "Sleep( clPause )"),
+        ),
+        global_names=(),
+        source_lines=(),
+        source_line_set=frozenset(),
+    )
+    stale = """
+    void DrawTime(void)
+    {
+        Sleep(SEG_U16(ds, 306), SEG_U16(ds, 308));
+        Sleep();
+    }
+    """
+    materialized = """
+    void DrawTime(void)
+    {
+        Sleep(SEG_U32(ds, 306) - 75);
+        Sleep(SEG_U32(ds, 306));
+    }
+    """
+
+    assert cli_decompilation._expected_call_presence_score_8616(stale, metadata) == 1
+    assert cli_decompilation._expected_call_presence_score_8616(materialized, metadata) == 1
+    assert cli_decompilation._expected_call_arity_score_8616(stale, metadata) == 0
+    assert cli_decompilation._expected_call_arity_score_8616(materialized, metadata) == 2
+    assert cli_decompilation._expected_call_arity_deficit_8616(stale, metadata) == 2
+    assert cli_decompilation._expected_call_arity_deficit_8616(materialized, metadata) == 0
 
 
 def test_sync_recovered_function_metadata_from_kb_copies_annotations_to_distinct_function_object():
@@ -332,19 +367,34 @@ int Swaps(void *lhs, void *rhs)
     assert decompile._count_unresolved_ds_linear_macro_hits_8616(payload) == 0
 
 
-def test_count_unresolved_ds_linear_macro_hits_counts_non_pointer_offsets():
+def test_count_unresolved_ds_linear_macro_hits_counts_raw_or_stack_offsets():
     payload = """
 int Foo(void)
 {
     unsigned short ds;
     unsigned short tmp;
+    tmp = ds << 4;
     tmp = SEG_U8(ds, 0x200) | SEG_U8(ds, 0x201) * 0x100;
     SEG_U8(ds, tmp) = 0;
     SEG_U8(ds, stack_base + 2) = 1;
 }
 """
-    # 0x200, 0x201, tmp, stack_base+2 are unresolved by pointer-arg evidence.
+    # Constant/global DS helpers are valid; raw DS linearization and DS helpers
+    # using stack offsets are not.
     assert decompile._count_unresolved_ds_linear_macro_hits_8616(payload) == 2
+
+
+def test_count_unresolved_ds_linear_macro_hits_accepts_global_ds_helpers():
+    payload = """
+void DrawTime(int iCurrentRow)
+{
+    Sleep(SEG_U32(ds, 306));
+    sprintf(SEG_PTR(ds, achTiming), SEG_PTR(ds, 381), SEG_U16(ds, 2980));
+    if (SEG_U16(ds, 2886))
+        Sleep(SEG_U32(ds, 306) - 75);
+}
+"""
+    assert decompile._count_unresolved_ds_linear_macro_hits_8616(payload) == 0
 
 
 def test_count_unresolved_ds_linear_macro_hits_ignores_dynamic_variable_indexed_offsets():
@@ -5130,6 +5180,22 @@ def test_original_callee_name_uses_original_project_function_table_for_exact_sli
     assert decompile._original_callee_name_8616(project, 0xEB3) == "rel_i16"
 
 
+def test_sidecar_enclosing_label_caches_code_label_regions(monkeypatch):
+    calls: list[int] = []
+    metadata = SimpleNamespace(code_labels={0x1000: "FuncA", 0x1100: "FuncB"})
+
+    def fake_lst_code_region(_metadata, start):
+        calls.append(start)
+        return (start, start + 0x20)
+
+    monkeypatch.setattr(decompile, "_lst_code_region", fake_lst_code_region)
+
+    assert decompile._sidecar_enclosing_label_8616(metadata, 0x1004) == "FuncA"
+    assert decompile._sidecar_enclosing_label_8616(metadata, 0x1110) == "FuncB"
+    assert decompile._sidecar_enclosing_label_8616(metadata, 0x1008) == "FuncA"
+    assert calls == [0x1000, 0x1100]
+
+
 def test_register_direct_call_target_function_stubs_prefers_proven_exact_slice_target_name():
     created = {}
 
@@ -8193,6 +8259,24 @@ def test_run_function_work_item_uses_fork_lane_for_force_isolated_project(monkey
     assert seen["timeout"] == 3
 
 
+def test_direct_addr_use_fork_lane_refuses_tail_validation(monkeypatch):
+    monkeypatch.setattr(decompile.os, "name", "posix")
+    monkeypatch.setattr(decompile.threading, "current_thread", lambda: decompile.threading.main_thread())
+    monkeypatch.setattr(decompile.threading, "active_count", lambda: 1)
+    monkeypatch.delenv("INERTIA_OTEL_PROFILE_IN_PROCESS", raising=False)
+
+    assert decompile._direct_addr_use_fork_lane_8616(tail_validation_enabled=True) is False
+
+
+def test_direct_addr_use_fork_lane_keeps_non_tail_posix_fast_path(monkeypatch):
+    monkeypatch.setattr(decompile.os, "name", "posix")
+    monkeypatch.setattr(decompile.threading, "current_thread", lambda: decompile.threading.main_thread())
+    monkeypatch.setattr(decompile.threading, "active_count", lambda: 1)
+    monkeypatch.delenv("INERTIA_OTEL_PROFILE_IN_PROCESS", raising=False)
+
+    assert decompile._direct_addr_use_fork_lane_8616(tail_validation_enabled=False) is True
+
+
 def test_main_uses_prefork_pool_for_isolated_x86_16_parallel_lane(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
@@ -10635,6 +10719,152 @@ def test_parse_ida_map_metadata_prefers_segment_class_over_loc_name(tmp_path):
     assert data_labels[0x10022] == "word_10022"
 
 
+def test_parse_ida_map_metadata_classifies_msvc_data_segments(tmp_path):
+    map_path = tmp_path / "demo.MAP"
+    map_path.write_text(
+        "\n"
+        " Start  Stop   Length Name               Class\n"
+        "\n"
+        " 00000H 0001FH 00020H _TEXT              CODE\n"
+        " 05DA0H 05DE1H 00042H NULL               BEGDATA\n"
+        " 063FAH 06401H 00008H CONST              CONST\n"
+        "\n"
+        "  Address         Publics by Value\n"
+        "\n"
+        " 0000:0010       _main\n"
+        " 05DA:0BA4       _iSwaps\n"
+        " 063F:0001       _msgText\n"
+    )
+
+    code_labels, data_labels, _segment_offsets = decompile._parse_ida_map_metadata(
+        map_path,
+        load_base_linear=0x10000,
+    )
+
+    assert code_labels[0x10010] == "main"
+    assert data_labels[0x16944] == "_iSwaps"
+    assert data_labels[0x163F1] == "_msgText"
+    assert 0x16944 not in code_labels
+    assert 0x163F1 not in code_labels
+
+
+def test_sidecar_cache_fingerprints_case_insensitive_siblings(tmp_path):
+    binary = tmp_path / "DEMO.EXE"
+    binary.write_bytes(b"MZ")
+    (tmp_path / "DEMO.MAP").write_text("map")
+    (tmp_path / "demo.COD").write_text("cod")
+
+    sidecars = recovery_cache._cache_sidecar_fingerprints(binary)
+
+    assert sidecars[".map"]["path"].endswith("DEMO.MAP")
+    assert sidecars[".cod"]["path"].endswith("demo.COD")
+
+
+def test_lst_code_region_uses_nearest_containing_start_for_overlaps():
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x10768: "SwapBars", 0x10794: "Swaps"},
+        code_ranges={
+            0x10768: (0x10768, 0x107B8),
+            0x10794: (0x10794, 0x107E7),
+        },
+        absolute_addrs=True,
+    )
+
+    assert sidecar_metadata._lst_code_region(metadata, 0x10794) == (0x10794, 0x107E7)
+    assert sidecar_metadata._lst_code_region(metadata, 0x107A8) == (0x10794, 0x107E7)
+
+
+def test_cod_body_range_replaces_unbounded_approximate_public_start(monkeypatch, tmp_path):
+    binary = tmp_path / "DEMO.EXE"
+    binary.write_bytes(b"MZ")
+    (tmp_path / "DEMO.COD").write_text("")
+    code_labels = {0x10794: "Swaps"}
+    data_labels: dict[int, str] = {}
+    code_ranges: dict[int, tuple[int, int]] = {}
+    source_formats: list[str] = []
+    cod_proc_kinds: dict[int, str] = {}
+    project = SimpleNamespace(loader=SimpleNamespace(memory=SimpleNamespace()))
+
+    monkeypatch.setattr(
+        sidecar_metadata,
+        "_parse_cod_sidecar_metadata",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            code_labels={0x107B8: "Swaps"},
+            code_ranges={0x107B8: (0x107B8, 0x107E7)},
+            proc_kinds={0x107B8: "NEAR"},
+        ),
+    )
+    monkeypatch.setattr(sidecar_metadata, "_reconcile_cod_listing_with_codeview", lambda cod, *_args: cod)
+    monkeypatch.setattr(sidecar_metadata, "_detect_flair_metadata", lambda *_args, **_kwargs: ({}, {}, ()))
+
+    cod_path, signature_addrs = sidecar_metadata._load_cod_mzre_flair_sidecars(
+        binary,
+        project,
+        load_base_linear=0x10000,
+        code_labels=code_labels,
+        data_labels=data_labels,
+        code_ranges=code_ranges,
+        source_formats=source_formats,
+        codeview_code={},
+        codeview_ranges={},
+        pat_backend=None,
+        signature_catalog=None,
+        cod_proc_kinds=cod_proc_kinds,
+    )
+
+    assert cod_path == tmp_path / "DEMO.COD"
+    assert signature_addrs == set()
+    assert code_labels == {0x107B8: "Swaps"}
+    assert code_ranges[0x107B8] == (0x107B8, 0x107E7)
+    assert 0x10794 not in code_ranges
+    assert cod_proc_kinds == {0x107B8: "NEAR"}
+    assert source_formats == ["cod_listing"]
+
+
+def test_cod_body_range_extends_existing_precise_function_start(monkeypatch, tmp_path):
+    binary = tmp_path / "DEMO.EXE"
+    binary.write_bytes(b"MZ")
+    (tmp_path / "DEMO.COD").write_text("")
+    code_labels = {0x10794: "Swaps"}
+    data_labels: dict[int, str] = {}
+    code_ranges = {0x10794: (0x10794, 0x107B8)}
+    source_formats: list[str] = []
+    cod_proc_kinds: dict[int, str] = {}
+    project = SimpleNamespace(loader=SimpleNamespace(memory=SimpleNamespace()))
+
+    monkeypatch.setattr(
+        sidecar_metadata,
+        "_parse_cod_sidecar_metadata",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            code_labels={0x107B8: "Swaps"},
+            code_ranges={0x107B8: (0x107B8, 0x107E7)},
+            proc_kinds={0x107B8: "NEAR"},
+        ),
+    )
+    monkeypatch.setattr(sidecar_metadata, "_reconcile_cod_listing_with_codeview", lambda cod, *_args: cod)
+    monkeypatch.setattr(sidecar_metadata, "_detect_flair_metadata", lambda *_args, **_kwargs: ({}, {}, ()))
+
+    sidecar_metadata._load_cod_mzre_flair_sidecars(
+        binary,
+        project,
+        load_base_linear=0x10000,
+        code_labels=code_labels,
+        data_labels=data_labels,
+        code_ranges=code_ranges,
+        source_formats=source_formats,
+        codeview_code={},
+        codeview_ranges={},
+        pat_backend=None,
+        signature_catalog=None,
+        cod_proc_kinds=cod_proc_kinds,
+    )
+
+    assert code_labels == {0x10794: "Swaps"}
+    assert code_ranges == {0x10794: (0x10794, 0x107E7)}
+    assert cod_proc_kinds == {0x10794: "NEAR"}
+
+
 def test_visible_code_labels_skip_signature_matched_functions_by_default():
     metadata = LSTMetadata(
         data_labels={},
@@ -11391,6 +11621,12 @@ def test_normalize_function_signature_arg_names_deduplicates_duplicate_parameter
     assert decompile._normalize_function_signature_arg_names(text) == (
         "unsigned short _strlen(unsigned short s, unsigned short s_2)\n"
     )
+
+
+def test_normalize_function_signature_arg_names_does_not_rewrite_control_conditions():
+    text = "        else if (v15 > local_4)\n"
+
+    assert decompile._normalize_function_signature_arg_names(text) == text
 
 
 def test_prune_void_function_return_values_text_handles_multiline_headers():

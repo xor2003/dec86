@@ -55,7 +55,6 @@ from inertia_decompiler.project_loading import (
 )
 
 from inertia_decompiler.sidecar_metadata import (
-    _exact_function_span_matches,
     _load_lst_metadata,
     _lst_code_label,
     _lst_code_region,
@@ -248,10 +247,19 @@ structured_c = structured_codegen.c
 print = _timestamped_print
 __all__ = ['InterruptWrapperCall', 'InterruptWrapperFieldAccess', '_normalize_interrupt_wrapper_name', '_interrupt_wrapper_call_kind', '_interrupt_wrapper_call_signature', '_interrupt_wrapper_field_path', '_interrupt_wrapper_field_role', '_interrupt_wrapper_field_access_summary', '_interrupt_wrapper_call_text', 'collect_interrupt_wrapper_calls', 'collect_interrupt_wrapper_field_accesses', '_attach_interrupt_wrapper_callees', '_interrupt_wrapper_register_state_value', '_interrupt_wrapper_record_register_write', '_interrupt_wrapper_helper_call_expr', '_interrupt_wrapper_result_helper_expr', '_interrupt_wrapper_result_extract_expr', '_interrupt_wrapper_result_replacement', '_interrupt_wrapper_result_expr_replacement', '_lower_interrupt_wrapper_result_reads', '_attach_dos_pseudo_callees']
 
-def _iter_c_nodes(node):
+def _iter_c_nodes(node, *, max_nodes: int = 10000):
     stack = [node]
+    seen: set[int] = set()
+    visited = 0
     while stack:
         current = stack.pop()
+        marker = id(current)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        visited += 1
+        if visited > max_nodes:
+            return
         yield current
         if isinstance(current, (list, tuple)):
             stack.extend(reversed(current))

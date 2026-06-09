@@ -115,6 +115,12 @@ class ParseInstr(X86Instruction):
             if self.chk[opcode] & CHK_IMM8:
                 self.instr.imm8 = struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0]
                 # self.emu.update_eip(1)
+                if opcode == 0xCD and self.instr.imm8 in (0x34, 0x35, 0x38, 0x39):
+                    # Microsoft C can encode x87 instructions as INT 34h/35h/38h/39h
+                    # followed by the original x87 ModR/M form. Treat the trailing
+                    # bytes as part of this instruction so later decoding does not
+                    # split the FPU operand into bogus integer instructions.
+                    self.parse_modrm_sib_disp()
             if self.chk[opcode] & CHK_PTR16:
                 self.instr.ptr16 = self.emu.get_code16(0)
                 # self.emu.update_eip(2)
@@ -142,6 +148,8 @@ class ParseInstr(X86Instruction):
 
     def _classify_control_flow(self, opcode: int) -> str:
         def _impl():
+            if opcode == 0xCD and self.instr.imm8 in (0x34, 0x35, 0x38, 0x39, 0x3D):
+                return "none"
             if opcode in {0xCC, 0xCD, 0xCE}:
                 return "interrupt"
             if opcode == 0xCF:

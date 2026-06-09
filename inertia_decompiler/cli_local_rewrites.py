@@ -57,6 +57,89 @@ def _is_materialized_named_stack_cvar(node) -> bool:
     return re.fullmatch(r"(?:arg_\d+|local_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name) is None
 
 
+def _generic_stack_local_name(name: object) -> bool:
+    return isinstance(name, str) and re.fullmatch(r"(?:local_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name) is not None
+
+
+def _stack_name_from_cvar(cvar) -> str | None:
+    for candidate in (
+        getattr(cvar, "name", None),
+        getattr(getattr(cvar, "variable", None), "name", None),
+        getattr(getattr(cvar, "unified_variable", None), "name", None),
+    ):
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
+def _set_stack_cvar_name(cvar, name: str) -> bool:
+    changed = False
+    for target in (
+        getattr(cvar, "variable", None),
+        getattr(cvar, "unified_variable", None),
+    ):
+        if target is None:
+            continue
+        with contextlib.suppress(Exception):
+            if getattr(target, "name", None) != name:
+                target.name = name
+                changed = True
+    with contextlib.suppress(Exception):
+        if getattr(cvar, "name", None) != name:
+            cvar.name = name
+            changed = True
+    return changed
+
+
+def _sync_unified_stack_local_names_from_live_cvars(
+    *,
+    cfunc,
+    unified_locals,
+    stack_slot_identity_for_variable,
+    iter_c_nodes_deep,
+) -> bool:
+    root = getattr(cfunc, "statements", None)
+    if root is None or not isinstance(unified_locals, dict):
+        return False
+
+    live_name_by_identity: dict[object, str] = {}
+    for node in iter_c_nodes_deep(root):
+        if not _is_materialized_named_stack_cvar(node):
+            continue
+        variable = getattr(node, "variable", None)
+        identity = stack_slot_identity_for_variable(variable)
+        if identity is None or identity in live_name_by_identity:
+            continue
+        name = _stack_name_from_cvar(node)
+        if isinstance(name, str) and name and not _generic_stack_local_name(name):
+            live_name_by_identity[identity] = name
+
+    if not live_name_by_identity:
+        return False
+
+    changed = False
+    for variable, entries in list(unified_locals.items()):
+        identity = stack_slot_identity_for_variable(variable)
+        name = live_name_by_identity.get(identity)
+        if name is None:
+            continue
+        current = getattr(variable, "name", None)
+        if isinstance(current, str) and current and not _generic_stack_local_name(current) and current != name:
+            continue
+        with contextlib.suppress(Exception):
+            if getattr(variable, "name", None) != name:
+                variable.name = name
+                changed = True
+        if not isinstance(entries, set):
+            continue
+        rebuilt = set()
+        for cvar, vartype in entries:
+            changed = _set_stack_cvar_name(cvar, name) or changed
+            rebuilt.add((cvar, vartype))
+        unified_locals[variable] = rebuilt
+    return changed
+
+
 def _make_placeholder_canonicalizer(
     *,
     codegen,
@@ -243,6 +326,16 @@ def _materialize_missing_stack_local_declarations(
                 for identity in (stack_slot_identity_for_variable(getattr(node, "variable", None)),)
                 if identity is not None
             )
+            if _sync_unified_stack_local_names_from_live_cvars(
+                cfunc=cfunc,
+                unified_locals=unified_locals,
+                stack_slot_identity_for_variable=stack_slot_identity_for_variable,
+                iter_c_nodes_deep=iter_c_nodes_deep,
+            ):
+                changed_ref["changed"] = True
+                codegen._inertia_stack_declaration_name_synced_count_8616 = int(
+                    getattr(codegen, "_inertia_stack_declaration_name_synced_count_8616", 0) or 0
+                ) + 1
         if _prune_dead_placeholder_variables(
             cfunc=cfunc,
             variables_in_use=variables_in_use,
@@ -498,24 +591,50 @@ def _prune_void_function_return_values(codegen, *, iter_c_nodes_deep):
     if getattr(codegen, "cfunc", None) is None:
         return False
 
-    prototype = getattr(codegen.cfunc, "prototype", None)
+    prototype = None
+    for candidate in (
+        getattr(codegen.cfunc, "prototype", None),
+        getattr(codegen.cfunc, "functy", None),
+        getattr(getattr(codegen, "_func", None), "prototype", None),
+        getattr(getattr(codegen, "_inertia_current_function_8616", None), "prototype", None),
+    ):
+        if candidate is not None and getattr(candidate, "returnty", None) is not None:
+            prototype = candidate
+            break
     returnty = getattr(prototype, "returnty", None) if prototype is not None else None
     if type(returnty) is not SimTypeBottom or getattr(returnty, "label", None) != "void":
         return False
 
     if not getattr(codegen, "cfunc", None):
         return False
-    return_nodes = [node for node in iter_c_nodes_deep(codegen.cfunc.statements) if isinstance(node, structured_c.CReturn)]
-    if any(getattr(node, "retval", None) is not None for node in return_nodes):
-        return False
-
     changed = False
-    for node in return_nodes:
-        if not isinstance(node, structured_c.CReturn):
+    for container in tuple(iter_c_nodes_deep(codegen.cfunc.statements)):
+        if not isinstance(container, structured_c.CStatements):
             continue
-        if getattr(node, "retval", None) is None:
+        statements = list(getattr(container, "statements", ()) or ())
+        if not statements:
             continue
-        node.retval = None
-        changed = True
+        is_root_container = container is codegen.cfunc.statements
+        rewritten: list[object] = []
+        local_changed = False
+        for index, stmt in enumerate(statements):
+            if not isinstance(stmt, structured_c.CReturn):
+                rewritten.append(stmt)
+                continue
+            retval = getattr(stmt, "retval", None)
+            if retval is None:
+                rewritten.append(stmt)
+                continue
+            if isinstance(retval, structured_c.CFunctionCall):
+                rewritten.append(structured_c.CExpressionStatement(retval, codegen=getattr(stmt, "codegen", codegen)))
+                if not (is_root_container and index == len(statements) - 1):
+                    rewritten.append(structured_c.CReturn(None, codegen=getattr(stmt, "codegen", codegen)))
+            else:
+                stmt.retval = None
+                rewritten.append(stmt)
+            local_changed = True
+        if local_changed:
+            container.statements = rewritten if isinstance(getattr(container, "statements", None), list) else tuple(rewritten)
+            changed = True
 
     return changed

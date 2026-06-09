@@ -31,6 +31,8 @@ from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesT
 
 from dataclasses import dataclass, replace
 
+from enum import Enum
+
 from pathlib import Path
 
 from types import SimpleNamespace
@@ -43,6 +45,7 @@ from angr_platforms.X86_16.cod_extract import (
     extract_small_two_arg_cod_logic_entries,
     join_cod_entries_with_synthetic_globals,
 )
+from angr_platforms.X86_16.analysis_helpers import collect_neighbor_call_targets
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 from angr_platforms.X86_16.structuring.compare32_recovery import recover_32bit_compare_c_8616
 from angr_platforms.X86_16.structuring.simple_loop_recovery import recover_counted_stack_loop_c_8616
@@ -570,8 +573,57 @@ __all__ = ['_argument_was_explicit', '_parse_int', '_function_recovery_detail', 
 _TRUTHY_ENV_VALUES_8616 = frozenset({"1", "true", "yes", "on"})
 
 
+class DirectClinicPolicy8616(Enum):
+    STANDARD = "standard"
+    FAST_PEEPHOLE = "fast_peephole"
+    AGGRESSIVE_GUARD = "aggressive_guard"
+
+
+def _direct_clinic_policy_8616(
+    *,
+    arch_name: str,
+    direct_addr_mode: bool,
+    block_count: int,
+    byte_count: int,
+    call_site_count: int,
+) -> DirectClinicPolicy8616:
+    if arch_name != "86_16" or not direct_addr_mode:
+        return DirectClinicPolicy8616.STANDARD
+    if block_count >= 32 or byte_count >= 280:
+        return DirectClinicPolicy8616.AGGRESSIVE_GUARD
+    if call_site_count >= 6 and block_count >= 10 and byte_count >= 160:
+        return DirectClinicPolicy8616.FAST_PEEPHOLE
+    return DirectClinicPolicy8616.STANDARD
+
+
+def _safe_function_callsite_count_8616(func) -> int:
+    counts: list[int] = []
+    get_call_sites = getattr(func, "get_call_sites", None)
+    if callable(get_call_sites):
+        try:
+            counts.append(len(tuple(get_call_sites() or ())))
+        except Exception:
+            counts.append(0)
+    try:
+        counts.append(len(tuple(collect_neighbor_call_targets(func) or ())))
+    except Exception:
+        counts.append(0)
+    return max(counts, default=0)
+
+
 def _env_truthy_8616(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY_ENV_VALUES_8616
+
+
+def _direct_addr_use_fork_lane_8616(*, tail_validation_enabled: bool) -> bool:
+    if tail_validation_enabled:
+        return False
+    return (
+        os.name == "posix"
+        and threading.current_thread() is threading.main_thread()
+        and threading.active_count() == 1
+        and not _env_truthy_8616("INERTIA_OTEL_PROFILE_IN_PROCESS")
+    )
 
 
 def _argument_was_explicit(name: str) -> bool:
@@ -580,6 +632,23 @@ def _argument_was_explicit(name: str) -> bool:
         if token == flag or token.startswith(f"{flag}="):
             return True
     return False
+
+
+def _configure_cli_telemetry_8616(args: Any) -> None:
+    configure_telemetry_from_env(
+        enabled=getattr(args, "otel_spans", None),
+        file_path=getattr(args, "otel_span_file", None),
+        top_n=getattr(args, "otel_top_n", None),
+        min_ms=getattr(args, "otel_min_ms", None),
+        full_jsonl=getattr(args, "otel_full_jsonl", None),
+        stderr_summary=getattr(args, "otel_stderr", None),
+        output_format=getattr(args, "otel_format", None),
+        text_max_spans=getattr(args, "otel_text_max_spans", None),
+        otlp_export=getattr(args, "otel_export_otlp", None),
+        service_name=getattr(args, "otel_service_name", None),
+        force_flush_ms=getattr(args, "otel_force_flush_ms", None),
+        otlp_endpoint=getattr(args, "otel_endpoint", None),
+    )
 
 def _parse_int(value: str) -> int:
     return int(value, 0)
@@ -770,18 +839,29 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
 def _parse_env_timeout_cap() -> int | None:
     cap = os.environ.get("INERTIA_MAX_FUNCTION_TIMEOUT")
     if not cap:
-        return 120
+        return 60
     try:
         cap_value = int(cap)
     except ValueError:
-        return 120
+        return 60
     if cap_value <= 0:
         return None
     return max(1, cap_value)
 
 
-def _enforce_function_timeout_cap(timeout: int, *, context: str) -> int:
+def _enforce_function_timeout_cap(
+    timeout: int,
+    *,
+    context: str,
+    explicit_timeout_floor: int | None = None,
+) -> int:
     cap = _parse_env_timeout_cap()
+    if (
+        cap is not None
+        and explicit_timeout_floor is not None
+        and "INERTIA_MAX_FUNCTION_TIMEOUT" not in os.environ
+    ):
+        cap = max(cap, max(1, int(explicit_timeout_floor)))
     if cap is None:
         return max(1, int(timeout))
     bounded = max(1, min(int(timeout), cap))
@@ -818,7 +898,11 @@ def _direct_addr_wall_clock_budget(
             budget = max(8, base + min(14, max(8, base + 4)))
         else:
             budget = max(2, base + max(40, _bounded_non_optimized_timeout(base)) + 2)
-    return _enforce_function_timeout_cap(int(budget), context="direct address wall clock")
+    return _enforce_function_timeout_cap(
+        int(budget),
+        context="direct address wall clock",
+        explicit_timeout_floor=base if explicit_timeout else None,
+    )
 
 def _prepare_ranked_binary_preview_items(
     project: angr.Project,
@@ -1461,13 +1545,24 @@ def _run_function_work_item(
         )
         if fork_isolated_eligible:
             try:
-                    status, payload, partial_payload, debug_output, tail_validation_snapshot, elapsed, block_count, byte_count = _run_with_timeout_in_fork(
-                    lambda: _run_local(decompile_project, decompile_cfg, decompile_function),
+                with span(
+                    "direct.decompile_job",
+                    addr=hex(getattr(decompile_function, "addr", 0)),
+                    name=getattr(decompile_function, "name", None),
                     timeout=_enforce_function_timeout_cap(
                         max(1, effective_timeout) + 1,
                         context="forked local decompile",
                     ),
-                )
+                    isolated="fork",
+                ):
+                    status, payload, partial_payload, debug_output, tail_validation_snapshot, elapsed, block_count, byte_count = _run_with_timeout_in_fork(
+                        lambda: _run_local(decompile_project, decompile_cfg, decompile_function),
+                        timeout=_enforce_function_timeout_cap(
+                            max(1, effective_timeout) + 1,
+                            context="forked local decompile",
+                        ),
+                    )
+                    annotate_current_span(status=status, blocks=block_count, bytes=byte_count)
             except Exception as ex:
                 logging.getLogger(__name__).warning("fork-isolated decompilation failed: %s", ex)
                 fork_isolated_eligible = False
@@ -1503,11 +1598,19 @@ def _run_function_work_item(
                     pass
 
         if not fork_isolated_eligible:
-            status, payload, partial_payload, debug_output, tail_validation_snapshot, elapsed, block_count, byte_count = _run_local(
-                decompile_project,
-                decompile_cfg,
-                decompile_function,
-            )
+            with span(
+                "direct.decompile_job",
+                addr=hex(getattr(decompile_function, "addr", 0)),
+                name=getattr(decompile_function, "name", None),
+                timeout=effective_timeout,
+                isolated="local",
+            ):
+                status, payload, partial_payload, debug_output, tail_validation_snapshot, elapsed, block_count, byte_count = _run_local(
+                    decompile_project,
+                    decompile_cfg,
+                    decompile_function,
+                )
+                annotate_current_span(status=status, blocks=block_count, bytes=byte_count)
         if cache_bypass_debug:
             debug_output = f"{cache_bypass_debug}{debug_output}"
         return _finalize_work_result(
@@ -1526,7 +1629,14 @@ def _run_function_work_item(
             expected_validation_stages=expected_validation_stages,
         )
 
-    return _impl()
+    with span(
+        "cli.function_work",
+        index=item.index,
+        addr=hex(getattr(item.function, "addr", 0)),
+        name=getattr(item.function, "name", None),
+        timeout=timeout,
+    ):
+        return _impl()
 
 def _function_work_result_for_fork_ipc(result: FunctionWorkResult) -> FunctionWorkResult:
     # angr Function/CFG objects are not reliable pickle payloads. The parent still owns
@@ -1962,21 +2072,16 @@ def _pointer_param_names_8616(text: str) -> set[str]:
 
 
 def _count_unresolved_ds_linear_macro_hits_8616(payload: str) -> int:
+    stripped_payload = _strip_comment_blocks_8616(payload)
     pointer_like = _pointer_param_names_8616(payload)
     # Track simple aliases of pointer parameters (e.g., bx = rhs; SEG_U8(ds, bx)).
     for lhs, rhs in _C_ASSIGN_RE_8616.findall(payload):
         if rhs in pointer_like:
             pointer_like.add(lhs)
 
-    unresolved = 0
-    for match in _SEG_DS_ACCESS_RE_8616.finditer(payload):
+    unresolved = len(re.findall(r"\bds\s*(?:<<\s*4|\*\s*16)", stripped_payload))
+    for match in _SEG_DS_ACCESS_RE_8616.finditer(stripped_payload):
         offset = match.group(1).strip()
-        # Dynamic DS accesses (offset depends on runtime variables/register
-        # carriers) are not unresolved global-lowering debt. Keep the gate for
-        # constant-like DS offsets that should have been lowered.
-        offset_idents = set(_C_IDENT_RE.findall(offset))
-        if offset_idents:
-            continue
         base = offset
         if "+" in offset:
             left, right = [piece.strip() for piece in offset.split("+", 1)]
@@ -1986,7 +2091,15 @@ def _count_unresolved_ds_linear_macro_hits_8616(payload: str) -> int:
                 base = left
         if base in pointer_like:
             continue
-        unresolved += 1
+        if re.search(r"(?<![A-Za-z0-9_])(?:stack_base|sp|bp|s_[0-9a-fA-F]+|arg_[0-9a-fA-F]+)(?![A-Za-z0-9_])", offset):
+            unresolved += 1
+            continue
+        if re.search(r"&\s*(?:s_[0-9a-fA-F]+|arg_[0-9a-fA-F]+)", offset):
+            unresolved += 1
+            continue
+        # Constant/global DS helpers are the intended segmented-memory runtime
+        # representation, not unresolved flattened linear addressing.
+        continue
     return unresolved
 
 
@@ -2041,22 +2154,152 @@ def _extract_original_c_comment_block_8616(emitted_c: str) -> str:
     return "\n".join(lines)
 
 
-def _return_values_from_c_text_8616(text: str) -> Counter[str]:
+def _normalize_return_expr_for_evidence_gate_8616(
+    expr: str,
+    *,
+    rename_identifiers: dict[str, str] | None = None,
+) -> str | None:
+    if not isinstance(expr, str):
+        return None
+    normalized = expr.strip()
+    if not normalized:
+        return None
+    if rename_identifiers:
+        clean_renames = {
+            old_name: new_name
+            for old_name, new_name in rename_identifiers.items()
+            if old_name and new_name and old_name != new_name
+        }
+        if clean_renames:
+            normalized = re.sub(
+                r"\b[A-Za-z_]\w*\b",
+                lambda match: clean_renames.get(match.group(0), match.group(0)),
+                normalized,
+            )
+    normalized = re.sub(r"\s+", " ", normalized)
+    while normalized.startswith("(") and normalized.endswith(")"):
+        inner = normalized[1:-1].strip()
+        if not inner:
+            break
+        depth = 0
+        balanced = True
+        for ch in inner:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    balanced = False
+                    break
+        if not balanced or depth != 0:
+            break
+        normalized = inner
+    int_match = re.fullmatch(r"[-+]?(?:0[xX][0-9A-Fa-f]+|\d+)[uUlL]*", normalized)
+    if int_match is not None:
+        value_text = re.sub(r"[uUlL]+$", "", normalized)
+        try:
+            return f"const:{int(value_text, 0)}"
+        except ValueError:
+            return None
+    if not re.fullmatch(r"[A-Za-z_]\w*(?:\s*(?:[+\-*/&|^]|<<|>>)\s*(?:[A-Za-z_]\w*|[-+]?(?:0[xX][0-9A-Fa-f]+|\d+)[uUlL]*))*", normalized):
+        return None
+    normalized = re.sub(r"\s*([+\-*/&|^])\s*", r"\1", normalized)
+    normalized = re.sub(r"\s*(<<|>>)\s*", r"\1", normalized)
+    normalized = re.sub(r"(?<=\d)[uUlL]+\b", "", normalized)
+    mul_match = re.fullmatch(
+        r"(?:(?P<lhs_name>[A-Za-z_]\w*)\*(?P<rhs_const>[-+]?(?:0[xX][0-9A-Fa-f]+|\d+))|"
+        r"(?P<lhs_const>[-+]?(?:0[xX][0-9A-Fa-f]+|\d+))\*(?P<rhs_name>[A-Za-z_]\w*))",
+        normalized,
+    )
+    if mul_match is not None:
+        const_text = mul_match.group("rhs_const") or mul_match.group("lhs_const")
+        ident = mul_match.group("lhs_name") or mul_match.group("rhs_name")
+        with contextlib.suppress(ValueError):
+            const_value = int(const_text, 0)
+            if const_value > 0 and const_value & (const_value - 1) == 0:
+                normalized = f"{ident}<<{const_value.bit_length() - 1}"
+    return f"expr:{normalized}"
+
+
+def _return_values_from_c_text_8616(
+    text: str,
+    *,
+    rename_identifiers: dict[str, str] | None = None,
+) -> Counter[str]:
     values: Counter[str] = Counter()
     if not isinstance(text, str) or not text:
         return values
     for match in re.finditer(r"\breturn\s+([^;]+)\s*;", text):
-        expr = match.group(1).strip()
-        int_match = re.fullmatch(r"[-+]?(?:0[xX][0-9A-Fa-f]+|\d+)[uUlL]*", expr)
-        if int_match is None:
+        fingerprint = _normalize_return_expr_for_evidence_gate_8616(
+            match.group(1),
+            rename_identifiers=rename_identifiers,
+        )
+        if fingerprint is None:
             continue
-        normalized = re.sub(r"[uUlL]+$", "", expr)
-        try:
-            value = int(normalized, 0)
-        except ValueError:
-            continue
-        values[str(value)] += 1
+        values[fingerprint] += 1
     return values
+
+
+def _arg_names_from_function_signature_8616(text: str, function_name: str | None) -> list[str]:
+    if not isinstance(text, str) or not isinstance(function_name, str) or not function_name:
+        return []
+    signature_re = re.compile(
+        rf"(?m)^[ \t]*(?!/)[A-Za-z_][\w\s\*]*?\s+{re.escape(function_name)}\s*\((?P<args>[^)]*)\)"
+    )
+    for match in signature_re.finditer(text):
+        suffix = text[match.end() : match.end() + 128]
+        if "{" not in suffix.split(";", 1)[0]:
+            continue
+        args_text = match.group("args").strip()
+        if not args_text or args_text == "void":
+            return []
+        names: list[str] = []
+        for raw_arg in args_text.split(","):
+            arg = raw_arg.strip()
+            name_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^]]*\])?\s*$", arg)
+            if name_match is None:
+                continue
+            name = name_match.group(1)
+            if name in {"char", "short", "int", "long", "unsigned", "signed", "void", "float", "double"}:
+                continue
+            names.append(name)
+        return names
+    return []
+
+
+def _emitted_to_source_arg_name_map_8616(
+    *,
+    original_c: str,
+    emitted_c: str,
+    function_name: str | None,
+) -> dict[str, str]:
+    source_names = _arg_names_from_function_signature_8616(original_c, function_name)
+    emitted_names = _arg_names_from_function_signature_8616(_strip_comment_blocks_8616(emitted_c), function_name)
+    if not source_names or not emitted_names or len(source_names) != len(emitted_names):
+        return {}
+    mapping: dict[str, str] = {}
+    for emitted_name, source_name in zip(emitted_names, source_names):
+        if emitted_name and source_name and emitted_name != source_name:
+            mapping[emitted_name] = source_name
+    return mapping
+
+
+def _return_evidence_sort_key_8616(item: tuple[str, int]) -> tuple[int, int | str]:
+    value = item[0]
+    if value.startswith("const:"):
+        with contextlib.suppress(ValueError):
+            return (0, int(value.removeprefix("const:"), 10))
+    return (1, value)
+
+
+def _format_return_evidence_token_8616(value: str, have: int, needed: int) -> str:
+    if value.startswith("const:"):
+        display = value.removeprefix("const:")
+    elif value.startswith("expr:"):
+        display = value.removeprefix("expr:")
+    else:
+        display = value
+    return f"return {display}({have}/{needed})"
 
 
 def _missing_expected_return_values_from_embedded_evidence_8616(emitted_c: str) -> list[str]:
@@ -2071,12 +2314,20 @@ def _missing_expected_return_values_from_embedded_evidence_8616(emitted_c: str) 
     # disappear.
     if sum(expected.values()) < 2:
         return []
-    actual = _return_values_from_c_text_8616(_extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c)))
+    arg_name_map = _emitted_to_source_arg_name_map_8616(
+        original_c=original_c,
+        emitted_c=emitted_c,
+        function_name=function_name,
+    )
+    actual = _return_values_from_c_text_8616(
+        _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c)),
+        rename_identifiers=arg_name_map,
+    )
     missing: list[str] = []
-    for value, needed in sorted(expected.items(), key=lambda item: int(item[0])):
+    for value, needed in sorted(expected.items(), key=_return_evidence_sort_key_8616):
         have = int(actual.get(value, 0))
         if have < needed:
-            missing.append(f"return {value}({have}/{needed})")
+            missing.append(_format_return_evidence_token_8616(value, have, needed))
     return missing
 
 
@@ -3180,6 +3431,7 @@ def main(argv: list[str] | None = None) -> int:
 
         parser = _build_cli_argument_parser()
         args = parser.parse_args(argv)
+        _configure_cli_telemetry_8616(args)
         annotate_current_span(
             binary=getattr(args.binary, "name", str(args.binary)),
             addr=hex(args.addr) if isinstance(args.addr, int) else None,
@@ -4039,6 +4291,7 @@ def main(argv: list[str] | None = None) -> int:
                 return _enforce_function_timeout_cap(
                     max(1, boosted),
                     context="direct shape timeout",
+                    explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                 )
             try:
                 def direct_decompile_job():
@@ -4054,11 +4307,23 @@ def main(argv: list[str] | None = None) -> int:
                     prev_disable_complex_expr_scan = getattr(direct_project, "_inertia_disable_complex_expr_scan", False)
                     prev_fast_block_peephole = getattr(direct_project, "_inertia_fast_block_peephole", False)
                     prev_peephole_cap = getattr(direct_project, "_inertia_clinic_peephole_cap", None)
-                    direct_clinic_guard = (
-                        getattr(getattr(direct_project, "arch", None), "name", "") == "86_16"
-                        and args.addr is not None
-                        and (_bcount >= 32 or _bbytes >= 280)
+                    direct_arch_name = getattr(getattr(direct_project, "arch", None), "name", "")
+                    direct_callsite_count = _safe_function_callsite_count_8616(func)
+                    direct_clinic_policy = _direct_clinic_policy_8616(
+                        arch_name=direct_arch_name,
+                        direct_addr_mode=args.addr is not None,
+                        block_count=_bcount,
+                        byte_count=_bbytes,
+                        call_site_count=direct_callsite_count,
                     )
+                    if os.environ.get("INERTIA_DEBUG_CLINIC_FLAGS"):
+                        print(
+                            "[dbg] direct clinic policy "
+                            f"policy={direct_clinic_policy.value} arch={direct_arch_name!r} "
+                            f"blocks={_bcount} bytes={_bbytes} calls={direct_callsite_count}"
+                        )
+                    direct_clinic_guard = direct_clinic_policy is DirectClinicPolicy8616.AGGRESSIVE_GUARD
+                    direct_fast_peephole_guard = direct_clinic_policy is DirectClinicPolicy8616.FAST_PEEPHOLE
                     if direct_clinic_guard:
                         setattr(direct_project, "_inertia_disable_ail_narrowing", True)
                         setattr(direct_project, "_inertia_disable_complex_expr_scan", True)
@@ -4070,6 +4335,10 @@ def main(argv: list[str] | None = None) -> int:
                         setattr(direct_project, "_inertia_skip_clinic_recover_variables_assert", True)
                         setattr(direct_project, "_inertia_recover_variables_seed_empty", True)
                         setattr(direct_project, "_inertia_clinic_peephole_cap", 24)
+                    elif direct_fast_peephole_guard:
+                        setattr(direct_project, "_inertia_disable_complex_expr_scan", True)
+                        setattr(direct_project, "_inertia_fast_block_peephole", True)
+                        setattr(direct_project, "_inertia_clinic_peephole_cap", 48)
                     try:
                         result = _decompile_function_with_stats(
                             direct_project,
@@ -4089,7 +4358,7 @@ def main(argv: list[str] | None = None) -> int:
                             failure_family_state=direct_failure_family_state,
                         )
                     finally:
-                        if direct_clinic_guard:
+                        if direct_clinic_guard or direct_fast_peephole_guard:
                             setattr(direct_project, "_inertia_disable_ail_narrowing", prev_disable_narrowing)
                             setattr(direct_project, "_inertia_disable_complex_expr_scan", prev_disable_complex_expr_scan)
                             setattr(direct_project, "_inertia_fast_block_peephole", prev_fast_block_peephole)
@@ -4149,6 +4418,7 @@ def main(argv: list[str] | None = None) -> int:
                 direct_decompile_timeout = _enforce_function_timeout_cap(
                     max(1, _direct_effective_timeout) + 28,
                     context="direct analysis wrapper timeout",
+                    explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                 )
                 if timeout_was_explicit and isinstance(args.timeout, int):
                     if args.timeout <= 6:
@@ -4161,12 +4431,10 @@ def main(argv: list[str] | None = None) -> int:
                 direct_decompile_timeout = _enforce_function_timeout_cap(
                     max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1)),
                     context="direct direct-address budget timeout",
+                    explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                 )
-                use_fork_for_direct = (
-                    os.name == "posix"
-                    and threading.current_thread() is threading.main_thread()
-                    and threading.active_count() == 1
-                    and not _env_truthy_8616("INERTIA_OTEL_PROFILE_IN_PROCESS")
+                use_fork_for_direct = _direct_addr_use_fork_lane_8616(
+                    tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                 )
                 with span(
                     "direct.decompile_job",
@@ -4621,6 +4889,12 @@ def main(argv: list[str] | None = None) -> int:
                     *,
                     tail_validation_snapshot: dict[str, object] | None = None,
                 ) -> bool:
+                    payload_for_validation = _with_source_evidence_comments_8616(
+                        args.binary,
+                        func.name,
+                        payload_text,
+                        enabled=bool(args.alternate_source_c),
+                    )
                     snapshot = dict(tail_validation_snapshot) if isinstance(tail_validation_snapshot, dict) else None
                     for attr_name in ("_inertia_partial_tail_validation_snapshot", "_inertia_last_tail_validation_snapshot"):
                         if snapshot is not None:
@@ -4633,7 +4907,7 @@ def main(argv: list[str] | None = None) -> int:
                         snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
                     checked_acceptance = _validated_generated_c_acceptance_8616(
                         status="ok",
-                        payload=payload_text,
+                        payload=payload_for_validation,
                         tail_validation_snapshot=snapshot,
                         tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                         expected_validation_stages=["structuring", "postprocess"],
@@ -6226,6 +6500,7 @@ def main(argv: list[str] | None = None) -> int:
                         decompile_timeout = _enforce_function_timeout_cap(
                             int(decompile_timeout),
                             context="sweep decompile timeout",
+                            explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                         )
                         if (
                             use_serial_fork_per_function
@@ -6238,6 +6513,7 @@ def main(argv: list[str] | None = None) -> int:
                             hard_timeout = _enforce_function_timeout_cap(
                                 max(2, int(decompile_timeout) + 8),
                                 context="sweep hard timeout",
+                                explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                             )
                             print(
                                 f"[dbg] isolated function worker: start {active_item.function.addr:#x} "
@@ -6263,6 +6539,7 @@ def main(argv: list[str] | None = None) -> int:
                                     timeout=_enforce_function_timeout_cap(
                                         max(1, hard_timeout + 2),
                                         context="sweep function fork timeout",
+                                        explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                                     ),
                                 )
                                 result = replace(result, function=active_item.function, function_cfg=active_item.function_cfg)
@@ -6312,6 +6589,7 @@ def main(argv: list[str] | None = None) -> int:
                                     timeout=_enforce_function_timeout_cap(
                                         max(1, decompile_timeout + 1),
                                         context="sweep function daemon timeout",
+                                        explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                                     ),
                                     thread_name_prefix="func-serial-fallback",
                                 )
@@ -6359,6 +6637,7 @@ def main(argv: list[str] | None = None) -> int:
                                     timeout=_enforce_function_timeout_cap(
                                         max(1, decompile_timeout + 1),
                                         context="sweep function serial daemon timeout",
+                                        explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                                     ),
                                     thread_name_prefix="func-serial",
                                 )
@@ -6421,6 +6700,7 @@ def main(argv: list[str] | None = None) -> int:
                         retry_timeout = _enforce_function_timeout_cap(
                             retry_timeout,
                             context="sweep timeout bridge",
+                            explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                         )
                         try:
                             retry_result = _run_with_timeout_in_daemon_thread(
@@ -6439,6 +6719,7 @@ def main(argv: list[str] | None = None) -> int:
                                 timeout=_enforce_function_timeout_cap(
                                     max(1, retry_timeout + 2),
                                     context="sweep retry bridge thread timeout",
+                                    explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
                                 ),
                                 thread_name_prefix="func-timeout-bridge",
                             )
@@ -6902,7 +7183,6 @@ def main(argv: list[str] | None = None) -> int:
             _emit_function_timing_summary(function_tasks, result_map)
         return 0 if decompiled else 2
 
-    configure_telemetry_from_env()
     with span("cli.main"):
         try:
             return _impl()

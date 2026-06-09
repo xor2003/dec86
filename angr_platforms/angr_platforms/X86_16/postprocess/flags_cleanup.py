@@ -62,6 +62,28 @@ def _c_variable_register_offset_8616(node) -> int | None:
     return None
 
 
+def _c_register_offset_8616(node) -> int | None:
+    variable_offset = _c_variable_register_offset_8616(node)
+    if variable_offset is not None:
+        return variable_offset
+    if type(node).__name__ != "CDirtyExpression":
+        return None
+    dirty = getattr(node, "dirty", None)
+    try:
+        reg_offset = getattr(dirty, "reg_offset", None)
+    except (TypeError, ValueError):
+        reg_offset = None
+    if isinstance(reg_offset, int):
+        return int(reg_offset)
+    try:
+        reg = getattr(dirty, "reg", None)
+    except (TypeError, ValueError):
+        reg = None
+    if isinstance(reg, int):
+        return int(reg)
+    return None
+
+
 def _flags_register_offset_8616(codegen) -> int | None:
     project = getattr(codegen, "project", None)
     arch = getattr(project, "arch", None)
@@ -1106,17 +1128,20 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
                     continue
                 seen.add(node_id)
 
-                if isinstance(node, CVariable) and not assignment_lhs:
-                    variable = getattr(node, "variable", None)
-                    if variable is not None:
-                        used_variables.add(id(variable))
-                        if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) is not None:
-                            used_registers.add(variable.reg)
-                    unified = getattr(node, "unified_variable", None)
-                    if unified is not None:
-                        used_variables.add(id(unified))
-                        if isinstance(unified, SimRegisterVariable) and getattr(unified, "reg", None) is not None:
-                            used_registers.add(unified.reg)
+                if not assignment_lhs:
+                    reg_offset = _c_register_offset_8616(node)
+                    if reg_offset is not None:
+                        used_registers.add(reg_offset)
+                    if isinstance(node, CVariable):
+                        variable = getattr(node, "variable", None)
+                        if variable is not None:
+                            used_variables.add(id(variable))
+                        unified = getattr(node, "unified_variable", None)
+                        if unified is not None:
+                            used_variables.add(id(unified))
+                        continue
+
+                if isinstance(node, CVariable):
                     continue
 
                 for attr in (
@@ -1179,11 +1204,7 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
             if isinstance(node, CStatements):
                 new_statements = []
                 for stmt in getattr(node, "statements", ()):
-                    if (
-                        isinstance(stmt, CAssignment)
-                        and isinstance(stmt.lhs, CVariable)
-                        and _c_variable_register_offset_8616(stmt.lhs) == flags_offset
-                    ):
+                    if isinstance(stmt, CAssignment) and _c_register_offset_8616(stmt.lhs) == flags_offset:
                         variable = getattr(stmt.lhs, "variable", None)
                         unified = getattr(stmt.lhs, "unified_variable", None)
                         if (
@@ -1233,9 +1254,14 @@ def _c_expr_uses_register_8616(node, reg_offset: int) -> bool:
                 continue
             seen.add(current_id)
 
-            if isinstance(current, CVariable):
-                if _c_variable_register_offset_8616(current) == reg_offset:
+            current_reg_offset = _c_register_offset_8616(current)
+            if current_reg_offset is not None:
+                if current_reg_offset == reg_offset:
                     return True
+                if isinstance(current, CVariable):
+                    continue
+
+            if isinstance(current, CVariable):
                 continue
 
             for attr in (
@@ -1289,7 +1315,7 @@ def _stmt_reads_reg_before_write_8616(stmt, reg_offset: int) -> tuple[bool, bool
 
         if isinstance(stmt, CAssignment):
             lhs = stmt.lhs
-            writes = isinstance(lhs, CVariable) and _c_variable_register_offset_8616(lhs) == reg_offset
+            writes = _c_register_offset_8616(lhs) == reg_offset
             reads = _c_expr_uses_register_8616(stmt.rhs, reg_offset)
             return reads, writes
 
@@ -1344,46 +1370,49 @@ def _prune_overwritten_flag_assignments_8616(project, codegen) -> bool:
 
         changed = False
 
-        stack = [cfunc.statements]
-        seen: set[int] = set()
-        while stack:
-            node = stack.pop()
-            if not _structured_codegen_node_8616(node):
-                continue
-            node_id = id(node)
-            if node_id in seen:
-                continue
-            seen.add(node_id)
+        for _ in range(32):
+            pass_changed = False
+            stack = [cfunc.statements]
+            seen: set[int] = set()
+            while stack:
+                node = stack.pop()
+                if not _structured_codegen_node_8616(node):
+                    continue
+                node_id = id(node)
+                if node_id in seen:
+                    continue
+                seen.add(node_id)
 
-            if isinstance(node, CStatements):
-                new_statements = []
-                statements = list(getattr(node, "statements", ()))
-                for idx, stmt in enumerate(statements):
-                    remove = False
-                    if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
-                        if _c_variable_register_offset_8616(stmt.lhs) == flags_offset:
+                if isinstance(node, CStatements):
+                    new_statements = []
+                    statements = list(getattr(node, "statements", ()))
+                    for idx, stmt in enumerate(statements):
+                        remove = False
+                        if isinstance(stmt, CAssignment) and _c_register_offset_8616(stmt.lhs) == flags_offset:
                             remainder = CStatements(statements[idx + 1 :], codegen=codegen)
                             reads, _writes = _stmt_reads_reg_before_write_8616(remainder, flags_offset)
                             if not reads:
                                 remove = True
-                    if remove:
-                        changed = True
-                        continue
-                    new_statements.append(stmt)
-                    stack.append(stmt)
-                node.statements = new_statements
+                        if remove:
+                            changed = True
+                            pass_changed = True
+                            continue
+                        new_statements.append(stmt)
+                        stack.append(stmt)
+                    node.statements = new_statements
 
-            for attr in ("body", "else_node"):
-                child = getattr(node, attr, None)
-                if _structured_codegen_node_8616(child):
-                    stack.append(child)
+                for attr in ("body", "else_node"):
+                    child = getattr(node, attr, None)
+                    if _structured_codegen_node_8616(child):
+                        stack.append(child)
 
-            pairs = getattr(node, "condition_and_nodes", None)
-            if pairs:
-                for _cond, body in pairs:
-                    if _structured_codegen_node_8616(body):
-                        stack.append(body)
-
+                pairs = getattr(node, "condition_and_nodes", None)
+                if pairs:
+                    for _cond, body in pairs:
+                        if _structured_codegen_node_8616(body):
+                            stack.append(body)
+            if not pass_changed:
+                break
         return changed
 
     return _impl()

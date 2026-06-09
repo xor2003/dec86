@@ -128,12 +128,30 @@ def _cache_source_digest(paths: tuple[Path, ...]) -> str:
     return digest.hexdigest()
 
 
+def _case_insensitive_sibling_path(binary_path: Path, suffix: str) -> Path | None:
+    direct = binary_path.with_suffix(suffix)
+    if direct.exists():
+        return direct
+    parent = binary_path.parent
+    try:
+        siblings = sorted(parent.iterdir(), key=lambda path: path.name.lower())
+    except OSError:
+        return None
+    wanted_stem = binary_path.stem.lower()
+    wanted_suffix = suffix.lower()
+    for sibling in siblings:
+        if sibling.stem.lower() == wanted_stem and sibling.suffix.lower() == wanted_suffix:
+            return sibling
+    return None
+
+
 def _cache_sidecar_fingerprints(binary_path: Path | None) -> dict[str, dict[str, object]]:
     if binary_path is None:
         return {}
     sidecars: dict[str, dict[str, object]] = {}
-    for suffix in (".lst", ".map", ".cod"):
-        fingerprint = _cache_file_fingerprint(binary_path.with_suffix(suffix))
+    for suffix in (".lst", ".map", ".cod", ".idc", ".inc"):
+        sidecar_path = _case_insensitive_sibling_path(binary_path, suffix)
+        fingerprint = _cache_file_fingerprint(sidecar_path)
         if fingerprint is not None:
             sidecars[suffix] = fingerprint
     return sidecars

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import faulthandler
 import io
 import logging
 import os
@@ -383,16 +384,21 @@ def guard_angr_variable_recovery_binop_sub_size_mismatch(project=None):
 @contextlib.contextmanager
 def guard_angr_clinic_stage_markers(project):
     import time as _time
+    from angr.ailment.expression import Tmp as AILTmp
     from angr.analyses.decompiler.block_simplifier import BlockSimplifier
+    from angr.analyses.decompiler.ail_simplifier import AILSimplifier
     from angr.analyses.decompiler.clinic import Clinic
     from angr.analyses.decompiler import utils as decompiler_utils
     from angr.analyses.decompiler.utils import peephole_optimize_multistmts, peephole_optimize_stmts
+    from angr.knowledge_plugins.key_definitions.atoms import Tmp as AtomTmp
 
     orig_stage_pre_ssa = Clinic._stage_pre_ssa_level1_simplifications
     orig_stage_ssa_level1 = Clinic._stage_transform_to_ssa_level1
     orig_stage_post_ssa = Clinic._stage_post_ssa_level1_simplifications
     orig_stage_recover_vars = Clinic._stage_recover_variables
     orig_simplify_block = Clinic._simplify_block
+    orig_block_compute_propagation = BlockSimplifier._compute_propagation
+    orig_compute_propagation = AILSimplifier._compute_propagation
     orig_peephole_optimize = BlockSimplifier._peephole_optimize
     orig_peephole_optimize_exprs = decompiler_utils.peephole_optimize_exprs
     _t0 = _time.perf_counter()
@@ -627,11 +633,60 @@ def guard_angr_clinic_stage_markers(project):
             return block
         return orig_peephole_optimize_exprs(block, expr_opts)
 
+    class _NoPropagationResult:
+        def __init__(self):
+            self.replacements = {}
+            self.dead_vvar_ids = set()
+            self.model = self
+
+    def _compute_propagation_guarded(self, *args, **kwargs):  # noqa: ANN001
+        try:
+            return orig_compute_propagation(self, *args, **kwargs)
+        except KeyError as exc:
+            missing = exc.args[0] if exc.args else None
+            if not isinstance(missing, (AILTmp, AtomTmp)):
+                raise
+            count = int(getattr(project, "_inertia_clinic_missing_tmp_propagation_refused", 0) or 0) + 1
+            setattr(project, "_inertia_clinic_missing_tmp_propagation_refused", count)
+            if timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"):
+                print(
+                    "[dbg] clinic:refuse-missing-tmp-propagation "
+                    f"tmp={missing}{_project_current_function_context_suffix(project)}",
+                    file=sys.stderr,
+                )
+                sys.stderr.flush()
+            result = _NoPropagationResult()
+            self._propagator = result
+            self._propagator_dead_vvar_ids = result.dead_vvar_ids
+            return result
+
+    def _block_compute_propagation_guarded(self, *args, **kwargs):  # noqa: ANN001
+        try:
+            return orig_block_compute_propagation(self, *args, **kwargs)
+        except KeyError as exc:
+            missing = exc.args[0] if exc.args else None
+            if not isinstance(missing, (AILTmp, AtomTmp)):
+                raise
+            count = int(getattr(project, "_inertia_block_missing_tmp_propagation_refused", 0) or 0) + 1
+            setattr(project, "_inertia_block_missing_tmp_propagation_refused", count)
+            if timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"):
+                print(
+                    "[dbg] clinic:refuse-block-missing-tmp-propagation "
+                    f"tmp={missing}{_project_current_function_context_suffix(project)}",
+                    file=sys.stderr,
+                )
+                sys.stderr.flush()
+            result = _NoPropagationResult()
+            self._propagator = result
+            return result
+
     Clinic._stage_pre_ssa_level1_simplifications = _stage_pre_ssa_level1_simplifications
     Clinic._stage_transform_to_ssa_level1 = _stage_transform_to_ssa_level1
     Clinic._stage_post_ssa_level1_simplifications = _stage_post_ssa_level1_simplifications
     Clinic._stage_recover_variables = _stage_recover_variables
     Clinic._simplify_block = _simplify_block
+    BlockSimplifier._compute_propagation = _block_compute_propagation_guarded
+    AILSimplifier._compute_propagation = _compute_propagation_guarded
     BlockSimplifier._peephole_optimize = _peephole_optimize
     decompiler_utils.peephole_optimize_exprs = _peephole_optimize_exprs_guarded
     try:
@@ -642,6 +697,8 @@ def guard_angr_clinic_stage_markers(project):
         Clinic._stage_post_ssa_level1_simplifications = orig_stage_post_ssa
         Clinic._stage_recover_variables = orig_stage_recover_vars
         Clinic._simplify_block = orig_simplify_block
+        BlockSimplifier._compute_propagation = orig_block_compute_propagation
+        AILSimplifier._compute_propagation = orig_compute_propagation
         BlockSimplifier._peephole_optimize = orig_peephole_optimize
         decompiler_utils.peephole_optimize_exprs = orig_peephole_optimize_exprs
 
@@ -895,6 +952,12 @@ def run_with_timeout_in_fork(
             _FORK_CHILD_PID = os.getpid()
             try:
                 os.close(read_fd)
+                stack_dump_raw = os.environ.get("INERTIA_FORK_STACK_DUMP_SEC", "").strip()
+                if stack_dump_raw:
+                    with contextlib.suppress(Exception):
+                        stack_dump_sec = max(1, int(float(stack_dump_raw)))
+                        faulthandler.enable(file=sys.stderr, all_threads=True)
+                        faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=sys.stderr)
                 try:
                     payload = ("ok", func())
                 except BaseException as ex:  # noqa: BLE001

@@ -20,7 +20,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from inertia_decompiler.tail_validation import tail_validation_snapshot_for_function_run
 
@@ -71,6 +71,54 @@ class _DummyCodegen:
 
 def _project():
     return SimpleNamespace(arch=Arch86_16())
+
+
+def test_tail_validation_call_fingerprint_resolves_original_project_function_alias():
+    class CurrentFunctions:
+        def function(self, **_kwargs):
+            return None
+
+    class OriginalFunctions:
+        def function(self, *, name=None, create=False, **_kwargs):
+            if not create and name in {"rel_i16", "_rel_i16"}:
+                return SimpleNamespace(addr=0x1005A, name="rel_i16")
+            return None
+
+    project = _project()
+    project.kb = SimpleNamespace(functions=CurrentFunctions(), labels={})
+    project._inertia_original_project = SimpleNamespace(kb=SimpleNamespace(functions=OriginalFunctions(), labels={}))
+    codegen = _DummyCodegen()
+    call = CFunctionCall("rel_i16", None, [], codegen=codegen)
+
+    assert tail_validation_fingerprint_module._call_target_name(call, project) == "addr:0x1005a"
+    assert tail_validation_fingerprint_module._expr_fingerprint(call, project) == "call:addr:0x1005a()"
+
+
+def test_postprocess_validation_accepts_direct_helper_callsite_rename():
+    class Functions:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            if addr == 0x105D2 and not create:
+                return SimpleNamespace(addr=addr, name="sub_105d2")
+            return None
+
+    project = _project()
+    project.kb = SimpleNamespace(functions=Functions(), labels={})
+    function = SimpleNamespace(
+        get_call_sites=lambda: (0x10016,),
+        get_call_target=lambda _addr: 0x105D2,
+    )
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("name:aNchkstk",),
+                "removed": ("name:addr:0x105d2",),
+            },
+            "returns": {"added": (), "removed": ()},
+            "conditions": {"added": (), "removed": ()},
+        }
+    }
+
+    assert postprocess_stage._is_direct_callsite_helper_delta_only_8616(project, function, validation) is True
 
 
 def _codegen(statements, codegen=None):
@@ -162,6 +210,93 @@ def test_tail_validation_summary_collects_observable_effects():
     assert summary.helper_calls == ("print_dos_string",)
     assert summary.returns == ("call:print_dos_string(const:128)",)
     assert summary.control_flow_effects == ("return",)
+
+
+def test_tail_validation_void_return_call_matches_call_then_return():
+    project = _project()
+
+    return_call_codegen = _DummyCodegen()
+    return_call_codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        functy=SimTypeFunction([], SimTypeBottom(label="void")),
+        body=CStatements(
+            [
+                CReturn(
+                    CFunctionCall("Sleep", None, [_const(1, return_call_codegen)], codegen=return_call_codegen),
+                    codegen=return_call_codegen,
+                )
+            ],
+            addr=0x4010,
+            codegen=return_call_codegen,
+        ),
+    )
+
+    split_codegen = _DummyCodegen()
+    split_codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        functy=SimTypeFunction([], SimTypeBottom(label="void")),
+        body=CStatements(
+            [
+                CFunctionCall("Sleep", None, [_const(1, split_codegen)], codegen=split_codegen),
+                CReturn(None, codegen=split_codegen),
+            ],
+            addr=0x4010,
+            codegen=split_codegen,
+        ),
+    )
+
+    assert collect_x86_16_tail_validation_summary(project, return_call_codegen, mode="coarse") == (
+        collect_x86_16_tail_validation_summary(project, split_codegen, mode="coarse")
+    )
+
+
+def test_tail_validation_void_return_value_does_not_observe_ax_live_out():
+    project = _project()
+    codegen = _DummyCodegen()
+    ax = _reg(project, "ax", codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        functy=SimTypeFunction([], SimTypeBottom(label="void")),
+        body=CStatements(
+            [
+                CAssignment(ax, _const(7, codegen), codegen=codegen),
+                CReturn(ax, codegen=codegen),
+            ],
+            addr=0x4010,
+            codegen=codegen,
+        ),
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.register_writes == ()
+    assert summary.returns == ("none",)
+
+
+def test_tail_validation_void_return_evidence_from_source_annotation():
+    project = _project()
+    codegen = _DummyCodegen()
+    ax = _reg(project, "ax", codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        functy=SimTypeFunction([], SimTypeShort(False)),
+        body=CStatements(
+            [
+                CAssignment(ax, _const(7, codegen), codegen=codegen),
+                CReturn(ax, codegen=codegen),
+            ],
+            addr=0x4010,
+            codegen=codegen,
+        ),
+    )
+    codegen._inertia_current_function_8616 = SimpleNamespace(
+        info={"x86_16_annotations": {"source_lines": ("void DrawTime(int iCurrentRow)",)}}
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.register_writes == ()
+    assert summary.returns == ("none",)
 
 
 def test_tail_validation_legacy_and_canonical_modules_share_identity():
@@ -478,6 +613,13 @@ def test_tail_validation_live_out_ignores_dynamic_dirty_ss_segment_writes():
     assert before.segmented_writes == ()
     assert diff["changed"] is False
     assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_live_out_ignores_indexed_ss_frame_segment_write_fingerprint():
+    assert tail_validation_module._is_dynamic_dirty_ss_location_8616(
+        "deref:Add(Mul(reg:ss,const:16),Reference(CIndexedVariable),const:1)"
+    )
+    assert not tail_validation_module._is_dynamic_dirty_ss_location_8616("deref:Add(Mul(reg:ss,const:16),reg:ax)")
 
 
 def test_tail_validation_uses_cod_call_name_fingerprint_when_cfg_and_direct_targets_missing(monkeypatch):

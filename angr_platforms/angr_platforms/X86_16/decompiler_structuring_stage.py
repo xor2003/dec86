@@ -190,6 +190,58 @@ def _induction_summary_artifact_8616(codegen) -> bool:
 DECOMPILER_STRUCTURING_PASSES = _build_decompiler_structuring_passes()
 
 
+@contextlib.contextmanager
+def _guard_condition_processor_multibit_bool_predicates_8616(project):
+    """Normalize multi-bit AIL branch predicates to explicit nonzero Bool ASTs.
+
+    angr's condition processor may return a BV for Register/Load/VirtualVariable
+    leaves even when the caller requests ``must_bool=True``. x86 conditional
+    branch semantics are explicit nonzero tests for such values, so structuring
+    must see a Bool predicate instead of asserting later in short-circuit
+    recovery.
+    """
+    try:
+        import claripy
+        from angr.analyses.decompiler.condition_processor import ConditionProcessor
+    except Exception:
+        yield
+        return
+
+    orig = ConditionProcessor.claripy_ast_from_ail_condition
+    if getattr(orig, "_inertia_8616_multibit_bool_guard", False):
+        yield
+        return
+
+    normalized_count = 0
+    refused_count = 0
+
+    def _claripy_ast_from_ail_condition_8616(self, condition, *, nobool=False, must_bool=False, ins_addr=0):
+        nonlocal normalized_count, refused_count
+        result = orig(self, condition, nobool=nobool, must_bool=must_bool, ins_addr=ins_addr)
+        if not must_bool or isinstance(result, claripy.ast.Bool):
+            return result
+        if isinstance(result, claripy.ast.BV):
+            size = int(result.size())
+            if size > 0:
+                normalized_count += 1
+                return result != claripy.BVV(0, size)
+        refused_count += 1
+        return result
+
+    _claripy_ast_from_ail_condition_8616._inertia_8616_multibit_bool_guard = True
+    ConditionProcessor.claripy_ast_from_ail_condition = _claripy_ast_from_ail_condition_8616
+    try:
+        yield
+    finally:
+        ConditionProcessor.claripy_ast_from_ail_condition = orig
+        if normalized_count:
+            current = int(getattr(project, "_inertia_condition_predicate_multibit_bool_normalized", 0) or 0)
+            project._inertia_condition_predicate_multibit_bool_normalized = current + normalized_count
+        if refused_count:
+            current = int(getattr(project, "_inertia_condition_predicate_multibit_bool_refused", 0) or 0)
+            project._inertia_condition_predicate_multibit_bool_refused = current + refused_count
+
+
 def _semantic_validation_pass_names_8616() -> tuple[str, ...]:
     return (
         "_simplify_structured_expressions_8616",
@@ -203,21 +255,26 @@ def _prime_structuring_validation_semantics_8616(project, codegen) -> None:
     if getattr(codegen, "_inertia_structuring_validation_semantics_primed", False):
         return
     try:
+        from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
         from .lowering.real_mode_linear import (
             lower_stable_ds_es_linear_global_dereferences_8616,
             lower_stable_ss_linear_stack_dereferences_8616,
         )
-
-        lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
-        lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
-        _segmented_mem.apply_x86_16_segmented_memory_reasoning(codegen)
-        from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
         from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 
         transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
         alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+        changed = False
         if isinstance(alias_facts, list) and alias_facts:
+            before_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
             lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+            after_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
+            changed = changed or after_materialized > before_materialized
+        changed = bool(lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)) or changed
+        if changed:
+            codegen._inertia_codegen_decl_refresh_required_8616 = True
+        lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
+        _segmented_mem.apply_x86_16_segmented_memory_reasoning(codegen)
         # Keep structuring-tail validation stable: if priming already applied
         # SS stack lowering and alias-fact lowering, skip re-running it in the
         # structuring body to avoid representation-only drift.
@@ -351,49 +408,40 @@ def _structuring_codegen_8616(project, codegen) -> bool:
             return False
 
         # ── Stack lowering (before structuring) ──
-        # Must run early: alias facts → stack variables → structuring sees named variables.
+        # Must run early: alias facts → stack variables → SS linear derefs →
+        # structuring sees named variables. Running SS linear lowering before
+        # alias fact materialization leaves stack_base carriers unresolved.
         if not getattr(codegen, "_inertia_ss_stack_lowered", False):
             from .pipeline.errors import PipelineHardError
 
             try:
+                from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
                 from .lowering.real_mode_linear import (
                     lower_stable_ss_linear_stack_dereferences_8616,
                 )
-
-                lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
-            except PipelineHardError:
-                raise
-            except Exception as ex:
-                codegen._inertia_structuring_failed = True
-                codegen._inertia_structuring_failure_pass = "lower_stable_ss_linear_stack_dereferences_8616"
-                codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
-                logging.getLogger(__name__).exception(
-                    "stack lowering setup failed function=%#x stage=%s: %s: %s",
-                    getattr(getattr(codegen, "cfunc", None), "addr", 0),
-                    "lower_stable_ss_linear_stack_dereferences_8616",
-                    type(ex).__name__,
-                    ex,
-                )
-                return False
-
-            try:
-                from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
                 from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 
                 transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
                 alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+                changed = False
                 if isinstance(alias_facts, list) and alias_facts:
+                    before_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
                     lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+                    after_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
+                    changed = changed or after_materialized > before_materialized
+                changed = bool(lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)) or changed
+                if changed:
+                    codegen._inertia_codegen_decl_refresh_required_8616 = True
             except PipelineHardError:
                 raise
             except Exception as ex:
                 codegen._inertia_structuring_failed = True
-                codegen._inertia_structuring_failure_pass = "lower_stack_accesses_from_alias_facts_8616"
+                codegen._inertia_structuring_failure_pass = "stack_alias_materialization_and_ss_linear_lowering"
                 codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
                 logging.getLogger(__name__).warning(
                     "stack lowering from facts failed function=%#x stage=%s: %s: %s",
                     getattr(getattr(codegen, "cfunc", None), "addr", 0),
-                    "lower_stack_accesses_from_alias_facts_8616",
+                    "stack_alias_materialization_and_ss_linear_lowering",
                     type(ex).__name__,
                     ex,
                 )
@@ -509,7 +557,8 @@ def _decompile_structuring_8616(self):
         structuring_started = time.perf_counter()
         self.project._inertia_decompiler_stage = "core"
         _ensure_function_prototype_8616()
-        _orig_decompiler_decompile(self)
+        with _guard_condition_processor_multibit_bool_predicates_8616(self.project):
+            _orig_decompiler_decompile(self)
         structuring_elapsed = time.perf_counter() - structuring_started
         if self.project.arch.name != "86_16" or self.codegen is None:
             return

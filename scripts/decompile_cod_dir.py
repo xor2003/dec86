@@ -1136,7 +1136,7 @@ def main() -> int:
             default=None,
             help="Limit the run to one PROC name. Can be repeated. Matching is case-insensitive.",
         )
-        parser.add_argument("--timeout", type=int, default=20, help="Per-procedure decompiler timeout in seconds.")
+        parser.add_argument("--timeout", type=int, default=60, help="Per-procedure decompiler timeout in seconds.")
         parser.add_argument(
             "--max-memory-mb",
             type=int,

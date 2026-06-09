@@ -284,6 +284,13 @@ def _rebind_for_loop_byte_carrier_recurrence(loop, state, *, rules) -> bool:
                     state._record_recurrence_reason("ambiguous_delta")
                     return None, None, False
                 if not state.same_c_expression(state.unwrap_c_casts(candidate_base), state.unwrap_c_casts(iterator_local)):
+                    if _linear_recurrence_debug_enabled():
+                        log.warning(
+                            "[linear-recurrence] iterator candidate rejected: base=%s iterator=%s delta=%r",
+                            _node_summary_8616(candidate_base),
+                            _node_summary_8616(iterator_local),
+                            candidate_delta_local,
+                        )
                     state._record_recurrence_reason("not_materialized_local")
                     return None, None, False
                 return iterator_local, candidate_delta_local, _find_low_delta_stmt_8616(

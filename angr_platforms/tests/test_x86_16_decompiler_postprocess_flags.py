@@ -8,6 +8,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
     CIfElse,
     CStatements,
     CUnaryOp,
@@ -20,6 +21,8 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_flags import (
     _c_expr_uses_var_8616,
     _fix_interval_guard_conditions_8616,
+    _prune_overwritten_flag_assignments_8616,
+    _prune_unused_flag_assignments_8616,
     _rewrite_flag_bit_value_uses_8616,
     _rewrite_flag_condition_pairs_8616,
 )
@@ -60,8 +63,73 @@ def _reg(project, name: str, codegen, *, var_name: str | None = None):
     return CVariable(SimRegisterVariable(reg_offset, reg_size, name=var_name or name), codegen=codegen)
 
 
+def _dirty_reg(project, name: str, codegen, *, varid: int = 1):
+    reg_offset, reg_size = project.arch.registers[name]
+    return CDirtyExpression(
+        SimpleNamespace(varid=varid, idx=varid, name=f"vvar_{varid}", reg_offset=reg_offset, bits=reg_size * 8),
+        codegen=codegen,
+    )
+
+
 def _empty_body(codegen):
     return CStatements([], codegen=codegen)
+
+
+def test_prune_unused_flag_assignments_removes_dirty_flags_write():
+    project = _project()
+    codegen = _codegen([])
+    flags = _dirty_reg(project, "flags", codegen)
+    stmt = CAssignment(flags, _const(0x40, codegen), codegen=codegen)
+    codegen.cfunc.statements = CStatements([stmt], codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _prune_unused_flag_assignments_8616(project, codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+
+
+def test_prune_unused_flag_assignments_keeps_dirty_flags_read_by_condition():
+    project = _project()
+    codegen = _codegen([])
+    flags_lhs = _dirty_reg(project, "flags", codegen, varid=1)
+    flags_read = _dirty_reg(project, "flags", codegen, varid=1)
+    stmt = CAssignment(flags_lhs, _const(0x40, codegen), codegen=codegen)
+    condition = CBinaryOp("And", flags_read, _const(0x40, codegen), codegen=codegen)
+    if_stmt = CIfElse([(condition, _empty_body(codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([stmt, if_stmt], codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _prune_unused_flag_assignments_8616(project, codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [stmt, if_stmt]
+
+
+def test_prune_overwritten_flag_assignments_reaches_dirty_flag_fixed_point():
+    project = _project()
+    codegen = _codegen([])
+    flags_1 = _dirty_reg(project, "flags", codegen, varid=1)
+    flags_2 = _dirty_reg(project, "flags", codegen, varid=2)
+    flags_3 = _dirty_reg(project, "flags", codegen, varid=3)
+    stmt_1 = CAssignment(flags_1, _const(1, codegen), codegen=codegen)
+    stmt_2 = CAssignment(
+        flags_2,
+        CBinaryOp("Or", flags_1, _const(2, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    stmt_3 = CAssignment(
+        flags_3,
+        CBinaryOp("Or", flags_2, _const(4, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements([stmt_1, stmt_2, stmt_3], codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _prune_overwritten_flag_assignments_8616(project, codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
 
 
 def test_rewrite_flag_condition_pairs_recovers_zero_flag_guard_without_tail_delta():

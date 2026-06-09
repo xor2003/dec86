@@ -88,6 +88,12 @@ def _run_single_stack_lowering_round_8616(
         if codegen is not None and lower_stable_ds_es_linear_global_addresses_8616(codegen, project=project):
             _record_lowering_change_8616(codegen)
             round_changed = True
+            if lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
+                codegen._inertia_global_deref_after_address_materialized_count = int(
+                    getattr(codegen, "_inertia_global_deref_after_address_materialized_count", 0) or 0
+                ) + 1
+                _record_lowering_change_8616(codegen)
+                round_changed = True
         if codegen is not None and apply_runtime_segment_lowering_8616(
             codegen,
             target=str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat"),

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from functools import lru_cache
+import re
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -15,9 +17,50 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from .lowering.real_mode_linear import _stack_pointer_carrier_offset_8616
+from .lowering.real_mode_linear import _stack_base_bp_bias_8616, _stack_pointer_carrier_offset_8616
 
 _SEGMENT_REGISTER_NAMES_8616 = {"cs", "ds", "es", "ss"}
+_LINEAR_TEMP_NAME_RE_8616 = re.compile(r"(?:v\d+|vvar_\d+|ir_\d+|tmp_\d+)(?:\{[^}]+\})?$")
+_STRUCTURED_NON_CHILD_ATTRS_8616 = frozenset({"codegen", "idx", "tags"})
+_STRUCTURED_CHILD_ATTRS_BY_CLASS_8616 = {
+    "CAILBlock": ("block",),
+    "CAssignment": ("lhs", "rhs"),
+    "CBinaryOp": ("lhs", "rhs"),
+    "CDoWhileLoop": ("condition", "body"),
+    "CExpressionStatement": ("expr",),
+    "CForLoop": ("initializer", "condition", "iterator", "body"),
+    "CFunction": ("arg_list", "statements"),
+    "CFunctionCall": ("callee_target", "callee_func", "args"),
+    "CITE": ("cond", "iftrue", "iffalse"),
+    "CIfBreak": ("condition",),
+    "CIfElse": ("condition_and_nodes", "else_node"),
+    "CIncompleteSwitchCase": ("head", "cases"),
+    "CIndexedVariable": ("variable", "index"),
+    "CMultiStatementExpression": ("stmts", "expr"),
+    "CReturn": ("retval",),
+    "CStatements": ("statements",),
+    "CSwitchCase": ("switch", "cases", "default"),
+    "CTypeCast": ("expr",),
+    "CUnaryOp": ("operand",),
+    "CVEXCCallExpression": ("callee", "operands"),
+    "CVariableField": ("variable", "field"),
+    "CWhileLoop": ("condition", "body"),
+}
+
+
+def _strip_typed_name_suffix_8616(name: object) -> str | None:
+    if not isinstance(name, str):
+        return None
+    if name.endswith("}"):
+        brace_pos = name.find("{")
+        if brace_pos >= 0:
+            return name[:brace_pos]
+    return name
+
+
+def _is_linear_temp_name_8616(name: object) -> bool:
+    normalized = _strip_typed_name_suffix_8616(name)
+    return isinstance(normalized, str) and _LINEAR_TEMP_NAME_RE_8616.fullmatch(normalized) is not None
 
 
 def _safe_assign_cfunc_statements_8616(codegen, new_root, old_root):
@@ -81,28 +124,60 @@ def _structured_codegen_node_8616(value) -> bool:
     return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
 
 
+@lru_cache(maxsize=256)
+def _structured_slot_names_for_type_8616(value_type: type) -> tuple[str, ...]:
+    attrs: list[str] = []
+    if value_type is object:
+        return ()
+
+    for cls in value_type.mro():
+        slots = getattr(cls, "__slots__", ())
+        if not slots:
+            continue
+        if isinstance(slots, str):
+            slots = (slots,)
+        for slot in slots:
+            if isinstance(slot, str) and not slot.startswith("_") and slot not in _STRUCTURED_NON_CHILD_ATTRS_8616:
+                attrs.append(slot)
+
+    seen = set()
+    ordered: list[str] = []
+    for attr in attrs:
+        if attr in seen:
+            continue
+        seen.add(attr)
+        ordered.append(attr)
+    return tuple(ordered)
+
+
 def _structured_slot_names_8616(value) -> tuple[str, ...]:
     def _impl():
-        attrs: list[str] = []
-        if type(value) is object:
-            return ()
+        child_attrs = _STRUCTURED_CHILD_ATTRS_BY_CLASS_8616.get(type(value).__name__)
+        if child_attrs is not None:
+            return child_attrs
 
-        for cls in type(value).mro():
-            slots = getattr(cls, "__slots__", ())
-            if not slots:
-                continue
-            if isinstance(slots, str):
-                slots = (slots,)
-            for slot in slots:
-                if isinstance(slot, str) and not slot.startswith("_") and slot != "codegen":
-                    attrs.append(slot)
+        base_attrs = _structured_slot_names_for_type_8616(type(value))
+        if not hasattr(value, "__dict__"):
+            return base_attrs
 
-        if hasattr(value, "__dict__"):
-            attrs.extend(
-                attr
-                for attr in value.__dict__.keys()
-                if isinstance(attr, str) and not attr.startswith("_") and attr != "codegen"
+        attrs: list[str] = list(base_attrs)
+        try:
+            dynamic_keys = tuple(value.__dict__.keys())
+        except Exception:
+            dynamic_keys = ()
+        if not dynamic_keys:
+            return base_attrs
+        attrs.extend(
+            attr
+            for attr in dynamic_keys
+            if (
+                isinstance(attr, str)
+                and not attr.startswith("_")
+                and attr not in _STRUCTURED_NON_CHILD_ATTRS_8616
             )
+        )
+        if not attrs:
+            return ()
 
         seen = set()
         ordered: list[str] = []
@@ -622,10 +697,8 @@ def _resolve_stack_bp_term_8616(node, project=None, codegen=None, seen: set[int]
         variable = getattr(node, "variable", None)
         if variable is None:
             return node
-        name = getattr(variable, "name", None)
-        should_follow_single_assignment = isinstance(name, str) and (
-            name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_")
-        )
+        name = _strip_typed_name_suffix_8616(getattr(node, "name", None) or getattr(variable, "name", None))
+        should_follow_single_assignment = _is_linear_temp_name_8616(name)
         if isinstance(variable, SimStackVariable):
             should_follow_single_assignment = True
         if not should_follow_single_assignment:
@@ -666,6 +739,13 @@ def _stack_bp_displacement_8616(node, project=None, codegen=None, seen: set[int]
             total += const
             return
 
+        if isinstance(term, CVariable):
+            stack_base_bias = _stack_base_bp_bias_8616(term, codegen)
+            if isinstance(stack_base_bias, int):
+                stack_offsets.append(stack_base_bias)
+                found_stack_ref = True
+                return
+
         if isinstance(term, CUnaryOp) and term.op == "Reference":
             operand = term.operand
             if isinstance(operand, CVariable):
@@ -674,6 +754,11 @@ def _stack_bp_displacement_8616(node, project=None, codegen=None, seen: set[int]
                     offset = getattr(variable, "offset", None)
                     if isinstance(offset, int):
                         stack_offsets.append(offset)
+                        found_stack_ref = True
+                else:
+                    stack_base_bias = _stack_base_bp_bias_8616(operand, codegen)
+                    if isinstance(stack_base_bias, int):
+                        stack_offsets.append(stack_base_bias)
                         found_stack_ref = True
             return
 

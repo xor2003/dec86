@@ -124,6 +124,17 @@ def test_expr_fingerprint_canonicalizes_negated_compare_to_inverted_compare():
     assert _expr_fingerprint(negated, project) == _expr_fingerprint(direct, project)
 
 
+def test_expr_fingerprint_allows_shared_child_nodes_without_cycle():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    shared = _stack(4, codegen)
+    shared_tree = CBinaryOp("CmpGE", shared, shared, codegen=codegen)
+    duplicated_tree = CBinaryOp("CmpGE", _stack(4, codegen), _stack(4, codegen), codegen=codegen)
+
+    assert _expr_fingerprint(shared_tree, project) == _expr_fingerprint(duplicated_tree, project)
+    assert "expr_cycle" not in _expr_fingerprint(shared_tree, project)
+
+
 def test_location_fingerprint_ignores_nested_casts_on_segmented_dereference():
     codegen = _DummyCodegen()
     project = codegen.project

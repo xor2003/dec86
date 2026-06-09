@@ -43,8 +43,20 @@ def _widening_copy_propagation_8616(codegen) -> bool:
         from angr.analyses.decompiler.structured_codegen import c as structured_c
 
         stmts = _unwrap_statements_8616(statements_obj)
-        # Map storage domain key → (source_expr, storage_facts) for last definition
+        # Map storage domain key -> source_expr for last plain-variable definition.
         block_defs: dict[str, object] = {}
+
+        def _lhs_writes_memory(lhs) -> bool:
+            if lhs is None:
+                return False
+            if isinstance(lhs, structured_c.CVariable):
+                return False
+            if isinstance(lhs, structured_c.CUnaryOp) and getattr(lhs, "op", None) == "Dereference":
+                return True
+            if isinstance(lhs, (structured_c.CIndexedVariable, structured_c.CStructField)):
+                return True
+            # Unknown lvalue shape: conservatively treat it as an observable memory write.
+            return True
 
         for stmt in stmts:
             if isinstance(stmt, structured_c.CAssignment):
@@ -61,8 +73,24 @@ def _widening_copy_propagation_8616(codegen) -> bool:
                             stmt.rhs = _unwrap_c_casts(replacement)
                             changed = True
 
-                # Record this definition's source for future propagation
-                if lhs is not None and not _is_side_effecting(rhs):
+                # A memory write can invalidate any previous expression whose
+                # source may have read memory. Alias precision is not available
+                # here, so unknown means kill rather than propagate stale data.
+                if _lhs_writes_memory(lhs):
+                    if block_defs:
+                        codegen.widening_copyprop_memory_kills_8616 = (
+                            int(getattr(codegen, "widening_copyprop_memory_kills_8616", 0) or 0) + 1
+                        )
+                    block_defs.clear()
+                    if _is_side_effecting(rhs):
+                        block_defs.clear()
+                    _walk_node(stmt)
+                    continue
+
+                # Record this definition's source for future propagation.
+                # Only plain variable definitions are copy-prop definitions;
+                # memory stores are effects, not reusable definitions.
+                if isinstance(lhs, structured_c.CVariable) and not _is_side_effecting(rhs):
                     lhs_facts = describe_alias_storage(lhs)
                     lhs_key = _block_def_key(lhs_facts)
                     if lhs_key is not None:

@@ -3,7 +3,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+from collections.abc import MutableMapping
 from dataclasses import dataclass
+from enum import Enum
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -18,6 +20,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
+from .annotations import ANNOTATION_KEY
 from .decompiler_postprocess_flags import _c_expr_uses_register_8616
 from .decompiler_postprocess_utils import (
     _iter_c_nodes_deep_8616,
@@ -26,6 +29,7 @@ from .decompiler_postprocess_utils import (
     _structured_codegen_node_8616,
 )
 from .ir.condition_ir import JCC_TO_COND_8616
+from .lowering.real_mode_linear import RealModeLinearStackAccess8616, stack_cvar_for_stable_ss_linear_access_8616
 from .lowering.segmented_memory_lowering import lower_runtime_segment_access_8616
 from .tail_validation_fingerprint import _expr_fingerprint
 
@@ -81,6 +85,11 @@ class _DecodedCmpGuard8616:
     expr: object | None = None
 
 
+class _JccPolarityEvidence8616(Enum):
+    UNKNOWN = "unknown"
+    JCC_TARGET_BODY = "jcc_target_body"
+
+
 def _condition_tags_8616(node) -> tuple[int, int] | None:
     seen: set[int] = set()
 
@@ -103,6 +112,28 @@ def _condition_tags_8616(node) -> tuple[int, int] | None:
             if found is not None:
                 return found
         return None
+
+    return _walk(node)
+
+
+def _condition_materialized_by_jcc_8616(node) -> bool:
+    seen: set[int] = set()
+
+    def _walk(current) -> bool:
+        if current is None:
+            return False
+        marker = id(current)
+        if marker in seen:
+            return False
+        seen.add(marker)
+        tags = getattr(current, "tags", None)
+        if isinstance(tags, dict) and tags.get("inertia_jcc_materialized_8616") is True:
+            return True
+        for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond"):
+            child = getattr(current, attr, None)
+            if _walk(child):
+                return True
+        return False
 
     return _walk(node)
 
@@ -141,6 +172,42 @@ def _const_8616(value: int, codegen):
 
 def _signed_const_8616(value: int, codegen):
     return CConstant(int(value), SimTypeShort(True), codegen=codegen)
+
+
+def _type_with_project_arch_8616(project, sim_type):
+    if sim_type is None:
+        return None
+    try:
+        _ = sim_type.size
+        return sim_type
+    except ValueError:
+        pass
+    except Exception:
+        return sim_type
+    arch = getattr(project, "arch", None)
+    if arch is None or not hasattr(sim_type, "with_arch"):
+        return sim_type
+    with contextlib.suppress(Exception):
+        return sim_type.with_arch(arch)
+    return sim_type
+
+
+def _ensure_c_expr_type_has_arch_8616(project, expr):
+    if expr is None:
+        return None
+    if isinstance(expr, CVariable):
+        variable_type = getattr(expr, "variable_type", None)
+        fixed_type = _type_with_project_arch_8616(project, variable_type)
+        if fixed_type is not None and fixed_type is not variable_type:
+            with contextlib.suppress(Exception):
+                expr.variable_type = fixed_type
+    elif isinstance(expr, CConstant):
+        const_type = getattr(expr, "_type", None)
+        fixed_type = _type_with_project_arch_8616(project, const_type)
+        if fixed_type is not None and fixed_type is not const_type:
+            with contextlib.suppress(Exception):
+                expr._type = fixed_type
+    return expr
 
 
 def _register_exprs_by_ins_addr_8616(codegen, project) -> dict[tuple[int, str, int], object]:
@@ -227,7 +294,7 @@ def _lookup_prior_register_stack_load_8616(project, codegen, ins_addr: int, reg_
         mem = operands[1].mem
         if not mem.base or str(insn.reg_name(mem.base)).lower() != "bp":
             continue
-        return _stack_slot_expr_8616(codegen, int(mem.disp), int(getattr(operands[1], "size", 0) or size))
+        return _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operands[1], "size", 0) or size))
     return None
 
 
@@ -251,12 +318,197 @@ def _wide_stack_pair_expr_8616(codegen, hi_expr, lo_expr):
     return _stack_slot_expr_8616(codegen, lo_offset, 4)
 
 
+def _expr_is_register_8616(project, expr, reg_name: str) -> bool:
+    node = expr
+    while isinstance(node, CTypeCast):
+        node = getattr(node, "expr", None)
+    if not isinstance(node, CVariable):
+        return False
+    variable = getattr(node, "variable", None)
+    if not isinstance(variable, SimRegisterVariable):
+        return False
+    expected = _reg_offset_8616(project, reg_name)
+    return expected is not None and int(getattr(variable, "reg", -1)) == int(expected)
+
+
+def _wide_call_return_pair_expr_8616(project, codegen, hi_expr, lo_expr, ins_addr: int):
+    if not (_expr_is_register_8616(project, hi_expr, "dx") and _expr_is_register_8616(project, lo_expr, "ax")):
+        return None
+    debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
+    if debug_jcc:
+        _log.warning("[jcc-rewrite] wide-call-return candidate ins_addr=%#x hi=%r lo=%r", int(ins_addr), hi_expr, lo_expr)
+    try:
+        codegen._inertia_jcc_wide_call_return_pair_candidates_8616 = int(
+            getattr(codegen, "_inertia_jcc_wide_call_return_pair_candidates_8616", 0) or 0
+        ) + 1
+    except Exception:
+        pass
+    call_expr = _call_return_expr_before_insn_8616(project, codegen, int(ins_addr))
+    if call_expr is None:
+        if debug_jcc:
+            _log.warning("[jcc-rewrite] wide-call-return refused-no-call ins_addr=%#x", int(ins_addr))
+        try:
+            codegen._inertia_jcc_wide_call_return_pair_refused_8616 = int(
+                getattr(codegen, "_inertia_jcc_wide_call_return_pair_refused_8616", 0) or 0
+            ) + 1
+        except Exception:
+            pass
+        return None
+    try:
+        codegen._inertia_jcc_wide_call_return_pair_materialized_8616 = int(
+            getattr(codegen, "_inertia_jcc_wide_call_return_pair_materialized_8616", 0) or 0
+        ) + 1
+    except Exception:
+        pass
+    if debug_jcc:
+        _log.warning("[jcc-rewrite] wide-call-return materialized ins_addr=%#x expr=%r", int(ins_addr), call_expr)
+    return call_expr
+
+
+def _wide_call_return_pair_operands_8616(project, codegen, hi_operand, lo_operand, hi_reg_name_fn, lo_reg_name_fn, ins_addr: int):
+    if int(getattr(hi_operand, "type", -1)) != 1 or int(getattr(lo_operand, "type", -1)) != 1:
+        return None
+    if str(hi_reg_name_fn(hi_operand.reg)).lower() != "dx":
+        return None
+    if str(lo_reg_name_fn(lo_operand.reg)).lower() != "ax":
+        return None
+    dx_offset = _reg_offset_8616(project, "dx")
+    ax_offset = _reg_offset_8616(project, "ax")
+    if dx_offset is None or ax_offset is None:
+        return None
+    return _wide_call_return_pair_expr_8616(
+        project,
+        codegen,
+        CVariable(SimRegisterVariable(dx_offset, int(getattr(hi_operand, "size", 0) or 2), name="dx"), codegen=codegen),
+        CVariable(SimRegisterVariable(ax_offset, int(getattr(lo_operand, "size", 0) or 2), name="ax"), codegen=codegen),
+        ins_addr,
+    )
+
+
 def _stack_slot_placeholder_name_8616(disp: int, size: int) -> str:
     sign = "m" if int(disp) < 0 else "p"
     return f"stack_bp_{sign}{abs(int(disp)):x}_b{int(size)}"
 
 
-def _stack_slot_expr_8616(codegen, disp: int, size: int = 2):
+def _stack_arg_width_from_type_8616(arg_type) -> int:
+    bits = getattr(arg_type, "size", None)
+    with contextlib.suppress(Exception):
+        if isinstance(bits, int) and bits > 0:
+            return max(2, int(bits // 8))
+    return 2
+
+
+def _is_unstable_stack_arg_name_8616(name: object) -> bool:
+    return isinstance(name, str) and (
+        name.startswith("arg_")
+        or name.startswith("local_")
+        or name.startswith("stack_bp_")
+        or name.startswith("s_")
+    )
+
+
+def _annotation_arg_name_for_stack_offset_8616(codegen, disp: int, *, project=None) -> str | None:
+    def _name_from_spec(spec) -> str | None:
+        name = spec if isinstance(spec, str) else None
+        if isinstance(spec, dict):
+            spec_name = spec.get("name")
+            if isinstance(spec_name, str):
+                name = spec_name
+        if isinstance(name, str) and name and not _is_unstable_stack_arg_name_8616(name):
+            return name
+        return None
+
+    cfunc = getattr(codegen, "cfunc", None)
+    project = project if project is not None else getattr(codegen, "project", None)
+    func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
+    if project is None or not isinstance(func_addr, int) or int(disp) <= 2:
+        return None
+    with contextlib.suppress(Exception):
+        function = project.kb.functions.function(addr=func_addr, create=False)
+        info = getattr(function, "info", None)
+        annotations = info.get(ANNOTATION_KEY) if isinstance(info, MutableMapping) else None
+        stack_vars = annotations.get("stack_vars") if isinstance(annotations, dict) else None
+        if not isinstance(stack_vars, dict):
+            return None
+        # COD/LST BP aliases are recorded as architectural BP displacements,
+        # while function annotations normalize BP-relative slots by removing the
+        # return-address word. Accept both forms so lowering can consume the
+        # same evidence regardless of which layer is asking.
+        candidates = (int(disp), int(disp) - 2)
+        for candidate in candidates:
+            name = _name_from_spec(stack_vars.get(candidate))
+            if name is not None:
+                return name
+    return None
+
+
+def _prototype_arg_name_for_stack_offset_8616(codegen, disp: int, *, project=None) -> str | None:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None or int(disp) <= 2:
+        return None
+    candidates = [
+        getattr(cfunc, "functy", None),
+        getattr(cfunc, "prototype", None),
+    ]
+    project = project if project is not None else getattr(codegen, "project", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if project is not None and isinstance(func_addr, int):
+        with contextlib.suppress(Exception):
+            func = project.kb.functions.function(addr=func_addr, create=False)
+            candidates.append(getattr(func, "prototype", None) if func is not None else None)
+    for prototype in candidates:
+        arg_names = tuple(getattr(prototype, "arg_names", ()) or ()) if prototype is not None else ()
+        args = tuple(getattr(prototype, "args", ()) or ()) if prototype is not None else ()
+        if not arg_names or len(arg_names) != len(args):
+            continue
+        cursor = 4
+        for name, arg_type in zip(arg_names, args):
+            if (
+                cursor == int(disp)
+                and isinstance(name, str)
+                and name
+                and not _is_unstable_stack_arg_name_8616(name)
+            ):
+                return name
+            cursor += _stack_arg_width_from_type_8616(arg_type)
+    return None
+
+
+def _is_placeholder_stack_arg_name_8616(name: object) -> bool:
+    return _is_unstable_stack_arg_name_8616(name)
+
+
+def _sync_stack_arg_expr_name_from_prototype_8616(codegen, expr, disp: int, *, project=None):
+    if int(disp) <= 2:
+        return expr
+    desired_name = _annotation_arg_name_for_stack_offset_8616(
+        codegen,
+        disp,
+        project=project,
+    ) or _prototype_arg_name_for_stack_offset_8616(codegen, disp, project=project)
+    if not desired_name:
+        return expr
+    variable = getattr(expr, "variable", None)
+    if not isinstance(variable, SimStackVariable):
+        return expr
+    if int(getattr(variable, "offset", 0) or 0) != int(disp):
+        return expr
+    current_name = getattr(variable, "name", None)
+    if current_name == desired_name:
+        return expr
+    if _is_placeholder_stack_arg_name_8616(current_name) or not current_name:
+        with contextlib.suppress(Exception):
+            variable.name = desired_name
+        with contextlib.suppress(Exception):
+            expr.name = desired_name
+        unified = getattr(expr, "unified_variable", None)
+        if unified is not None:
+            with contextlib.suppress(Exception):
+                unified.name = desired_name
+    return expr
+
+
+def _stack_slot_expr_8616(codegen, disp: int, size: int = 2, *, project=None):
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return None
@@ -274,10 +526,27 @@ def _stack_slot_expr_8616(codegen, disp: int, size: int = 2):
                     if isinstance(item, tuple) and item:
                         yield item[0]
 
+    # Positive BP displacements are function arguments in near 16-bit C calls.
+    # Reuse an existing canonical argument before stable stack lowering can
+    # synthesize a placeholder such as arg_4 and diverge from the signature.
+    if int(disp) > 2:
+        for expr in tuple(getattr(cfunc, "arg_list", ()) or ()):
+            variable = getattr(expr, "variable", None)
+            if isinstance(variable, SimStackVariable) and int(getattr(variable, "offset", 0) or 0) == int(disp):
+                return _sync_stack_arg_expr_name_from_prototype_8616(codegen, expr, disp, project=project)
+
+    with contextlib.suppress(Exception):
+        materialized = stack_cvar_for_stable_ss_linear_access_8616(
+            codegen,
+            RealModeLinearStackAccess8616(int(disp), int(size) or 2),
+        )
+        if materialized is not None:
+            return _sync_stack_arg_expr_name_from_prototype_8616(codegen, materialized, disp, project=project)
+
     for expr in _candidate_exprs():
         variable = getattr(expr, "variable", None)
         if isinstance(variable, SimStackVariable) and int(getattr(variable, "offset", 0) or 0) == int(disp):
-            return expr
+            return _sync_stack_arg_expr_name_from_prototype_8616(codegen, expr, disp, project=project)
     region = getattr(cfunc, "addr", None)
     return CVariable(
         SimStackVariable(
@@ -289,6 +558,50 @@ def _stack_slot_expr_8616(codegen, disp: int, size: int = 2):
         ),
         codegen=codegen,
     )
+
+
+def _bp_operand_stack_expr_8616(codegen, disp: int, size: int = 2):
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return _stack_slot_expr_8616(codegen, disp, size)
+    requested_disp = int(disp)
+    requested_size = int(size) or 2
+    for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
+        variable = getattr(arg, "variable", None)
+        if not isinstance(arg, CVariable) or not isinstance(variable, SimStackVariable):
+            continue
+        offset = getattr(variable, "offset", None)
+        if isinstance(offset, int) and int(offset) == requested_disp:
+            return arg
+
+    # x86-16 near C functions place the first stack argument at BP+4.
+    # Prefer this instruction operand evidence over unstable recovered positive
+    # BP aliases when the function prototype already proves an argument slot.
+    expected_disp = 4
+    for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
+        variable = getattr(arg, "variable", None)
+        if not isinstance(arg, CVariable):
+            continue
+        arg_type = getattr(arg, "variable_type", None)
+        arg_size = max(2, int(getattr(variable, "size", 0) or requested_size))
+        if requested_disp == expected_disp:
+            project = getattr(codegen, "project", None)
+            fallback_type = SimTypeShort(False)
+            if getattr(project, "arch", None) is not None:
+                fallback_type = fallback_type.with_arch(project.arch)
+            return CVariable(
+                SimStackVariable(
+                    requested_disp,
+                    requested_size,
+                    base="bp",
+                    name=f"arg_{requested_disp:x}",
+                    region=getattr(cfunc, "addr", None),
+                ),
+                variable_type=arg_type if arg_type is not None else fallback_type,
+                codegen=codegen,
+            )
+        expected_disp += arg_size
+    return _stack_slot_expr_8616(codegen, disp, size)
 
 
 def _low_byte_expr_from_assignment_8616(expr):
@@ -429,6 +742,78 @@ def _function_insns_for_codegen_8616(project, codegen) -> tuple:
     return result
 
 
+def _merge_unique_insns_by_addr_8616(*groups: tuple) -> tuple:
+    by_addr = {}
+    for group in groups:
+        for insn in tuple(group or ()):
+            addr = int(getattr(insn, "address", 0) or 0)
+            if addr:
+                by_addr.setdefault(addr, insn)
+    return tuple(sorted(by_addr.values(), key=lambda item: int(getattr(item, "address", 0) or 0)))
+
+
+def _linear_insns_before_addr_8616(project, codegen, ins_addr: int, *, max_bytes: int = 0x800) -> tuple:
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    stop_addr = int(ins_addr)
+    start_candidates: list[int] = []
+    if isinstance(func_addr, int):
+        start_candidates.append(int(func_addr))
+    loader = getattr(project, "loader", None)
+    for owner in (loader, getattr(loader, "main_object", None)):
+        min_addr = getattr(owner, "min_addr", None)
+        if isinstance(min_addr, int):
+            start_candidates.append(int(min_addr))
+    cache = getattr(codegen, "_inertia_jcc_function_insns_8616", None)
+    if isinstance(cache, tuple):
+        cached_addrs = sorted(
+            {
+                int(getattr(insn, "address", -1))
+                for insn in cache
+                if 0 <= int(getattr(insn, "address", -1)) < stop_addr
+            }
+        )
+        if cached_addrs:
+            start_candidates.append(cached_addrs[0])
+    start_candidates = sorted({addr for addr in start_candidates if 0 <= addr < stop_addr})
+    if not start_candidates:
+        return ()
+    start_addr = start_candidates[0]
+    if stop_addr <= start_addr:
+        return ()
+    end_addr = min(stop_addr, start_addr + int(max_bytes))
+    addr = start_addr
+    insns: list[object] = []
+    while addr < end_addr:
+        try:
+            block = project.factory.block(addr, num_inst=1, opt_level=0)
+        except TypeError:
+            try:
+                block = project.factory.block(addr, opt_level=0)
+            except Exception:
+                break
+        except Exception:
+            break
+        decoded = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        if not decoded:
+            break
+        insn = decoded[0]
+        insn_addr = int(getattr(insn, "address", addr) or addr)
+        if insn_addr >= stop_addr:
+            break
+        insns.append(insn)
+        size = int(getattr(insn, "size", 0) or 0)
+        if str(getattr(insn, "mnemonic", "")).lower() in {"ret", "retf", "iret"}:
+            break
+        if size <= 0:
+            break
+        next_addr = insn_addr + size
+        if next_addr <= addr:
+            break
+        addr = next_addr
+    return tuple(insns)
+
+
 def _direct_call_target_8616(insn) -> int | None:
     mnemonic = str(getattr(insn, "mnemonic", "")).lower()
     if mnemonic not in {"call", "lcall"}:
@@ -454,6 +839,16 @@ def _callee_name_for_target_8616(project, target_addr: int) -> tuple[str, object
     return name, callee_func
 
 
+def _callee_prototype_arg_count_8616(callee_func, callee_name: str | None = None) -> int | None:
+    prototype = getattr(callee_func, "prototype", None)
+    args = getattr(prototype, "args", None)
+    if isinstance(args, (list, tuple)):
+        return len(args)
+    if isinstance(callee_name, str) and callee_name in {"clock"}:
+        return 0
+    return None
+
+
 def _const_from_push_imm_8616(value: int, codegen):
     return CConstant(int(value) & 0xFFFF, SimTypeShort(False), codegen=codegen)
 
@@ -461,6 +856,8 @@ def _const_from_push_imm_8616(value: int, codegen):
 def _call_args_from_push_setup_8616(
     project, codegen, insns: tuple, call_index: int, arg_count: int | None = None
 ) -> tuple[object, ...] | None:
+    if arg_count == 0:
+        return ()
     start = call_index
     lower_bound = max(0, call_index - 16)
     for idx in range(call_index - 1, lower_bound - 1, -1):
@@ -512,11 +909,21 @@ def _call_args_from_push_setup_8616(
 
 
 def _call_return_expr_before_insn_8616(project, codegen, ins_addr: int):
+    debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
     insns = _function_insns_for_codegen_8616(project, codegen)
+    linear_insns = _linear_insns_before_addr_8616(project, codegen, int(ins_addr))
+    if linear_insns:
+        insns = _merge_unique_insns_by_addr_8616(insns, linear_insns)
+        try:
+            codegen._inertia_jcc_function_insns_8616 = insns
+        except Exception:
+            pass
     if not insns:
         return None
     index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
     start_idx = index_by_addr.get(int(ins_addr))
+    if start_idx is None and linear_insns:
+        start_idx = len(tuple(insn for insn in insns if int(getattr(insn, "address", -1)) < int(ins_addr)))
     if start_idx is None:
         return None
     lower_bound = max(0, start_idx - 8)
@@ -526,11 +933,14 @@ def _call_return_expr_before_insn_8616(project, codegen, ins_addr: int):
         mnemonic = str(getattr(insn, "mnemonic", "")).lower()
         target = _direct_call_target_8616(insn)
         if target is not None:
-            args = _call_args_from_push_setup_8616(project, codegen, insns, idx, arg_count)
-            if args is None:
-                return None
             name, callee_func = _callee_name_for_target_8616(project, target)
             if name == "aNchkstk":
+                return None
+            effective_arg_count = arg_count
+            if effective_arg_count is None:
+                effective_arg_count = _callee_prototype_arg_count_8616(callee_func, name)
+            args = _call_args_from_push_setup_8616(project, codegen, insns, idx, effective_arg_count)
+            if args is None:
                 return None
             return CFunctionCall(name, callee_func, list(args), codegen=codegen)
         if (
@@ -547,6 +957,35 @@ def _call_return_expr_before_insn_8616(project, codegen, ins_addr: int):
         if mnemonic in {"add", "sub", "nop"}:
             continue
         break
+    if debug_jcc:
+        seen = getattr(codegen, "_inertia_jcc_call_return_debug_logged_8616", None)
+        if not isinstance(seen, set):
+            seen = set()
+            try:
+                codegen._inertia_jcc_call_return_debug_logged_8616 = seen
+            except Exception:
+                pass
+        key = int(ins_addr)
+        if key not in seen:
+            seen.add(key)
+            window = []
+            for insn in insns:
+                addr = int(getattr(insn, "address", -1))
+                if int(ins_addr) - 0x40 <= addr <= int(ins_addr):
+                    window.append(f"{addr:#x}:{str(getattr(insn, 'mnemonic', '')).lower()}")
+            cfunc = getattr(codegen, "cfunc", None)
+            loader = getattr(project, "loader", None)
+            _log.warning(
+                "[jcc-rewrite] call-return no-call ins_addr=%#x cfunc_addr=%r loader_min=%r main_min=%r "
+                "cache_count=%d linear_count=%d window=%s",
+                int(ins_addr),
+                getattr(cfunc, "addr", None),
+                getattr(loader, "min_addr", None),
+                getattr(getattr(loader, "main_object", None), "min_addr", None),
+                len(tuple(insns or ())),
+                len(tuple(linear_insns or ())),
+                ",".join(window[-16:]),
+            )
     return None
 
 
@@ -626,6 +1065,30 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
                 )
                 lhs_wide = _wide_stack_pair_expr_8616(codegen, lhs_hi, lhs_lo)
                 rhs_wide = _wide_stack_pair_expr_8616(codegen, rhs_hi, rhs_lo)
+                if lhs_wide is None:
+                    lhs_wide = _wide_call_return_pair_expr_8616(project, codegen, lhs_hi, lhs_lo, int(cmp_insn.address))
+                if lhs_wide is None:
+                    lhs_wide = _wide_call_return_pair_operands_8616(
+                        project,
+                        codegen,
+                        cmp_insn.operands[0],
+                        cmp2_insn.operands[0],
+                        cmp_insn.reg_name,
+                        cmp2_insn.reg_name,
+                        int(cmp_insn.address),
+                    )
+                if rhs_wide is None:
+                    rhs_wide = _wide_call_return_pair_expr_8616(project, codegen, rhs_hi, rhs_lo, int(cmp_insn.address))
+                if rhs_wide is None:
+                    rhs_wide = _wide_call_return_pair_operands_8616(
+                        project,
+                        codegen,
+                        cmp_insn.operands[1],
+                        cmp2_insn.operands[1],
+                        cmp_insn.reg_name,
+                        cmp2_insn.reg_name,
+                        int(cmp_insn.address),
+                    )
                 if lhs_wide is not None and rhs_wide is not None:
                     jcc2_name = str(getattr(jcc2_insn, "mnemonic", "")).lower()
                     return _DecodedCmpGuard8616(
@@ -696,6 +1159,11 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
         if lhs_hi is None or rhs_hi is None or lhs_lo is None or rhs_lo is None:
             return None
 
+        lhs_hi = _ensure_c_expr_type_has_arch_8616(project, lhs_hi)
+        rhs_hi = _ensure_c_expr_type_has_arch_8616(project, rhs_hi)
+        lhs_lo = _ensure_c_expr_type_has_arch_8616(project, lhs_lo)
+        rhs_lo = _ensure_c_expr_type_has_arch_8616(project, rhs_lo)
+
         hi_lt = CBinaryOp("CmpLT", lhs_hi, rhs_hi, codegen=codegen)
         hi_gt = CBinaryOp("CmpGT", lhs_hi, rhs_hi, codegen=codegen)
         hi_eq = CBinaryOp("CmpEQ", lhs_hi, rhs_hi, codegen=codegen)
@@ -703,6 +1171,30 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
         eq_expr = CBinaryOp("LogicalAnd", hi_eq, CBinaryOp("CmpEQ", lhs_lo, rhs_lo, codegen=codegen), codegen=codegen)
         lhs_wide = _wide_stack_pair_expr_8616(codegen, lhs_hi, lhs_lo)
         rhs_wide = _wide_stack_pair_expr_8616(codegen, rhs_hi, rhs_lo)
+        if lhs_wide is None:
+            lhs_wide = _wide_call_return_pair_expr_8616(project, codegen, lhs_hi, lhs_lo, int(cmp_insn.address))
+        if lhs_wide is None:
+            lhs_wide = _wide_call_return_pair_operands_8616(
+                project,
+                codegen,
+                cmp_insn.operands[0],
+                cmp2_insn.operands[0],
+                cmp_insn.reg_name,
+                cmp2_insn.reg_name,
+                int(cmp_insn.address),
+            )
+        if rhs_wide is None:
+            rhs_wide = _wide_call_return_pair_expr_8616(project, codegen, rhs_hi, rhs_lo, int(cmp_insn.address))
+        if rhs_wide is None:
+            rhs_wide = _wide_call_return_pair_operands_8616(
+                project,
+                codegen,
+                cmp_insn.operands[1],
+                cmp2_insn.operands[1],
+                cmp_insn.reg_name,
+                cmp2_insn.reg_name,
+                int(cmp_insn.address),
+            )
 
         if jcc1 in {"jl", "jnge", "jb", "jnae", "jc"} and jcc2 in {"jge", "jnl", "jae", "jnb", "jnc"}:
             if lhs_wide is not None and rhs_wide is not None:
@@ -816,7 +1308,7 @@ def _resolve_cmp_operand_expr_8616(
             if mem.base:
                 base_reg_name = reg_name_fn(mem.base).lower()
                 if base_reg_name == "bp":
-                    return _stack_slot_expr_8616(codegen, int(mem.disp), int(getattr(operand, "size", 0) or 2))
+                    return _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operand, "size", 0) or 2))
                 return _memory_load_expr_8616(
                     project,
                     codegen,
@@ -885,12 +1377,109 @@ def _decode_mask_test_guard_8616(project, codegen, jcc_mnemonic: str, block_addr
     )
 
 
-def _decode_inc_dec_jcc_guard_8616(project, codegen, arith_insn, jcc_mnemonic: str, reg_exprs):
+_INC_DEC_JCC_BASELINE_8616: dict[tuple[str, str], tuple[str, int, bool]] = {
+    ("inc", "je"): ("CmpEQ", -1, True),
+    ("inc", "jz"): ("CmpEQ", -1, True),
+    ("inc", "jne"): ("CmpNE", -1, True),
+    ("inc", "jnz"): ("CmpNE", -1, True),
+    ("inc", "jge"): ("CmpGE", -1, True),
+    ("inc", "jnl"): ("CmpGE", -1, True),
+    ("inc", "jg"): ("CmpGT", -1, True),
+    ("inc", "jnle"): ("CmpGT", -1, True),
+    ("inc", "jl"): ("CmpLT", -1, True),
+    ("inc", "jnge"): ("CmpLT", -1, True),
+    ("inc", "jle"): ("CmpLE", -1, True),
+    ("inc", "jng"): ("CmpLE", -1, True),
+    ("dec", "je"): ("CmpEQ", 1, False),
+    ("dec", "jz"): ("CmpEQ", 1, False),
+    ("dec", "jne"): ("CmpNE", 1, False),
+    ("dec", "jnz"): ("CmpNE", 1, False),
+    ("dec", "jge"): ("CmpGE", 1, False),
+    ("dec", "jnl"): ("CmpGE", 1, False),
+    ("dec", "jg"): ("CmpGT", 1, False),
+    ("dec", "jnle"): ("CmpGT", 1, False),
+    ("dec", "jl"): ("CmpLT", 1, False),
+    ("dec", "jnge"): ("CmpLT", 1, False),
+    ("dec", "jle"): ("CmpLE", 1, False),
+    ("dec", "jng"): ("CmpLE", 1, False),
+}
+
+
+def _decode_linear_insns_range_8616(project, start_addr: int, stop_addr: int) -> tuple:
+    insns: list[object] = []
+    addr = int(start_addr)
+    while addr < int(stop_addr):
+        try:
+            block = project.factory.block(addr, num_inst=1, opt_level=0)
+        except Exception:
+            break
+        decoded = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        if not decoded:
+            break
+        insn = decoded[0]
+        insn_addr = int(getattr(insn, "address", addr) or addr)
+        if insn_addr >= int(stop_addr):
+            break
+        insns.append(insn)
+        size = int(getattr(insn, "size", 0) or 0)
+        if size <= 0:
+            break
+        addr = insn_addr + size
+    return tuple(insns)
+
+
+def _switch_dispatch_seed_expr_8616(project, codegen, ins_addr: int, reg_name: str, reg_size: int):
+    insns = tuple(_function_insns_for_codegen_8616(project, codegen) or ())
+    for idx, insn in enumerate(insns[:-1]):
+        if int(getattr(insn, "address", -1)) >= int(ins_addr):
+            break
+        next_insn = insns[idx + 1]
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        next_mnemonic = str(getattr(next_insn, "mnemonic", "")).lower()
+        if mnemonic != "mov" or next_mnemonic not in {"jmp", "ljmp"}:
+            continue
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if len(operands) != 2 or int(getattr(operands[0], "type", -1)) != 1 or int(getattr(operands[1], "type", -1)) != 3:
+            continue
+        if str(insn.reg_name(operands[0].reg)).lower() != reg_name.lower():
+            continue
+        if int(getattr(operands[0], "size", 0) or reg_size) != int(reg_size):
+            continue
+        target = _branch_target_imm_8616(next_insn)
+        if target is None or int(target) > int(ins_addr):
+            continue
+        mem = operands[1].mem
+        if not mem.base or str(insn.reg_name(mem.base)).lower() != "bp":
+            continue
+        seed = _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operands[1], "size", 0) or reg_size))
+        return seed, int(target)
+    return None, None
+
+
+def _stateful_register_expr_before_insn_8616(project, codegen, ins_addr: int, reg_name: str, reg_size: int, reg_exprs, ds_var):
+    reg_state: dict[str, object] = {}
+    stack_slots: dict[tuple[int, int], object] = {}
+    seed_expr, replay_start = _switch_dispatch_seed_expr_8616(project, codegen, ins_addr, reg_name, reg_size)
+    if seed_expr is not None and replay_start is not None:
+        reg_state[reg_name.lower()] = seed_expr
+        replay_insns = _decode_linear_insns_range_8616(project, replay_start, int(ins_addr))
+    else:
+        replay_insns = tuple(_function_insns_for_codegen_8616(project, codegen) or ())
+    for insn in replay_insns:
+        current_addr = int(getattr(insn, "address", -1))
+        if current_addr >= int(ins_addr):
+            break
+        _apply_cmp_state_update_8616(project, codegen, insn, reg_state, stack_slots, reg_exprs, ds_var)
+    return reg_state.get(reg_name.lower())
+
+
+def _decode_inc_dec_jcc_guard_8616(project, codegen, arith_insn, jcc_mnemonic: str, reg_exprs, ds_var=None):
     def _impl():
         mnemonic = str(getattr(arith_insn, "mnemonic", "")).lower()
         if mnemonic not in {"inc", "dec"}:
             return None
-        if jcc_mnemonic not in {"je", "jz", "jne", "jnz"}:
+        decision = _INC_DEC_JCC_BASELINE_8616.get((mnemonic, jcc_mnemonic))
+        if decision is None:
             return None
         operands = tuple(getattr(arith_insn, "operands", ()) or ())
         if len(operands) != 1 or int(getattr(operands[0], "type", -1)) != 1:
@@ -901,14 +1490,24 @@ def _decode_inc_dec_jcc_guard_8616(project, codegen, arith_insn, jcc_mnemonic: s
         if reg_name in {"ax", "al", "ah"}:
             lhs = _call_return_expr_before_insn_8616(project, codegen, int(arith_insn.address))
         if lhs is None:
+            lhs = _stateful_register_expr_before_insn_8616(
+                project,
+                codegen,
+                int(arith_insn.address),
+                reg_name,
+                reg_size,
+                reg_exprs,
+                ds_var,
+            )
+        if lhs is None:
             lhs = _lookup_register_expr_before_8616(reg_exprs, int(arith_insn.address), reg_name, reg_size)
         if lhs is None:
             reg_offset = _reg_offset_8616(project, reg_name)
             if reg_offset is None:
                 return None
             lhs = CVariable(SimRegisterVariable(reg_offset, reg_size, name=reg_name), codegen=codegen)
-        rhs = _signed_const_8616(-1, codegen) if mnemonic == "inc" else _const_8616(1, codegen)
-        op = "CmpEQ" if jcc_mnemonic in {"je", "jz"} else "CmpNE"
+        op, rhs_value, rhs_signed = decision
+        rhs = _signed_const_8616(rhs_value, codegen) if rhs_signed else _const_8616(rhs_value, codegen)
         return _DecodedCmpGuard8616(lhs=lhs, rhs=rhs, op=op)
 
     return _impl()
@@ -916,7 +1515,8 @@ def _decode_inc_dec_jcc_guard_8616(project, codegen, arith_insn, jcc_mnemonic: s
 
 def _decode_test_jcc_guard_8616(project, codegen, test_insn, jcc_mnemonic: str, reg_exprs, ds_var):
     def _impl():
-        if str(getattr(test_insn, "mnemonic", "")).lower() != "test":
+        mnemonic = str(getattr(test_insn, "mnemonic", "")).lower()
+        if mnemonic not in {"test", "or", "and"}:
             return None
         if jcc_mnemonic not in {"je", "jz", "jne", "jnz"}:
             return None
@@ -947,6 +1547,8 @@ def _decode_test_jcc_guard_8616(project, codegen, test_insn, jcc_mnemonic: str, 
         )
         if lhs is None or rhs is None:
             return None
+        if mnemonic in {"or", "and"} and not _same_c_expression_8616(lhs, rhs):
+            return None
         tested = lhs if _same_c_expression_8616(lhs, rhs) else CBinaryOp("And", lhs, rhs, codegen=codegen)
         return _DecodedCmpGuard8616(
             lhs=tested,
@@ -959,14 +1561,26 @@ def _decode_test_jcc_guard_8616(project, codegen, test_insn, jcc_mnemonic: str, 
 
 def _apply_cmp_state_update_8616(project, codegen, insn, reg_state, stack_slots, reg_exprs, ds_var) -> None:
     def _impl():
-        mnemonic = insn.mnemonic
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
         if mnemonic == "mov" and len(insn.operands) == 2 and insn.operands[0].type == 1 and insn.operands[1].type == 3:
             dst_reg = insn.reg_name(insn.operands[0].reg).lower()
             mem = insn.operands[1].mem
             key = (int(mem.disp), int(insn.operands[0].size)) if insn.reg_name(mem.base) == "bp" else None
             expr = None
             if key is not None:
-                expr = _stack_slot_expr_8616(codegen, key[0], key[1]) or stack_slots.get(key)
+                expr = _bp_operand_stack_expr_8616(codegen, key[0], key[1]) or stack_slots.get(key)
+            elif mem.base:
+                base_reg_name = insn.reg_name(mem.base).lower()
+                base_expr = reg_state.get(base_reg_name)
+                if base_expr is not None:
+                    expr = _memory_load_expr_8616(
+                        project,
+                        codegen,
+                        ds_var,
+                        base_expr,
+                        int(mem.disp),
+                        int(insn.operands[0].size),
+                    )
             if expr is None:
                 expr = _lookup_register_expr_8616(reg_exprs, int(insn.address), dst_reg, int(insn.operands[0].size))
             if dst_reg == "al" and expr is not None:
@@ -992,18 +1606,54 @@ def _apply_cmp_state_update_8616(project, codegen, insn, reg_state, stack_slots,
                 return
             src_reg = insn.reg_name(insn.operands[1].reg).lower()
             size = int(insn.operands[1].size)
-            slot_expr = _stack_slot_expr_8616(codegen, int(mem.disp), size)
+            slot_expr = _bp_operand_stack_expr_8616(codegen, int(mem.disp), size)
             if slot_expr is not None:
                 stack_slots[(int(mem.disp), size)] = slot_expr
             elif reg_state.get(src_reg) is not None:
                 stack_slots[(int(mem.disp), size)] = reg_state[src_reg]
             return
 
-        if mnemonic == "shl" and len(insn.operands) == 2 and insn.operands[0].type == 1 and insn.operands[1].type == 2:
+        if mnemonic in {"shl", "sal"} and len(insn.operands) == 2 and insn.operands[0].type == 1 and insn.operands[1].type == 2:
             reg_name = insn.reg_name(insn.operands[0].reg).lower()
             reg_expr = reg_state.get(reg_name)
             if reg_expr is not None:
                 reg_state[reg_name] = CBinaryOp("Shl", reg_expr, _const_8616(int(insn.operands[1].imm), codegen), codegen=codegen)
+            else:
+                reg_state.pop(reg_name, None)
+            return
+
+        if mnemonic in {"inc", "dec"} and len(insn.operands) == 1 and insn.operands[0].type == 1:
+            reg_name = insn.reg_name(insn.operands[0].reg).lower()
+            reg_expr = reg_state.get(reg_name)
+            if reg_expr is None:
+                reg_state.pop(reg_name, None)
+                return
+            op = "Add" if mnemonic == "inc" else "Sub"
+            reg_state[reg_name] = CBinaryOp(op, reg_expr, _const_8616(1, codegen), codegen=codegen)
+            return
+
+        if mnemonic in {"add", "sub"} and len(insn.operands) == 2 and insn.operands[0].type == 1:
+            reg_name = insn.reg_name(insn.operands[0].reg).lower()
+            reg_expr = reg_state.get(reg_name)
+            if reg_expr is None:
+                reg_state.pop(reg_name, None)
+                return
+            rhs = _resolve_cmp_operand_expr_8616(
+                project,
+                codegen,
+                insn.operands[1],
+                reg_state,
+                ds_var,
+                insn.reg_name,
+                reg_exprs,
+                int(insn.address),
+            )
+            if rhs is None:
+                reg_state.pop(reg_name, None)
+                return
+            op = "Add" if mnemonic == "add" else "Sub"
+            reg_state[reg_name] = CBinaryOp(op, reg_expr, rhs, codegen=codegen)
+            return
 
     return _impl()
 
@@ -1033,7 +1683,13 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
                 )
             return None
         reg_exprs = _register_exprs_by_ins_addr_8616(codegen, project)
-        arith_decoded = _decode_inc_dec_jcc_guard_8616(project, codegen, cmp_insn, jcc_mnemonic, reg_exprs)
+        ds_offset = _reg_offset_8616(project, "ds")
+        ds_var = (
+            CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen)
+            if ds_offset is not None
+            else None
+        )
+        arith_decoded = _decode_inc_dec_jcc_guard_8616(project, codegen, cmp_insn, jcc_mnemonic, reg_exprs, ds_var)
         if arith_decoded is not None:
             if debug_jcc:
                 _log.warning(
@@ -1044,12 +1700,10 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
                     cmp_insn.mnemonic,
                 )
             return arith_decoded
-        ds_offset = _reg_offset_8616(project, "ds")
-        if ds_offset is None:
+        if ds_var is None:
             if debug_jcc:
                 _log.warning("[jcc-rewrite] ds reg missing block=%#x jcc=%#x", block_addr, jcc_addr)
             return None
-        ds_var = CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen)
         test_decoded = _decode_test_jcc_guard_8616(project, codegen, cmp_insn, jcc_mnemonic, reg_exprs, ds_var)
         if test_decoded is not None:
             if debug_jcc:
@@ -1205,7 +1859,43 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
 
             return _walk(expr)
 
-        def _has_nonflag_cmp_8616(expr) -> bool:
+        def _expr_uses_nonsegment_register_carrier_8616(expr) -> bool:
+            seen: set[int] = set()
+            segment_offsets = {
+                offset
+                for name, (offset, _size) in getattr(project.arch, "registers", {}).items()
+                if name.lower() in {"cs", "ds", "es", "ss"}
+            }
+
+            def _walk(node) -> bool:
+                if node is None:
+                    return False
+                marker = id(node)
+                if marker in seen:
+                    return False
+                seen.add(marker)
+                if isinstance(node, CVariable):
+                    variable = getattr(node, "variable", None)
+                    if isinstance(variable, SimRegisterVariable):
+                        return int(getattr(variable, "reg", -1)) not in segment_offsets
+                if isinstance(node, CBinaryOp):
+                    return _walk(getattr(node, "lhs", None)) or _walk(getattr(node, "rhs", None))
+                if isinstance(node, CUnaryOp):
+                    return _walk(getattr(node, "operand", None))
+                if isinstance(node, CTypeCast):
+                    return _walk(getattr(node, "expr", None))
+                for attr in ("expr", "condition", "cond", "lhs", "rhs"):
+                    child = getattr(node, attr, None)
+                    if child is not None and _walk(child):
+                        return True
+                args = getattr(node, "args", None)
+                if isinstance(args, (list, tuple)):
+                    return any(_walk(arg) for arg in args)
+                return False
+
+            return _walk(expr)
+
+        def _has_materialized_nonflag_cmp_8616(expr) -> bool:
             seen: set[int] = set()
 
             def _walk(node) -> bool:
@@ -1219,7 +1909,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     op = getattr(node, "op", None)
                     if isinstance(op, str) and op.startswith("Cmp"):
                         if not _c_expr_uses_register_8616(node, flags_offset):
-                            return True
+                            return not _expr_uses_nonsegment_register_carrier_8616(node)
                     return _walk(getattr(node, "lhs", None)) or _walk(getattr(node, "rhs", None))
                 if isinstance(node, CUnaryOp):
                     return _walk(getattr(node, "operand", None))
@@ -1345,6 +2035,18 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             return False
 
         def _invert_decoded_guard_8616(decoded: _DecodedCmpGuard8616, tags):
+            def _decoded_guard_contains_real_call_8616() -> bool:
+                roots = (decoded.expr,) if getattr(decoded, "expr", None) is not None else (decoded.lhs, decoded.rhs)
+                for root in roots:
+                    for child in _iter_c_nodes_deep_8616(root):
+                        if not isinstance(child, CFunctionCall):
+                            continue
+                        callee = getattr(child, "callee_target", None)
+                        if isinstance(callee, str) and callee in {"SEG_PTR", "MK_FP", "SEG_U8", "SEG_U16", "SEG_U32"}:
+                            continue
+                        return True
+                return False
+
             if getattr(decoded, "expr", None) is not None:
                 return _DecodedCmpGuard8616(
                     lhs=None,
@@ -1353,7 +2055,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     expr=CUnaryOp("Not", decoded.expr, codegen=codegen, tags=tags),
                 )
             inverted_op = _INVERT_CMP_OP_8616.get(decoded.op)
-            if inverted_op is not None:
+            if inverted_op is not None and not _decoded_guard_contains_real_call_8616():
                 return _DecodedCmpGuard8616(lhs=decoded.lhs, rhs=decoded.rhs, op=inverted_op, expr=None)
             return _DecodedCmpGuard8616(
                 lhs=None,
@@ -1366,6 +2068,60 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     tags=tags,
                 ),
             )
+
+        def _jcc_target_for_key_8616(key: tuple[int, int] | None) -> int | None:
+            if not isinstance(key, tuple) or len(key) != 2:
+                return None
+            ins_addr, block_addr = key
+            if not (isinstance(ins_addr, int) and isinstance(block_addr, int)):
+                return None
+            decoded = _decode_block_and_jcc_index_8616(project, block_addr, ins_addr, False)
+            insns, jcc_index = decoded
+            if insns is None or jcc_index is None:
+                return None
+            if jcc_index < 0 or jcc_index >= len(insns):
+                return None
+            return _branch_target_imm_8616(insns[jcc_index])
+
+        def _root_contains_ins_addr_8616(root, target_addr: int) -> bool:
+            if root is None:
+                return False
+            pending = [root]
+            seen: set[int] = set()
+            while pending:
+                current = pending.pop()
+                if current is None:
+                    continue
+                if isinstance(current, (list, tuple)):
+                    pending.extend(reversed(tuple(current)))
+                    continue
+                marker = id(current)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                tags = getattr(current, "tags", None)
+                if isinstance(tags, dict) and tags.get("ins_addr") == target_addr:
+                    return True
+                stmts = getattr(current, "statements", None)
+                if stmts is not None:
+                    pending.extend(reversed(tuple(stmts or ())))
+                    continue
+                for attr in ("condition_and_nodes", "body", "else_node", "iftrue", "iffalse"):
+                    child = getattr(current, attr, None)
+                    if child is None:
+                        continue
+                    if attr == "condition_and_nodes" and isinstance(child, (list, tuple)):
+                        for _cond, body in reversed(tuple(child)):
+                            pending.append(body)
+                    else:
+                        pending.append(child)
+            return False
+
+        def _jcc_polarity_evidence_8616(key: tuple[int, int] | None, body) -> _JccPolarityEvidence8616:
+            target = _jcc_target_for_key_8616(key)
+            if isinstance(target, int) and _root_contains_ins_addr_8616(body, target):
+                return _JccPolarityEvidence8616.JCC_TARGET_BODY
+            return _JccPolarityEvidence8616.UNKNOWN
 
         def _condition_exprs_from_stmt_8616(stmt):
             cond_pairs = getattr(stmt, "condition_and_nodes", None)
@@ -1686,13 +2442,18 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                         (ins_addr, block_addr),
                         tagged_key,
                         type(cond).__name__,
-                    )
+                )
+                return None
+
+            if _condition_materialized_by_jcc_8616(cond):
+                if debug_jcc:
+                    _log.warning("[jcc-rewrite] decode skip already-materialized key=%r", (ins_addr, block_addr))
                 return None
 
             # Guardrail: once a condition is an explicit non-flag comparison,
             # treat it as materialized. Re-decoding the same branch tag in a
             # later pass can drop carrier polarity such as CITE(cond, 0, 1).
-            if _has_nonflag_cmp_8616(cond):
+            if _has_materialized_nonflag_cmp_8616(cond):
                 if debug_jcc:
                     _log.warning("[jcc-rewrite] decode skip explicit-cmp key=%r", (ins_addr, block_addr))
                 return None
@@ -1737,16 +2498,32 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
 
             return decoded
 
-        def _build_rewrite_8616(cond, decoded, key):
+        def _build_rewrite_8616(
+            cond,
+            decoded,
+            key,
+            *,
+            polarity_evidence: _JccPolarityEvidence8616 = _JccPolarityEvidence8616.UNKNOWN,
+        ):
             decoded = _rebind_decoded_call_return_guard_8616(key, decoded)
             tags = getattr(cond, "tags", None)
             if not isinstance(tags, dict) and isinstance(key, tuple) and len(key) == 2:
                 ins_addr, block_addr = key
                 if isinstance(ins_addr, int) and isinstance(block_addr, int):
                     tags = {"ins_addr": ins_addr, "vex_block_addr": block_addr}
-            if _condition_inverts_decoded_guard_8616(cond):
+            tags = dict(tags or {})
+            tags["inertia_jcc_materialized_8616"] = True
+            invert_guard = _condition_inverts_decoded_guard_8616(cond)
+            if polarity_evidence is _JccPolarityEvidence8616.JCC_TARGET_BODY:
+                invert_guard = False
+            if invert_guard:
                 if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
-                    _log.warning("[jcc-rewrite] applying decoded guard polarity inversion key=%r op=%s", key, decoded.op)
+                    _log.warning(
+                        "[jcc-rewrite] applying decoded guard polarity inversion key=%r op=%s evidence=%s",
+                        key,
+                        decoded.op,
+                        polarity_evidence.value,
+                    )
                 decoded = _invert_decoded_guard_8616(decoded, tags)
             if getattr(decoded, "expr", None) is not None:
                 with contextlib.suppress(Exception):
@@ -1761,7 +2538,12 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 tags=tags,
             )
 
-        def _decoded_condition_replacement(cond):
+        def _decoded_condition_replacement(
+            cond,
+            *,
+            body=None,
+            polarity_evidence: _JccPolarityEvidence8616 | None = None,
+        ):
             key = _condition_tags_8616(cond)
             ins_addr = None if key is None else key[0]
             block_addr = None if key is None else key[1]
@@ -1800,7 +2582,9 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     _log.warning("[jcc-rewrite] decoded candidate accepted (expr) key=%r", key)
             elif debug_jcc:
                 _log.warning("[jcc-rewrite] decoded candidate accepted key=%r", key)
-            return _build_rewrite_8616(cond, decoded, key)
+            if polarity_evidence is None:
+                polarity_evidence = _jcc_polarity_evidence_8616(key, body)
+            return _build_rewrite_8616(cond, decoded, key, polarity_evidence=polarity_evidence)
 
         for cond in _iter_guard_conditions_8616():
             key = _condition_tags_8616(cond)
@@ -1810,21 +2594,32 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 continue
             _collect_decoded_signature_8616(cond)
 
-        if _rebind_adjacent_call_return_register_conditions_8616():
-            changed = True
+        if bool(os.environ.get("INERTIA_ENABLE_JCC_CALL_RETURN_REBIND")):
+            if _rebind_adjacent_call_return_register_conditions_8616():
+                changed = True
 
-        def _rewrite_condition(node):
+        def _rewrite_condition(
+            node,
+            *,
+            body=None,
+            polarity_evidence: _JccPolarityEvidence8616 | None = None,
+        ):
             nonlocal changed, materialized_count
-            replacement = _decoded_condition_replacement(node)
+            replacement = _decoded_condition_replacement(node, body=body, polarity_evidence=polarity_evidence)
             if replacement is None:
                 return None
             changed = True
             materialized_count += 1
             return replacement
 
-        def _replace_tagged_condition(node):
+        def _replace_tagged_condition(
+            node,
+            *,
+            body=None,
+            polarity_evidence: _JccPolarityEvidence8616 | None = None,
+        ):
             nonlocal changed
-            replacement = _rewrite_condition(node)
+            replacement = _rewrite_condition(node, body=body, polarity_evidence=polarity_evidence)
             if replacement is not None:
                 return replacement
             if not _structured_codegen_node_8616(node):
@@ -1840,7 +2635,8 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 pair_changed = False
                 new_pairs = []
                 for cond, body in cond_pairs:
-                    new_cond = _replace_tagged_condition(cond)
+                    polarity_evidence = _jcc_polarity_evidence_8616(_condition_tags_8616(cond), body)
+                    new_cond = _replace_tagged_condition(cond, body=body, polarity_evidence=polarity_evidence)
                     pair_changed = pair_changed or (new_cond is not cond)
                     new_pairs.append((new_cond, body))
                     if new_cond is not cond:

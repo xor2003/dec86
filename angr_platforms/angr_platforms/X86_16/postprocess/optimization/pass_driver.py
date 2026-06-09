@@ -122,7 +122,13 @@ def _run_optimization_passes_8616(codegen) -> bool:
             f"dce_keep_side_effect={int(getattr(codegen, 'dce_keep_side_effect', 0) or 0)} "
             f"dce_keep_protected={int(getattr(codegen, 'dce_keep_protected', 0) or 0)} "
             f"dce_keep_observable={int(getattr(codegen, 'dce_keep_observable', 0) or 0)} "
-            f"dce_keep_unknown={int(getattr(codegen, 'dce_keep_unknown', 0) or 0)}",
+            f"dce_keep_unknown={int(getattr(codegen, 'dce_keep_unknown', 0) or 0)} "
+            f"dce_duplicate_assignment_candidates="
+            f"{int(getattr(codegen, 'dce_duplicate_assignment_candidates', 0) or 0)} "
+            f"dce_duplicate_assignment_deleted="
+            f"{int(getattr(codegen, 'dce_duplicate_assignment_deleted', 0) or 0)} "
+            f"dce_duplicate_assignment_refused="
+            f"{int(getattr(codegen, 'dce_duplicate_assignment_refused', 0) or 0)}",
             file=sys.stderr,
             flush=True,
         )

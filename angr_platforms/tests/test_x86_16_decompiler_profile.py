@@ -1,4 +1,5 @@
 import sys
+from collections import UserDict
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +20,11 @@ sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
 from angr_platforms.X86_16 import decompiler_postprocess as postprocess  # noqa: E402
-from angr_platforms.X86_16.annotations import _normalize_arg_names as _normalize_annotation_arg_names  # noqa: E402
+from angr_platforms.X86_16.annotations import (  # noqa: E402
+    ANNOTATION_KEY,
+    _parse_c_prototype_8616,
+    _normalize_arg_names as _normalize_annotation_arg_names,
+)
 from angr_platforms.X86_16.decompiler_postprocess import (  # noqa: E402
     _apply_annotations_8616,
     _normalize_arg_names_8616,
@@ -63,6 +68,18 @@ class _FakeFactory:
 class _FakeProject:
     def __init__(self, blocks):
         self.factory = _FakeFactory(blocks)
+
+
+class _FakeFunctionManager:
+    def __init__(self):
+        self._funcs = {}
+
+    def function(self, addr, create=False, **_kwargs):
+        func = self._funcs.get(addr)
+        if func is None and create:
+            func = SimpleNamespace(addr=addr, name=f"sub_{addr:x}", info={})
+            self._funcs[addr] = func
+        return func
 
 
 def test_tiny_function_with_only_call_sites_can_still_be_wrapper_like():
@@ -153,12 +170,16 @@ def test_tiny_wrapper_like_postprocess_keeps_argument_normalization():
         "_rewrite_flag_bit_value_uses_8616",
         "_prune_unused_flag_assignments_8616",
         "_prune_overwritten_flag_assignments_8616",
-        "_fix_interval_guard_conditions_8616",
-        "_lower_stable_ss_stack_accesses_8616",
+        "_dead_code_elimination_after_flag_prune_8616",
         "_attach_callsite_summaries_8616",
+        "_lower_stable_ss_stack_accesses_8616",
         "_materialize_callsite_stack_arguments_8616",
+        "_rewrite_decoded_jcc_conditions_after_calls_8616",
+        "_materialize_empty_if_return_branches_8616",
+        "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
         "_materialize_callsite_prototypes_8616",
         "_normalize_call_target_names_8616",
+        "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
     )
 
 
@@ -245,6 +266,14 @@ def test_normalize_function_prototype_arg_names_pass_updates_duplicates():
     assert codegen.cfunc.prototype.arg_names == ["s", "s_2"]
 
 
+def test_parse_c_prototype_treats_unknown_source_types_as_opaque_words():
+    name, prototype, _ = _parse_c_prototype_8616("void Swaps( BAR *bar1, BAR *bar2 );")
+
+    assert name == "Swaps"
+    assert len(prototype.args) == 2
+    assert tuple(prototype.arg_names or ()) == ("bar1", "bar2")
+
+
 def test_attach_cod_variable_names_deduplicates_stack_aliases():
     stack_a = SimStackVariable(-6, 2, base="bp", name="v0", region=0x1000)
     stack_b = SimStackVariable(-2, 2, base="bp", name="v1", region=0x1000)
@@ -267,6 +296,77 @@ def test_attach_cod_variable_names_deduplicates_stack_aliases():
     assert stack_b.name == "err_2"
     assert codegen.cfunc.variables_in_use[stack_a].unified_variable.name == "err"
     assert codegen.cfunc.variables_in_use[stack_b].unified_variable.name == "err_2"
+
+
+def test_attach_cod_variable_names_uses_normalized_bp_displacements():
+    arg_lhs = SimStackVariable(2, 2, base="bp", name="arg_4", region=0x1000)
+    arg_rhs = SimStackVariable(4, 2, base="bp", name="arg_6", region=0x1000)
+    local_tmp = SimStackVariable(-4, 2, base="bp", name="local_2", region=0x1000)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            variables_in_use={
+                arg_lhs: SimpleNamespace(unified_variable=SimpleNamespace(name="arg_4")),
+                arg_rhs: SimpleNamespace(unified_variable=SimpleNamespace(name="arg_6")),
+                local_tmp: SimpleNamespace(unified_variable=SimpleNamespace(name="local_2")),
+            }
+        )
+    )
+    cod_metadata = SimpleNamespace(stack_aliases={4: "lhs", 6: "rhs", -2: "tmp"})
+
+    changed = _decompile._attach_cod_variable_names(codegen, cod_metadata)
+
+    assert changed is True
+    assert arg_lhs.name == "lhs"
+    assert arg_rhs.name == "rhs"
+    assert local_tmp.name == "tmp"
+    assert codegen.cfunc.variables_in_use[arg_lhs].unified_variable.name == "lhs"
+    assert codegen.cfunc.variables_in_use[arg_rhs].unified_variable.name == "rhs"
+    assert codegen.cfunc.variables_in_use[local_tmp].unified_variable.name == "tmp"
+
+
+def test_attach_project_cod_source_annotations_merges_stack_aliases():
+    functions = _FakeFunctionManager()
+    func = functions.function(0x1000, create=True)
+    project = SimpleNamespace(
+        kb=SimpleNamespace(functions=functions),
+        _inertia_cod_metadata_by_func_addr_8616={
+            0x1000: SimpleNamespace(
+                stack_aliases={4: "lhs", 6: "rhs", -2: "tmp"},
+                source_lines=("void swap(int *lhs, int *rhs)", "{", "}"),
+            )
+        },
+    )
+
+    changed = postprocess._attach_project_cod_source_annotations_if_missing_8616(project, 0x1000, func)
+
+    assert changed is True
+    annotations = func.info[ANNOTATION_KEY]
+    assert annotations["stack_vars"][2]["name"] == "lhs"
+    assert annotations["stack_vars"][4]["name"] == "rhs"
+    assert annotations["stack_vars"][-4]["name"] == "tmp"
+    assert annotations["source_lines"] == ("void swap(int *lhs, int *rhs)", "{", "}")
+
+
+def test_attach_project_cod_source_annotations_preserves_mutable_mapping_info():
+    functions = _FakeFunctionManager()
+    func = functions.function(0x1000, create=True)
+    func.info = UserDict()
+    project = SimpleNamespace(
+        kb=SimpleNamespace(functions=functions),
+        _inertia_cod_metadata_by_func_addr_8616={
+            0x1000: SimpleNamespace(
+                stack_aliases={4: "lhs"},
+                source_lines=("void swap(int *lhs)", "{", "}"),
+            )
+        },
+    )
+
+    changed = postprocess._attach_project_cod_source_annotations_if_missing_8616(project, 0x1000, func)
+
+    assert changed is True
+    annotations = func.info[ANNOTATION_KEY]
+    assert annotations["stack_vars"][2]["name"] == "lhs"
+    assert annotations["source_lines"] == ("void swap(int *lhs)", "{", "}")
 
 
 def test_apply_annotations_deduplicates_stack_variable_names():

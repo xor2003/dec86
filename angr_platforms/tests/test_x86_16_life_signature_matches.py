@@ -15,7 +15,6 @@ def test_life_metadata_marks_amallocbrk_as_signature_matched():
         LIFE_EXE,
         project,
         signature_catalog=default_signature_catalog_path(),
-        allow_peer_exe=False,
     )
 
     assert metadata is not None
@@ -29,7 +28,6 @@ def test_life_metadata_marks_fcmp_and_catox_as_signature_matched():
         LIFE_EXE,
         project,
         signature_catalog=default_signature_catalog_path(),
-        allow_peer_exe=False,
     )
 
     assert metadata is not None

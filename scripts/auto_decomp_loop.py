@@ -324,7 +324,7 @@ def run_loop(cfg: LoopConfig) -> StopReason:
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Auto-run decompilation quality loop until tail-validation goals are met.")
     p.add_argument("binary", type=Path, help="Binary path (for example SORTDEMO.EXE).")
-    p.add_argument("--timeout", type=int, default=20, help="Per decompile.py run timeout seconds.")
+    p.add_argument("--timeout", type=int, default=60, help="Per decompile.py run timeout seconds.")
     p.add_argument("--include-library-functions", action="store_true", help="Run whole sweep including library functions.")
     p.add_argument("--max-functions", type=int, default=0, help="Pass-through max functions (0 = all).")
     p.add_argument("--max-iterations", type=int, default=200, help="Hard cap for loop iterations.")

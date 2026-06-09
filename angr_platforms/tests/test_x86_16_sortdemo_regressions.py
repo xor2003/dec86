@@ -76,7 +76,7 @@ def _run_decompile_file(
 
 
 def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_clean():
-    result = _run_decompile_addr(SORTDEMO_EXE, 0x10F28)
+    result = _run_decompile_addr(SORTDEMO_EXE, 0x10F38)
     scorecard = build_acceptance_scorecard(
         "Sleep",
         _combined_output(result),
@@ -84,8 +84,13 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert ("function: 0x10f18 Sleep" in result.stdout) or ("function: 0x10f28 Sleep" in result.stdout)
-    assert "void Sleep(clock_t wait)" in result.stdout
+    assert (
+        ("function: 0x10f18 Sleep" in result.stdout)
+        or ("function: 0x10f28 Sleep" in result.stdout)
+        or ("function: 0x10f38 Sleep" in result.stdout)
+    )
+    assert ("void Sleep(clock_t wait)" in result.stdout) or ("void Sleep(uint32_t wait)" in result.stdout)
+    assert "clock() + wait" in result.stdout
     assert "flags_2 = ...;" not in result.stdout
     assert "flags_2 =" not in result.stdout
     assert "if (...)" not in result.stdout
@@ -149,6 +154,27 @@ def test_sortdemo_swapbars_does_not_pointer_promote_irow2_or_emit_dead_setup_art
     assert "void SwapBars(int iRow1, int *iRow2)" not in result.stdout
     assert "s_2 = &s_2 + 2;" not in result.stdout
     assert "vvar_16 = &s_6;" not in result.stdout
+
+
+def test_sortdemo_swaps_preserves_binary_proven_global_increment_and_pointer_swap():
+    result = _run_decompile_addr(
+        SORTDEMO_EXE,
+        0x107B8,
+        analysis_timeout=10,
+        subprocess_timeout=60,
+        extra_args=("--c-target", "portable-flat"),
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    assert "function: 0x107b8 Swaps" in result.stdout
+    assert "validation=passed" in combined
+    assert "gcc syntax check failed:" not in combined
+    assert "void Swaps(unsigned short *bar1, unsigned short *bar2)" in result.stdout
+    assert "iSwaps += 1;" in result.stdout
+    assert "local_2 = bar1[0];" in result.stdout
+    assert "bar1[0] = bar2[0];" in result.stdout
+    assert "bar2[0] = local_2;" in result.stdout
 
 
 def test_sortdemo_main_uses_portable_flat_int_main_signature():

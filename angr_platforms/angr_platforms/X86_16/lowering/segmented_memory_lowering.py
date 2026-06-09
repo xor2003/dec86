@@ -7,6 +7,15 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
 from ..decompiler_postprocess_utils import _replace_c_children_8616
+from .real_mode_linear import (
+    RealModeLinearStackAccess8616,
+    _canonical_stack_offset_8616,
+    _has_stack_alias_fact_for_displacement_8616,
+    _known_bp_stack_offsets_8616,
+    _segment_base_name_8616,
+    _stack_offset_from_expr_8616,
+    stack_cvar_for_stable_ss_linear_access_8616,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +185,115 @@ def lower_runtime_segment_address_8616(expr, *, target: str):
     )
 
 
+def _runtime_segment_helper_name_8616(node) -> str | None:
+    node = _strip_casts_8616(node)
+    if not isinstance(node, structured_c.CFunctionCall):
+        return None
+    for candidate in (
+        getattr(node, "callee_target", None),
+        getattr(getattr(node, "callee_func", None), "name", None),
+    ):
+        if isinstance(candidate, str) and candidate:
+            return candidate.strip()
+    return None
+
+
+def _runtime_segment_helper_width_8616(name: str | None) -> int | None:
+    normalized = name.upper() if isinstance(name, str) else ""
+    if normalized == "SEG_U8":
+        return 1
+    if normalized == "SEG_U16":
+        return 2
+    if normalized == "SEG_U32":
+        return 4
+    return None
+
+
+def _runtime_segment_helper_args_8616(node) -> tuple[object, object] | None:
+    args = getattr(node, "args", None)
+    if not isinstance(args, (list, tuple)) or len(args) != 2:
+        return None
+    return args[0], args[1]
+
+
+def lower_runtime_ss_segment_helper_to_stack_8616(node, *, codegen, project):
+    """Convert proven SS SEG_U* helper accesses back to stack variables."""
+
+    node = _strip_casts_8616(node)
+    if not isinstance(node, structured_c.CFunctionCall):
+        return None
+    helper_name = _runtime_segment_helper_name_8616(node)
+    width = _runtime_segment_helper_width_8616(helper_name)
+    if width is None:
+        return None
+    args = _runtime_segment_helper_args_8616(node)
+    if args is None:
+        return None
+    segment_expr, offset_expr = args
+    segment_name = _segment_base_name_8616(segment_expr, project, codegen=codegen)
+    if segment_name != "ss":
+        return None
+    displacement = _stack_offset_from_expr_8616(offset_expr, project, codegen)
+    displacement = _canonical_stack_offset_8616(displacement)
+    if not isinstance(displacement, int):
+        return None
+    known_offsets = _known_bp_stack_offsets_8616(codegen)
+    if (
+        not _has_stack_alias_fact_for_displacement_8616(codegen, displacement, width)
+        and displacement not in known_offsets
+    ):
+        return None
+    access = RealModeLinearStackAccess8616(displacement=displacement, width=width)
+    return stack_cvar_for_stable_ss_linear_access_8616(codegen, access)
+
+
+def lower_runtime_ss_segment_helpers_to_stack_8616(codegen, *, project=None) -> bool:
+    if project is None:
+        project = getattr(codegen, "project", None)
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if project is None or root is None:
+        return False
+
+    candidate_count = 0
+    materialized_count = 0
+    refused_count = 0
+    changed = False
+
+    def transform(node):
+        nonlocal candidate_count, changed, materialized_count, refused_count
+        if not isinstance(_strip_casts_8616(node), structured_c.CFunctionCall):
+            return node
+        if _runtime_segment_helper_width_8616(_runtime_segment_helper_name_8616(node)) is None:
+            return node
+        candidate_count += 1
+        cvar = lower_runtime_ss_segment_helper_to_stack_8616(node, codegen=codegen, project=project)
+        if cvar is None:
+            refused_count += 1
+            return node
+        changed = True
+        materialized_count += 1
+        return cvar
+
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        if hasattr(codegen.cfunc, "body"):
+            codegen.cfunc.body = new_root
+        changed = True
+    if _replace_c_children_8616(codegen.cfunc.statements, transform):
+        changed = True
+    codegen._inertia_runtime_ss_helper_candidate_count_8616 = (
+        int(getattr(codegen, "_inertia_runtime_ss_helper_candidate_count_8616", 0) or 0) + candidate_count
+    )
+    codegen._inertia_runtime_ss_helper_materialized_count_8616 = (
+        int(getattr(codegen, "_inertia_runtime_ss_helper_materialized_count_8616", 0) or 0) + materialized_count
+    )
+    codegen._inertia_runtime_ss_helper_refused_count_8616 = (
+        int(getattr(codegen, "_inertia_runtime_ss_helper_refused_count_8616", 0) or 0) + refused_count
+    )
+    return changed
+
+
 def apply_runtime_segment_lowering_8616(codegen, *, target: str = "portable-flat") -> bool:
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
     project = getattr(codegen, "project", None)
@@ -204,6 +322,8 @@ def apply_runtime_segment_lowering_8616(codegen, *, target: str = "portable-flat
         changed = True
     if _replace_c_children_8616(codegen.cfunc.statements, transform):
         changed = True
+    if lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project):
+        changed = True
     return changed
 
 
@@ -212,4 +332,6 @@ __all__ = [
     "apply_runtime_segment_lowering_8616",
     "lower_runtime_segment_access_8616",
     "lower_runtime_segment_address_8616",
+    "lower_runtime_ss_segment_helper_to_stack_8616",
+    "lower_runtime_ss_segment_helpers_to_stack_8616",
 ]

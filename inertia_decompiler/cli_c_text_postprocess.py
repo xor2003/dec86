@@ -589,6 +589,7 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
         "union",
         "enum",
     }
+    control_statement_names = {"if", "for", "while", "switch"}
 
     def split_args(args_text: str) -> list[str]:
         if not args_text.strip():
@@ -652,7 +653,9 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
             prefix, name = split
             candidate = name
             suffix_match = re.fullmatch(r"(?P<base>.+?)_(?P<suffix>\d+)", name)
-            if suffix_match is not None:
+            if re.fullmatch(r"arg_\d+", name):
+                candidate = name
+            elif suffix_match is not None:
                 unsuffixed = suffix_match.group("base")
                 if unsuffixed and unsuffixed not in used:
                     candidate = unsuffixed
@@ -669,6 +672,8 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
     for index, line in enumerate(lines):
         match = header_pattern.match(line)
         if match is None:
+            continue
+        if match.group("name") in control_statement_names:
             continue
         args_text = match.group("args")
         normalized_args = normalize_args(args_text)
@@ -982,7 +987,7 @@ def _materialize_annotated_cod_declarations_text(
         source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, func_name)
         if source_arg_text:
             pointer_evidence_text = f"{source_arg_text}\n{pointer_evidence_text}"
-        source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
+        source_decl = _source_decl_from_cod_source_lines(metadata.source_lines, func_name)
         source_prototypes = _source_function_prototype_decls_from_cod_source_lines(metadata.source_lines)
         if not preserve_source_header:
             header_changed = _apply_source_decl_to_header_8616(
@@ -1182,6 +1187,63 @@ def _source_decl_has_custom_ptr_8616(source_args: list[str]) -> bool:
     return False
 
 
+def _source_header_args_unmaterialized_8616(
+    c_text: str,
+    *,
+    func_name: str,
+    source_decl: str | None,
+    source_arg_text: str | None = None,
+) -> bool:
+    if not isinstance(func_name, str) or not func_name:
+        return False
+    if not source_decl and not source_arg_text:
+        return False
+    header_re = re.compile(
+        rf"(?m)^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>[^()]*)\)\s*(?:\{{|$)"
+    )
+    current_header = header_re.search(c_text)
+    if current_header is None:
+        return False
+    source_parts = _split_source_decl_args_8616(source_decl, source_arg_text)
+    current_parts = _split_c_signature_args_8616(current_header.group("args"))
+    if not source_parts or len(source_parts) != len(current_parts):
+        return False
+    body_text = c_text[current_header.end() :]
+    for current_part, source_part in zip(current_parts, source_parts):
+        current_name = _decl_arg_name_8616(current_part)
+        source_name = _decl_arg_name_8616(source_part)
+        if not current_name or not source_name or current_name == source_name:
+            continue
+        current_used = re.search(rf"(?<![A-Za-z_]){re.escape(current_name)}(?![A-Za-z_])", body_text) is not None
+        source_used = re.search(rf"(?<![A-Za-z_]){re.escape(source_name)}(?![A-Za-z_])", body_text) is not None
+        if current_used and not source_used:
+            return True
+    return False
+
+
+def _restore_codegen_header_for_unmaterialized_source_args_8616(
+    before_text: str,
+    after_text: str,
+    *,
+    func_name: str,
+) -> str:
+    if not isinstance(func_name, str) or not func_name:
+        return after_text
+    header_re = re.compile(
+        rf"(?m)^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>[^()]*)\)(?P<suffix>\s*[;{{]?\s*)$"
+    )
+    before_match = header_re.search(before_text)
+    after_match = header_re.search(after_text)
+    if before_match is None or after_match is None:
+        return after_text
+    replacement = before_match.group(0)
+    before_suffix = before_match.group("suffix") or ""
+    after_suffix = after_match.group("suffix") or ""
+    if after_suffix.strip() and not before_suffix.strip():
+        replacement = replacement.rstrip() + after_suffix
+    return after_text[: after_match.start()] + replacement + after_text[after_match.end() :]
+
+
 def _apply_source_decl_to_header_8616(
     lines: list[str],
     *,
@@ -1205,6 +1267,14 @@ def _apply_source_decl_to_header_8616(
         return header_changed
     current_header = header_re.match(lines[header_index])
     if current_header is None:
+        return header_changed
+    c_text = "\n".join(lines)
+    if _source_header_args_unmaterialized_8616(
+        c_text,
+        func_name=func_name,
+        source_decl=source_decl,
+        source_arg_text=None,
+    ):
         return header_changed
     replacement_header = f"{current_header.group('indent')}{source_ret} {func_name}({source_args_text})"
     if current_header.group("suffix") == "{":
@@ -1868,6 +1938,10 @@ def _collect_global_usage_candidates_from_body_8616(text: str, declared: set[str
             for m in _safe_finditer_8616(r"&\s*(?P<name>[A-Za-z_][\w$?@]*)", work)
             if m.group("name") not in function_like
         )
+        candidates.extend(
+            m.group("name")
+            for m in _safe_finditer_8616(r"(?<![A-Za-z_])(?P<name>g_[0-9a-fA-F]+)(?![A-Za-z0-9_])", work)
+        )
         ordered: list[str] = []
         seen: set[str] = set()
         banned = {"if", "for", "while", "switch", "return", "sizeof", "case", "else", "struct", "stdint", "stdbool", "time", "stddef"}
@@ -2292,7 +2366,7 @@ def _repair_missing_cod_function_header_text(c_text: str, function, metadata: CO
         if header_pattern.search(c_text) is not None:
             return c_text
 
-        source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
+        source_decl = _source_decl_from_cod_source_lines(metadata.source_lines, func_name)
         if not source_decl:
             return c_text
 
@@ -2359,7 +2433,7 @@ def _align_function_header_with_cod_source_decl_text(
         func_name = getattr(function, "name", None)
         if not isinstance(func_name, str) or not func_name:
             return c_text
-        source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
+        source_decl = _source_decl_from_cod_source_lines(metadata.source_lines, func_name)
         if not source_decl:
             return c_text
 
@@ -2383,6 +2457,13 @@ def _align_function_header_with_cod_source_decl_text(
         return_type = re.sub(r"\buint16\b", "unsigned short", return_type)
         return_type = re.sub(r"\bint16\b", "short", return_type)
         return_type = re.sub(r"\buint8\b", "unsigned char", return_type)
+        if _source_header_args_unmaterialized_8616(
+            c_text,
+            func_name=func_name,
+            source_decl=source_decl,
+            source_arg_text=None,
+        ):
+            return c_text
         signature = f"{return_type} {func_name}({args})"
 
         header_with_brace_re = re.compile(
@@ -4048,6 +4129,7 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
         nonlocal c_text
         if metadata is None:
             return c_text
+        original_c_text = c_text
 
         prepend_block = ""
         raw_entries = getattr(metadata, "cod_raw_entries", ()) or ()
@@ -4070,15 +4152,26 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
             if prepend_block:
                 prepend_block += "\n\n"
 
-        source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
+        func_name = getattr(function, "name", None) or ""
+        source_decl = _source_decl_from_cod_source_lines(metadata.source_lines, getattr(function, "name", None))
         source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, getattr(function, "name", None))
-        preserve_codegen_header = _codegen_signature_authoritative_8616(function=function, codegen=codegen)
+        source_header_unmaterialized = _source_header_args_unmaterialized_8616(
+            c_text,
+            func_name=func_name,
+            source_decl=source_decl,
+            source_arg_text=source_arg_text,
+        )
+        source_header_materialized = bool(source_decl) and not source_header_unmaterialized
+        preserve_codegen_header = (
+            _codegen_signature_authoritative_8616(function=function, codegen=codegen)
+            and not source_header_materialized
+        ) or source_header_unmaterialized
         header_source_decl = None if preserve_codegen_header else source_decl
         header_source_arg_text = None if preserve_codegen_header else source_arg_text
         positive_arg_aliases = [
             name
             for disp, name in _sorted_metadata_stack_aliases(metadata)
-            if disp > 0 and isinstance(name, str) and name
+            if not preserve_codegen_header and disp > 0 and isinstance(name, str) and name
         ]
         positive_aliases = _build_cod_positive_bp_alias_map(
             [
@@ -4127,6 +4220,12 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
                 c_text = staging_assignment_pattern.sub("", c_text)
                 c_text = re.sub(r"\n{3,}", "\n\n", c_text)
         c_text = _finalize_cod_annotation_text_8616(c_text, metadata)
+        if source_header_unmaterialized:
+            c_text = _restore_codegen_header_for_unmaterialized_source_args_8616(
+                original_c_text,
+                c_text,
+                func_name=func_name,
+            )
         if prepend_block:
             c_text = prepend_block + c_text
         return c_text
@@ -4150,13 +4249,29 @@ def _annotate_cod_lines_with_aliases_8616(
         input_lines = c_text.splitlines()
         for index, line in enumerate(input_lines):
             next_line = input_lines[index + 1] if index + 1 < len(input_lines) else None
+            line_header_match = re.match(
+                r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)(?P<suffix>\s*[;{]?\s*)$",
+                line,
+            )
+            local_positive_arg_aliases = positive_arg_aliases
+            local_source_decl = source_decl
+            local_source_arg_text = source_arg_text
+            if line_header_match is not None and _source_header_args_unmaterialized_8616(
+                c_text,
+                func_name=line_header_match.group("name"),
+                source_decl=source_decl,
+                source_arg_text=source_arg_text,
+            ):
+                local_positive_arg_aliases = []
+                local_source_decl = None
+                local_source_arg_text = None
             line = _rewrite_cod_header_args_line_8616(
                 line,
                 next_line=next_line,
                 metadata=metadata,
-                positive_arg_aliases=positive_arg_aliases,
-                source_decl=source_decl,
-                source_arg_text=source_arg_text,
+                positive_arg_aliases=local_positive_arg_aliases,
+                source_decl=local_source_decl,
+                source_arg_text=local_source_arg_text,
             )
             match = re.search(r"// \[bp([+-])0x([0-9a-f]+)\]", line)
             if match is not None:
@@ -4228,7 +4343,7 @@ def _rewrite_cod_header_args_line_8616(
 
 def _split_source_decl_args_8616(source_decl: str | None, source_arg_text: str | None) -> list[str]:
     if source_decl is not None:
-        source_match = re.match(r"^(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+[A-Za-z_][\w$?@]*\s*\((?P<args>[^()]*)\)\s*;?$", source_decl.strip())
+        source_match = re.search(r"\((?P<args>[^()]*)\)\s*;?$", source_decl.strip())
         if source_match is not None:
             source_args = source_match.group("args").strip()
             if source_args and source_args != "void":
@@ -4273,8 +4388,20 @@ def _rewrite_cod_header_arg_parts_8616(
         normalized_source_parts = [normalize_arg_text(part) for part in source_parts]
         normalized_candidate_parts = [normalize_arg_text(part) for part in parts]
         current_arg_names = [_decl_arg_name_8616(part) for part in parts if _decl_arg_name_8616(part)]
+        source_arg_names = [_decl_arg_name_8616(part) for part in source_parts if _decl_arg_name_8616(part)]
+        source_types_match_names = (
+            bool(source_parts)
+            and len(parts) == len(source_parts)
+            and len(current_arg_names) == len(source_arg_names)
+            and current_arg_names == source_arg_names
+            and normalized_candidate_parts != normalized_source_parts
+        )
         use_source_args = bool(source_parts) and (
-            not parts or len(parts) != len(source_parts) or args_text.strip() in {"", "void"} or all(re.fullmatch(r"(?:v\d+|vvar_\d+|a\d+)", n or "") for n in current_arg_names)
+            not parts
+            or len(parts) != len(source_parts)
+            or args_text.strip() in {"", "void"}
+            or source_types_match_names
+            or all(re.fullmatch(r"(?:v\d+|vvar_\d+|a\d+)", n or "") for n in current_arg_names)
         )
         candidate_parts = normalized_source_parts if use_source_args else (normalized_candidate_parts or parts)
         rewritten: list[str] = []

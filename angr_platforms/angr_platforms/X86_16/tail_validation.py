@@ -30,7 +30,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
+from angr.sim_type import SimTypeBottom
 
+from .annotations import ANNOTATION_KEY, _parse_c_prototype_8616, _source_decl_from_cod_source_lines
 from .callsite_summary import summarize_x86_16_callsite
 from .decompiler_postprocess_flags import _split_ordering_if_chain_replacement_condition_8616
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
@@ -300,6 +302,79 @@ def _normalize_helper_call_fingerprint_8616(project, token: str | None) -> str |
         return token
 
     return _impl()
+
+
+def _is_void_return_type_8616(return_type) -> bool:
+    return isinstance(return_type, SimTypeBottom) and getattr(return_type, "label", None) == "void"
+
+
+def _active_codegen_has_void_return_evidence_8616(project) -> bool:
+    codegen = getattr(project, "_inertia_tail_validation_active_codegen", None)
+    if codegen is None:
+        return False
+    cfunc = getattr(codegen, "cfunc", None)
+    for candidate in (
+        getattr(cfunc, "prototype", None),
+        getattr(cfunc, "functy", None),
+        getattr(getattr(codegen, "_func", None), "prototype", None),
+        getattr(getattr(codegen, "_inertia_current_function_8616", None), "prototype", None),
+    ):
+        if _is_void_return_type_8616(getattr(candidate, "returnty", None)):
+            return True
+    candidate_functions = [
+        getattr(codegen, "_inertia_current_function_8616", None),
+        getattr(codegen, "_func", None),
+    ]
+    cfunc_addr = getattr(cfunc, "addr", None)
+    functions = getattr(getattr(project, "kb", None), "functions", None)
+    if isinstance(cfunc_addr, int) and functions is not None:
+        with contextlib.suppress(Exception):
+            candidate_functions.append(functions.function(addr=cfunc_addr, create=False))
+    for candidate_function in candidate_functions:
+        if _function_has_void_return_evidence_8616(candidate_function):
+            return True
+    return False
+
+
+def _function_has_void_return_evidence_8616(function) -> bool:
+    if function is None:
+        return False
+    if getattr(function, "returning", None) is False:
+        return True
+    prototype = getattr(function, "prototype", None)
+    if _is_void_return_type_8616(getattr(prototype, "returnty", None)):
+        return True
+    info = getattr(function, "info", None)
+    annotations = info.get(ANNOTATION_KEY) if isinstance(info, MutableMapping) else None
+    if not isinstance(annotations, Mapping):
+        return False
+    source_lines = tuple(annotations.get("source_lines", ()) or ())
+    source_decl = _source_decl_from_cod_source_lines(source_lines, getattr(function, "name", None))
+    if not source_decl:
+        return False
+    with contextlib.suppress(Exception):
+        _name, source_proto, _source_arg_names = _parse_c_prototype_8616(source_decl)
+        return _is_void_return_type_8616(getattr(source_proto, "returnty", None))
+    return False
+
+
+def _call_effect_fingerprint_8616(
+    node,
+    project,
+    *,
+    contextual_call_summaries: Mapping[int, object],
+    contextual_call_fingerprints: Mapping[int, str],
+) -> str:
+    summary = contextual_call_summaries.get(id(node))
+    target_addr = _call_summary_target_addr_8616(project, summary)
+    call_fingerprint = (
+        f"addr:{target_addr:#x}" if isinstance(target_addr, int) else contextual_call_fingerprints.get(id(node))
+    )
+    if call_fingerprint is None:
+        call_name = _call_target_name(node, project)
+        if isinstance(call_name, str) and call_name:
+            call_fingerprint = f"name:{call_name}"
+    return _normalize_helper_call_fingerprint_8616(project, call_fingerprint) or "<unknown-call>"
 
 
 def _node_callsite_addr_8616(node) -> int | None:
@@ -1601,6 +1676,7 @@ def _collect_observed_locations(root, project, mode: str) -> set[str]:
     if mode != "live_out":
         return observed_locations
 
+    active_void_return = _active_codegen_has_void_return_evidence_8616(project)
     for node in _iter_c_nodes_deep_8616(root):
         if isinstance(node, CFunctionCall):
             if _is_runtime_segment_helper_call_8616(node):
@@ -1608,7 +1684,13 @@ def _collect_observed_locations(root, project, mode: str) -> set[str]:
             for arg in getattr(node, "args", ()) or ():
                 _record_expr_locations(arg, project, observed_locations)
         if isinstance(node, CReturn):
-            _record_expr_locations(getattr(node, "retval", None), project, observed_locations)
+            retval = getattr(node, "retval", None)
+            if active_void_return:
+                if isinstance(retval, CFunctionCall) and not _is_runtime_segment_helper_call_8616(retval):
+                    for arg in getattr(retval, "args", ()) or ():
+                        _record_expr_locations(arg, project, observed_locations)
+                continue
+            _record_expr_locations(retval, project, observed_locations)
     return observed_locations
 
 
@@ -1797,6 +1879,9 @@ def _is_dynamic_dirty_ss_location_8616(location: str) -> bool:
     if not isinstance(location, str) or not location.startswith("deref:"):
         return False
     if "reg:ss" in location and ("CDirtyExpression" in location or "CFakeVariable" in location):
+        return True
+    dynamic_frame_atom = r"(?:CDirtyExpression|CFakeVariable|virtual:unknown|Reference\(CIndexedVariable\))"
+    if re.fullmatch(rf"deref:Add\(Mul\(reg:ss,const:16\),{dynamic_frame_atom},const:-?[0-9]+\)", location):
         return True
     if "CDirtyExpression" not in location and "CFakeVariable" not in location:
         return False
@@ -2076,17 +2161,30 @@ def _process_tail_validation_node_8616(
         if isinstance(node, CFunctionCall):
             if _is_runtime_segment_helper_call_8616(node):
                 return
-            summary = contextual_call_summaries.get(id(node))
-            target_addr = _call_summary_target_addr_8616(project, summary)
-            call_fingerprint = f"addr:{target_addr:#x}" if isinstance(target_addr, int) else contextual_call_fingerprints.get(id(node))
-            if call_fingerprint is None:
-                call_name = _call_target_name(node, project)
-                if isinstance(call_name, str) and call_name:
-                    call_fingerprint = f"name:{call_name}"
-            helper_calls.add(_normalize_helper_call_fingerprint_8616(project, call_fingerprint) or "<unknown-call>")
+            helper_calls.add(
+                _call_effect_fingerprint_8616(
+                    node,
+                    project,
+                    contextual_call_summaries=contextual_call_summaries,
+                    contextual_call_fingerprints=contextual_call_fingerprints,
+                )
+            )
             return
         if isinstance(node, CReturn):
-            returns.add(_expr_fingerprint(getattr(node, "retval", None), project))
+            retval = getattr(node, "retval", None)
+            if _active_codegen_has_void_return_evidence_8616(project):
+                if isinstance(retval, CFunctionCall) and not _is_runtime_segment_helper_call_8616(retval):
+                    helper_calls.add(
+                        _call_effect_fingerprint_8616(
+                            retval,
+                            project,
+                            contextual_call_summaries=contextual_call_summaries,
+                            contextual_call_fingerprints=contextual_call_fingerprints,
+                        )
+                    )
+                returns.add("none")
+            else:
+                returns.add(_expr_fingerprint(retval, project))
             control_flow_effects.add("return")
             return
         if isinstance(node, CAssignment):
@@ -2261,6 +2359,17 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
             build=_build_summary,
         )
         summary = cached["value"]
+        if os.environ.get("INERTIA_DEBUG_TV_SUMMARY", "").strip().lower() in {"1", "true", "yes", "on"}:
+            import sys
+
+            sys.stderr.write(
+                "[tail-validation-summary-debug] "
+                f"cache_hit={bool(cached.get('cache_hit', False))} "
+                f"conditions={tuple(getattr(summary, 'conditions', ()) or ())!r} "
+                f"returns={tuple(getattr(summary, 'returns', ()) or ())!r} "
+                f"control={tuple(getattr(summary, 'control_flow_effects', ()) or ())!r}\n"
+            )
+            sys.stderr.flush()
         if bool(cached["cache_hit"]):
             cache["stats"]["hits"] = int(cache["stats"].get("hits", 0) or 0) + 1
         else:

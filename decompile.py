@@ -96,11 +96,9 @@ _install_early_log_levels()
 _enable_line_buffered_stdio()
 _configure_python_recursion_limit()
 
-from inertia_decompiler.telemetry import configure_telemetry_from_env, emit_compact_summary, span
+from inertia_decompiler.telemetry import emit_compact_summary
 
-configure_telemetry_from_env()
-with span("decompile.import_cli"):
-    from inertia_decompiler import cli as _cli
+from inertia_decompiler import cli as _cli
 
 _THIS_MODULE = sys.modules[__name__]
 

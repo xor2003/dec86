@@ -265,6 +265,20 @@ int select_and_apply(int which, int value)
     assert "extern unsigned short dec_one" not in rewritten
 
 
+def test_materialize_synthetic_globals_declares_generated_scalar_hex_global_without_metadata():
+    c_text = """
+int f(void)
+{
+    return g_ba4 >> 8;
+}
+"""
+
+    rewritten = _materialize_missing_synthetic_global_declarations_text(c_text)
+
+    assert "extern unsigned short g_ba4;" in rewritten
+    assert rewritten.index("extern unsigned short g_ba4;") < rewritten.index("int f(void)")
+
+
 def test_source_function_prototype_decls_from_cod_source_lines_extracts_simple_prototypes():
     prototypes = _source_function_prototype_decls_from_cod_source_lines(
         (

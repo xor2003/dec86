@@ -368,7 +368,11 @@ def _looks_like_x86_16_entry_byte(code: bytes, offset: int) -> bool:
         return False
     return code[offset] not in {0x00, 0x90, 0xCC}
 
-def _resolve_x86_16_function_start(code: bytes, offset: int, *, max_padding: int = 0x10) -> int | None:
+
+_X86_16_EXACT_REGION_PADDING_SCAN_LIMIT = 0x80
+
+
+def _resolve_x86_16_function_start(code: bytes, offset: int, *, max_padding: int = 0x20) -> int | None:
     if offset < 0 or offset >= len(code):
         return None
     if _looks_like_x86_16_function_prologue(code, offset):
@@ -733,9 +737,9 @@ def _function_recovery_score(function) -> tuple[int, int]:
     return (len(blocks), total_bytes)
 
 
-def _function_block_overlap_count_8616(function, exact_region: tuple[int, int] | None = None) -> int:
+def _block_ranges_for_overlap_8616(blocks, exact_region: tuple[int, int] | None = None) -> list[tuple[int, int]]:
     ranges: list[tuple[int, int]] = []
-    for block in tuple(getattr(function, "blocks", ()) or ()):
+    for block in tuple(blocks or ()):
         addr = getattr(block, "addr", None)
         size = max(0, getattr(block, "size", 0))
         if not isinstance(addr, int) or size <= 0:
@@ -750,13 +754,35 @@ def _function_block_overlap_count_8616(function, exact_region: tuple[int, int] |
             if addr >= end:
                 continue
         ranges.append((addr, end))
+    return sorted(ranges)
+
+
+def _block_overlap_count_8616(blocks, exact_region: tuple[int, int] | None = None) -> int:
+    ranges = _block_ranges_for_overlap_8616(blocks, exact_region)
     overlap_count = 0
     last_end: int | None = None
-    for start, end in sorted(ranges):
+    for start, end in ranges:
         if last_end is not None and start < last_end:
             overlap_count += 1
         last_end = max(last_end or end, end)
     return overlap_count
+
+
+def _block_unique_covered_bytes_8616(blocks, exact_region: tuple[int, int] | None = None) -> int:
+    ranges = _block_ranges_for_overlap_8616(blocks, exact_region)
+    if not ranges:
+        return 0
+    merged: list[list[int]] = []
+    for start, end in ranges:
+        if not merged or start > merged[-1][1]:
+            merged.append([start, end])
+            continue
+        merged[-1][1] = max(merged[-1][1], end)
+    return sum(end - start for start, end in merged)
+
+
+def _function_block_overlap_count_8616(function, exact_region: tuple[int, int] | None = None) -> int:
+    return _block_overlap_count_8616(tuple(getattr(function, "blocks", ()) or ()), exact_region)
 
 
 def _should_replace_exact_region_candidate_8616(
@@ -1017,7 +1043,7 @@ def _stitch_x86_16_exact_function_8616(
     if len(reachable) <= 1:
         return function, False
 
-    if not _should_replace_function_with_stitched_graph_8616(function, reachable):
+    if not _should_replace_function_with_stitched_graph_8616(function, reachable, exact_region):
         return function, False
 
     _reset_function_graph_state_8616(function)
@@ -1104,9 +1130,22 @@ def _recompute_stitched_edges_8616(
     return edges
 
 
-def _should_replace_function_with_stitched_graph_8616(function, reachable: dict[int, object]) -> bool:
+def _should_replace_function_with_stitched_graph_8616(
+    function,
+    reachable: dict[int, object],
+    exact_region: tuple[int, int] | None = None,
+) -> bool:
     current_block_count, current_block_bytes = _function_recovery_score(function)
     stitched_bytes = sum(len(getattr(block, "bytes", b"")) for block in reachable.values())
+    current_blocks = tuple(getattr(function, "blocks", ()) or ())
+    stitched_blocks = tuple(reachable.values())
+    current_overlap = _block_overlap_count_8616(current_blocks, exact_region)
+    stitched_overlap = _block_overlap_count_8616(stitched_blocks, exact_region)
+    if current_overlap > stitched_overlap:
+        current_unique = _block_unique_covered_bytes_8616(current_blocks, exact_region)
+        stitched_unique = _block_unique_covered_bytes_8616(stitched_blocks, exact_region)
+        if stitched_unique >= current_unique:
+            return True
     return stitched_bytes > current_block_bytes or len(reachable) > current_block_count
 
 
@@ -3545,6 +3584,30 @@ def _derive_lst_exact_region_8616(
                     f"{addr:#x}-{exact_region[1]:#x} (from containing sidecar span)"
                 )
         if project.arch.name == "86_16" and exact_region is not None:
+            start, end = exact_region
+            try:
+                probe = bytes(
+                    project.loader.memory.load(
+                        start,
+                        min(_X86_16_EXACT_REGION_PADDING_SCAN_LIMIT, max(0, end - start)),
+                    )
+                )
+            except Exception:
+                probe = b""
+            resolved_start = _resolve_x86_16_function_start(
+                probe,
+                0,
+                max_padding=_X86_16_EXACT_REGION_PADDING_SCAN_LIMIT,
+            )
+            if isinstance(resolved_start, int) and resolved_start > 0:
+                adjusted_start = start + resolved_start
+                if adjusted_start < end:
+                    exact_region = (adjusted_start, end)
+                    print(
+                        f"[dbg] adjusted exact-region start for {name}: "
+                        f"{adjusted_start:#x}-{end:#x} (from sidecar padding)"
+                    )
+        if project.arch.name == "86_16" and exact_region is not None:
             exact_region = _maybe_extend_x86_16_exact_region_terminator(project, exact_region)
             exact_size = max(0, exact_region[1] - exact_region[0])
             if exact_size <= 0x20 and not _x86_16_exact_region_has_terminator(project, exact_region):
@@ -3564,6 +3627,10 @@ def _try_rebased_exact_region_recovery_8616(
     if project.arch.name != "86_16" or exact_region is None:
         return None
     exact_region_size = max(0, exact_region[1] - exact_region[0])
+    loader = getattr(project, "loader", None)
+    project_memory = getattr(loader, "memory", None)
+    if project_memory is None or not hasattr(project_memory, "load"):
+        return None
     slice_plan = plan_x86_16_exact_slice(*exact_region)
     enable_rebased_exact_slice = _env_flag_enabled_8616("INERTIA_ENABLE_REBASED_EXACT_SLICE", "1")
     use_rebased_exact_slice = (
@@ -3625,6 +3692,7 @@ def _try_rebased_exact_region_recovery_8616(
         func = stitched_func
         _mark_x86_16_stitched_recovery_8616(func)
     func.name = name
+    _commit_exact_region_function_to_kb_8616(slice_project, cfg, func, slice_region)
     mark_function_original_addr(func, exact_region[0])
     with contextlib.suppress(Exception):
         source_func = project.kb.functions.function(addr=exact_region[0], create=False)
@@ -4256,6 +4324,13 @@ def _try_recover_direct_addr_from_sidecar_region(
             )
         except _AnalysisTimeout:
             return None
+        except Exception as ex:  # noqa: BLE001
+            logging.getLogger(__name__).debug(
+                "sidecar region lst recovery failed for %s: %s",
+                hex(recover_addr),
+                ex,
+            )
+            return None
 
     return _impl()
 
@@ -4296,6 +4371,13 @@ def _try_recover_direct_addr_from_sidecar_label(
                 low_memory=low_memory_path,
             )
         except _AnalysisTimeout:
+            return None
+        except Exception as ex:  # noqa: BLE001
+            logging.getLogger(__name__).debug(
+                "sidecar label lst recovery failed for %s: %s",
+                hex(recover_addr),
+                ex,
+            )
             return None
 
     return _impl()
@@ -4360,6 +4442,12 @@ def _recover_direct_addr_function(
         if function_label is not None and addr == project.entry:
             return _recover_blob_entry_function(project, addr, timeout=timeout)
 
+        candidate_addr = addr
+        if project.arch.name == "86_16" and lst_metadata is not None:
+            sidecar_region = _lst_code_region(lst_metadata, addr)
+            if sidecar_region is not None and isinstance(sidecar_region[0], int):
+                candidate_addr = sidecar_region[0]
+
         with _analysis_timeout(timeout):
             if project.arch.name == "86_16":
                 main_object = getattr(project.loader, "main_object", None)
@@ -4368,7 +4456,7 @@ def _recover_direct_addr_function(
                 if isinstance(linked_base, int) and isinstance(max_addr, int):
                     return _recover_candidate_function_pair(
                         project,
-                        candidate_addr=addr,
+                        candidate_addr=candidate_addr,
                         image_end=linked_base + max_addr + 1,
                         metadata=lst_metadata,
                         project_entry=project.entry,

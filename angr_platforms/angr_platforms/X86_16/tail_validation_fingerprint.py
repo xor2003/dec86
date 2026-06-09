@@ -11,12 +11,17 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CDirtyExpression,
+    CDoWhileLoop,
+    CExpressionStatement,
+    CForLoop,
     CFunctionCall,
+    CIfElse,
     CIndexedVariable,
     CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
+    CWhileLoop,
 )
 from angr.sim_type import SimTypePointer
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -53,6 +58,32 @@ __all__ = [
 TAIL_VALIDATION_FINGERPRINT_VERSION = 6
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log = logging.getLogger(__name__)
+
+
+def _first_codegen_8616(*nodes) -> object | None:
+    for node in nodes:
+        codegen = getattr(node, "codegen", None)
+        if codegen is not None:
+            return codegen
+    return None
+
+
+def _safe_rebuild_binary_8616(op: str, lhs, rhs, template) -> object:
+    if lhs is getattr(template, "lhs", None) and rhs is getattr(template, "rhs", None):
+        return template
+    codegen = _first_codegen_8616(template, lhs, rhs)
+    if codegen is None:
+        return template
+    return CBinaryOp(op, lhs, rhs, codegen=codegen)
+
+
+def _safe_rebuild_unary_8616(op: str, operand, template) -> object:
+    if operand is getattr(template, "operand", None):
+        return template
+    codegen = _first_codegen_8616(template, operand)
+    if codegen is None:
+        return template
+    return CUnaryOp(op, operand, codegen=codegen)
 
 
 def _segment_linear_lowering_allowed(node, segment_reg: str) -> bool:
@@ -498,11 +529,69 @@ def _stack_alias_map_8616(codegen) -> dict[int, tuple[object, int]]:
                     return base, offset + lhs_value
             return None
 
+        def _alias_stable_key(resolved: tuple[object, int]) -> tuple[int, int]:
+            base, offset = resolved
+            variable = getattr(base, "variable", None)
+            return (id(variable) if variable is not None else id(base), offset)
+
+        def _iter_alias_assignment_candidates(start):
+            seen: set[int] = set()
+            stack = [start]
+            visited = 0
+            while stack:
+                current = stack.pop()
+                current_id = id(current)
+                if current_id in seen:
+                    continue
+                seen.add(current_id)
+                visited += 1
+                if visited > max_nodes:
+                    setattr(codegen, "_inertia_tail_validation_stack_alias_candidate_budget_exceeded", True)
+                    break
+                if isinstance(current, CAssignment):
+                    yield current
+                    continue
+                if isinstance(current, CStatements):
+                    stack.extend(reversed(tuple(getattr(current, "statements", ()) or ())))
+                    continue
+                if isinstance(current, CExpressionStatement):
+                    expr = getattr(current, "expr", None)
+                    if expr is not None:
+                        stack.append(expr)
+                    continue
+                if isinstance(current, CIfElse):
+                    else_node = getattr(current, "else_node", None)
+                    if else_node is not None:
+                        stack.append(else_node)
+                    for _, body in reversed(tuple(getattr(current, "condition_and_nodes", ()) or ())):
+                        stack.append(body)
+                    continue
+                if isinstance(current, (CForLoop, CWhileLoop, CDoWhileLoop)):
+                    for attr in ("body", "iterator", "initializer"):
+                        child = getattr(current, attr, None)
+                        if child is not None:
+                            stack.append(child)
+                    continue
+                if isinstance(current, (list, tuple)):
+                    stack.extend(reversed(tuple(current)))
+
         aliases: dict[int, tuple[object, int]] = {}
+        alias_keys: dict[int, tuple[int, int]] = {}
         changed = True
-        while changed:
+        iteration_count = 0
+        max_iterations = 32
+        visited_nodes = 0
+        max_nodes = 4096
+        budget_exceeded = False
+        while changed and iteration_count < max_iterations:
+            iteration_count += 1
             changed = False
-            for node in _iter_c_nodes_deep_8616(root):
+            for node in _iter_alias_assignment_candidates(root):
+                visited_nodes += 1
+                if visited_nodes > max_nodes:
+                    budget_exceeded = True
+                    changed = False
+                    break
                 if not isinstance(node, CAssignment):
                     continue
                 lhs = _strip_validation_casts(getattr(node, "lhs", None))
@@ -520,9 +609,19 @@ def _stack_alias_map_8616(codegen) -> dict[int, tuple[object, int]]:
                         isinstance(rhs_expr, CUnaryOp) and rhs_expr.op == "Reference" or isinstance(rhs_expr, CBinaryOp)
                     ):
                         continue
-                if aliases.get(id(lhs_var)) != resolved:
-                    aliases[id(lhs_var)] = resolved
+                lhs_key = id(lhs_var)
+                resolved_key = _alias_stable_key(resolved)
+                if alias_keys.get(lhs_key) != resolved_key:
+                    aliases[lhs_key] = resolved
+                    alias_keys[lhs_key] = resolved_key
                     changed = True
+            if budget_exceeded:
+                break
+        if changed or budget_exceeded:
+            aliases = {}
+            setattr(codegen, "_inertia_tail_validation_stack_alias_incomplete", True)
+        setattr(codegen, "_inertia_tail_validation_stack_alias_iterations", iteration_count)
+        setattr(codegen, "_inertia_tail_validation_stack_alias_nodes", visited_nodes)
         setattr(codegen, "_inertia_stack_pointer_aliases_for_cvars", (root, aliases))
         setattr(codegen, "_inertia_tail_validation_stack_pointer_aliases", aliases)
         return aliases
@@ -600,10 +699,9 @@ def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen, *, sou
         if source == "word_pair":
             return _stack_slot_fingerprint_from_slot_8616(offset, 2)
         materialized_local_map = _materialized_local_map_8616(codegen) if codegen is not None else {}
-        stack_alias_map = _stack_alias_map_8616(codegen) if codegen is not None else {}
         normalized = canonicalize_stack_alias_fingerprint_8616(
             offset,
-            stack_alias_map=stack_alias_map,
+            stack_alias_map={},
             materialized_local_map=materialized_local_map,
         )
         if normalized is not None:
@@ -611,11 +709,12 @@ def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen, *, sou
                 codegen,
                 node=node,
                 candidate=f"stack:{offset:+#x}",
-                alias_keys=tuple(sorted(str(key) for key in stack_alias_map.keys())),
+                alias_keys=(),
                 binding=f"bp{offset:+#x}",
                 final=normalized,
             )
             return normalized
+        stack_alias_map = _stack_alias_map_8616(codegen) if codegen is not None else {}
         if codegen is None:
             return f"stack:{offset:+#x}"
         has_alias_context = bool(
@@ -701,6 +800,8 @@ def _resolve_stack_offset_from_indexed_8616(node, project=None) -> int | None:
                 )
                 if isinstance(bridged, int):
                     return bridged
+        if codegen is None:
+            return None
         combined = CBinaryOp(
             "Add",
             base,
@@ -854,6 +955,8 @@ def _stack_indexed_location_fingerprint_8616(node, project=None) -> str | None:
         bridged = _indexed_location_bridge_8616(node=node, base=base, index_value=index_value, codegen=codegen)
         if bridged is not None:
             return bridged
+        if codegen is None:
+            return None
         combined = CBinaryOp(
             "Add",
             base,
@@ -1082,7 +1185,7 @@ def _normalize_zero_flag_comparison_8616(node):
         return node
     if node.op == "CmpEQ":
         return source_expr
-    return CUnaryOp("Not", source_expr, codegen=getattr(node, "codegen", None))
+    return _safe_rebuild_unary_8616("Not", source_expr, node)
 
 
 def _simplify_expr_for_fingerprint_8616(node):
@@ -1092,7 +1195,7 @@ def _simplify_expr_for_fingerprint_8616(node):
         if isinstance(node, CUnaryOp):
             operand = _simplify_expr_for_fingerprint_8616(getattr(node, "operand", None))
             if operand is not getattr(node, "operand", None):
-                return CUnaryOp(node.op, operand, codegen=getattr(node, "codegen", None))
+                return _safe_rebuild_unary_8616(node.op, operand, node)
             return node
         if not isinstance(node, CBinaryOp):
             return node
@@ -1110,7 +1213,7 @@ def _simplify_expr_for_fingerprint_8616(node):
         if node.op in {"Sub"} and rhs_zero:
             return lhs
         if lhs is not node.lhs or rhs is not node.rhs:
-            return CBinaryOp(node.op, lhs, rhs, codegen=getattr(node, "codegen", None))
+            return _safe_rebuild_binary_8616(node.op, lhs, rhs, node)
         return node
 
     return _impl()
@@ -1136,6 +1239,10 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
         if node_id in _seen:
             return "expr_cycle"
         _seen.add(node_id)
+
+        def _child_seen() -> set[int]:
+            return set(_seen)
+
         node = _simplify_expr_for_fingerprint_8616(node)
         stack_pair = _stack_word_pair_fingerprint(node, project)
         if stack_pair is not None:
@@ -1147,7 +1254,7 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
         if isinstance(node, CDirtyExpression):
             resolved_dirty = _resolve_validation_dirty_alias_expr_8616(node)
             if resolved_dirty is not None and resolved_dirty is not node:
-                return _expr_fingerprint(resolved_dirty, project, _seen)
+                return _expr_fingerprint(resolved_dirty, project, _child_seen())
             dirty_name = _dirty_virtual_name_8616(node)
             if isinstance(dirty_name, str):
                 return f"virtual:{dirty_name}"
@@ -1169,17 +1276,17 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
                     ("stack:", "stack_slot:", "unresolved_stack_carrier:")
                 ):
                     return deref_location
-                operand_fp = _expr_fingerprint(node.operand, project, _seen)
+                operand_fp = _expr_fingerprint(node.operand, project, _child_seen())
                 if isinstance(operand_fp, str) and operand_fp.startswith("stack_slot:"):
                     return operand_fp
             operand = getattr(node, "operand", None)
             if node.op == "Not" and isinstance(operand, CBinaryOp):
                 inverted = _invert_cmp_op_8616(operand.op)
                 if inverted is not None:
-                    lhs = _expr_fingerprint(operand.lhs, project, _seen)
-                    rhs = _expr_fingerprint(operand.rhs, project, _seen)
+                    lhs = _expr_fingerprint(operand.lhs, project, _child_seen())
+                    rhs = _expr_fingerprint(operand.rhs, project, _child_seen())
                     return f"{inverted}({lhs},{rhs})"
-            return f"{node.op}({_expr_fingerprint(node.operand, project, _seen)})"
+            return f"{node.op}({_expr_fingerprint(node.operand, project, _child_seen())})"
         if isinstance(node, CBinaryOp):
             if node.op in {"Add", "Sub"}:
                 parts: list[str] = []
@@ -1189,7 +1296,7 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
                     if isinstance(const_value, int):
                         const_total += sign * const_value
                         continue
-                    part = _expr_fingerprint(term, project, _seen)
+                    part = _expr_fingerprint(term, project, _child_seen())
                     if sign < 0:
                         part = f"Neg({part})"
                     parts.append(part)
@@ -1197,16 +1304,16 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
                     parts.append(f"const:{const_total!r}")
                 return f"Add({','.join(parts)})"
             if node.op == "Shl" and _c_constant_int_value(node.rhs) == 4:
-                return f"Mul({_expr_fingerprint(node.lhs, project, _seen)},const:16)"
-            lhs = _expr_fingerprint(node.lhs, project, _seen)
-            rhs = _expr_fingerprint(node.rhs, project, _seen)
+                return f"Mul({_expr_fingerprint(node.lhs, project, _child_seen())},const:16)"
+            lhs = _expr_fingerprint(node.lhs, project, _child_seen())
+            rhs = _expr_fingerprint(node.rhs, project, _child_seen())
             return f"{node.op}({lhs},{rhs})"
         if isinstance(node, CFunctionCall):
             runtime_helper = _runtime_segment_helper_fingerprint_8616(node, project)
             if runtime_helper is not None:
                 return runtime_helper
             callee = _call_target_name(node, project)
-            args = ",".join(_expr_fingerprint(arg, project, _seen) for arg in getattr(node, "args", ()) or ())
+            args = ",".join(_expr_fingerprint(arg, project, _child_seen()) for arg in getattr(node, "args", ()) or ())
             return f"call:{callee}({args})"
         return type(node).__name__
 
@@ -1227,23 +1334,89 @@ def _call_target_name(node: CFunctionCall, project) -> str:
                 return f"addr:{int(match.group('addr'), 16):#x}"
             except ValueError:
                 pass
-        functions = getattr(getattr(project, "kb", None), "functions", None)
-        function = getattr(functions, "function", lambda **_: None)(name=normalized_callee, create=False)
-        resolved_addr = getattr(function, "addr", None)
+        resolved_addr = _resolve_call_symbol_addr_8616(project, normalized_callee)
         if isinstance(resolved_addr, int):
             return f"addr:{resolved_addr:#x}"
     if isinstance(normalized_callee, str):
         return normalized_callee
     name = normalize_callee_name_8616(getattr(callee_func, "name", None))
     if isinstance(name, str):
-        function = getattr(getattr(project, "kb", None), "functions", None)
-        function = getattr(function, "function", lambda **_: None)(name=name, create=False)
-        resolved_addr = getattr(function, "addr", None)
+        resolved_addr = _resolve_call_symbol_addr_8616(project, name)
         if isinstance(resolved_addr, int):
             return f"addr:{resolved_addr:#x}"
     if isinstance(name, str):
         return name
     return "<indirect>"
+
+
+def _resolve_call_symbol_addr_8616(project, name: str) -> int | None:
+    for candidate_project in _call_symbol_lookup_projects_8616(project):
+        resolved_addr = _resolve_call_symbol_addr_in_project_8616(candidate_project, name)
+        if isinstance(resolved_addr, int):
+            return resolved_addr
+    return None
+
+
+def _call_symbol_lookup_projects_8616(project) -> tuple[object, ...]:
+    projects: list[object] = []
+    for candidate in (project, getattr(project, "_inertia_original_project", None)):
+        if candidate is not None and all(candidate is not existing for existing in projects):
+            projects.append(candidate)
+    return tuple(projects)
+
+
+def _resolve_call_symbol_addr_in_project_8616(project, name: str) -> int | None:
+    function_addr = _function_addr_by_name_8616(project, name)
+    if isinstance(function_addr, int):
+        return function_addr
+    for addr, label in getattr(getattr(project, "kb", None), "labels", {}).items():
+        if isinstance(addr, int) and _call_symbol_names_equivalent_8616(label, name):
+            return addr
+    metadata = getattr(project, "_inertia_lst_metadata", None)
+    code_labels = getattr(metadata, "code_labels", None)
+    if isinstance(code_labels, dict):
+        for addr, label in code_labels.items():
+            if isinstance(addr, int) and _call_symbol_names_equivalent_8616(label, name):
+                return addr
+    return None
+
+
+def _function_addr_by_name_8616(project, name: str) -> int | None:
+    functions = getattr(getattr(project, "kb", None), "functions", None)
+    lookup = getattr(functions, "function", None)
+    if not callable(lookup):
+        return None
+    for lookup_name in _call_symbol_lookup_names_8616(name):
+        try:
+            function = lookup(name=lookup_name, create=False)
+        except TypeError:
+            continue
+        addr = getattr(function, "addr", None)
+        if isinstance(addr, int):
+            return addr
+    return None
+
+
+def _call_symbol_lookup_names_8616(name: str) -> tuple[str, ...]:
+    normalized = normalize_callee_name_8616(name)
+    if not isinstance(normalized, str):
+        return ()
+    names = [normalized]
+    undecorated = normalized.lstrip("_")
+    decorated = f"_{undecorated}" if undecorated else None
+    if decorated is not None and decorated not in names:
+        names.append(decorated)
+    if undecorated and undecorated not in names:
+        names.append(undecorated)
+    return tuple(names)
+
+
+def _call_symbol_names_equivalent_8616(left: str | None, right: str | None) -> bool:
+    left_name = normalize_callee_name_8616(left)
+    right_name = normalize_callee_name_8616(right)
+    if not isinstance(left_name, str) or not isinstance(right_name, str):
+        return False
+    return left_name == right_name or left_name.lstrip("_") == right_name.lstrip("_")
 
 
 def _call_symbol_name_8616(node: CFunctionCall) -> str | None:

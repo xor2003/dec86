@@ -48,7 +48,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     render_dos_int21_call,
     render_interrupt_call,
 )
-from angr_platforms.X86_16.annotations import annotate_function
+from angr_platforms.X86_16.annotations import _normalize_bp_disp, annotate_function
 from angr_platforms.X86_16.alias.alias_model_impl import (
     _CopyAliasState,
     _StackPointerAliasState,
@@ -369,14 +369,32 @@ def _cod_stack_alias_for_disp(
     cod_metadata: CODProcMetadata | None,
     *,
     positive_aliases: dict[int, str] | None = None,
+    normalized_aliases: dict[int, str] | None = None,
 ) -> str | None:
     if cod_metadata is None:
         return None
+    if normalized_aliases is not None:
+        alias = normalized_aliases.get(disp)
+        if alias is not None:
+            return alias
     if disp > 0 and positive_aliases is not None:
         alias = positive_aliases.get(disp)
         if alias is not None:
             return alias
     return cod_metadata.stack_aliases.get(disp)
+
+
+def _build_cod_normalized_bp_alias_map(cod_metadata: CODProcMetadata | None) -> dict[int, str]:
+    if cod_metadata is None:
+        return {}
+    aliases = getattr(cod_metadata, "stack_aliases", None)
+    if not isinstance(aliases, dict):
+        return {}
+    normalized: dict[int, str] = {}
+    for bp_disp, alias in aliases.items():
+        if isinstance(bp_disp, int) and isinstance(alias, str) and alias:
+            normalized.setdefault(_normalize_bp_disp(bp_disp), alias)
+    return normalized
 
 
 def _collect_cod_name_ownership(codegen) -> tuple[set[str], dict[str, int]]:
@@ -488,6 +506,7 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
             ],
             cod_metadata,
         )
+        normalized_aliases = _build_cod_normalized_bp_alias_map(cod_metadata)
 
         changed = False
         used_names, name_owner_offsets = _collect_cod_name_ownership(codegen)
@@ -498,7 +517,12 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
             disp = getattr(variable, "offset", None)
             if disp is None:
                 continue
-            alias = _cod_stack_alias_for_disp(disp, cod_metadata, positive_aliases=positive_aliases)
+            alias = _cod_stack_alias_for_disp(
+                disp,
+                cod_metadata,
+                positive_aliases=positive_aliases,
+                normalized_aliases=normalized_aliases,
+            )
             if alias is None:
                 continue
             current_name = getattr(variable, "name", None)
@@ -3971,6 +3995,15 @@ def _run_typed_widening_pass(project: angr.Project, codegen) -> bool:
         codegen,
         coalesce_direct_ss_local_word_statements=_coalesce_direct_ss_local_word_statements,
         coalesce_segmented_word_store_statements=_coalesce_segmented_word_store_statements,
+        promote_stack_slots_from_instruction_widths=lambda current_project, current_codegen: (
+            _cli_segmented_store_coalesce.promote_stack_slots_from_instruction_widths_8616(
+                current_project,
+                current_codegen,
+                resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+                promote_direct_stack_cvariable=_promote_direct_stack_cvariable,
+                stack_type_for_size=_stack_type_for_size,
+            )
+        ),
     )
 
 def _global_memory_addr(node) -> int | None:
