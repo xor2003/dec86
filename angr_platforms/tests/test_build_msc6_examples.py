@@ -171,8 +171,39 @@ def test_function_fallback_decompile_timeout_is_structured_failure(monkeypatch, 
     assert seen_timeout["timeout"] == _focused_decompile_process_timeout(60)
     assert profile["process_timeout_seconds"] == _focused_decompile_process_timeout(60)
     assert profile["analysis_timeout_seconds"] == 60
+    assert profile["quality"]["function_name"] == "select_and_apply"
+    assert profile["quality"]["asm_fallback_count"] == 0
     assert "select_and_apply" in command
     assert function_name == "select_and_apply"
+
+
+def test_function_fallback_profile_includes_quality_metrics(monkeypatch, tmp_path):
+    def fake_run(cmd, **_kwargs):
+        stdout = "int f(void) { if (flags) return tmp_1; return ((ss << 4) + 2); }"
+        stderr = "[tail-validation] whole-tail validation clean across 1 functions\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr=stderr)
+
+    monkeypatch.setattr("scripts.build_msc6_examples._run", fake_run)
+
+    ok, _stdout, _stderr, profile, _command, function_name = _decompile_function_with_options(
+        tmp_path / "TEST.EXE",
+        decompile_py=tmp_path / "decompile.py",
+        decompile_timeout=60,
+        decompile_function_discovery_backend="auto",
+        decompile_seed_engine="auto",
+        decompile_rizin_timeout=8,
+        decompile_force_rizin_8616=False,
+        decompile_pat_backend=None,
+        decompile_signature_catalog=None,
+        function_name="f",
+    )
+
+    assert ok is True
+    assert function_name == "f"
+    assert profile["quality"]["function_name"] == "f"
+    assert profile["quality"]["tmp_condition_count"] == 1
+    assert profile["quality"]["raw_flag_condition_count"] == 1
+    assert profile["quality"]["raw_ss_linear_expr_count"] == 1
 
 
 def test_explicit_function_fallback_failure_does_not_probe_whole_binary(monkeypatch, tmp_path):

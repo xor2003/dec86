@@ -25,6 +25,11 @@ from angr_platforms.X86_16.analysis_helpers import (
     patch_interrupt_service_call_sites,
     seed_calling_conventions,
 )
+from angr_platforms.X86_16.exact_region_diagnostics import (
+    build_exact_region_diagnostics_8616,
+    classify_region_split_8616,
+    format_exact_region_diagnostics_8616,
+)
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 from inertia_decompiler.cache import (
@@ -3773,11 +3778,26 @@ def _recover_lst_function(
 
                 if cfg is not None and func is not None:
                     if _exact_region_recovery_looks_truncated(func, exact_region):
-                        split_count = _count_region_local_functions(cfg, exact_region)
-                        if split_count > 1:
+                        block_addrs = tuple(
+                            int(getattr(block, "addr"))
+                            for block in tuple(getattr(func, "blocks", ()) or ())
+                            if isinstance(getattr(block, "addr", None), int)
+                        )
+                        cfg_functions = getattr(getattr(cfg, "kb", None), "functions", None)
+                        diagnostics = build_exact_region_diagnostics_8616(
+                            name,
+                            requested_start=exact_region[0],
+                            requested_end=exact_region[1],
+                            covered_block_addrs=block_addrs,
+                            cfg_functions=cfg_functions,
+                            proc_identity=name,
+                        )
+                        split = classify_region_split_8616(diagnostics)
+                        if split.is_split:
                             print(
-                                f"[dbg] exact-region recovery split {name} into {split_count} local functions "
-                                f"inside {exact_region[0]:#x}-{exact_region[1]:#x}"
+                                f"[dbg] {format_exact_region_diagnostics_8616(diagnostics)}",
+                                file=sys.stderr,
+                                flush=True,
                             )
                         best_cfg = cfg
                         best_func = func

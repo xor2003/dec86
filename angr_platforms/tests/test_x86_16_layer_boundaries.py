@@ -33,6 +33,62 @@ def _import_targets(path: Path) -> list[str]:
     return targets
 
 
+def _tracked_python_files() -> tuple[Path, ...]:
+    repo = Path(__file__).resolve().parents[2]
+    return tuple(
+        path
+        for base in (
+            repo / "angr_platforms",
+            repo / "inertia_decompiler",
+            repo / "scripts",
+        )
+        if base.exists()
+        for path in sorted(base.rglob("*.py"))
+        if "__pycache__" not in path.parts
+    )
+
+
+def _module_name_for_path(path: Path) -> str:
+    repo = Path(__file__).resolve().parents[2]
+    rel = path.relative_to(repo)
+    if rel.parts[:2] == ("angr_platforms", "angr_platforms"):
+        rel = Path(*rel.parts[1:])
+    return ".".join(rel.with_suffix("").parts)
+
+
+def _resolve_import_from_module(current_module: str, level: int, module: str | None) -> str:
+    if level <= 0:
+        return module or ""
+    parts = current_module.split(".")[:-1]
+    base = parts[: max(0, len(parts) - level + 1)]
+    if module:
+        base.extend(module.split("."))
+    return ".".join(base)
+
+
+def _production_importers_for_module(module_name: str) -> list[str]:
+    test_root = Path(__file__).resolve().parent
+    importers: list[str] = []
+    for path in _tracked_python_files():
+        if test_root in path.parents:
+            continue
+        current_module = _module_name_for_path(path)
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == module_name or alias.name.startswith(module_name + "."):
+                        importers.append(f"{path}:{node.lineno}")
+            elif isinstance(node, ast.ImportFrom):
+                source = _resolve_import_from_module(current_module, node.level, node.module)
+                if source == module_name or source.startswith(module_name + "."):
+                    importers.append(f"{path}:{node.lineno}")
+                for alias in node.names:
+                    if source and f"{source}.{alias.name}" == module_name:
+                        importers.append(f"{path}:{node.lineno}")
+    return importers
+
+
 def test_layer_modules_do_not_import_cli_modules() -> None:
     offenders: list[str] = []
     for layer in _ALL_GUARDED_LAYERS:
@@ -107,6 +163,48 @@ def test_flat_alias_modules_are_compatibility_shims_only() -> None:
         tree = ast.parse(path.read_text(), filename=str(path))
         if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for node in tree.body):
             offenders.append(str(path))
+    assert offenders == []
+
+
+def test_quality_and_diagnostics_modules_are_wired_into_production_paths() -> None:
+    modules = (
+        "angr_platforms.X86_16.alias.state",
+        "angr_platforms.X86_16.alias.domains",
+        "angr_platforms.X86_16.semantics.evidence_cache",
+        "angr_platforms.X86_16.structuring.simple_loop_recovery",
+        "angr_platforms.X86_16.lowering.segmented_lowering",
+        "angr_platforms.X86_16.quality",
+        "angr_platforms.X86_16.exact_region_diagnostics",
+    )
+    missing = [module for module in modules if not _production_importers_for_module(module)]
+
+    assert missing == []
+
+
+def test_prototype_quality_modules_are_test_only_until_pipeline_admission() -> None:
+    modules = (
+        "angr_platforms.X86_16.ir.ir_canonicalize_8616",
+        "angr_platforms.X86_16.structuring.loop_recovery",
+        "angr_platforms.X86_16.validation.canonicalize",
+        "angr_platforms.X86_16.postprocess.condition_patterns",
+    )
+    unexpected = {module: _production_importers_for_module(module) for module in modules}
+
+    assert unexpected == {module: [] for module in modules}
+
+
+def test_layer_compatibility_wrappers_do_not_hide_production_logic() -> None:
+    shim_paths = (
+        _ROOT / "postprocess" / "cleanup.py",
+        _ROOT / "postprocess" / "simplify.py",
+        _ROOT / "structuring" / "control_flow.py",
+    )
+    offenders: list[str] = []
+    for path in shim_paths:
+        tree = ast.parse(path.read_text(), filename=str(path))
+        if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for node in tree.body):
+            offenders.append(str(path))
+
     assert offenders == []
 
 

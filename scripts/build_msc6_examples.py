@@ -22,6 +22,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from signature_catalog import build_signature_catalog
 
+from angr_platforms.X86_16.quality import measure_x86_16_codegen_quality_8616
+
 from inertia_decompiler.flair_paths import default_flair_startup_root
 
 from inertia_decompiler.project_loading import _build_project  # noqa: E402
@@ -67,6 +69,21 @@ def _focused_decompile_retry_reason(profile: dict[str, object]) -> FocusedDecomp
         if reason == retry_reason.value:
             return retry_reason
     return None
+
+
+def _attach_decompile_quality_profile(
+    profile: dict[str, object],
+    c_text: str,
+    *,
+    function_name: str = "unknown",
+) -> None:
+    metrics = measure_x86_16_codegen_quality_8616(
+        c_text,
+        function_name=function_name,
+        asm_fallback=bool(profile.get("asm_fallback")),
+        validation_uncollected=bool(profile.get("tail_validation_uncollected")),
+    )
+    profile["quality"] = metrics.to_dict()
 
 COMPARE16_HARNESS_MAIN = """
 int main(void)
@@ -1415,6 +1432,7 @@ def _decompile_function_with_options(
         profile["command"] = " ".join(cmd)
         profile["process_timeout_seconds"] = process_timeout
         profile["analysis_timeout_seconds"] = decompile_timeout
+        _attach_decompile_quality_profile(profile, stdout_data, function_name=function_name)
         return (
             False,
             stdout_data,
@@ -1428,6 +1446,7 @@ def _decompile_function_with_options(
     profile["acceptance_reason"] = None if acceptable else reason
     profile["process_timeout_seconds"] = process_timeout
     profile["analysis_timeout_seconds"] = decompile_timeout
+    _attach_decompile_quality_profile(profile, proc.stdout, function_name=function_name)
     return (
         acceptable and proc.returncode == 0,
         proc.stdout,
@@ -1780,7 +1799,9 @@ def _decompile(
                 run_profile["wall_seconds"] = elapsed
                 run_profile["selected"] = profile.get("selected", {})
                 run_profile["slowest_function_summary"] = _extract_profile_summary(run_profile)
-                stdout_path.write_text(_prepare_decompiled_source_for_c89(proc.stdout), encoding="utf-8")
+                source_text = _prepare_decompiled_source_for_c89(proc.stdout)
+                _attach_decompile_quality_profile(run_profile, source_text)
+                stdout_path.write_text(source_text, encoding="utf-8")
                 stderr_path.write_text(proc.stderr, encoding="utf-8")
                 return True, stdout_path, stderr_path, elapsed, run_profile
 
@@ -1844,7 +1865,9 @@ def _decompile(
                 run_profile["wall_seconds"] = elapsed
                 run_profile["selected"] = profile.get("selected", {})
                 run_profile["slowest_function_summary"] = _extract_profile_summary(run_profile)
-                stdout_path.write_text(_prepare_decompiled_source_for_c89(proc.stdout), encoding="utf-8")
+                source_text = _prepare_decompiled_source_for_c89(proc.stdout)
+                _attach_decompile_quality_profile(run_profile, source_text)
+                stdout_path.write_text(source_text, encoding="utf-8")
                 stderr_path.write_text(proc.stderr, encoding="utf-8")
                 return True, stdout_path, stderr_path, elapsed, run_profile
             last_profile = run_profile
@@ -1863,6 +1886,7 @@ def _decompile(
         if last_proc is not None:
             stdout_text = _prepare_decompiled_source_for_c89(last_proc.stdout)
             stderr_text = last_proc.stderr
+        _attach_decompile_quality_profile(merged_profile, stdout_text)
         stdout_path.write_text(stdout_text, encoding="utf-8")
         stderr_path.write_text(stderr_text, encoding="utf-8")
         return False, stdout_path, stderr_path, elapsed, merged_profile
@@ -1877,7 +1901,9 @@ def _decompile(
         merged_profile["timeout"] = True
         merged_profile["selected"] = profile.get("selected", {})
         merged_profile["acceptance_reason"] = "timeout"
-        stdout_path.write_text(_prepare_decompiled_source_for_c89(stdout_data), encoding="utf-8")
+        stdout_text = _prepare_decompiled_source_for_c89(stdout_data)
+        _attach_decompile_quality_profile(merged_profile, stdout_text)
+        stdout_path.write_text(stdout_text, encoding="utf-8")
         stderr_path.write_text(timeout_text, encoding="utf-8")
         return False, stdout_path, stderr_path, elapsed, merged_profile
 
