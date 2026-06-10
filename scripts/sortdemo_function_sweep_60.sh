@@ -45,7 +45,7 @@ for entry in "${entries[@]}"; do
   if rg -q "Decompilation timeout" "$log_file"; then
     status="timeout"
   elif rg -q "direct failure family" "$log_file"; then
-    status="$(rg -o 'direct failure family: [a-z_]+' "$log_file" | awk '{print $4}' | head -n 1 || true)"
+    status="$(rg -o 'direct failure family: status=[a-z_]+' "$log_file" | sed 's/.*status=//' | head -n 1 || true)"
     status="${status:-failed}"
   elif rg -q "non-optimized fallback failed" "$log_file"; then
     status="fallback_failed"

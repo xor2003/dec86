@@ -354,6 +354,54 @@ def test_tail_validation_counts_helper_call_in_assignment_rhs():
     assert summary.helper_calls == ("name:sprintf",)
 
 
+def test_tail_validation_summary_uses_precomputed_boundary_fingerprint(monkeypatch):
+    project = _project()
+    codegen = _DummyCodegen()
+    _codegen([], codegen)
+
+    def fail_fingerprint(*_args, **_kwargs):
+        raise AssertionError("boundary fingerprint was recomputed")
+
+    monkeypatch.setattr(tail_validation_module, "fingerprint_x86_16_tail_validation_boundary", fail_fingerprint)
+
+    summary = collect_x86_16_tail_validation_summary(
+        project,
+        codegen,
+        mode="live_out",
+        boundary_fingerprint="precomputed:empty",
+    )
+
+    assert summary == X86_16TailValidationSummary((), (), (), (), (), (), (), ())
+
+
+def test_tail_validation_summary_cache_hit_skips_ast_walk(monkeypatch):
+    project = _project()
+    codegen = _DummyCodegen()
+    _codegen([], codegen)
+
+    first = collect_x86_16_tail_validation_summary(
+        project,
+        codegen,
+        mode="live_out",
+        boundary_fingerprint="precomputed:empty",
+    )
+
+    def fail_iter(*_args, **_kwargs):
+        raise AssertionError("cached summary walked AST")
+
+    monkeypatch.setattr(tail_validation_module, "_iter_c_nodes_deep_8616", fail_iter)
+
+    second = collect_x86_16_tail_validation_summary(
+        project,
+        codegen,
+        mode="live_out",
+        boundary_fingerprint="precomputed:empty",
+    )
+
+    assert second == first
+    assert codegen._inertia_tail_validation_last_summary_cache_hit is True
+
+
 def test_tail_validation_collects_duplicate_helper_calls():
     project = _project()
     codegen = _DummyCodegen()

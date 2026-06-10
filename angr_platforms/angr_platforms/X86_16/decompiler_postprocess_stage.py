@@ -7845,24 +7845,40 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(
     codegen,
     *,
     mode: str,
+    boundary_fingerprint: str | None = None,
     force_baseline_canonicalization: bool = False,
 ):
     def _impl():
         canonicalization_setting = os.environ.get("INERTIA_ENABLE_TV_BASELINE_CANONICALIZATION", "1").strip().lower()
         if canonicalization_setting in {"0", "false", "no", "off"}:
-            return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+            return collect_x86_16_tail_validation_summary(
+                project,
+                codegen,
+                mode=mode,
+                boundary_fingerprint=boundary_fingerprint,
+            )
         function_addr = getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1
         if hasattr(codegen, "_inertia_postprocess_changed") and not force_baseline_canonicalization:
             codegen._inertia_tail_validation_direct_final_summary_count_8616 = int(
                 getattr(codegen, "_inertia_tail_validation_direct_final_summary_count_8616", 0) or 0
             ) + 1
-            return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+            return collect_x86_16_tail_validation_summary(
+                project,
+                codegen,
+                mode=mode,
+                boundary_fingerprint=boundary_fingerprint,
+            )
         # Large functions frequently time out in baseline clone canonicalization.
         # For those, use direct summary collection to keep validation deterministic
         # and avoid repeated timeout churn.
         complexity = _postprocess_function_complexity_8616(project, codegen, function_addr)
         if complexity.is_expensive_for_local_validation:
-            return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+            return collect_x86_16_tail_validation_summary(
+                project,
+                codegen,
+                mode=mode,
+                boundary_fingerprint=boundary_fingerprint,
+            )
 
         cloned_codegen = None
         if cloned_codegen is None:
@@ -7878,16 +7894,31 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(
                     "Tail-validation baseline canonicalization timed out at function=%#x; falling back to direct summary collection",
                     function_addr,
                 )
-                return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+                return collect_x86_16_tail_validation_summary(
+                    project,
+                    codegen,
+                    mode=mode,
+                    boundary_fingerprint=boundary_fingerprint,
+                )
             except Exception as ex:
                 logging.getLogger(__name__).debug(
                     "Tail-validation baseline canonicalization failed at function=%#x stage=baseline-canonicalization: %s",
                     function_addr,
                     ex,
                 )
-                return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+                return collect_x86_16_tail_validation_summary(
+                    project,
+                    codegen,
+                    mode=mode,
+                    boundary_fingerprint=boundary_fingerprint,
+                )
         if cloned_codegen is None:
-            return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+            return collect_x86_16_tail_validation_summary(
+                project,
+                codegen,
+                mode=mode,
+                boundary_fingerprint=boundary_fingerprint,
+            )
         try:
             _repair_cfunc_statements_wrapper(cloned_codegen)
         except Exception as ex:
@@ -7938,7 +7969,12 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(
                 "Tail-validation baseline summary timed out at function=%#x; falling back to direct summary collection",
                 function_addr,
             )
-            return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+            return collect_x86_16_tail_validation_summary(
+                project,
+                codegen,
+                mode=mode,
+                boundary_fingerprint=boundary_fingerprint,
+            )
 
     return _impl()
 
@@ -11126,6 +11162,7 @@ def _decompile_8616(self):
                     self.project,
                     self.codegen,
                     mode=validation_mode,
+                    boundary_fingerprint=before_fingerprint,
                 )
         before_collect_elapsed = time.perf_counter() - before_collect_started
         if baseline_cfunc_snapshot is not None:
@@ -11237,6 +11274,7 @@ def _decompile_8616(self):
                     self.project,
                     self.codegen,
                     mode=validation_mode,
+                    boundary_fingerprint=after_fingerprint,
                 )
             after_collect_elapsed = time.perf_counter() - after_collect_started
         owner = getattr(function, "info", None) if function is not None else None

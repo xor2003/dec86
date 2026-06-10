@@ -444,12 +444,22 @@ def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
     mode = "live_out"
     _prime_structuring_validation_semantics_8616(project, codegen)
     before_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode=mode)
-    before_summary = collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+    before_summary = collect_x86_16_tail_validation_summary(
+        project,
+        codegen,
+        mode=mode,
+        boundary_fingerprint=before_fingerprint,
+    )
 
     def finalize():
         _refresh_structuring_condition_semantics_8616(project, codegen)
         after_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode=mode)
-        after_summary = collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+        after_summary = collect_x86_16_tail_validation_summary(
+            project,
+            codegen,
+            mode=mode,
+            boundary_fingerprint=after_fingerprint,
+        )
         validation = build_x86_16_tail_validation_cached_result(
             owner=None,
             stage=f"structuring:{spec_name}",
@@ -759,7 +769,12 @@ def _decompile_structuring_8616(self):
             before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
         before_collect_started = time.perf_counter()
         with span("x86_16.structuring.validation.before_summary", function=func_addr):
-            before_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
+            before_summary = collect_x86_16_tail_validation_summary(
+                self.project,
+                self.codegen,
+                mode=validation_mode,
+                boundary_fingerprint=before_fingerprint,
+            )
         before_collect_elapsed = time.perf_counter() - before_collect_started
         if not getattr(self.codegen, "_inertia_typed_conditions_transferred", False):
             func_addr = getattr(getattr(self.codegen, "cfunc", None), "addr", None)
@@ -780,7 +795,12 @@ def _decompile_structuring_8616(self):
             after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
         after_collect_started = time.perf_counter()
         with span("x86_16.structuring.validation.after_summary", function=func_addr):
-            after_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
+            after_summary = collect_x86_16_tail_validation_summary(
+                self.project,
+                self.codegen,
+                mode=validation_mode,
+                boundary_fingerprint=after_fingerprint,
+            )
         after_collect_elapsed = time.perf_counter() - after_collect_started
         self.codegen._inertia_structuring_tail_validation_artifacts_8616 = {
             "mode": validation_mode,

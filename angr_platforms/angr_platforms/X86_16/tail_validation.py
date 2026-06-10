@@ -2553,7 +2553,13 @@ def _tail_validation_headline_8616(severity: str, scanned_count: int, changed_fu
     return f"whole-tail validation failed across {changed_function_count} functions"
 
 
-def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "live_out") -> X86_16TailValidationSummary:
+def collect_x86_16_tail_validation_summary(
+    project,
+    codegen,
+    *,
+    mode: str = "live_out",
+    boundary_fingerprint: str | None = None,
+) -> X86_16TailValidationSummary:
     def _impl():
         if mode not in _TAIL_VALIDATION_MODES:
             raise ValueError(f"Unsupported x86-16 tail validation mode: {mode}")
@@ -2564,88 +2570,104 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
         with contextlib.suppress(Exception):
             codegen._inertia_jcc_register_exprs_by_ins_addr_8616 = None
         cache = _tail_validation_summary_cache_store(codegen)
+        summary_boundary_fingerprint = boundary_fingerprint
+        if summary_boundary_fingerprint is None:
+            summary_boundary_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode=mode)
         descriptor = build_x86_16_validation_cache_descriptor(
             "tail_validation.summary",
             {
                 "mode": mode,
-                "boundary_fingerprint": fingerprint_x86_16_tail_validation_boundary(project, codegen, mode=mode),
+                "boundary_fingerprint": summary_boundary_fingerprint,
             },
         )
         entries = cache.get("entries", {})
 
         root = _codegen_root(codegen)
-        helper_calls: list[str] = []
-        register_writes: set[str] = set()
-        stack_writes: set[str] = set()
-        global_writes: set[str] = set()
-        segmented_writes: set[str] = set()
-        returns: set[str] = set()
-        conditions: set[str] = set()
-        control_flow_effects: set[str] = set()
-
         if root is None:
             return X86_16TailValidationSummary((), (), (), (), (), (), (), ())
-        previous_active_codegen = getattr(project, "_inertia_tail_validation_active_codegen", None)
-        project._inertia_tail_validation_active_codegen = codegen
-        observed_locations = _collect_observed_locations(root, project, mode)
-        contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
-        contextual_call_summaries = _build_contextual_call_summary_map(root, project)
-        contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(root, project)
-        prunable_segment_write_ids = (
-            _prunable_live_out_segment_write_ids_8616(root, project, contextual_call_summaries)
-            if mode == "live_out"
-            else set()
-        )
-        normalized_loop_conditions: dict[int, str] = {}
-        suppressed_control_flow_nodes: set[int] = set()
-        for node in _iter_c_nodes_deep_8616(root):
-            if not isinstance(node, CWhileLoop):
-                continue
-            normalized = _extract_loop_break_guard_normalization_8616(node, project, contextual_condition_fingerprints)
-            if normalized is None:
-                continue
-            normalized_loop_conditions[id(node)] = normalized[0]
-            suppressed_control_flow_nodes.update(normalized[1])
-
-        for node in _iter_c_nodes_deep_8616(root):
-            if id(node) in suppressed_control_flow_nodes:
-                continue
-            _process_tail_validation_node_8616(
-                node,
-                project=project,
-                mode=mode,
-                observed_locations=observed_locations,
-                contextual_call_summaries=contextual_call_summaries,
-                contextual_call_fingerprints=contextual_call_fingerprints,
-                contextual_condition_fingerprints=contextual_condition_fingerprints,
-                normalized_loop_conditions=normalized_loop_conditions,
-                prunable_segment_write_ids=prunable_segment_write_ids,
-                helper_calls=helper_calls,
-                register_writes=register_writes,
-                stack_writes=stack_writes,
-                global_writes=global_writes,
-                segmented_writes=segmented_writes,
-                returns=returns,
-                conditions=conditions,
-                control_flow_effects=control_flow_effects,
-            )
-            _maybe_add_coarse_conditions_8616(node, project, conditions, mode)
-        _append_missing_contextual_callsite_fingerprints_8616(root, project, helper_calls)
 
         def _build_summary() -> X86_16TailValidationSummary:
-            canonical_segmented_writes = _canonicalize_segmented_write_aliases_8616(segmented_writes, global_writes)
-            return X86_16TailValidationSummary(
-                helper_calls=tuple(helper_calls),
-                register_writes=_sorted_unique(register_writes),
-                stack_writes=_sorted_unique(stack_writes),
-                global_writes=_sorted_unique(global_writes),
-                segmented_writes=_sorted_unique(canonical_segmented_writes),
-                returns=_sorted_unique(returns),
-                conditions=_sorted_unique(_compact_tail_validation_observables_8616("conditions", conditions)),
-                control_flow_effects=_sorted_unique(
-                    _compact_tail_validation_observables_8616("control_flow_effects", control_flow_effects)
-                ),
-            )
+            helper_calls: list[str] = []
+            register_writes: set[str] = set()
+            stack_writes: set[str] = set()
+            global_writes: set[str] = set()
+            segmented_writes: set[str] = set()
+            returns: set[str] = set()
+            conditions: set[str] = set()
+            control_flow_effects: set[str] = set()
+            previous_active_codegen = getattr(project, "_inertia_tail_validation_active_codegen", None)
+            project._inertia_tail_validation_active_codegen = codegen
+            try:
+                observed_locations = _collect_observed_locations(root, project, mode)
+                contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
+                contextual_call_summaries = _build_contextual_call_summary_map(root, project)
+                contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(root, project)
+                prunable_segment_write_ids = (
+                    _prunable_live_out_segment_write_ids_8616(root, project, contextual_call_summaries)
+                    if mode == "live_out"
+                    else set()
+                )
+                normalized_loop_conditions: dict[int, str] = {}
+                suppressed_control_flow_nodes: set[int] = set()
+                for node in _iter_c_nodes_deep_8616(root):
+                    if not isinstance(node, CWhileLoop):
+                        continue
+                    normalized = _extract_loop_break_guard_normalization_8616(
+                        node,
+                        project,
+                        contextual_condition_fingerprints,
+                    )
+                    if normalized is None:
+                        continue
+                    normalized_loop_conditions[id(node)] = normalized[0]
+                    suppressed_control_flow_nodes.update(normalized[1])
+
+                for node in _iter_c_nodes_deep_8616(root):
+                    if id(node) in suppressed_control_flow_nodes:
+                        continue
+                    _process_tail_validation_node_8616(
+                        node,
+                        project=project,
+                        mode=mode,
+                        observed_locations=observed_locations,
+                        contextual_call_summaries=contextual_call_summaries,
+                        contextual_call_fingerprints=contextual_call_fingerprints,
+                        contextual_condition_fingerprints=contextual_condition_fingerprints,
+                        normalized_loop_conditions=normalized_loop_conditions,
+                        prunable_segment_write_ids=prunable_segment_write_ids,
+                        helper_calls=helper_calls,
+                        register_writes=register_writes,
+                        stack_writes=stack_writes,
+                        global_writes=global_writes,
+                        segmented_writes=segmented_writes,
+                        returns=returns,
+                        conditions=conditions,
+                        control_flow_effects=control_flow_effects,
+                    )
+                    _maybe_add_coarse_conditions_8616(node, project, conditions, mode)
+                _append_missing_contextual_callsite_fingerprints_8616(root, project, helper_calls)
+                canonical_segmented_writes = _canonicalize_segmented_write_aliases_8616(
+                    segmented_writes,
+                    global_writes,
+                )
+                return X86_16TailValidationSummary(
+                    helper_calls=tuple(helper_calls),
+                    register_writes=_sorted_unique(register_writes),
+                    stack_writes=_sorted_unique(stack_writes),
+                    global_writes=_sorted_unique(global_writes),
+                    segmented_writes=_sorted_unique(canonical_segmented_writes),
+                    returns=_sorted_unique(returns),
+                    conditions=_sorted_unique(_compact_tail_validation_observables_8616("conditions", conditions)),
+                    control_flow_effects=_sorted_unique(
+                        _compact_tail_validation_observables_8616("control_flow_effects", control_flow_effects)
+                    ),
+                )
+            finally:
+                if previous_active_codegen is None:
+                    with contextlib.suppress(Exception):
+                        delattr(project, "_inertia_tail_validation_active_codegen")
+                else:
+                    project._inertia_tail_validation_active_codegen = previous_active_codegen
 
         cached = resolve_x86_16_validation_cached_artifact(
             cache=entries if isinstance(entries, dict) else None,
@@ -2672,11 +2694,6 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
             cache["stats"]["misses"] = int(cache["stats"].get("misses", 0) or 0) + 1
         codegen._inertia_tail_validation_last_summary_cache_hit = bool(cached["cache_hit"])
         codegen._inertia_tail_validation_last_summary_cache_key = cached["cache_key"]
-        if previous_active_codegen is None:
-            with contextlib.suppress(Exception):
-                delattr(project, "_inertia_tail_validation_active_codegen")
-        else:
-            project._inertia_tail_validation_active_codegen = previous_active_codegen
         return summary
 
     return _impl()

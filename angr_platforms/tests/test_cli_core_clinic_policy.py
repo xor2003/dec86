@@ -146,6 +146,18 @@ def test_direct_addr_wall_clock_budget_respects_explicit_cli_timeout(monkeypatch
     assert _direct_addr_wall_clock_budget(240, explicit_timeout=True) >= 240
 
 
+def test_direct_addr_wall_clock_budget_adds_wrapper_overhead_for_explicit_timeout(monkeypatch):
+    monkeypatch.delenv("INERTIA_MAX_FUNCTION_TIMEOUT", raising=False)
+
+    assert _direct_addr_wall_clock_budget(60, explicit_timeout=True) >= 92
+
+
+def test_direct_addr_wall_clock_budget_respects_explicit_env_cap(monkeypatch):
+    monkeypatch.setenv("INERTIA_MAX_FUNCTION_TIMEOUT", "70")
+
+    assert _direct_addr_wall_clock_budget(60, explicit_timeout=True) == 70
+
+
 def test_source_evidence_return_gate_catches_missing_variable_return():
     emitted = """
 /// unsigned int clamp_u16(unsigned int value, unsigned int limit)

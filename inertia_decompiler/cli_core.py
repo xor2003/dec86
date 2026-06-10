@@ -909,8 +909,11 @@ def _direct_addr_wall_clock_budget(
     base = max(1, effective_timeout if isinstance(effective_timeout, int) else timeout)
     if explicit_timeout:
         # Explicit timeout should stay deterministic and bounded, but still
-        # leave room for one fallback lane and validation emission.
-        budget = max(8, base + min(14, max(8, base + 4)))
+        # leave room for result serialization, final gates, and validation
+        # emission.  The configured timeout is the analysis budget, not the
+        # daemon-thread wrapper budget; otherwise the wrapper can race and kill
+        # a successful large-function decompile before it returns its payload.
+        budget = max(8, base + min(32, max(14, base + 4)))
     # Default direct-address mode should bias toward successful recovery over
     # early timeout. Keep a larger bounded budget so non-optimized and sidecar
     # fallback lanes can actually execute on medium x86-16 functions.
@@ -922,7 +925,7 @@ def _direct_addr_wall_clock_budget(
     return _enforce_function_timeout_cap(
         int(budget),
         context="direct address wall clock",
-        explicit_timeout_floor=base if explicit_timeout else None,
+        explicit_timeout_floor=int(budget) if explicit_timeout else None,
     )
 
 
@@ -4735,7 +4738,9 @@ def main(argv: list[str] | None = None) -> int:
                 direct_decompile_timeout = _enforce_function_timeout_cap(
                     max(1, _direct_effective_timeout) + 28,
                     context="direct analysis wrapper timeout",
-                    explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
+                    explicit_timeout_floor=(
+                        max(1, _direct_effective_timeout) + 28 if timeout_was_explicit else None
+                    ),
                 )
                 if timeout_was_explicit and isinstance(args.timeout, int):
                     if args.timeout <= 6:
@@ -4745,10 +4750,14 @@ def main(argv: list[str] | None = None) -> int:
                             direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 8)
                     else:
                         direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 32)
+                remaining_direct_budget = _remaining_direct_addr_budget() or 1
+                budgeted_direct_decompile_timeout = max(1, min(direct_decompile_timeout, remaining_direct_budget))
                 direct_decompile_timeout = _enforce_function_timeout_cap(
-                    max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1)),
+                    budgeted_direct_decompile_timeout,
                     context="direct direct-address budget timeout",
-                    explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
+                    explicit_timeout_floor=(
+                        budgeted_direct_decompile_timeout if timeout_was_explicit else None
+                    ),
                 )
                 use_fork_for_direct = _direct_addr_use_fork_lane_8616(
                     tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
