@@ -180,27 +180,36 @@ class LinearRecurrenceState:
 
         return _impl()
 
+    def build_binary_op_or_none(self, op: str, lhs, rhs, *, codegen=None):
+        try:
+            return structured_c.CBinaryOp(op, lhs, rhs, codegen=codegen or self.codegen)
+        except ValueError as ex:
+            if "Can't tell my size without an arch" in str(ex):
+                self._record_recurrence_reason("binary_rebuild_unarched_type")
+                return None
+            raise
+
     def build_linear_expr(self, base_expr, delta):
         if delta == 0:
             return base_expr
         op = "Add" if delta > 0 else "Sub"
         magnitude = delta if delta > 0 else -delta
-        return structured_c.CBinaryOp(
+        rebuilt = self.build_binary_op_or_none(
             op,
             base_expr,
             structured_c.CConstant(magnitude, SimTypeShort(False), codegen=self.codegen),
-            codegen=self.codegen,
         )
+        return rebuilt if rebuilt is not None else base_expr
 
     def build_shift_expr(self, base_expr, count):
         if count == 0:
             return base_expr
-        return structured_c.CBinaryOp(
+        rebuilt = self.build_binary_op_or_none(
             "Shr",
             base_expr,
             structured_c.CConstant(count, SimTypeShort(False), codegen=self.codegen),
-            codegen=self.codegen,
         )
+        return rebuilt if rebuilt is not None else base_expr
 
     def inline_known_linear_defs(self, expr, seen_vars: set[int] | None = None, seen_exprs: set[int] | None = None, depth: int = 0):
         def _impl():
@@ -244,7 +253,10 @@ class LinearRecurrenceState:
                 lhs = self.inline_known_linear_defs(expr.lhs, seen_vars, seen_exprs, depth + 1)
                 rhs = self.inline_known_linear_defs(expr.rhs, seen_vars, seen_exprs, depth + 1)
                 if lhs is not expr.lhs or rhs is not expr.rhs:
-                    expr = structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=self.codegen)
+                    rebuilt = self.build_binary_op_or_none(expr.op, lhs, rhs)
+                    if rebuilt is None:
+                        return expr
+                    expr = rebuilt
                 linear_expr = self.match_linear_word_delta_expr(expr)
                 if linear_expr is not None and not self.same_c_expression(linear_expr, expr):
                     return linear_expr
@@ -340,7 +352,9 @@ class LinearRecurrenceState:
                 rhs = self.resolve_known_copy_alias_expr(expr.rhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
                 active_expr_ids.discard(expr_id)
                 if lhs is not expr.lhs or rhs is not expr.rhs:
-                    return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
+                    rebuilt = self.build_binary_op_or_none(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
+                    if rebuilt is not None:
+                        return rebuilt
                 return self.canonicalize_stack_cvar_expr(expr, self.codegen)
             active_expr_ids.discard(expr_id)
             return self.canonicalize_stack_cvar_expr(expr, self.codegen)

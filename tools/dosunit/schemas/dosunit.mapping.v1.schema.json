@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.mapping.v1",
+  "type": "object",
+  "required": ["schema", "functions"],
+  "properties": {
+    "schema": { "const": "dosunit.mapping.v1" },
+    "oracle_module": { "type": "string" },
+    "candidate_module": { "type": "string" },
+    "mode": { "type": "string" },
+    "functions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["candidate_entry"],
+        "properties": {
+          "oracle_id": { "type": "string" },
+          "oracle_name": { "type": "string" },
+          "candidate_id": { "type": "string" },
+          "candidate_name": { "type": "string" },
+          "candidate_entry": { "type": "object" }
+        }
+      }
+    },
+    "diagnostics": { "type": "array" },
+    "summary": { "type": "object" }
+  }
+}

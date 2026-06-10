@@ -65,7 +65,14 @@ def _rewrite_ss_stack_byte_offsets(
     synthetic_sp_anchor = None
     _UNRESOLVED_SINGLE_ASSIGN = object()
     dirty_expr_single_assignment_cache: dict[str, object | None] = {}
+    dirty_expr_single_assignment_index: dict[str, object | None] | None = None
     cvar_single_assignment_cache: dict[int, object | None] = {}
+
+    def _safe_dirty_attr_8616(obj, attr: str):
+        try:
+            return getattr(obj, attr, None)
+        except (AttributeError, TypeError, ValueError):
+            return None
 
     def _synthetic_sp_anchor_cvar():
         nonlocal synthetic_sp_anchor
@@ -85,6 +92,23 @@ def _rewrite_ss_stack_byte_offsets(
     def _is_sp_virtual_register(variable) -> bool:
         sp_offset = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))[0]
         return isinstance(sp_offset, int) and getattr(variable, "reg", None) == sp_offset
+
+    def _is_ss_virtual_register(variable) -> bool:
+        ss_offset = getattr(getattr(project, "arch", None), "registers", {}).get("ss", (None, None))[0]
+        return isinstance(ss_offset, int) and getattr(variable, "reg", None) == ss_offset
+
+    def _dirty_reg_offset_8616(node) -> int | None:
+        dirty = getattr(node, "dirty", None)
+        if dirty is None:
+            return None
+        for attr in ("reg_offset", "reg"):
+            reg = _safe_dirty_attr_8616(dirty, attr)
+            if isinstance(reg, int):
+                return int(reg)
+        return None
+
+    def _dirty_is_ss_virtual_register_8616(node) -> bool:
+        return _is_ss_virtual_register(SimpleNamespace(reg=_dirty_reg_offset_8616(node)))
 
     def _is_linear_temp(cvar) -> bool:
         if not isinstance(cvar, structured_c.CVariable):
@@ -135,6 +159,7 @@ def _rewrite_ss_stack_byte_offsets(
         return tuple(dict.fromkeys(keys))
 
     def _single_assignment_expr_for_virtual_name(name: str):
+        nonlocal dirty_expr_single_assignment_index
         normalized_name = _strip_typed_suffix_8616(name)
         if not normalized_name:
             return None
@@ -155,24 +180,48 @@ def _rewrite_ss_stack_byte_offsets(
             dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
             return None
 
-        matches = []
-        for stmt in iter_c_nodes_deep(root):
-            if not isinstance(stmt, structured_c.CAssignment):
-                continue
-            lhs = getattr(stmt, "lhs", None)
-            lhs_name = None
-            if isinstance(lhs, structured_c.CVariable):
-                lhs_name = getattr(lhs, "name", None) or getattr(getattr(lhs, "variable", None), "name", None)
-            lhs_name = _strip_typed_suffix_8616(lhs_name)
-            lhs_varid = getattr(getattr(lhs, "dirty", None), "varid", None)
-            if lhs_name != normalized_name and lhs_varid != target_varid:
-                continue
-            matches.append(getattr(stmt, "rhs", None))
-            if len(matches) > 1:
-                dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
-                return None
-        resolved = matches[0] if len(matches) == 1 else None
+        if dirty_expr_single_assignment_index is None:
+            index: dict[str, object | None] = {}
+            scanned = 0
+            for stmt in iter_c_nodes_deep(root):
+                if not isinstance(stmt, structured_c.CAssignment):
+                    continue
+                scanned += 1
+                lhs = getattr(stmt, "lhs", None)
+                lhs_keys: set[str] = set()
+                if isinstance(lhs, structured_c.CVariable):
+                    lhs_name = getattr(lhs, "name", None) or getattr(getattr(lhs, "variable", None), "name", None)
+                    lhs_name = _strip_typed_suffix_8616(lhs_name)
+                    if isinstance(lhs_name, str) and lhs_name:
+                        lhs_keys.add(lhs_name)
+                lhs_varid = _safe_dirty_attr_8616(getattr(lhs, "dirty", None), "varid")
+                if isinstance(lhs_varid, int):
+                    lhs_keys.add(f"vvar_{lhs_varid}")
+                if not lhs_keys:
+                    continue
+                rhs = getattr(stmt, "rhs", None)
+                for lhs_key in lhs_keys:
+                    if lhs_key in index:
+                        index[lhs_key] = _UNRESOLVED_SINGLE_ASSIGN
+                    else:
+                        index[lhs_key] = rhs
+            dirty_expr_single_assignment_index = index
+            codegen._inertia_ss_stack_virtual_assignment_index_scanned = int(
+                getattr(codegen, "_inertia_ss_stack_virtual_assignment_index_scanned", 0) or 0
+            ) + scanned
+            codegen._inertia_ss_stack_virtual_assignment_index_keys = int(
+                getattr(codegen, "_inertia_ss_stack_virtual_assignment_index_keys", 0) or 0
+            ) + len(index)
+
+        resolved = dirty_expr_single_assignment_index.get(normalized_name)
+        if resolved is _UNRESOLVED_SINGLE_ASSIGN:
+            dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
+            return None
         dirty_expr_single_assignment_cache[normalized_name] = resolved if resolved is not None else _UNRESOLVED_SINGLE_ASSIGN
+        if resolved is not None:
+            codegen._inertia_ss_stack_virtual_assignment_index_hits = int(
+                getattr(codegen, "_inertia_ss_stack_virtual_assignment_index_hits", 0) or 0
+            ) + 1
         return resolved
 
     def _single_assignment_expr_for_cvar(node_cvar):
@@ -280,10 +329,10 @@ def _rewrite_ss_stack_byte_offsets(
         dirty = getattr(node, "dirty", None)
         if dirty is None:
             return None
-        varid = getattr(dirty, "varid", None)
+        varid = _safe_dirty_attr_8616(dirty, "varid")
         if not isinstance(varid, int):
-            reg = getattr(dirty, "reg", None)
-            bits = getattr(dirty, "bits", None)
+            reg = _safe_dirty_attr_8616(dirty, "reg")
+            bits = _safe_dirty_attr_8616(dirty, "bits")
             if _is_sp_virtual_register(SimpleNamespace(reg=reg, size=(bits // 8) if isinstance(bits, int) else None)):
                 return _synthetic_sp_anchor_cvar()
             return None
@@ -295,14 +344,14 @@ def _rewrite_ss_stack_byte_offsets(
         resolved = _single_assignment_expr_for_virtual_name(f"vvar_{varid}")
         if resolved is not None:
             return resolved
-        reg = getattr(dirty, "reg", None)
-        bits = getattr(dirty, "bits", None)
+        reg = _safe_dirty_attr_8616(dirty, "reg")
+        bits = _safe_dirty_attr_8616(dirty, "bits")
         if _is_sp_virtual_register(SimpleNamespace(reg=reg, size=(bits // 8) if isinstance(bits, int) else None)):
             return _synthetic_sp_anchor_cvar()
         return None
 
     def _dirty_alias_key(node):
-        varid = getattr(getattr(node, "dirty", None), "varid", None)
+        varid = _safe_dirty_attr_8616(getattr(node, "dirty", None), "varid")
         if isinstance(varid, int):
             return ("vvar", varid)
         return None
@@ -395,6 +444,261 @@ def _rewrite_ss_stack_byte_offsets(
                 base, offset = rhs
                 return base, offset + lhs_const
         return None
+
+    def _expr_is_ss_segment_value_8616(
+        node,
+        *,
+        seen_expr_ids: set[int] | None = None,
+        seen_varids: set[int] | None = None,
+    ) -> bool:
+        node = unwrap_c_casts(node)
+        if node is None:
+            return False
+        if seen_expr_ids is None:
+            seen_expr_ids = set()
+        node_id = id(node)
+        if node_id in seen_expr_ids:
+            return False
+        seen_expr_ids.add(node_id)
+
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            if _is_ss_virtual_register(variable):
+                codegen._inertia_ss_stack_byte_ss_virtual_register_evidence_8616 = int(
+                    getattr(codegen, "_inertia_ss_stack_byte_ss_virtual_register_evidence_8616", 0) or 0
+                ) + 1
+                return True
+            if _dirty_is_ss_virtual_register_8616(node):
+                codegen._inertia_ss_stack_byte_ss_dirty_register_evidence_8616 = int(
+                    getattr(codegen, "_inertia_ss_stack_byte_ss_dirty_register_evidence_8616", 0) or 0
+                ) + 1
+                return True
+            name = getattr(node, "name", None) or getattr(variable, "name", None)
+            if isinstance(name, str) and name.lower() == "ss":
+                return True
+            single_assignment_rhs = _single_assignment_expr_for_cvar(node)
+            if single_assignment_rhs is not None:
+                return _expr_is_ss_segment_value_8616(
+                    single_assignment_rhs,
+                    seen_expr_ids=seen_expr_ids,
+                    seen_varids=seen_varids,
+                )
+            return False
+
+        resolved_dirty = _resolve_dirty_virtual_expr(node, seen_varids=seen_varids)
+        if resolved_dirty is not None:
+            return _expr_is_ss_segment_value_8616(
+                resolved_dirty,
+                seen_expr_ids=seen_expr_ids,
+                seen_varids=seen_varids,
+            )
+        if _dirty_is_ss_virtual_register_8616(node):
+            codegen._inertia_ss_stack_byte_ss_dirty_register_evidence_8616 = int(
+                getattr(codegen, "_inertia_ss_stack_byte_ss_dirty_register_evidence_8616", 0) or 0
+            ) + 1
+            return True
+        return False
+
+    def _expr_is_ss_segment_scale_term_8616(node, *, seen_varids: set[int] | None = None) -> bool:
+        node = unwrap_c_casts(node)
+        if not isinstance(node, structured_c.CBinaryOp):
+            return False
+        op = getattr(node, "op", None)
+        lhs = getattr(node, "lhs", None)
+        rhs = getattr(node, "rhs", None)
+        lhs_const = c_constant_value(unwrap_c_casts(lhs))
+        rhs_const = c_constant_value(unwrap_c_casts(rhs))
+        if op == "Shl" and rhs_const == 4:
+            return _expr_is_ss_segment_value_8616(lhs, seen_varids=seen_varids)
+        if op != "Mul":
+            return False
+        if rhs_const == 16 and _expr_is_ss_segment_value_8616(lhs, seen_varids=seen_varids):
+            return True
+        return lhs_const == 16 and _expr_is_ss_segment_value_8616(rhs, seen_varids=seen_varids)
+
+    def _strip_proven_ss_segment_scale_from_addr_expr_8616(
+        addr_expr,
+        *,
+        seen_varids: set[int] | None = None,
+    ):
+        terms = flatten_c_add_terms(addr_expr)
+        if not terms:
+            return None
+        kept_terms = []
+        stripped = 0
+        for term in terms:
+            inner = unwrap_c_casts(term)
+            if _expr_is_ss_segment_scale_term_8616(inner, seen_varids=seen_varids):
+                stripped += 1
+                continue
+            kept_terms.append(term)
+        if stripped != 1 or not kept_terms:
+            if stripped > 1:
+                codegen._inertia_ss_stack_byte_segment_strip_refused_8616 = int(
+                    getattr(codegen, "_inertia_ss_stack_byte_segment_strip_refused_8616", 0) or 0
+                ) + 1
+            return None
+        result = kept_terms[0]
+        for term in kept_terms[1:]:
+            result = structured_c.CBinaryOp("Add", result, term, codegen=getattr(term, "codegen", None))
+        codegen._inertia_ss_stack_byte_segment_strip_materialized_8616 = int(
+            getattr(codegen, "_inertia_ss_stack_byte_segment_strip_materialized_8616", 0) or 0
+        ) + 1
+        return result
+
+    def _expr_contains_ss_segment_scale_8616(
+        node,
+        *,
+        seen_expr_ids: set[int] | None = None,
+        seen_varids: set[int] | None = None,
+    ) -> bool:
+        node = unwrap_c_casts(node)
+        if node is None:
+            return False
+        if seen_expr_ids is None:
+            seen_expr_ids = set()
+        node_id = id(node)
+        if node_id in seen_expr_ids:
+            return False
+        seen_expr_ids.add(node_id)
+
+        if isinstance(node, structured_c.CBinaryOp):
+            op = getattr(node, "op", None)
+            lhs = getattr(node, "lhs", None)
+            rhs = getattr(node, "rhs", None)
+            lhs_const = c_constant_value(unwrap_c_casts(lhs))
+            rhs_const = c_constant_value(unwrap_c_casts(rhs))
+            if op == "Shl" and rhs_const == 4 and _expr_is_ss_segment_value_8616(
+                lhs,
+                seen_varids=seen_varids,
+            ):
+                return True
+            if op == "Mul":
+                if rhs_const == 16 and _expr_is_ss_segment_value_8616(lhs, seen_varids=seen_varids):
+                    return True
+                if lhs_const == 16 and _expr_is_ss_segment_value_8616(rhs, seen_varids=seen_varids):
+                    return True
+            return _expr_contains_ss_segment_scale_8616(
+                lhs,
+                seen_expr_ids=seen_expr_ids,
+                seen_varids=seen_varids,
+            ) or _expr_contains_ss_segment_scale_8616(
+                rhs,
+                seen_expr_ids=seen_expr_ids,
+                seen_varids=seen_varids,
+            )
+
+        resolved_dirty = _resolve_dirty_virtual_expr(node, seen_varids=seen_varids)
+        if resolved_dirty is not None:
+            return _expr_contains_ss_segment_scale_8616(
+                resolved_dirty,
+                seen_expr_ids=seen_expr_ids,
+                seen_varids=seen_varids,
+            )
+        if isinstance(node, structured_c.CVariable):
+            single_assignment_rhs = _single_assignment_expr_for_cvar(node)
+            if single_assignment_rhs is not None:
+                return _expr_contains_ss_segment_scale_8616(
+                    single_assignment_rhs,
+                    seen_expr_ids=seen_expr_ids,
+                    seen_varids=seen_varids,
+                )
+        return False
+
+    def _resolve_ss_linear_stack_pointer_alias(
+        node,
+        *,
+        seen_expr_ids: set[int] | None = None,
+        seen_varids: set[int] | None = None,
+    ):
+        node = unwrap_c_casts(node)
+        if node is None:
+            return None
+        if seen_expr_ids is None:
+            seen_expr_ids = set()
+        node_id = id(node)
+        if node_id in seen_expr_ids:
+            return None
+        seen_expr_ids.add(node_id)
+
+        direct = _resolve_stack_pointer_alias(node, seen_varids=seen_varids)
+        if direct is not None:
+            return direct
+
+        if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
+            lhs_const = c_constant_value(unwrap_c_casts(node.lhs))
+            rhs_const = c_constant_value(unwrap_c_casts(node.rhs))
+            if rhs_const is not None:
+                lhs = _resolve_ss_linear_stack_pointer_alias(
+                    node.lhs,
+                    seen_expr_ids=seen_expr_ids,
+                    seen_varids=seen_varids,
+                )
+                if lhs is not None:
+                    base, offset = lhs
+                    return base, offset + (rhs_const if node.op == "Add" else -rhs_const)
+            if lhs_const is not None and node.op == "Add":
+                rhs = _resolve_ss_linear_stack_pointer_alias(
+                    node.rhs,
+                    seen_expr_ids=seen_expr_ids,
+                    seen_varids=seen_varids,
+                )
+                if rhs is not None:
+                    base, offset = rhs
+                    return base, offset + lhs_const
+
+        resolved_expr = None
+        resolved_dirty = _resolve_dirty_virtual_expr(node, seen_varids=seen_varids)
+        if resolved_dirty is not None:
+            resolved_expr = resolved_dirty
+        elif isinstance(node, structured_c.CVariable):
+            resolved_expr = _single_assignment_expr_for_cvar(node)
+            if resolved_expr is None:
+                resolved_expr = _nearest_preceding_assignment_expr_for_cvar(node)
+        if resolved_expr is None:
+            return None
+
+        if _expr_contains_ss_segment_scale_8616(resolved_expr, seen_varids=seen_varids):
+            addr_expr = strip_segment_scale_from_addr_expr(resolved_expr, project)
+            if addr_expr is None or _expr_contains_ss_segment_scale_8616(addr_expr, seen_varids=seen_varids):
+                addr_expr = _strip_proven_ss_segment_scale_from_addr_expr_8616(
+                    resolved_expr,
+                    seen_varids=seen_varids,
+                )
+            if addr_expr is not None:
+                resolved = _resolve_stack_pointer_alias(addr_expr, seen_varids=seen_varids)
+                if resolved is not None:
+                    codegen._inertia_ss_stack_byte_linear_carrier_resolved_8616 = int(
+                        getattr(codegen, "_inertia_ss_stack_byte_linear_carrier_resolved_8616", 0) or 0
+                    ) + 1
+                    return resolved
+        return _resolve_ss_linear_stack_pointer_alias(
+            resolved_expr,
+            seen_expr_ids=seen_expr_ids,
+            seen_varids=seen_varids,
+        )
+
+    def _is_uncast_ss_linear_carrier_byte_offset_8616(node) -> bool:
+        if isinstance(node, structured_c.CTypeCast):
+            return False
+        node = unwrap_c_casts(node)
+        if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Add", "Sub"}:
+            return False
+        lhs_const = c_constant_value(unwrap_c_casts(node.lhs))
+        rhs_const = c_constant_value(unwrap_c_casts(node.rhs))
+        if rhs_const not in (1, -1) and lhs_const not in (1, -1):
+            return False
+        base_expr = node.rhs if lhs_const in (1, -1) and node.op == "Add" else node.lhs
+        resolved_dirty = _resolve_dirty_virtual_expr(base_expr)
+        if resolved_dirty is not None:
+            base_expr = resolved_dirty
+        elif isinstance(unwrap_c_casts(base_expr), structured_c.CVariable):
+            base_expr = (
+                _single_assignment_expr_for_cvar(unwrap_c_casts(base_expr))
+                or _nearest_preceding_assignment_expr_for_cvar(unwrap_c_casts(base_expr))
+                or base_expr
+            )
+        return _expr_contains_ss_segment_scale_8616(base_expr)
 
     def _collect_stack_pointer_aliases() -> None:
         aliases: dict[object, object] = {}
@@ -558,11 +862,15 @@ def _rewrite_ss_stack_byte_offsets(
         if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
             return node
         resolved_plain_alias = _resolve_stack_pointer_alias(getattr(node, "operand", None))
+        if resolved_plain_alias is None:
+            resolved_plain_alias = _resolve_ss_linear_stack_pointer_alias(getattr(node, "operand", None))
         if resolved_plain_alias is not None:
             base_cvar, extra_offset = resolved_plain_alias
             bits = _effective_deref_bits(node)
-            if bits not in {8, 16}:
-                bits = 16
+            if extra_offset != 0 and _is_uncast_ss_linear_carrier_byte_offset_8616(getattr(node, "operand", None)):
+                bits = 8
+            elif bits not in {8, 16}:
+                bits = 8 if extra_offset != 0 else 16
             base_variable = getattr(base_cvar, "variable", None)
             access_size = bits // project.arch.byte_width if isinstance(bits, int) and bits > 0 else None
             if isinstance(base_variable, SimStackVariable) and isinstance(access_size, int):
@@ -598,6 +906,10 @@ def _rewrite_ss_stack_byte_offsets(
             if classified is None or classified.seg_name != "ss":
                 return node
             addr_expr = strip_segment_scale_from_addr_expr(getattr(classified, "addr_expr", None), project)
+            if addr_expr is None or _expr_contains_ss_segment_scale_8616(addr_expr):
+                addr_expr = _strip_proven_ss_segment_scale_from_addr_expr_8616(
+                    getattr(classified, "addr_expr", None),
+                )
             if addr_expr is None:
                 return node
             resolved_stack_alias = _resolve_stack_pointer_alias(addr_expr)
@@ -679,6 +991,10 @@ def _rewrite_ss_stack_byte_offsets(
                     return _return_if_changed(node, materialize_stack_cvar_at_offset(codegen, target_offset, access_size))
             elif getattr(classified, "seg_name", None) == "ss":
                 addr_expr = strip_segment_scale_from_addr_expr(getattr(classified, "addr_expr", None), project)
+                if addr_expr is None or _expr_contains_ss_segment_scale_8616(addr_expr):
+                    addr_expr = _strip_proven_ss_segment_scale_from_addr_expr_8616(
+                        getattr(classified, "addr_expr", None),
+                    )
                 if addr_expr is not None:
                     resolved_stack_alias = _resolve_stack_pointer_alias(addr_expr)
                     if resolved_stack_alias is not None:

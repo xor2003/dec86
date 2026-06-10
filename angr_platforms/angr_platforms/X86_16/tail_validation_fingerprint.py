@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -55,9 +56,19 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION = 6
+TAIL_VALIDATION_FINGERPRINT_VERSION = 8
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log = logging.getLogger(__name__)
+_EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 50000
+
+
+def _expr_fingerprint_cache_8616(project) -> dict[tuple[object, int, str], str]:
+    cache = getattr(project, "_inertia_tail_validation_expr_fingerprint_cache_8616", None)
+    if not isinstance(cache, dict) or len(cache) > _EXPR_FINGERPRINT_CACHE_LIMIT_8616:
+        cache = {}
+        with contextlib.suppress(Exception):
+            setattr(project, "_inertia_tail_validation_expr_fingerprint_cache_8616", cache)
+    return cache
 
 
 def _first_codegen_8616(*nodes) -> object | None:
@@ -86,18 +97,64 @@ def _safe_rebuild_unary_8616(op: str, operand, template) -> object:
     return CUnaryOp(op, operand, codegen=codegen)
 
 
-def _segment_linear_lowering_allowed(node, segment_reg: str) -> bool:
+def _segment_linear_lowering_allowed(node, segment_reg: str, project=None) -> bool:
     codegen = getattr(node, "codegen", None)
-    lowering = getattr(codegen, "_inertia_segmented_memory_lowering", None)
-    if not isinstance(lowering, dict):
-        return False
-    entry = lowering.get(segment_reg.upper())
-    return isinstance(entry, dict) and bool(entry.get("allow_linear_lowering", False))
+    for owner in (codegen, project):
+        lowering = getattr(owner, "_inertia_segmented_memory_lowering", None)
+        if not isinstance(lowering, dict):
+            continue
+        entry = lowering.get(segment_reg.upper())
+        if isinstance(entry, dict) and bool(entry.get("allow_linear_lowering", False)):
+            return True
+    return False
 
 
 def _register_name(project, reg_offset: int) -> str:
     name = project.arch.register_names.get(reg_offset)
     return name if isinstance(name, str) else f"reg@{reg_offset}"
+
+
+def _dirty_attr_8616(obj, attr: str):
+    try:
+        return getattr(obj, attr, None)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _dirty_register_fingerprint_8616(node, project) -> str | None:
+    dirty = getattr(node, "dirty", None)
+    if dirty is None:
+        return None
+    reg_offset = None
+    for attr in ("reg_offset", "reg", "variable_offset"):
+        value = _dirty_attr_8616(dirty, attr)
+        if isinstance(value, int):
+            reg_offset = value
+            break
+    if not isinstance(reg_offset, int):
+        return None
+    bits = _dirty_attr_8616(dirty, "bits")
+    size = _dirty_attr_8616(dirty, "size")
+    size_bytes = int(bits // 8) if isinstance(bits, int) and bits > 0 else int(size) if isinstance(size, int) else None
+    registers = getattr(getattr(project, "arch", None), "registers", None)
+    if isinstance(registers, dict) and isinstance(size_bytes, int) and size_bytes > 0:
+        exact_names = sorted(
+            name
+            for name, reg_info in registers.items()
+            if (
+                isinstance(name, str)
+                and isinstance(reg_info, tuple)
+                and len(reg_info) >= 2
+                and reg_info[0] == reg_offset
+                and reg_info[1] == size_bytes
+            )
+        )
+        if exact_names:
+            return f"reg:{exact_names[0]}"
+    register_names = getattr(getattr(project, "arch", None), "register_names", None)
+    if not isinstance(register_names, dict) or reg_offset not in register_names:
+        return None
+    return f"reg:{_register_name(project, reg_offset)}"
 
 
 def _c_constant_int_value(node) -> int | None:
@@ -124,6 +181,84 @@ def _record_stack_alias_refusal_8616(codegen, reason: str) -> None:
 def _stack_slot_fingerprint_from_slot_8616(offset: int, size: int | None = None) -> str:
     size_text = f":size{size}" if isinstance(size, int) and size > 0 else ""
     return f"stack_slot:SS:BP{offset:+#x}{size_text}"
+
+
+def _type_size_bytes_8616(type_, *, default: int = 2) -> int:
+    try:
+        bits = getattr(type_, "size", None)
+    except ValueError:
+        bits = None
+    if isinstance(bits, int) and bits > 0:
+        return max(1, (bits + 7) // 8)
+    return default
+
+
+def _source_arg_names_by_offset_8616(function) -> dict[int, str]:
+    prototype = getattr(function, "prototype", None) if function is not None else None
+    arg_names = tuple(arg_name for arg_name in (getattr(prototype, "arg_names", ()) or ()) if isinstance(arg_name, str))
+    arg_types = tuple(getattr(prototype, "args", ()) or ())
+    if not arg_names or len(arg_names) != len(arg_types):
+        return {}
+    offset = 4
+    names_by_offset: dict[int, str] = {}
+    for arg_name, arg_type in zip(arg_names, arg_types, strict=False):
+        names_by_offset[offset] = arg_name
+        offset += max(2, _type_size_bytes_8616(arg_type))
+    return names_by_offset
+
+
+def _cfunc_source_arg_names_by_offset_8616(cfunc) -> dict[int, str]:
+    names_by_offset: dict[int, str] = {}
+    for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
+        variable = getattr(arg, "variable", None)
+        if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
+            continue
+        offset = getattr(variable, "offset", None)
+        if not isinstance(offset, int) or offset <= 0:
+            continue
+        name = getattr(arg, "name", None) or getattr(variable, "name", None)
+        if not isinstance(name, str) or not name or _stack_name_is_generic_for_validation_8616(name):
+            continue
+        names_by_offset[offset] = name
+    return names_by_offset
+
+
+def _source_arg_location_fingerprint_8616(node, project) -> str | None:
+    codegen = getattr(node, "codegen", None)
+    active_codegen = getattr(project, "_inertia_tail_validation_active_codegen", None)
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        codegen = active_codegen
+        cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        codegen = active_codegen
+        cfunc = getattr(codegen, "cfunc", None)
+        func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return None
+    variable = getattr(node, "variable", None)
+    if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
+        return None
+    offset = getattr(variable, "offset", None)
+    if not isinstance(offset, int) or offset <= 0:
+        return None
+    name = getattr(node, "name", None) or getattr(variable, "name", None)
+    if not isinstance(name, str) or not name:
+        return None
+    function = _lookup_function_for_call_context_8616(project, func_addr)
+    prototype = getattr(function, "prototype", None) if function is not None else None
+    arg_names = tuple(arg_name for arg_name in (getattr(prototype, "arg_names", ()) or ()) if isinstance(arg_name, str))
+    source_name = _cfunc_source_arg_names_by_offset_8616(cfunc).get(offset)
+    if not isinstance(source_name, str) and name in arg_names:
+        source_name = name
+    if not isinstance(source_name, str):
+        source_name = _source_arg_names_by_offset_8616(function).get(offset)
+    if not isinstance(source_name, str) or not source_name:
+        return None
+    size = getattr(variable, "size", None)
+    size_text = f":size{size}" if isinstance(size, int) and size > 0 else ""
+    return f"stack_arg:{source_name}{size_text}"
 
 
 def _lookup_widened_carrier_proof_8616(value, codegen):
@@ -848,6 +983,15 @@ def _strip_validation_casts(node):
     return node
 
 
+def _strip_validation_casts_and_dirty_aliases_8616(node):
+    node = _strip_validation_casts(node)
+    if isinstance(node, CDirtyExpression):
+        resolved = _resolve_validation_dirty_alias_expr_8616(node)
+        if resolved is not None and resolved is not node:
+            return _strip_validation_casts_and_dirty_aliases_8616(resolved)
+    return node
+
+
 def _wrap_not_fingerprint(fingerprint: str) -> str:
     if fingerprint.startswith("Not(") and fingerprint.endswith(")"):
         return fingerprint[4:-1]
@@ -886,11 +1030,203 @@ def _stack_word_pair_fingerprint(node, project) -> str | None:
     )
 
 
+def _global_word_pair_fingerprint_8616(node, project) -> str | None:
+    if not isinstance(node, CBinaryOp) or node.op != "Or":
+        return None
+    left, right = node.lhs, node.rhs
+    low_offset = _global_byte_offset_from_expr_8616(left, project)
+    high_offset = _global_byte_offset_from_scaled_expr_8616(right, project)
+    if not isinstance(low_offset, int) or not isinstance(high_offset, int):
+        low_offset = _global_byte_offset_from_expr_8616(right, project)
+        high_offset = _global_byte_offset_from_scaled_expr_8616(left, project)
+    if not isinstance(low_offset, int) or not isinstance(high_offset, int):
+        return None
+    if high_offset != low_offset + 1:
+        return None
+    return f"global:{low_offset:#x}"
+
+
+def _global_word_pair_from_proven_byte_8616(node, project) -> str | None:
+    if not isinstance(node, CBinaryOp) or node.op != "Or":
+        return None
+    left, right = node.lhs, node.rhs
+    low_offset = _proven_global_byte_offset_8616(left, project)
+    high_offset = _ds_linear_byte_offset_from_scaled_expr_8616(right, project)
+    if not isinstance(low_offset, int) or not isinstance(high_offset, int):
+        low_offset = _proven_global_byte_offset_8616(right, project)
+        high_offset = _ds_linear_byte_offset_from_scaled_expr_8616(left, project)
+    if not isinstance(low_offset, int) or not isinstance(high_offset, int):
+        return None
+    if high_offset != low_offset + 1:
+        return None
+    return f"global:{low_offset:#x}"
+
+
+def _proven_global_byte_offset_8616(node, project) -> int | None:
+    offset = _materialized_global_byte_offset_8616(node)
+    if isinstance(offset, int):
+        return offset
+    offset = _global_byte_offset_from_expr_8616(node, project)
+    if isinstance(offset, int):
+        return offset
+    fingerprint = _expr_fingerprint(node, project, set())
+    if isinstance(fingerprint, str) and fingerprint.startswith("global:"):
+        try:
+            return int(fingerprint[len("global:") :], 16)
+        except ValueError:
+            return None
+    return None
+
+
+def _materialized_global_byte_offset_8616(node) -> int | None:
+    node = _strip_validation_casts_and_dirty_aliases_8616(node)
+    if not isinstance(node, CVariable):
+        return None
+    variable = getattr(node, "variable", None)
+    if not isinstance(variable, SimMemoryVariable):
+        return None
+    addr = getattr(variable, "addr", None)
+    return addr if isinstance(addr, int) and addr >= 0 else None
+
+
+def _global_byte_offset_from_expr_8616(node, project) -> int | None:
+    node = _strip_validation_casts_and_dirty_aliases_8616(node)
+    if isinstance(node, CVariable):
+        variable = getattr(node, "variable", None)
+        if isinstance(variable, SimMemoryVariable):
+            addr = getattr(variable, "addr", None)
+            if isinstance(addr, int) and addr >= 0:
+                return addr
+    if isinstance(node, CUnaryOp) and node.op == "Dereference":
+        location = _deref_location_fingerprint_8616(node, project)
+        if isinstance(location, str) and location.startswith("global:"):
+            try:
+                return int(location[len("global:") :], 16)
+            except ValueError:
+                return None
+        segmented_offset = _global_offset_from_segmented_deref_operand_8616(node, project)
+        if isinstance(segmented_offset, int):
+            return segmented_offset
+    return None
+
+
+def _ds_linear_byte_offset_from_expr_8616(node, project) -> int | None:
+    node = _strip_validation_casts_and_dirty_aliases_8616(node)
+    if not isinstance(node, CUnaryOp) or node.op != "Dereference":
+        return None
+    matched = _segment_linear_offset_from_deref_operand_8616(node, project)
+    if matched is None:
+        return None
+    segment_name, offset = matched
+    return offset if segment_name == "ds" else None
+
+
+def _ds_linear_byte_offset_from_scaled_expr_8616(node, project) -> int | None:
+    node = _strip_validation_casts_and_dirty_aliases_8616(node)
+    if not isinstance(node, CBinaryOp):
+        return None
+    if node.op == "Mul":
+        if _c_constant_int_value(node.lhs) == 256:
+            return _ds_linear_byte_offset_from_expr_8616(node.rhs, project)
+        if _c_constant_int_value(node.rhs) == 256:
+            return _ds_linear_byte_offset_from_expr_8616(node.lhs, project)
+    if node.op == "Shl" and _c_constant_int_value(node.rhs) == 8:
+        return _ds_linear_byte_offset_from_expr_8616(node.lhs, project)
+    return None
+
+
+def _global_offset_from_segmented_deref_operand_8616(node, project) -> int | None:
+    if not isinstance(node, CUnaryOp) or node.op != "Dereference":
+        return None
+    matched = _segment_linear_offset_from_deref_operand_8616(node, project)
+    if matched is None:
+        return None
+    segment_name, offset = matched
+    if segment_name == "ss":
+        return None
+    if not _segment_linear_lowering_allowed(node, segment_name, project):
+        return None
+    return offset
+
+
+def _segment_linear_offset_from_deref_operand_8616(node, project) -> tuple[str, int] | None:
+    segment_name: str | None = None
+    offset = 0
+    for sign, term in _flatten_additive_terms_8616(node.operand):
+        term_segment = _linear_segment_term_name_8616(term, project)
+        if term_segment is not None:
+            if sign != 1 or segment_name is not None:
+                return None
+            segment_name = term_segment
+            continue
+        value = _c_constant_int_value(term)
+        if not isinstance(value, int):
+            return None
+        offset += sign * value
+    if segment_name is None:
+        return None
+    return segment_name, offset
+
+
+def _linear_segment_term_name_8616(node, project) -> str | None:
+    node = _strip_validation_casts(node)
+    if not isinstance(node, CBinaryOp):
+        return None
+    if node.op == "Shl":
+        if _c_constant_int_value(node.rhs) == 4:
+            return _segment_register_expr_name_8616(node.lhs, project)
+        if _c_constant_int_value(node.lhs) == 4:
+            return _segment_register_expr_name_8616(node.rhs, project)
+        return None
+    if node.op != "Mul":
+        return None
+    if _c_constant_int_value(node.rhs) == 16:
+        return _segment_register_expr_name_8616(node.lhs, project)
+    if _c_constant_int_value(node.lhs) == 16:
+        return _segment_register_expr_name_8616(node.rhs, project)
+    return None
+
+
+def _segment_register_expr_name_8616(node, project) -> str | None:
+    node = _strip_validation_casts(node)
+    dirty_fingerprint = _dirty_register_fingerprint_8616(node, project) if isinstance(node, CDirtyExpression) else None
+    if isinstance(dirty_fingerprint, str) and dirty_fingerprint.startswith("reg:"):
+        name = dirty_fingerprint[len("reg:") :].lower()
+        return name if name in {"cs", "ds", "es", "ss"} else None
+    if not isinstance(node, CVariable):
+        return None
+    variable = getattr(node, "variable", None)
+    if not isinstance(variable, SimRegisterVariable):
+        return None
+    reg = getattr(variable, "reg", None)
+    if not isinstance(reg, int):
+        return None
+    name = getattr(getattr(project, "arch", None), "register_names", {}).get(reg)
+    if not isinstance(name, str):
+        return None
+    name = name.lower()
+    return name if name in {"cs", "ds", "es", "ss"} else None
+
+
+def _global_byte_offset_from_scaled_expr_8616(node, project) -> int | None:
+    while isinstance(node, CTypeCast):
+        node = node.expr
+    if not isinstance(node, CBinaryOp):
+        return None
+    if node.op == "Mul":
+        if _c_constant_int_value(node.lhs) == 256:
+            return _global_byte_offset_from_expr_8616(node.rhs, project)
+        if _c_constant_int_value(node.rhs) == 256:
+            return _global_byte_offset_from_expr_8616(node.lhs, project)
+    if node.op == "Shl" and _c_constant_int_value(node.rhs) == 8:
+        return _global_byte_offset_from_expr_8616(node.lhs, project)
+    return None
+
+
 def _stack_byte_offset_from_expr_8616(node, project) -> int | None:
     def _impl():
         nonlocal node
-        while isinstance(node, CTypeCast):
-            node = node.expr
+        node = _strip_validation_casts_and_dirty_aliases_8616(node)
         if isinstance(node, CVariable):
             variable = getattr(node, "variable", None)
             offset = getattr(variable, "offset", None)
@@ -930,8 +1266,7 @@ def _stack_byte_offset_from_expr_8616(node, project) -> int | None:
 def _stack_indexed_location_fingerprint_8616(node, project=None) -> str | None:
     def _impl():
         nonlocal node
-        while isinstance(node, CTypeCast):
-            node = node.expr
+        node = _strip_validation_casts_and_dirty_aliases_8616(node)
         if isinstance(node, CUnaryOp) and node.op == "Reference":
             node = node.operand
             while isinstance(node, CTypeCast):
@@ -1052,8 +1387,7 @@ def _indexed_location_alias_or_fallback_8616(*, node, base, index_value: int, co
 
 
 def _stack_byte_offset_from_scaled_expr_8616(node, project, *, scale: int) -> int | None:
-    while isinstance(node, CTypeCast):
-        node = node.expr
+    node = _strip_validation_casts_and_dirty_aliases_8616(node)
     if not isinstance(node, CBinaryOp):
         return None
     if node.op == "Mul":
@@ -1228,6 +1562,99 @@ def _flatten_additive_terms_8616(node, sign: int = 1) -> tuple[tuple[int, object
     return ((sign, node),)
 
 
+def _is_register_expr_8616(node, project, reg_name: str) -> bool:
+    node = _strip_validation_casts(node)
+    if not isinstance(node, CVariable):
+        return False
+    variable = getattr(node, "variable", None)
+    if not isinstance(variable, SimRegisterVariable):
+        return False
+    reg = getattr(variable, "reg", None)
+    if not isinstance(reg, int):
+        return False
+    try:
+        expected = project.arch.registers[reg_name][0]
+    except (AttributeError, KeyError, TypeError):
+        expected = None
+    if isinstance(expected, int) and reg == expected:
+        return True
+    name = getattr(node, "name", None) or getattr(variable, "name", None)
+    return isinstance(name, str) and name.lower() == reg_name
+
+
+def _is_ss_linear_segment_term_8616(node, project) -> bool:
+    node = _strip_validation_casts(node)
+    if not isinstance(node, CBinaryOp):
+        return False
+    if node.op == "Shl":
+        return _is_register_expr_8616(node.lhs, project, "ss") and _c_constant_int_value(node.rhs) == 4
+    if node.op != "Mul":
+        return False
+    return (
+        (_is_register_expr_8616(node.lhs, project, "ss") and _c_constant_int_value(node.rhs) == 16)
+        or (_is_register_expr_8616(node.rhs, project, "ss") and _c_constant_int_value(node.lhs) == 16)
+    )
+
+
+def _contains_bp_stack_location_expr_8616(node, *, seen: set[int] | None = None) -> bool:
+    node = _strip_validation_casts(node)
+    if node is None:
+        return False
+    if seen is None:
+        seen = set()
+    node_id = id(node)
+    if node_id in seen:
+        return False
+    seen.add(node_id)
+    if isinstance(node, CVariable):
+        variable = getattr(node, "variable", None)
+        return isinstance(variable, SimStackVariable) and getattr(variable, "base", "bp") == "bp"
+    if isinstance(node, CIndexedVariable):
+        return _contains_bp_stack_location_expr_8616(getattr(node, "variable", None), seen=seen)
+    if isinstance(node, CUnaryOp):
+        return _contains_bp_stack_location_expr_8616(getattr(node, "operand", None), seen=seen)
+    if isinstance(node, CBinaryOp):
+        return _contains_bp_stack_location_expr_8616(node.lhs, seen=seen) or _contains_bp_stack_location_expr_8616(
+            node.rhs, seen=seen
+        )
+    return False
+
+
+def _additive_terms_fingerprint_8616(terms: tuple[tuple[int, object], ...], project) -> str:
+    parts: list[str] = []
+    const_total = 0
+    for sign, term in terms:
+        const_value = _c_constant_int_value(term)
+        if isinstance(const_value, int):
+            const_total += sign * const_value
+            continue
+        part = _expr_fingerprint(term, project, set())
+        if sign < 0:
+            part = f"Neg({part})"
+        parts.append(part)
+    if const_total != 0 or not parts:
+        parts.append(f"const:{const_total!r}")
+    return f"Add({','.join(parts)})"
+
+
+def _deref_operand_fingerprint_8616(operand, project) -> str:
+    operand = _strip_validation_casts(operand)
+    if not isinstance(operand, CBinaryOp) or operand.op not in {"Add", "Sub"}:
+        return _expr_fingerprint(operand, project)
+    terms = _flatten_additive_terms_8616(operand)
+    has_bp_stack_location = any(_contains_bp_stack_location_expr_8616(term) for _sign, term in terms)
+    if not has_bp_stack_location:
+        return _additive_terms_fingerprint_8616(terms, project)
+    filtered_terms = tuple(
+        (sign, term)
+        for sign, term in terms
+        if not (sign > 0 and _is_ss_linear_segment_term_8616(term, project))
+    )
+    if len(filtered_terms) == len(terms):
+        return _expr_fingerprint(operand, project)
+    return _additive_terms_fingerprint_8616(filtered_terms, project)
+
+
 def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
     def _impl():
         nonlocal node, _seen
@@ -1244,49 +1671,73 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
             return set(_seen)
 
         node = _simplify_expr_for_fingerprint_8616(node)
+        cache_key = (
+            getattr(project, "_inertia_tv_active_function_addr", None),
+            id(node),
+            type(node).__name__,
+        )
+        cache = _expr_fingerprint_cache_8616(project)
+        cached = cache.get(cache_key)
+        if isinstance(cached, str):
+            return cached
+
+        def _cached(result: str) -> str:
+            if len(cache) <= _EXPR_FINGERPRINT_CACHE_LIMIT_8616:
+                cache[cache_key] = result
+            return result
+
         stack_pair = _stack_word_pair_fingerprint(node, project)
         if stack_pair is not None:
-            return stack_pair
+            return _cached(stack_pair)
+        global_pair = _global_word_pair_fingerprint_8616(node, project)
+        if global_pair is not None:
+            return _cached(global_pair)
+        materialized_global_pair = _global_word_pair_from_proven_byte_8616(node, project)
+        if materialized_global_pair is not None:
+            return _cached(materialized_global_pair)
         bool_projection = _bool_projection_fingerprint(node, project)
         if bool_projection is not None:
-            return bool_projection
+            return _cached(bool_projection)
         node = _normalize_zero_flag_comparison_8616(node)
         if isinstance(node, CDirtyExpression):
             resolved_dirty = _resolve_validation_dirty_alias_expr_8616(node)
             if resolved_dirty is not None and resolved_dirty is not node:
-                return _expr_fingerprint(resolved_dirty, project, _child_seen())
+                return _cached(_expr_fingerprint(resolved_dirty, project, _child_seen()))
+            dirty_register = _dirty_register_fingerprint_8616(node, project)
+            if dirty_register is not None:
+                return _cached(dirty_register)
             dirty_name = _dirty_virtual_name_8616(node)
             if isinstance(dirty_name, str):
-                return f"virtual:{dirty_name}"
-            return "virtual:unknown"
+                return _cached(f"virtual:{dirty_name}")
+            return _cached("virtual:unknown")
         if isinstance(node, CConstant):
-            return f"const:{node.value!r}"
+            return _cached(f"const:{node.value!r}")
         if isinstance(node, CVariable):
-            return _location_fingerprint(node, project)
+            return _cached(_location_fingerprint(node, project))
         indexed_stack_location = _stack_indexed_location_fingerprint_8616(node, project)
         if indexed_stack_location is not None:
-            return indexed_stack_location
+            return _cached(indexed_stack_location)
         if isinstance(node, CUnaryOp):
             indexed_stack_location = _stack_indexed_location_fingerprint_8616(node, project)
             if indexed_stack_location is not None:
-                return indexed_stack_location
+                return _cached(indexed_stack_location)
             if node.op == "Dereference":
                 deref_location = _location_fingerprint(node, project)
                 if isinstance(deref_location, str) and deref_location.startswith(
                     ("stack:", "stack_slot:", "unresolved_stack_carrier:")
                 ):
-                    return deref_location
+                    return _cached(deref_location)
                 operand_fp = _expr_fingerprint(node.operand, project, _child_seen())
                 if isinstance(operand_fp, str) and operand_fp.startswith("stack_slot:"):
-                    return operand_fp
+                    return _cached(operand_fp)
             operand = getattr(node, "operand", None)
             if node.op == "Not" and isinstance(operand, CBinaryOp):
                 inverted = _invert_cmp_op_8616(operand.op)
                 if inverted is not None:
                     lhs = _expr_fingerprint(operand.lhs, project, _child_seen())
                     rhs = _expr_fingerprint(operand.rhs, project, _child_seen())
-                    return f"{inverted}({lhs},{rhs})"
-            return f"{node.op}({_expr_fingerprint(node.operand, project, _child_seen())})"
+                    return _cached(f"{inverted}({lhs},{rhs})")
+            return _cached(f"{node.op}({_expr_fingerprint(node.operand, project, _child_seen())})")
         if isinstance(node, CBinaryOp):
             if node.op in {"Add", "Sub"}:
                 parts: list[str] = []
@@ -1302,20 +1753,20 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
                     parts.append(part)
                 if const_total != 0 or not parts:
                     parts.append(f"const:{const_total!r}")
-                return f"Add({','.join(parts)})"
+                return _cached(f"Add({','.join(parts)})")
             if node.op == "Shl" and _c_constant_int_value(node.rhs) == 4:
-                return f"Mul({_expr_fingerprint(node.lhs, project, _child_seen())},const:16)"
+                return _cached(f"Mul({_expr_fingerprint(node.lhs, project, _child_seen())},const:16)")
             lhs = _expr_fingerprint(node.lhs, project, _child_seen())
             rhs = _expr_fingerprint(node.rhs, project, _child_seen())
-            return f"{node.op}({lhs},{rhs})"
+            return _cached(f"{node.op}({lhs},{rhs})")
         if isinstance(node, CFunctionCall):
             runtime_helper = _runtime_segment_helper_fingerprint_8616(node, project)
             if runtime_helper is not None:
-                return runtime_helper
+                return _cached(runtime_helper)
             callee = _call_target_name(node, project)
             args = ",".join(_expr_fingerprint(arg, project, _child_seen()) for arg in getattr(node, "args", ()) or ())
-            return f"call:{callee}({args})"
-        return type(node).__name__
+            return _cached(f"call:{callee}({args})")
+        return _cached(type(node).__name__)
 
     return _impl()
 
@@ -1686,6 +2137,9 @@ def _cvariable_location_fingerprint_8616(node, project, *, _seen: set[int], reso
             if widened is not None:
                 return widened
         if isinstance(variable, SimStackVariable):
+            source_arg_fingerprint = _source_arg_location_fingerprint_8616(node, project)
+            if source_arg_fingerprint is not None:
+                return source_arg_fingerprint
             offset = getattr(variable, "offset", None)
             if isinstance(offset, int):
                 return _canonical_or_unresolved_stack_fingerprint_8616(offset, codegen, source="stack_var", node=node)
@@ -1716,6 +2170,21 @@ def _deref_location_fingerprint_8616(node, project) -> str | None:
             source="bp_deref",
             node=node,
         )
+    codegen = getattr(node, "codegen", None)
+    if codegen is not None:
+        try:
+            from .lowering.real_mode_linear import match_stable_ss_linear_stack_access_8616
+        except Exception:
+            stable_ss_access = None
+        else:
+            stable_ss_access = match_stable_ss_linear_stack_access_8616(node, project, codegen)
+        if stable_ss_access is not None and isinstance(getattr(stable_ss_access, "displacement", None), int):
+            return _canonical_or_unresolved_stack_fingerprint_8616(
+                stable_ss_access.displacement,
+                codegen,
+                source="stable_ss_linear",
+                node=node,
+            )
     operand = _strip_validation_casts(node.operand)
     bridged = _indexed_deref_bridge_fingerprint_8616(node, operand)
     if isinstance(bridged, str):
@@ -1725,10 +2194,10 @@ def _deref_location_fingerprint_8616(node, project) -> str | None:
         return indexed_stack_location
     seg_name, linear = _match_segmented_dereference_8616(node, project)
     if seg_name is not None:
-        if isinstance(linear, int) and _segment_linear_lowering_allowed(node, seg_name):
+        if isinstance(linear, int) and _segment_linear_lowering_allowed(node, seg_name, project):
             return f"global:{linear:#x}"
         return f"deref:{seg_name}:{linear:#x}" if isinstance(linear, int) else f"deref:{seg_name}:unknown"
-    return f"deref:{_expr_fingerprint(_strip_validation_casts(node.operand), project)}"
+    return f"deref:{_deref_operand_fingerprint_8616(node.operand, project)}"
 
 
 def _indexed_deref_bridge_fingerprint_8616(node, operand) -> str | None:

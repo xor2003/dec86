@@ -254,6 +254,7 @@ Rule defining which pipeline layer is responsible for a semantic transformation.
 The main entrypoints are:
 
 - `./decompile.py`
+- `./dosunit.py`
 - `python -m inertia_decompiler.cli`
 - installed script: `decompile-x86-16`
 
@@ -283,6 +284,189 @@ Current CLI options:
 - `--api-style` choose helper naming style: `modern`, `dos`, `raw`, `pseudo`, `service`, `msc`, `compiler`
 - `--pat-backend` choose PAT matcher backend: `hyperscan` or `python_regex`
 - `--signature-catalog` load a deduplicated PAT catalog
+
+### DOS function unit tests
+
+`./dosunit.py` discovers DOS functions, generates concrete input vectors,
+records original x86 outputs, and compares candidate binaries against the
+recorded oracle.
+
+Basic F-15-style flow:
+
+```bash
+./dosunit.py discover \
+  --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --map /home/xor/tmp/f15se2-re/map/egame.map \
+  --ida-listing /home/xor/games/f15se2-ida/egame.lst \
+  --module egame.exe \
+  --out /tmp/egame.original.functions.json
+
+./dosunit.py discover \
+  --exe /home/xor/tmp/f15se2-re/build/egame.exe \
+  --map /home/xor/tmp/f15se2-re/build/egame.map \
+  --module egame.exe \
+  --out /tmp/egame.rebuilt.functions.json
+
+./dosunit.py make-mapping \
+  --oracle-functions /tmp/egame.original.functions.json \
+  --candidate-functions /tmp/egame.rebuilt.functions.json \
+  --out /tmp/egame.mapping.json
+
+./dosunit.py compare-data \
+  --oracle-exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --candidate-exe /home/xor/tmp/f15se2-re/build/egame.exe \
+  --oracle-functions /tmp/egame.original.functions.json \
+  --candidate-functions /tmp/egame.rebuilt.functions.json \
+  --range Data3=DATA3:0x0000..0xffe0 \
+  --range Data1=DGROUP:0x0000..0xa020 \
+  --normalize-code-pointer Data1:0x6138=DGROUP:0x6138:__exit \
+  --out /tmp/egame.data.results.json
+
+./dosunit.py gen-vectors \
+  --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --functions /tmp/egame.original.functions.json \
+  --strategy entry \
+  --out /tmp/egame.vectors.json
+
+./dosunit.py gen-vectors \
+  --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --functions /tmp/egame.original.functions.json \
+  --strategy edge \
+  --max-branches 32 \
+  --max-vectors-per-function 2 \
+  --solver-timeout-ms 1000 \
+  --out /tmp/egame.edge.vectors.json
+
+./dosunit.py complexity \
+  --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --functions /tmp/egame.original.functions.json \
+  --max-simple-insns 16 \
+  --simple-score-threshold 8 \
+  --out /tmp/egame.complexity.json
+
+./dosunit.py report-failures \
+  --results /tmp/egame.complexity.json \
+  --limit 20 \
+  --out /tmp/egame.complexity.md
+
+./dosunit.py ssa \
+  --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --functions /tmp/egame.original.functions.json \
+  --output-reg ax \
+  --output-reg bx \
+  --output-reg sp \
+  --out /tmp/egame.original.ssa.json
+
+./dosunit.py ssa \
+  --exe /home/xor/tmp/f15se2-re/build/egame.exe \
+  --functions /tmp/egame.rebuilt.functions.json \
+  --output-reg ax \
+  --output-reg bx \
+  --output-reg sp \
+  --out /tmp/egame.rebuilt.ssa.json
+
+./dosunit.py compare-ssa \
+  --oracle-ssa /tmp/egame.original.ssa.json \
+  --candidate-ssa /tmp/egame.rebuilt.ssa.json \
+  --mapping /tmp/egame.mapping.json \
+  --out /tmp/egame.ssa.results.json
+
+./dosunit.py regions \
+  --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --functions /tmp/egame.original.functions.json \
+  --max-regions-per-function 8 \
+  --out /tmp/egame.original.regions.json
+
+./dosunit.py regions \
+  --exe /home/xor/tmp/f15se2-re/build/egame.exe \
+  --functions /tmp/egame.rebuilt.functions.json \
+  --max-regions-per-function 8 \
+  --out /tmp/egame.rebuilt.regions.json
+
+./dosunit.py compare-regions \
+  --oracle-regions /tmp/egame.original.regions.json \
+  --candidate-regions /tmp/egame.rebuilt.regions.json \
+  --out /tmp/egame.region.results.json
+
+./dosunit.py report-failures \
+  --results /tmp/egame.region.results.json \
+  --limit 20 \
+  --out /tmp/egame.region.failures.md
+
+./dosunit.py select-vectors \
+  --vectors /tmp/egame.vectors.json \
+  --function fixedMulQ14 \
+  --function sine \
+  --out /tmp/egame.selected.vectors.json
+
+./dosunit.py record-oracle \
+  --backend libkvikdos \
+  --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --functions /tmp/egame.original.functions.json \
+  --vectors /tmp/egame.selected.vectors.json \
+  --out /tmp/egame.oracle.json
+
+./dosunit.py compare \
+  --backend libkvikdos \
+  --candidate /home/xor/tmp/f15se2-re/build/egame.exe \
+  --functions /tmp/egame.rebuilt.functions.json \
+  --vectors /tmp/egame.oracle.json \
+  --mapping /tmp/egame.mapping.json \
+  --ignore-field sregs \
+  --out /tmp/egame.results.json
+
+./dosunit.py summarize --results /tmp/egame.results.json
+```
+
+`--ignore-field sregs` is useful when comparing original and rebuilt EXEs with
+different segment layouts; register, flag, return, and declared memory effects
+are still compared.
+
+`compare-data` compares loaded MZ images, not raw EXE bytes. It applies each
+EXE's relocation table, treats missing EXE tail/BSS as zero-filled loaded
+memory, and compares normal data bytes literally. Fields such as
+`Data1:6138`/`off_389E8` must be normalized as code pointers when the rebuilt
+code layout differs. Do not force that word to the original `__exit` offset;
+doing so can make a byte diff look better while breaking rebuilt control flow.
+
+The current `libkvikdos` backend builds an in-process wrapper around
+`/home/xor/kvikdos/kvikdos.c`, reuses the KVM VM inside the Python process,
+and records real MZ `.EXE` function observations for concrete `CS:IP` vectors.
+It currently supports near/far return traps, registers, segment registers,
+flags, declared segmented memory observations, lifter-backed original-side
+edge-vector generation, compact `cmp`/`test` condition solving,
+`or reg, reg` zero-test idioms, simple byte-register predicates such as
+`cmp al, imm`, lifter-backed function complexity scoring, conservative
+`simple_whole_function` comparison-part selection, bounded straight-line
+VEX-to-compact-SSA lowering, Z3 SSA equivalence/counterexample comparison,
+lifter-backed region operand/effect summaries, static region argument/effect
+comparison, lazy condition lowering, and explicit candidate mapping.
+Generation output reports `counters.edge_sources`,
+`counters.edge_fallback_diagnostics`, and `counters.lifter_blocks_lifted`;
+normal edge vectors carry `source.coverage.discovery_source = lifter_vex`, while
+byte-decoder fallback is explicit. Region summaries record structured operands,
+register/flag effects, and segmented memory expressions such as `DS:[si+4]` or
+`SS:[bp-2]`; `compare-regions` reports argument/effect drift before runtime,
+and `report-failures` renders failed/refused results as a visible Markdown
+report. For complexity documents the report lists blocker names plus the
+instruction addresses and disassembly for risk points. `complexity` reports the
+static reasons a function is or is not a good Z3 target: condition count, calls,
+indirect control, symbolic memory, partial registers, variable shifts, mul/div,
+string instructions, loops, and backward branches. Only functions with no
+branch/call/interrupt/loop hazards and a low risk score are emitted as
+`whole_function` comparison parts. `ssa` reuses the existing x86-16 VEX lifter
+for instruction semantics, slices from requested output registers, and drops
+unused flag and return-IP-load noise. The current compact SSA model is
+deliberately conservative: explicit memory operands, unmodeled partial-register
+accesses, memory stores, and control flow are refused rather than guessed. VEX
+normalizations such as `mov al,imm` becoming `(AX & 0xff00) | imm` are kept.
+`compare-ssa` can use the normal function mapping document and asks Z3 for a
+concrete input model where original and candidate outputs differ.
+Edge coverage metadata belongs to the original binary only; rebuilt comparison
+still replays concrete vectors at mapped function entries and does not require
+rebuilt CFG/block alignment. Full VEX/AIL path exploration, per-call libdosbox
+snapshot recording, and extracted standalone `libkvikdos` packaging are tracked in
+[reference/dosunit-gap-closure-plan.md](/home/xor/vextest/reference/dosunit-gap-closure-plan.md).
 
 ## Output model
 

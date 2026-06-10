@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.regions.v1",
+  "type": "object",
+  "required": ["schema", "source", "regions", "refusals", "counters"],
+  "properties": {
+    "schema": { "const": "dosunit.regions.v1" },
+    "exe": { "type": ["string", "null"] },
+    "source": { "const": "lifter_vex" },
+    "module": { "type": "string" },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["function", "entry", "end", "instructions", "effects", "exits"]
+      }
+    },
+    "refusals": { "type": "array" },
+    "counters": {
+      "type": "object",
+      "required": ["functions_seen", "functions_attempted", "regions_emitted", "instructions_summarized", "lifter_blocks_lifted", "refusals_by_reason"]
+    }
+  }
+}

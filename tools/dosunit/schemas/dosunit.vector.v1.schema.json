@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.vector.v1",
+  "type": "object",
+  "required": ["schema", "id", "module", "function", "source", "pre", "observe"],
+  "properties": {
+    "schema": { "const": "dosunit.vector.v1" },
+    "id": { "type": "string" },
+    "module": { "type": "string" },
+    "function": {
+      "type": "object",
+      "required": ["name", "entry"],
+      "properties": {
+        "name": { "type": "string" },
+        "entry": { "type": "object" }
+      }
+    },
+    "source": { "type": "object" },
+    "pre": { "type": "object" },
+    "observe": { "type": "object" },
+    "expected": { "type": ["object", "null"] }
+  }
+}

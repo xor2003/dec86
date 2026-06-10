@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.functions.v1",
+  "type": "object",
+  "required": ["schema", "id", "module", "program_kind", "functions"],
+  "properties": {
+    "schema": { "const": "dosunit.functions.v1" },
+    "id": { "type": "string" },
+    "module": { "type": "string" },
+    "program_kind": { "type": "string" },
+    "program": { "type": "object" },
+    "functions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "names", "entry", "return_kind", "sources", "confidence"]
+      }
+    },
+    "diagnostics": { "type": "array" }
+  }
+}

@@ -557,6 +557,7 @@ def _verify_example(
         obj_name=f"{example.output_stem}.OBJ",
         exe_name=exe_name,
         map_name=f"{example.output_stem}.MAP",
+        runtime_support=True,
     )
     (out_dir / f"{example.output_stem}.compile.out.txt").write_text(compile_stdout, encoding="utf-8")
     (out_dir / f"{example.output_stem}.compile.err.txt").write_text(compile_stderr, encoding="utf-8")

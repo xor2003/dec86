@@ -1080,6 +1080,129 @@ def test_decompiler_return_compat_refuses_stack_base_return_register():
         ReturnMaker._handle_Return = original_handle_return
 
 
+def test_decompiler_return_compat_uses_ax_for_x86_16_near_pointer_return():
+    original_handle_return = ReturnMaker._handle_Return
+    fallback_calls = []
+    cc_calls = []
+
+    def fake_handle_return(self, stmt_idx, stmt, block):
+        fallback_calls.append((self, stmt_idx, stmt, block))
+        return "fallback"
+
+    def generic_pointer_return(_returnty):
+        cc_calls.append(_returnty)
+        return SimRegArg("dx", 4)
+
+    try:
+        ReturnMaker._handle_Return = fake_handle_return
+        apply_x86_16_decompiler_return_compatibility()
+
+        ret_stmt = SimpleNamespace(
+            ret_exprs=[],
+            copy=lambda: SimpleNamespace(ret_exprs=[]),
+            tags={"ins_addr": 0x2000},
+        )
+        block = SimpleNamespace(statements=[ret_stmt])
+        fake_function = SimpleNamespace(
+            prototype=SimpleNamespace(returnty=SimTypePointer(SimTypeChar(False))),
+            calling_convention=SimpleNamespace(return_val=generic_pointer_return),
+            addr=0x2000,
+        )
+        fake_arch = SimpleNamespace(
+            name="86_16",
+            byte_width=8,
+            registers={"ax": (0, 2)},
+            translate_register_name=lambda _offset, _size: "ax",
+        )
+        fake_self = SimpleNamespace(
+            function=fake_function,
+            arch=fake_arch,
+            _next_atom=lambda: 1,
+            _new_block=None,
+        )
+
+        result = ReturnMaker._handle_Return(fake_self, 0, ret_stmt, block)
+
+        assert fallback_calls == []
+        assert cc_calls == []
+        assert len(result.ret_exprs) == 1
+        ret_expr = result.ret_exprs[0]
+        assert isinstance(ret_expr, ailment.Expr.Register)
+        assert ret_expr.reg_offset == 0
+        assert ret_expr.bits == 16
+    finally:
+        ReturnMaker._handle_Return = original_handle_return
+
+
+def test_decompiler_return_compat_refuses_cross_block_terminal_ax_substitution():
+    original_handle_return = ReturnMaker._handle_Return
+
+    def fake_handle_return(_self, _stmt_idx, _stmt, _block):
+        return "fallback"
+
+    class _FakeGraph:
+        def __init__(self, nodes, predecessors):
+            self._nodes = tuple(nodes)
+            self._predecessors = predecessors
+
+        def nodes(self):
+            return self._nodes
+
+        def predecessors(self, node):
+            return tuple(self._predecessors.get(id(node), ()))
+
+    try:
+        ReturnMaker._handle_Return = fake_handle_return
+        apply_x86_16_decompiler_return_compatibility()
+
+        arch = Arch86_16()
+        ax_a = ailment.Expr.Register(1, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x1010)
+        ax_b = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x1012)
+        assign_a = ailment.Stmt.Assignment(
+            3,
+            ax_a,
+            ailment.Expr.Const(4, None, 0x1111, 16, ins_addr=0x1010),
+            ins_addr=0x1010,
+        )
+        assign_b = ailment.Stmt.Assignment(
+            5,
+            ax_b,
+            ailment.Expr.Const(6, None, 0x2222, 16, ins_addr=0x1012),
+            ins_addr=0x1012,
+        )
+        block_a = SimpleNamespace(statements=[assign_a])
+        block_b = SimpleNamespace(statements=[assign_b])
+        ret_stmt = SimpleNamespace(
+            ret_exprs=[],
+            copy=lambda: SimpleNamespace(ret_exprs=[]),
+            tags={"ins_addr": 0x1020},
+        )
+        ret_block = SimpleNamespace(statements=[ret_stmt])
+        graph = _FakeGraph((block_a, block_b, ret_block), {id(ret_block): (block_a, block_b)})
+        fake_function = SimpleNamespace(
+            prototype=SimpleNamespace(returnty=SimTypeShort(False)),
+            calling_convention=SimpleNamespace(return_val=lambda _returnty: SimRegArg("ax", 2)),
+            addr=0x2000,
+        )
+        fake_self = SimpleNamespace(
+            function=fake_function,
+            arch=arch,
+            graph=graph,
+            _next_atom=lambda: 1,
+            _new_block=None,
+        )
+
+        result = ReturnMaker._handle_Return(fake_self, 0, ret_stmt, ret_block)
+
+        assert len(result.ret_exprs) == 1
+        ret_expr = result.ret_exprs[0]
+        assert isinstance(ret_expr, ailment.Expr.Register)
+        assert ret_expr.reg_offset == arch.registers["ax"][0]
+        assert ret_expr.bits == 16
+    finally:
+        ReturnMaker._handle_Return = original_handle_return
+
+
 def test_decompiler_return_compat_infers_ax_stack_load_without_prototype():
     original_handle_return = ReturnMaker._handle_Return
 
@@ -3336,6 +3459,81 @@ def test_canonicalize_stack_cvar_expr_rewrites_arithmetic_from_dirty_vvar_stack_
     assert getattr(canonical.lhs, "name", None) == "i"
 
 
+def test_canonicalize_stack_cvar_expr_refuses_dirty_vvar_assignment_cycle():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    var20 = SimRegisterVariable(20, 2, name="vvar_20")
+    var21 = SimRegisterVariable(21, 2, name="vvar_21")
+    cvar20 = structured_c.CVariable(var20, variable_type=SimTypeShort(False), codegen=codegen)
+    cvar21 = structured_c.CVariable(var21, variable_type=SimTypeShort(False), codegen=codegen)
+    dirty20 = structured_c.CDirtyExpression(SimpleNamespace(varid=20, name="vvar_20"), codegen=codegen)
+    dirty21 = structured_c.CDirtyExpression(SimpleNamespace(varid=21, name="vvar_21"), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        variables_in_use={var20: cvar20, var21: cvar21},
+        unified_local_vars={},
+    )
+    dirty20_lhs = structured_c.CDirtyExpression(SimpleNamespace(varid=20, name="vvar_20"), codegen=codegen)
+    dirty21_lhs = structured_c.CDirtyExpression(SimpleNamespace(varid=21, name="vvar_21"), codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements(
+        [
+            structured_c.CAssignment(dirty20_lhs, dirty21, codegen=codegen),
+            structured_c.CAssignment(dirty21_lhs, dirty20, codegen=codegen),
+        ],
+        addr=0x1000,
+        codegen=codegen,
+    )
+
+    canonical = decompile._canonicalize_stack_cvar_expr(dirty20, codegen)
+
+    assert canonical is dirty20
+    assert codegen._inertia_stack_lowering_dirty_cycle_refused_8616 == 1
+
+
+def test_canonicalize_stack_cvar_expr_refuses_dirty_vvar_depth_explosion():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+            self._inertia_stack_lowering_canonicalize_max_depth_8616 = 1
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    var20 = SimRegisterVariable(20, 2, name="vvar_20")
+    cvar20 = structured_c.CVariable(var20, variable_type=SimTypeShort(False), codegen=codegen)
+    dirty20 = structured_c.CDirtyExpression(SimpleNamespace(varid=20, name="vvar_20"), codegen=codegen)
+    dirty21 = structured_c.CDirtyExpression(SimpleNamespace(varid=21, name="vvar_21"), codegen=codegen)
+    dirty20_lhs = structured_c.CDirtyExpression(SimpleNamespace(varid=20, name="vvar_20"), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        variables_in_use={var20: cvar20},
+        unified_local_vars={},
+    )
+    codegen.cfunc.statements = structured_c.CStatements(
+        [structured_c.CAssignment(dirty20_lhs, dirty21, codegen=codegen)],
+        addr=0x1000,
+        codegen=codegen,
+    )
+
+    canonical = decompile._canonicalize_stack_cvar_expr(dirty20, codegen)
+
+    assert canonical is dirty21
+    assert codegen._inertia_stack_lowering_canonicalize_depth_refused_8616 == 1
+
+
 def test_materialize_missing_stack_local_declarations_adds_live_stack_slots():
     class _FakeCodegen:
         def __init__(self):
@@ -3447,6 +3645,114 @@ def test_materialize_missing_stack_local_declarations_skips_arg_slot_aliases():
     assert changed is False
     assert alias_var not in codegen.cfunc.unified_local_vars
     assert arg_var not in codegen.cfunc.unified_local_vars
+
+
+def test_materialize_missing_stack_local_declarations_normalizes_ast_only_negative_arg_placeholder():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    leaked_local_var = SimStackVariable(-8, 2, base="bp", name="arg_6", region=0x1000)
+    leaked_local_cvar = structured_c.CVariable(leaked_local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    stmt = structured_c.CAssignment(
+        leaked_local_cvar,
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        statements=structured_c.CStatements([stmt], codegen=codegen),
+        unified_local_vars={},
+        variables_in_use={},
+        sort_local_vars=lambda: None,
+    )
+
+    changed = decompile._materialize_missing_stack_local_declarations(codegen)
+
+    assert changed is True
+    assert leaked_local_var.name == "local_8"
+    assert getattr(leaked_local_cvar, "name", None) == "local_8"
+    assert leaked_local_var in codegen.cfunc.unified_local_vars
+
+
+def test_materialize_missing_stack_local_declarations_keeps_ast_only_arg_slot_as_argument():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    arg_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000)
+    arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
+    stmt = structured_c.CAssignment(
+        arg_cvar,
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[SimpleNamespace(variable=arg_var)],
+        statements=structured_c.CStatements([stmt], codegen=codegen),
+        unified_local_vars={},
+        variables_in_use={},
+        sort_local_vars=lambda: None,
+    )
+
+    changed = decompile._materialize_missing_stack_local_declarations(codegen)
+
+    assert changed is False
+    assert arg_var.name == "arg_4"
+    assert getattr(arg_cvar, "name", None) == "arg_4"
+    assert arg_var not in codegen.cfunc.unified_local_vars
+
+
+def test_normalize_stack_variable_identifiers_declares_ast_only_generic_local():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    leaked_local_var = SimStackVariable(-8, 2, base="bp", name="arg_6", region=0x1000)
+    leaked_local_cvar = structured_c.CVariable(leaked_local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    stmt = structured_c.CAssignment(
+        leaked_local_cvar,
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=[],
+        functy=None,
+        statements=structured_c.CStatements([stmt], codegen=codegen),
+        unified_local_vars={},
+        variables_in_use={},
+        sort_local_vars=lambda: None,
+    )
+
+    _postprocess_stage._normalize_stack_variable_identifiers_8616(codegen)
+
+    assert leaked_local_var.name == "local_8"
+    assert getattr(leaked_local_cvar, "name", None) == "local_8"
+    assert codegen.cfunc.variables_in_use[leaked_local_var] is leaked_local_cvar
+    assert leaked_local_var in codegen.cfunc.unified_local_vars
+    assert codegen._inertia_stack_identifier_live_node_declarations_8616 == 1
 
 
 def test_materialize_missing_stack_local_declarations_converts_stack_bp_placeholder_variable():

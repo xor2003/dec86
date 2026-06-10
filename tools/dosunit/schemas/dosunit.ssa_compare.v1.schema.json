@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.ssa_compare.v1",
+  "title": "DOS Unit SSA Compare",
+  "type": "object",
+  "required": ["schema", "oracle", "candidate", "summary", "results"],
+  "properties": {
+    "schema": { "const": "dosunit.ssa_compare.v1" },
+    "id": { "type": "string" },
+    "oracle": { "type": ["string", "null"] },
+    "candidate": { "type": ["string", "null"] },
+    "mapping": { "type": ["string", "null"] },
+    "include_unmapped": { "type": "boolean" },
+    "summary": { "type": "object" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["status", "function", "mismatches"],
+        "properties": {
+          "status": { "enum": ["passed", "failed", "refused"] },
+          "reason": { "type": ["string", "null"] },
+          "function": { "type": "object" },
+          "oracle_function": { "type": ["string", "null"] },
+          "candidate_function": { "type": ["string", "null"] },
+          "mismatches": { "type": "array" }
+        }
+      }
+    }
+  }
+}

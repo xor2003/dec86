@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import re
 
 from collections.abc import MutableMapping
@@ -10,6 +11,7 @@ from angr.utils.library import convert_cproto_to_py
 
 from .analysis_helpers import preferred_known_helper_signature_decl, seed_calling_conventions
 from .cod_known_objects import known_cod_object_spec
+from .simos_86_16 import SimCC8616MSCsmall
 from typing import Tuple
 
 ANNOTATION_KEY = "x86_16_annotations"
@@ -20,6 +22,13 @@ _PROTO_EMIT_TYPEDEFS_8616 = (
     "typedef long time_t;",
     "typedef unsigned long time_t;",
 )
+
+
+def _source_prototype_calling_convention_8616(project):
+    arch = getattr(project, "arch", None)
+    if getattr(arch, "name", None) != "86_16":
+        return None
+    return SimCC8616MSCsmall(arch)
 
 _C_TYPE_KEYWORDS_8616 = {
     "char",
@@ -40,6 +49,11 @@ _C_TYPE_KEYWORDS_8616 = {
     "void",
     "volatile",
 }
+
+_SOURCE_DECL_RE_8616 = re.compile(
+    r"^(?P<prefix>(?:(?:extern|static|inline|const|volatile|unsigned|signed|struct|union|enum|long|short|int|char|_Bool|[A-Za-z_]\w*)|\s|\*)+?)"
+    r"\s*(?P<name>[A-Za-z_][\w$?@]*)\s*\([^()]*\)\s*(?:\{|;)?\s*$"
+)
 
 
 def _opaque_typedef_headers_for_c_decl_8616(c_decl: str) -> tuple[str, ...]:
@@ -181,10 +195,16 @@ def _normalize_c_decl_text(c_decl: str) -> str:
 
 
 def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...], function_name: str | None = None) -> str | None:
-    decl_re = re.compile(
-        r"^(?P<prefix>(?:(?:extern|static|inline|const|volatile|unsigned|signed|struct|union|enum|long|short|int|char|_Bool|[A-Za-z_]\w*)|\s|\*)+?)"
-        r"\s*(?P<name>[A-Za-z_][\w$?@]*)\s*\([^()]*\)\s*(?:\{|;)?\s*$"
-    )
+    normalized_lines = tuple(str(line) for line in (source_lines or ()))
+    normalized_name = function_name if isinstance(function_name, str) and function_name else None
+    return _source_decl_from_cod_source_lines_cached_8616(normalized_lines, normalized_name)
+
+
+@functools.lru_cache(maxsize=4096)
+def _source_decl_from_cod_source_lines_cached_8616(
+    source_lines: tuple[str, ...],
+    function_name: str | None = None,
+) -> str | None:
     target_name = function_name.lstrip("_") if isinstance(function_name, str) and function_name else None
     first_decl: str | None = None
     for line in source_lines:
@@ -196,7 +216,7 @@ def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...], function_n
         if "(" not in stripped or ")" not in stripped:
             continue
         header = stripped[:-1].rstrip() if stripped.endswith("{") else stripped
-        match = decl_re.match(header)
+        match = _SOURCE_DECL_RE_8616.match(header)
         if match is None:
             continue
         if not header.endswith(";"):
@@ -472,6 +492,7 @@ def _apply_source_prototype_annotations_8616(project, func_addr: int, func, sour
             if parsed_proto is not None:
                 parsed_proto = parsed_proto.with_arch(project.arch)
         active_proto = current_proto
+        source_cc = _source_prototype_calling_convention_8616(project)
         if current_proto is not None and parsed_proto is not None:
             current_args = list(getattr(current_proto, "args", ()) or ())
             parsed_args = list(getattr(parsed_proto, "args", ()) or ())
@@ -489,18 +510,32 @@ def _apply_source_prototype_annotations_8616(project, func_addr: int, func, sour
                         func_addr,
                         name=getattr(func, "name", None) or parsed_name,
                         prototype=active_proto,
+                        calling_convention=source_cc,
                     )
                     changed = True
         elif parsed_proto is not None and not opaque_source_types:
             with contextlib.suppress(ValueError):
-                annotate_function(project, func_addr, name=getattr(func, "name", None) or parsed_name, c_decl=source_decl)
+                annotate_function(
+                    project,
+                    func_addr,
+                    name=getattr(func, "name", None) or parsed_name,
+                    c_decl=source_decl,
+                    calling_convention=source_cc,
+                )
                 changed = True
                 active_proto = getattr(func, "prototype", parsed_proto)
         if active_proto is not None:
             source_arg_names = _split_source_arg_names_8616(_source_args_from_cod_source_lines(source_lines, getattr(func, "name", None)))
             if source_arg_names and len(source_arg_names) == len(getattr(active_proto, "args", ()) or ()):
                 with contextlib.suppress(ValueError):
-                    annotate_function(project, func_addr, name=getattr(func, "name", None), prototype=active_proto, arg_names=source_arg_names)
+                    annotate_function(
+                        project,
+                        func_addr,
+                        name=getattr(func, "name", None),
+                        prototype=active_proto,
+                        calling_convention=source_cc,
+                        arg_names=source_arg_names,
+                    )
                     changed = True
         return changed
 

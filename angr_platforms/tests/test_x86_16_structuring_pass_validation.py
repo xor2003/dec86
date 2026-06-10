@@ -11,7 +11,7 @@ def test_structuring_stage_records_validation_for_semantic_passes(monkeypatch):
         _inertia_decompiler_stage=None,
         kb=SimpleNamespace(functions=None),
     )
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x4010))
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x4010), _inertia_ss_stack_lowered=True)
 
     monkeypatch.setattr(stage, "fingerprint_x86_16_tail_validation_boundary", lambda *_args, **_kwargs: ("fp",))
     monkeypatch.setattr(stage, "collect_x86_16_tail_validation_summary", lambda *_args, **_kwargs: {"conditions": ()})
@@ -49,13 +49,94 @@ def test_structuring_stage_records_validation_for_semantic_passes(monkeypatch):
     assert "_induction_summary_artifact_8616" not in validation
 
 
+def test_structuring_stage_skips_per_pass_validation_for_large_functions(monkeypatch):
+    class _Functions:
+        def function(self, addr, create=False):
+            del addr, create
+            return SimpleNamespace(block_addrs_set=set(range(40)))
+
+    project = SimpleNamespace(
+        _inertia_tail_validation_enabled=True,
+        _inertia_decompiler_stage=None,
+        kb=SimpleNamespace(functions=_Functions()),
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x4010), _inertia_ss_stack_lowered=True)
+    validation_calls = []
+
+    monkeypatch.setattr(
+        stage,
+        "collect_x86_16_tail_validation_summary",
+        lambda *_args, **_kwargs: validation_calls.append("collect") or {"conditions": ()},
+    )
+    monkeypatch.setattr(
+        stage,
+        "_decompiler_structuring_passes_for_function",
+        lambda _project, _codegen: (
+            stage.DecompilerStructuringPassSpec("_segmented_memory_reasoning_8616", lambda _codegen: False, False),
+        ),
+    )
+
+    changed = stage._structuring_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert validation_calls == []
+    assert codegen._inertia_structuring_pass_validation_skipped_large_function_8616 is True
+    assert (
+        codegen._inertia_structuring_pass_validation_skip_reason_8616
+        is stage.StructuringPassValidationSkipReason8616.LARGE_FUNCTION_BLOCK_COUNT
+    )
+    assert not hasattr(codegen, "_inertia_structuring_pass_validation")
+
+
+def test_structuring_stage_skips_per_pass_validation_for_byte_heavy_functions(monkeypatch):
+    class _Functions:
+        def function(self, addr, create=False):
+            del addr, create
+            return SimpleNamespace(
+                block_addrs_set=set(range(20)),
+                info={"_inertia_function_complexity": {"blocks": 20, "bytes": 0x180}},
+            )
+
+    project = SimpleNamespace(
+        _inertia_tail_validation_enabled=True,
+        _inertia_decompiler_stage=None,
+        kb=SimpleNamespace(functions=_Functions()),
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x4010), _inertia_ss_stack_lowered=True)
+    validation_calls = []
+
+    monkeypatch.setattr(
+        stage,
+        "collect_x86_16_tail_validation_summary",
+        lambda *_args, **_kwargs: validation_calls.append("collect") or {"conditions": ()},
+    )
+    monkeypatch.setattr(
+        stage,
+        "_decompiler_structuring_passes_for_function",
+        lambda _project, _codegen: (
+            stage.DecompilerStructuringPassSpec("_segmented_memory_reasoning_8616", lambda _codegen: False, False),
+        ),
+    )
+
+    changed = stage._structuring_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert validation_calls == []
+    assert codegen._inertia_structuring_pass_validation_skipped_large_function_8616 is True
+    assert (
+        codegen._inertia_structuring_pass_validation_skip_reason_8616
+        is stage.StructuringPassValidationSkipReason8616.LARGE_FUNCTION_BYTE_SIZE
+    )
+    assert not hasattr(codegen, "_inertia_structuring_pass_validation")
+
+
 def test_structuring_stage_rejects_non_stable_validation_status(monkeypatch):
     project = SimpleNamespace(
         _inertia_tail_validation_enabled=True,
         _inertia_decompiler_stage=None,
         kb=SimpleNamespace(functions=None),
     )
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x4010), order=[])
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x4010), order=[], _inertia_ss_stack_lowered=True)
 
     def _semantic_pass(_codegen):
         _codegen.order.append("semantic")

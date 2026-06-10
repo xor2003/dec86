@@ -58,6 +58,153 @@ def test_source_function_pointer_local_type_is_collected_from_source_lines():
     assert len(local_types["fn"].pts_to.args) == 1
 
 
+def test_positive_bp_arg_promotion_materializes_contained_high_byte_arg():
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
+    high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    word_cvar = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
+    high_cvar = structured_c.CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    call = structured_c.CFunctionCall(
+        "outp",
+        None,
+        [
+            structured_c.CConstant(66, SimTypeShort(False), codegen=codegen),
+            high_cvar,
+        ],
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([structured_c.CExpressionStatement(call, codegen=codegen)], codegen=codegen)
+    cfunc = SimpleNamespace(
+        addr=0x1000,
+        variables_in_use={word_var: word_cvar, high_var: high_cvar},
+        unified_local_vars={word_var: {(word_cvar, SimTypeShort(False))}, high_var: {(high_cvar, SimTypeShort(False))}},
+        arg_list=[word_cvar, high_cvar],
+        functy=None,
+        prototype=None,
+        statements=root,
+    )
+    codegen.cfunc = cfunc
+
+    changed = postprocess._promote_positive_bp_stack_slots_to_args_8616(project, codegen)
+
+    assert changed is True
+    assert cfunc.arg_list == [word_cvar]
+    assert tuple(cfunc.functy.arg_names) == ("frequency",)
+    assert high_var not in cfunc.variables_in_use
+    assert high_var not in cfunc.unified_local_vars
+    projected = call.args[1]
+    assert isinstance(projected, structured_c.CBinaryOp)
+    assert projected.op == "Shr"
+    assert projected.lhs is word_cvar
+    assert getattr(projected.rhs, "value", None) == 8
+    assert codegen._inertia_stack_arg_high_byte_projection_candidates_8616 == 1
+    assert codegen._inertia_stack_arg_high_byte_projection_materialized_8616 == 1
+
+
+def test_stack_prototype_promotion_collapses_existing_contained_high_byte_arg():
+    arch = Arch86_16()
+    prototype = SimTypeFunction(
+        [SimTypeShort(False).with_arch(arch), SimTypeShort(False).with_arch(arch)],
+        SimTypeBottom().with_arch(arch),
+        arg_names=("frequency", "duration"),
+    ).with_arch(arch)
+    func = SimpleNamespace(addr=0x1000, prototype=prototype, is_prototype_guessed=False)
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+    )
+    word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
+    high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
+    duration_var = SimStackVariable(6, 2, base="bp", name="duration", region=0x1000)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    word_cvar = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
+    high_cvar = structured_c.CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    duration_cvar = structured_c.CVariable(duration_var, variable_type=SimTypeShort(False), codegen=codegen)
+    call = structured_c.CFunctionCall(
+        "outp",
+        None,
+        [
+            structured_c.CConstant(66, SimTypeShort(False), codegen=codegen),
+            high_cvar,
+        ],
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([structured_c.CExpressionStatement(call, codegen=codegen)], codegen=codegen)
+    cfunc = SimpleNamespace(
+        addr=0x1000,
+        variables_in_use={word_var: word_cvar, high_var: high_cvar, duration_var: duration_cvar},
+        unified_local_vars={
+            word_var: {(word_cvar, SimTypeShort(False))},
+            high_var: {(high_cvar, SimTypeShort(False))},
+            duration_var: {(duration_cvar, SimTypeShort(False))},
+        },
+        arg_list=[word_cvar, high_cvar, duration_cvar],
+        functy=prototype,
+        prototype=prototype,
+        statements=root,
+    )
+    codegen.cfunc = cfunc
+
+    changed = postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen)
+
+    assert changed is True
+    assert cfunc.arg_list == [word_cvar, duration_cvar]
+    assert high_var not in cfunc.variables_in_use
+    assert high_var not in cfunc.unified_local_vars
+    projected = call.args[1]
+    assert isinstance(projected, structured_c.CBinaryOp)
+    assert projected.op == "Shr"
+    assert projected.lhs is word_cvar
+    assert getattr(projected.rhs, "value", None) == 8
+
+
+def test_positive_bp_arg_promotion_uses_body_reference_for_contained_high_byte_arg():
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
+    high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
+    duration_var = SimStackVariable(6, 2, base="bp", name="duration", region=0x1000)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    word_cvar = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
+    high_cvar = structured_c.CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    duration_cvar = structured_c.CVariable(duration_var, variable_type=SimTypeShort(False), codegen=codegen)
+    call = structured_c.CFunctionCall(
+        "outp",
+        None,
+        [
+            structured_c.CConstant(66, SimTypeShort(False), codegen=codegen),
+            high_cvar,
+        ],
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([structured_c.CExpressionStatement(call, codegen=codegen)], codegen=codegen)
+    cfunc = SimpleNamespace(
+        addr=0x1000,
+        variables_in_use={word_var: word_cvar, duration_var: duration_cvar},
+        unified_local_vars={
+            word_var: {(word_cvar, SimTypeShort(False))},
+            duration_var: {(duration_cvar, SimTypeShort(False))},
+        },
+        arg_list=[word_cvar, duration_cvar],
+        functy=None,
+        prototype=None,
+        statements=root,
+    )
+    codegen.cfunc = cfunc
+
+    changed = postprocess._promote_positive_bp_stack_slots_to_args_8616(project, codegen)
+
+    assert changed is True
+    assert cfunc.arg_list == [word_cvar, duration_cvar]
+    projected = call.args[1]
+    assert isinstance(projected, structured_c.CBinaryOp)
+    assert projected.op == "Shr"
+    assert projected.lhs is word_cvar
+    assert getattr(projected.rhs, "value", None) == 8
+
+
 def test_prototype_stack_layout_uses_cod_offsets_for_near_function_pointer_args():
     arch = Arch86_16()
     fnptr_type = SimTypePointer(

@@ -29,6 +29,7 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
 
 from dataclasses import dataclass, replace
+from enum import Enum, auto
 
 from pathlib import Path
 
@@ -1206,6 +1207,19 @@ def _source_header_args_unmaterialized_8616(
         return False
     source_parts = _split_source_decl_args_8616(source_decl, source_arg_text)
     current_parts = _split_c_signature_args_8616(current_header.group("args"))
+    source_args_text = ""
+    if source_decl is not None:
+        source_match = re.search(r"\((?P<args>[^()]*)\)\s*;?$", source_decl.strip())
+        if source_match is not None:
+            source_args_text = source_match.group("args").strip()
+    if not source_parts and source_args_text in {"", "void"} and current_parts:
+        body_text = c_text[current_header.end() :]
+        for current_part in current_parts:
+            current_name = _decl_arg_name_8616(current_part)
+            if not current_name:
+                continue
+            if re.search(rf"(?<![A-Za-z_]){re.escape(current_name)}(?![A-Za-z_])", body_text) is not None:
+                return True
     if not source_parts or len(source_parts) != len(current_parts):
         return False
     body_text = c_text[current_header.end() :]
@@ -1486,30 +1500,11 @@ def _materialize_stack_base_placeholder_declaration_text(c_text: str) -> str:
 
 
 def _normalize_integer_dereference_stores_text(c_text: str) -> str:
-    # Compile-hygiene only: preserve explicit linear-address store semantics in a
-    # compilable lvalue form when codegen leaves integer-as-pointer stores.
-    # Example: *(seg*16 + stack_base + K) = v;  -> SEG_U8(0, seg*16 + stack_base + K) = v;
-    pattern = re.compile(
-        r"(?m)^(?P<indent>\s*)\*\(\s*(?P<addr>[^)]+)\s*\)\s*=\s*(?P<rhs>[^;]+);\s*$"
-    )
-
-    def _replace(match: re.Match[str]) -> str:
-        indent = match.group("indent")
-        addr = match.group("addr").strip()
-        rhs = match.group("rhs").strip()
-        # Preserve already-lowered SEG_* lvalues and obvious typed pointers.
-        if addr.startswith("SEG_U8(") or addr.startswith("SEG_U16(") or addr.startswith("SEG_U32("):
-            return match.group(0)
-        # Compile-hygiene lowering target: raw real-mode linearized integer address.
-        # Evidence: expressions that carry seg*16 linearization or stack-base carrier math.
-        has_linearized_seg = re.search(r"\bir_\d+\s*\*\s*16\b", addr) is not None
-        has_stack_carrier = "stack_base" in addr
-        has_vvar_linear_carrier = re.search(r"\bvvar_\d+\b", addr) is not None and any(op in addr for op in ("+", "-"))
-        if not (has_linearized_seg or has_stack_carrier or has_vvar_linear_carrier):
-            return match.group(0)
-        return f"{indent}SEG_U8(0, {addr}) = {rhs};"
-
-    return pattern.sub(_replace, c_text)
+    # Semantic lowering belongs to the typed x86-16 lowering pipeline.  This
+    # legacy text hook used to synthesize SEG_U8(0, addr) for raw integer stores,
+    # which invented an unproven segment and produced invalid MS C lvalues.
+    # Keep the text unchanged so validation/gates expose the real owner.
+    return c_text
 
 
 def _materialize_missing_g_hex_externs_text(c_text: str) -> str:
@@ -2737,19 +2732,40 @@ def _extract_reserved_arg_names(args_text: str) -> set[str]:
     }
 
 
+class _LocalDeclKind8616(Enum):
+    SIMPLE = auto()
+    FUNCTION_POINTER = auto()
+
+
+@dataclass(frozen=True)
+class _LocalDeclEntry8616:
+    line_index: int
+    name: str
+    comment: str
+    kind: _LocalDeclKind8616
+
+
 def _collect_local_decl_entries(
-    lines: list[str], body_start: int, body_end: int, decl_re: re.Pattern[str]
-) -> tuple[list[tuple[int, str, str]], set[str]]:
-    decl_lines: list[tuple[int, str, str]] = []
+    lines: list[str],
+    body_start: int,
+    body_end: int,
+    decl_re: re.Pattern[str],
+    func_ptr_decl_re: re.Pattern[str],
+) -> tuple[list[_LocalDeclEntry8616], set[str]]:
+    decl_lines: list[_LocalDeclEntry8616] = []
     used_names: set[str] = set()
     for scan_index in range(body_start, body_end):
         line = lines[scan_index]
         decl_match = decl_re.match(line)
+        decl_kind = _LocalDeclKind8616.SIMPLE
+        if decl_match is None:
+            decl_match = func_ptr_decl_re.match(line)
+            decl_kind = _LocalDeclKind8616.FUNCTION_POINTER
         if decl_match is None:
             continue
         name = decl_match.group("name")
         comment = decl_match.group("comment") or ""
-        decl_lines.append((scan_index, name, comment))
+        decl_lines.append(_LocalDeclEntry8616(scan_index, name, comment, decl_kind))
         used_names.add(name)
     return decl_lines, used_names
 
@@ -2759,20 +2775,20 @@ def _rewrite_or_prune_duplicate_locals(
     decl_re: re.Pattern[str],
     reserved_names: set[str],
     used_names: set[str],
-    decl_lines: list[tuple[int, str, str]],
+    decl_lines: list[_LocalDeclEntry8616],
 ) -> tuple[bool, set[int]]:
     def _impl():
         changed = False
         remove_line_indexes: set[int] = set()
-        grouped: dict[str, list[tuple[int, str]]] = {}
-        for line_index, name, comment in decl_lines:
-            grouped.setdefault(name, []).append((line_index, comment))
+        grouped: dict[str, list[_LocalDeclEntry8616]] = {}
+        for entry in decl_lines:
+            grouped.setdefault(entry.name, []).append(entry)
         for name, entries in grouped.items():
             if name in reserved_names:
-                for line_index, _comment in entries:
+                for entry in entries:
                     unique_name = _make_unique_identifier(name, used_names)
-                    old_line = lines[line_index]
-                    lines[line_index] = decl_re.sub(
+                    old_line = lines[entry.line_index]
+                    lines[entry.line_index] = decl_re.sub(
                         lambda m, un=unique_name: f"{m.group('indent')}{m.group('type')} {un}{m.group('array') or ''};"
                         + (f" {m.group('comment')}" if m.group('comment') else ""),
                         old_line,
@@ -2783,14 +2799,19 @@ def _rewrite_or_prune_duplicate_locals(
                 continue
             if len(entries) <= 1:
                 continue
-            preferred = [(line_index, comment) for line_index, comment in entries if name in comment]
-            if not preferred:
-                preferred = [entries[0]]
-            keep_line_indexes = {line_index for line_index, _comment in preferred}
-            for line_index, _comment in entries:
-                if line_index in keep_line_indexes:
+            keep_entry = max(
+                entries,
+                key=lambda entry: (
+                    entry.name in entry.comment,
+                    entry.kind is _LocalDeclKind8616.FUNCTION_POINTER,
+                    bool(entry.comment),
+                    -entry.line_index,
+                ),
+            )
+            for entry in entries:
+                if entry.line_index == keep_entry.line_index:
                     continue
-                remove_line_indexes.add(line_index)
+                remove_line_indexes.add(entry.line_index)
                 changed = True
         return changed, remove_line_indexes
 
@@ -2807,6 +2828,10 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
         decl_re = re.compile(
             r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default|continue|break)\b)"
             r"(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$"
+        )
+        func_ptr_decl_re = re.compile(
+            r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)"
+            r"\s*\([^;{}]*\)\s*;\s*(?P<comment>//.*)?$"
         )
 
         changed = False
@@ -2825,7 +2850,9 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
             body_start = brace_index + 1
             body_end = _find_block_end(lines, brace_index)
             reserved_names = _extract_reserved_arg_names(match.group("args"))
-            decl_lines, local_used_names = _collect_local_decl_entries(lines, body_start, body_end, decl_re)
+            decl_lines, local_used_names = _collect_local_decl_entries(
+                lines, body_start, body_end, decl_re, func_ptr_decl_re
+            )
             if not decl_lines:
                 index = body_end
                 continue
@@ -4460,6 +4487,23 @@ def _finalize_cod_annotation_text_8616(c_text: str, metadata: CODProcMetadata) -
     c_text = _prune_unused_local_declarations_text(c_text)
     return c_text
 
+
+class _StagingAssignmentRhsEffect8616(Enum):
+    PURE = auto()
+    CALL_LIKE = auto()
+
+
+def _classify_staging_assignment_rhs_effect_8616(rhs: str) -> _StagingAssignmentRhsEffect8616:
+    if not isinstance(rhs, str) or not rhs.strip():
+        return _StagingAssignmentRhsEffect8616.PURE
+    call_like_re = re.compile(r"(?<![A-Za-z_])(?P<name>[A-Za-z_]\w*)\s*\(")
+    harmless_keywords = {"sizeof"}
+    for match in call_like_re.finditer(rhs):
+        if match.group("name") not in harmless_keywords:
+            return _StagingAssignmentRhsEffect8616.CALL_LIKE
+    return _StagingAssignmentRhsEffect8616.PURE
+
+
 def _prune_unused_staging_assignments(c_text: str) -> str:
     def _impl():
         current = c_text
@@ -4528,8 +4572,12 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
                     kept_lines.append(line)
                     continue
                 name = match.group("name")
+                rhs_effect = _classify_staging_assignment_rhs_effect_8616(match.group("rhs"))
                 if used_names.get(name, 0) == 0:
                     changed = True
+                    if rhs_effect is _StagingAssignmentRhsEffect8616.CALL_LIKE:
+                        indent = line[: len(line) - len(line.lstrip())]
+                        kept_lines.append(f"{indent}{match.group('rhs').strip()};")
                     continue
                 kept_lines.append(line)
 
@@ -5296,6 +5344,14 @@ def _normalize_boolean_conditions(c_text: str) -> str:
     rewritten = re.sub(
         r"(?m)^(?P<indent>\s*)if \((?P<cond>[^\n]+)\)\s*(?=\n\s*(?:\}|$))",
         r"\g<indent>if (\g<cond>);",
+        rewritten,
+    )
+    # Syntax hygiene only: a generated label directly before a closing brace has
+    # no statement to label, which old C compilers reject. Preserve semantics by
+    # materializing an explicit empty statement.
+    rewritten = re.sub(
+        r"(?m)^(?P<indent>\s*)(?P<label>(?!case\b|default\b)[A-Za-z_]\w*)\s*:\s*(?=\n\s*\})",
+        r"\g<indent>\g<label>:;",
         rewritten,
     )
     # Strict 16-bit compilers reject shifting raw address expressions. Make the

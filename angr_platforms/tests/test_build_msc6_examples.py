@@ -21,6 +21,7 @@ from scripts.build_msc6_examples import (
     _decompile_function_with_options,
     _normalize_extracted_function_arg_placeholders,
 )
+from scripts import verify_msc_example_runtime_gate as runtime_gate
 
 
 def test_extract_decompiled_function_definition_handles_multiline_header():
@@ -323,3 +324,41 @@ def test_extract_does_not_rewrite_declared_local_arg_placeholder():
 
     assert "int arg_4;" in normalized
     assert "return arg_4;" in normalized
+
+
+def test_runtime_gate_links_generic_runtime_support(monkeypatch, tmp_path):
+    seen: dict[str, object] = {}
+    exe = tmp_path / "TEST.EXE"
+    exe.write_bytes(b"MZ")
+    kvikdos = tmp_path / "kvikdos"
+    kvikdos.write_text("#!/bin/sh\n", encoding="utf-8")
+    msc6_root = tmp_path / "msc6"
+    msc6_root.mkdir()
+    example = runtime_gate.ExampleSpec(
+        name="test",
+        exe=exe,
+        output_stem="TESTRT",
+        functions=(),
+        harness_main="int main(void) { return 255; }",
+    )
+
+    def fake_compile_and_link(_source_path, out_dir, **kwargs):
+        seen["runtime_support"] = kwargs.get("runtime_support")
+        (out_dir / kwargs["exe_name"]).write_bytes(b"MZ")
+        return True, "", "", "", ""
+
+    monkeypatch.setattr(runtime_gate, "_compile_and_link", fake_compile_and_link)
+    monkeypatch.setattr(runtime_gate, "_run_example", lambda *_args, **_kwargs: (True, 255, "", ""))
+
+    rebuilt = runtime_gate._verify_example(
+        example,
+        out_dir=tmp_path / "out",
+        kvikdos=kvikdos,
+        msc6_root=msc6_root,
+        decompile_py=tmp_path / "decompile.py",
+        expected_exit_code=255,
+        timeout=60,
+    )
+
+    assert rebuilt.name == "TESTRT.EXE"
+    assert seen["runtime_support"] is True

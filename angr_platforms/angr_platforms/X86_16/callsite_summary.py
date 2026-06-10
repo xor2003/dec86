@@ -39,9 +39,17 @@ class CallsitePushExprOp8616(Enum):
     ADC = "adc"
     SUB = "sub"
     SBB = "sbb"
+    ADD_SOURCE = "add_source"
+    ADC_SOURCE = "adc_source"
+    SUB_SOURCE = "sub_source"
+    SBB_SOURCE = "sbb_source"
+    AND = "and"
+    OR = "or"
+    XOR = "xor"
     SHL = "shl"
     SHR = "shr"
     MUL = "mul"
+    SIGN_EXT_HI = "sign_ext_hi"
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,7 +408,7 @@ def _is_segment_register_push_8616(insn) -> bool:
 
 def _transparent_between_push_args_8616(insn) -> bool:
     mnemonic = _mnemonic(insn)
-    if mnemonic in {"cbw", "cwd", "cwde", "nop"}:
+    if mnemonic in {"cbw", "cwd", "cwde", "cdq", "nop"}:
         return True
     if mnemonic in {"mul", "imul"}:
         operands = _instruction_operands(insn)
@@ -718,7 +726,7 @@ def _indexed_global_source_from_mov_operand_8616(insns: tuple, mov_idx: int, ins
 
     scan = mov_idx - 1
     skipped = 0
-    ops: list[tuple[str, int]] = []
+    ops: list[tuple[str, object]] = []
     while scan >= 0 and skipped < 8:
         prev = insns[scan]
         mnemonic = _mnemonic(prev)
@@ -753,6 +761,10 @@ def _indexed_global_source_from_mov_operand_8616(insns: tuple, mov_idx: int, ins
             scan -= 1
             skipped += 1
             continue
+        if _mnemonic(prev).startswith("push") and _is_segment_register_push_8616(prev):
+            scan -= 1
+            skipped += 1
+            continue
         if _mnemonic(prev).startswith(("call", "push", "pop", "ret", "jmp")):
             return None
         if not _transparent_between_push_args_8616(prev):
@@ -773,6 +785,18 @@ def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *,
         insn = insns[scan]
         operands = _instruction_operands(insn)
         mnemonic = _mnemonic(insn)
+        if reg_name == "dx" and mnemonic in {"cwd", "cdq"}:
+            ax_source = _register_source_from_context_8616(insns, scan, "ax", depth=depth + 1)
+            if ax_source is None:
+                return None
+            high_source = (
+                CallsitePushSourceKind8616.EXPR.value,
+                ax_source,
+                ((CallsitePushExprOp8616.SIGN_EXT_HI.value, 16),),
+            )
+            if not ops:
+                return high_source
+            return (CallsitePushSourceKind8616.EXPR.value, high_source, tuple(reversed(ops)))
         if reg_name == "ax" and mnemonic in {"cbw", "cwde"}:
             source_regs.add("al")
             scan -= 1
@@ -791,24 +815,61 @@ def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *,
             if not ops:
                 return base_source
             return (CallsitePushSourceKind8616.EXPR.value, base_source, tuple(reversed(ops)))
-        if (
-            mnemonic in {"add", "sub", "shl", "shr"}
-            and len(operands) == 2
-            and _operand_reg_name(insn, operands[0]) == reg_name
-        ):
-            value = _operand_imm_value(operands[1])
-            if not isinstance(value, int):
-                return None
-            op = {
-                "add": CallsitePushExprOp8616.ADD,
-                "sub": CallsitePushExprOp8616.SUB,
-                "shl": CallsitePushExprOp8616.SHL,
-                "shr": CallsitePushExprOp8616.SHR,
-            }[mnemonic]
-            ops.append((op.value, value))
-            scan -= 1
-            skipped += 1
-            continue
+        if len(operands) == 2 and _operand_reg_name(insn, operands[0]) == reg_name:
+            if mnemonic in {"adc", "add", "sbb", "sub"}:
+                value = _operand_imm_value(operands[1])
+                if isinstance(value, int):
+                    op = {
+                        "adc": CallsitePushExprOp8616.ADC,
+                        "add": CallsitePushExprOp8616.ADD,
+                        "sbb": CallsitePushExprOp8616.SBB,
+                        "sub": CallsitePushExprOp8616.SUB,
+                    }[mnemonic]
+                    ops.append((op.value, value))
+                    scan -= 1
+                    skipped += 1
+                    continue
+                rhs_reg = _operand_reg_name(insn, operands[1])
+                if isinstance(rhs_reg, str) and rhs_reg and rhs_reg not in source_regs:
+                    rhs_source = _register_source_from_context_8616(insns, scan, rhs_reg, depth=depth + 1)
+                else:
+                    rhs_source = _source_from_mov_operand(insn, operands[1])
+                    if rhs_source is None:
+                        rhs_source = _indexed_global_source_from_mov_operand_8616(insns, scan, insn, operands[1])
+                if rhs_source is None:
+                    return None
+                op = {
+                    "adc": CallsitePushExprOp8616.ADC_SOURCE,
+                    "add": CallsitePushExprOp8616.ADD_SOURCE,
+                    "sbb": CallsitePushExprOp8616.SBB_SOURCE,
+                    "sub": CallsitePushExprOp8616.SUB_SOURCE,
+                }[mnemonic]
+                ops.append((op.value, rhs_source))
+                scan -= 1
+                skipped += 1
+                continue
+            if mnemonic in {"shl", "shr"}:
+                value = _operand_imm_value(operands[1])
+                if not isinstance(value, int):
+                    return None
+                op = CallsitePushExprOp8616.SHL if mnemonic == "shl" else CallsitePushExprOp8616.SHR
+                ops.append((op.value, value))
+                scan -= 1
+                skipped += 1
+                continue
+            if mnemonic in {"and", "or", "xor"}:
+                value = _operand_imm_value(operands[1])
+                if not isinstance(value, int):
+                    return None
+                op = {
+                    "and": CallsitePushExprOp8616.AND,
+                    "or": CallsitePushExprOp8616.OR,
+                    "xor": CallsitePushExprOp8616.XOR,
+                }[mnemonic]
+                ops.append((op.value, value))
+                scan -= 1
+                skipped += 1
+                continue
         if _mnemonic(insn).startswith(("call", "push", "pop", "ret", "jmp")):
             return None
         if not _transparent_between_push_args_8616(insn):
@@ -876,6 +937,9 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
         operands = _instruction_operands(insns[idx])
         if len(operands) != 1:
             return None
+        indexed_global_source = _indexed_global_source_from_mov_operand_8616(insns, idx, insns[idx], operands[0])
+        if indexed_global_source is not None:
+            return indexed_global_source
         pushed_reg = _operand_reg_name(insns[idx], operands[0])
         if pushed_reg is None or pushed_reg in {"sp", "bp", "ss", "ds", "es", "cs"}:
             return None
@@ -884,12 +948,24 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
             return return_source
         scan = idx - 1
         skipped = 0
-        ops: list[tuple[str, int]] = []
+        ops: list[tuple[str, object]] = []
         source_regs = {pushed_reg}
         while scan >= 0 and skipped < 6:
             insn = insns[scan]
             operands = _instruction_operands(insn)
             mnemonic = _mnemonic(insn)
+            if pushed_reg == "dx" and mnemonic in {"cwd", "cdq"}:
+                ax_source = _register_source_from_context_8616(insns, scan, "ax", depth=1)
+                if ax_source is None:
+                    return None
+                high_source = (
+                    CallsitePushSourceKind8616.EXPR.value,
+                    ax_source,
+                    ((CallsitePushExprOp8616.SIGN_EXT_HI.value, 16),),
+                )
+                if not ops:
+                    return high_source
+                return (CallsitePushSourceKind8616.EXPR.value, high_source, tuple(reversed(ops)))
             if pushed_reg == "ax" and mnemonic in {"cbw", "cwde"}:
                 source_regs.add("al")
                 scan -= 1
@@ -920,26 +996,62 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
                 if not ops:
                     return base_source
                 return (CallsitePushSourceKind8616.EXPR.value, base_source, tuple(reversed(ops)))
-            if (
-                mnemonic in {"adc", "add", "sbb", "sub", "shl", "shr"}
-                and len(operands) == 2
-                and _operand_reg_name(insn, operands[0]) == pushed_reg
-            ):
-                value = _operand_imm_value(operands[1])
-                if not isinstance(value, int):
-                    return None
-                op = {
-                    "adc": CallsitePushExprOp8616.ADC,
-                    "add": CallsitePushExprOp8616.ADD,
-                    "sbb": CallsitePushExprOp8616.SBB,
-                    "sub": CallsitePushExprOp8616.SUB,
-                    "shl": CallsitePushExprOp8616.SHL,
-                    "shr": CallsitePushExprOp8616.SHR,
-                }[mnemonic]
-                ops.append((op.value, value))
-                scan -= 1
-                skipped += 1
-                continue
+            if len(operands) == 2 and _operand_reg_name(insn, operands[0]) == pushed_reg:
+                if mnemonic in {"adc", "add", "sbb", "sub"}:
+                    value = _operand_imm_value(operands[1])
+                    if isinstance(value, int):
+                        op = {
+                            "adc": CallsitePushExprOp8616.ADC,
+                            "add": CallsitePushExprOp8616.ADD,
+                            "sbb": CallsitePushExprOp8616.SBB,
+                            "sub": CallsitePushExprOp8616.SUB,
+                        }[mnemonic]
+                        ops.append((op.value, value))
+                        scan -= 1
+                        skipped += 1
+                        continue
+                    rhs_reg = _operand_reg_name(insn, operands[1])
+                    if isinstance(rhs_reg, str) and rhs_reg and rhs_reg not in source_regs:
+                        rhs_source = _register_source_from_context_8616(insns, scan, rhs_reg, depth=1)
+                    else:
+                        rhs_source = _source_from_mov_operand(insn, operands[1])
+                        if rhs_source is None:
+                            rhs_source = _indexed_global_source_from_mov_operand_8616(insns, scan, insn, operands[1])
+                    if rhs_source is None:
+                        return None
+                    op = {
+                        "adc": CallsitePushExprOp8616.ADC_SOURCE,
+                        "add": CallsitePushExprOp8616.ADD_SOURCE,
+                        "sbb": CallsitePushExprOp8616.SBB_SOURCE,
+                        "sub": CallsitePushExprOp8616.SUB_SOURCE,
+                    }[mnemonic]
+                    ops.append((op.value, rhs_source))
+                    scan -= 1
+                    skipped += 1
+                    continue
+                if mnemonic in {"shl", "shr"}:
+                    value = _operand_imm_value(operands[1])
+                    if not isinstance(value, int):
+                        return None
+                    op = CallsitePushExprOp8616.SHL if mnemonic == "shl" else CallsitePushExprOp8616.SHR
+                    ops.append((op.value, value))
+                    scan -= 1
+                    skipped += 1
+                    continue
+                if mnemonic in {"and", "or", "xor"}:
+                    value = _operand_imm_value(operands[1])
+                    if not isinstance(value, int):
+                        return None
+                    op = {
+                        "and": CallsitePushExprOp8616.AND,
+                        "or": CallsitePushExprOp8616.OR,
+                        "xor": CallsitePushExprOp8616.XOR,
+                    }[mnemonic]
+                    ops.append((op.value, value))
+                    scan -= 1
+                    skipped += 1
+                    continue
+                return None
             if mnemonic in {"inc", "dec"} and len(operands) == 1 and _operand_reg_name(insn, operands[0]) == pushed_reg:
                 ops.append(
                     (
@@ -1075,6 +1187,14 @@ def _trim_push_arg_sources_to_stack_cleanup(
         if total == cleanup:
             return tuple(reversed(kept))
     return arg_sources
+
+
+def _push_arg_source_known_count_8616(arg_sources: tuple[tuple | None, ...]) -> int:
+    return sum(1 for source in arg_sources if source is not None)
+
+
+def _push_arg_sources_have_unknown_8616(arg_sources: tuple[tuple | None, ...]) -> bool:
+    return any(source is None for source in arg_sources)
 
 
 def _stack_cleanup_after_call(function, insns: tuple, idx: int, callsite_addr: int) -> int | None:
@@ -1347,19 +1467,33 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
                 return_addr = (insn_addr + insn_size) & 0xFFFF
 
         cleanup = _stack_cleanup_after_call(function, insns, call_idx, callsite_addr)
+        if cleanup is None:
+            cleanup = _callee_stack_cleanup_bytes_8616(function, insns[call_idx])
         target_source = _call_target_source_8616(insns[call_idx])
         raw_arg_widths = _collect_push_args_before_call(function, insns, call_idx, cleanup)
         raw_arg_sources = _collect_push_arg_sources_before_call(function, insns, call_idx, cleanup)
-        if isinstance(cleanup, int) and cleanup > 0 and sum(raw_arg_widths) < cleanup:
+        if (
+            isinstance(cleanup, int)
+            and cleanup > 0
+            and (sum(raw_arg_widths) < cleanup or _push_arg_sources_have_unknown_8616(raw_arg_sources))
+        ):
             window_insns = _linear_window_insns_for_callsite_8616(function, callsite_addr)
             window_idx = _find_call_index(window_insns, callsite_addr) if window_insns else None
             if window_idx is not None:
                 window_widths = _collect_push_args_before_call(function, window_insns, window_idx, cleanup)
-                if sum(window_widths) > sum(raw_arg_widths):
+                window_sources = _collect_push_arg_sources_before_call(
+                    function, window_insns, window_idx, cleanup
+                )
+                window_has_better_widths = sum(window_widths) > sum(raw_arg_widths)
+                window_has_same_widths_better_sources = (
+                    sum(window_widths) == sum(raw_arg_widths)
+                    and len(window_widths) == len(raw_arg_widths)
+                    and _push_arg_source_known_count_8616(window_sources)
+                    > _push_arg_source_known_count_8616(raw_arg_sources)
+                )
+                if window_has_better_widths or window_has_same_widths_better_sources:
                     raw_arg_widths = window_widths
-                    raw_arg_sources = _collect_push_arg_sources_before_call(
-                        function, window_insns, window_idx, cleanup
-                    )
+                    raw_arg_sources = window_sources
         arg_widths = _trim_push_args_to_stack_cleanup(raw_arg_widths, cleanup)
         push_arg_sources = _trim_push_arg_sources_to_stack_cleanup(raw_arg_widths, raw_arg_sources, cleanup)
         if os.environ.get("INERTIA_DEBUG_CALLSITE_SUMMARY"):

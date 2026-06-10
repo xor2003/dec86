@@ -373,6 +373,10 @@ def _cod_stack_alias_for_disp(
 ) -> str | None:
     if cod_metadata is None:
         return None
+    if disp < 0:
+        alias = cod_metadata.stack_aliases.get(disp)
+        if alias is not None:
+            return alias
     if normalized_aliases is not None:
         alias = normalized_aliases.get(disp)
         if alias is not None:
@@ -431,6 +435,52 @@ def _ordered_stack_identity_variables(codegen) -> list[tuple[object, object]]:
             for variable, cvar in variables_in_use.items()
             if _stack_slot_identity_for_variable(variable) is not None
         ],
+        key=lambda item: (
+            0 if isinstance(getattr(item[0], "offset", None), int) and getattr(item[0], "offset", 0) > 0 else 1,
+            getattr(item[0], "offset", 0) if isinstance(getattr(item[0], "offset", 0), int) else 0,
+            -getattr(item[0], "size", 0) if isinstance(getattr(item[0], "size", 0), int) else 0,
+            getattr(item[0], "name", "") or "",
+        ),
+    )
+
+
+def _ordered_stack_identity_nodes(codegen) -> list[tuple[object, object]]:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return []
+    variables_in_use = getattr(cfunc, "variables_in_use", None)
+    if not isinstance(variables_in_use, dict):
+        variables_in_use = {}
+        cfunc.variables_in_use = variables_in_use
+
+    nodes: dict[tuple[object, object, object], tuple[object, object]] = {}
+    for variable, cvar in variables_in_use.items():
+        if _stack_slot_identity_for_variable(variable) is None:
+            continue
+        nodes[(
+            getattr(variable, "offset", None),
+            getattr(variable, "size", None),
+            getattr(variable, "base", None),
+        )] = (variable, cvar)
+
+    root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+    for node in _iter_c_nodes_deep(root):
+        if not isinstance(node, structured_c.CVariable):
+            continue
+        variable = getattr(node, "variable", None)
+        if _stack_slot_identity_for_variable(variable) is None:
+            continue
+        key = (
+            getattr(variable, "offset", None),
+            getattr(variable, "size", None),
+            getattr(variable, "base", None),
+        )
+        nodes.setdefault(key, (variable, node))
+        if variable not in variables_in_use:
+            variables_in_use[variable] = node
+
+    return sorted(
+        nodes.values(),
         key=lambda item: (
             0 if isinstance(getattr(item[0], "offset", None), int) and getattr(item[0], "offset", 0) > 0 else 1,
             getattr(item[0], "offset", 0) if isinstance(getattr(item[0], "offset", 0), int) else 0,
@@ -510,7 +560,7 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
 
         changed = False
         used_names, name_owner_offsets = _collect_cod_name_ownership(codegen)
-        ordered_variables = _ordered_stack_identity_variables(codegen)
+        ordered_variables = _ordered_stack_identity_nodes(codegen)
         for variable, cvar in ordered_variables:
             if _stack_slot_identity_for_variable(variable) is None:
                 continue
@@ -527,6 +577,14 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
                 continue
             current_name = getattr(variable, "name", None)
             if isinstance(current_name, str) and current_name and current_name == alias:
+                used_names.add(current_name)
+                name_owner_offsets[current_name] = disp if isinstance(disp, int) else 0
+                continue
+            if (
+                isinstance(current_name, str)
+                and current_name.startswith(f"{alias}_")
+                and name_owner_offsets.get(current_name) == (disp if isinstance(disp, int) else 0)
+            ):
                 used_names.add(current_name)
                 name_owner_offsets[current_name] = disp if isinstance(disp, int) else 0
                 continue
@@ -3890,7 +3948,12 @@ def _materialize_stack_cvar_at_offset(codegen, offset: int, size: int = 2):
         stack_type_for_size=_stack_type_for_size,
     )
 
-def _canonicalize_stack_cvar_expr(expr, codegen, active_expr_ids: set[int] | None = None):
+def _canonicalize_stack_cvar_expr(
+    expr,
+    codegen,
+    active_expr_ids: set[int] | None = None,
+    analysis_context: dict[str, object] | None = None,
+):
     return _cli_stack_cvars._canonicalize_stack_cvar_expr(
         expr,
         codegen,
@@ -3898,6 +3961,7 @@ def _canonicalize_stack_cvar_expr(expr, codegen, active_expr_ids: set[int] | Non
         resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
         materialize_stack_cvar_at_offset=_materialize_stack_cvar_at_offset,
         active_expr_ids=active_expr_ids,
+        analysis_context=analysis_context,
     )
 
 def _canonicalize_stack_cvars(codegen) -> bool:

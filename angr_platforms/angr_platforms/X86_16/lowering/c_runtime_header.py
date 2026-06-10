@@ -14,7 +14,7 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             "typedef long time_t;\n"
             "\n"
             "#ifndef MK_FP\n"
-            "#define MK_FP(seg, off) ((void far *)((((unsigned long)(unsigned short)(seg)) << 16) | (unsigned short)(off)))\n"
+            "#define MK_FP(seg, off) ((uint8_t far *)((((unsigned long)(unsigned short)(seg)) << 16) | (unsigned short)(off)))\n"
             "#endif\n"
             "\n"
             "#define SEG_PTR(seg, off)  MK_FP((seg), (off))\n"

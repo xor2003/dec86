@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
+    CITE,
     CConstant,
+    CDirtyExpression,
     CReturn,
     CStatements,
     CUnaryOp,
@@ -117,6 +119,86 @@ def test_simplify_structured_expressions_inverts_negated_compare():
     result = codegen.cfunc.statements
     assert isinstance(result, CBinaryOp)
     assert result.op == "CmpGT"
+
+
+def test_simplify_structured_expressions_removes_same_arm_cite_condition_source():
+    project = _project()
+    codegen = _codegen([])
+    dead_selector = CBinaryOp("CmpEQ", _reg(project, "ax", codegen), _const(0, codegen), codegen=codegen)
+    live_value = CUnaryOp("Not", _reg(project, "bx", codegen), codegen=codegen)
+    expr = CITE(dead_selector, live_value, live_value, codegen=codegen)
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements is live_value
+    assert codegen._inertia_same_arm_cite_simplified_count_8616 == 1
+
+
+def test_simplify_virtual_key_extraction_refuses_non_register_dirty_without_crash():
+    class _NonRegisterDirty:
+        varid = 7
+        name = "vvar_7"
+        bits = 16
+
+        @property
+        def reg_offset(self):
+            raise TypeError("Is not a register")
+
+    codegen = _codegen([])
+    dirty_lhs = CDirtyExpression(_NonRegisterDirty(), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(dirty_lhs, _const(3, codegen), codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is False
+    assert len(codegen.cfunc.statements.statements) == 1
+
+
+def test_simplify_virtual_inline_refuses_dereference_address_carrier():
+    class _DirtyCarrier:
+        varid = 31
+        name = "vvar_31"
+        bits = 16
+
+    project = _project()
+    codegen = _codegen([])
+    dirty_lhs = CDirtyExpression(_DirtyCarrier(), codegen=codegen)
+    dirty_use = CDirtyExpression(_DirtyCarrier(), codegen=codegen)
+    replacement = _reg(project, "ss", codegen)
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Mul", dirty_use, _const(16, codegen), codegen=codegen),
+            _const(-2, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(dirty_lhs, replacement, codegen=codegen),
+            CAssignment(deref, _const(1, codegen), codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is False
+    write_lhs = codegen.cfunc.statements.statements[1].lhs
+    assert write_lhs.operand.lhs.lhs is dirty_use
+    assert codegen._inertia_virtual_inline_protected_address_refused == 1
 
 
 def test_eliminate_single_use_temporaries_inlines_immediate_use():

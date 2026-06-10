@@ -357,6 +357,11 @@ from inertia_decompiler.cache import (
     _store_cache_json,
 )
 
+from inertia_decompiler.library_function_classifier import (
+    filter_code_labels_for_library_policy,
+    is_library_like_function_name,
+)
+
 from inertia_decompiler.project_loading import (
     _build_project,
     _build_project_cached,
@@ -373,6 +378,7 @@ from inertia_decompiler.sidecar_metadata import (
     _recovery_code_labels,
     _signature_matched_code_addrs,
     _visible_code_labels,
+    attach_lst_metadata_to_project,
 )
 
 from inertia_decompiler.sidecar_parsers import _parse_ida_map_metadata
@@ -579,6 +585,17 @@ class DirectClinicPolicy8616(Enum):
     AGGRESSIVE_GUARD = "aggressive_guard"
 
 
+class _SourceCallOrderMode8616(Enum):
+    LINEAR_SUBSEQUENCE = "linear_subsequence"
+    SWITCH_CASE_GROUPS = "switch_case_groups"
+
+
+class _SourcePreprocessorCondition8616(Enum):
+    TRUE = "true"
+    FALSE = "false"
+    UNKNOWN = "unknown"
+
+
 def _direct_clinic_policy_8616(
     *,
     arch_name: str,
@@ -609,6 +626,20 @@ def _safe_function_callsite_count_8616(func) -> int:
     except Exception:
         counts.append(0)
     return max(counts, default=0)
+
+
+def _clinic_policy_needs_callsite_count_8616(
+    *,
+    arch_name: str,
+    direct_addr_mode: bool,
+    block_count: int,
+    byte_count: int,
+) -> bool:
+    if arch_name != "86_16" or not direct_addr_mode:
+        return False
+    if block_count >= 32 or byte_count >= 280:
+        return False
+    return block_count >= 10 and byte_count >= 160
 
 
 def _env_truthy_8616(name: str) -> bool:
@@ -663,25 +694,15 @@ def _discover_ranked_binary_offsets(
     include_library_functions = bool(getattr(args, "include_library_functions", False))
     setattr(project, "_inertia_include_library_functions", include_library_functions)
 
-    def _is_library_function_name_8616(name: str) -> bool:
-        lowered = (name or "").lower()
-        return (
-            lowered.startswith("sym.imp.")
-            or lowered.startswith("fcn.imp.")
-            or ".imp." in lowered
-            or lowered.startswith("import_")
-            or lowered.startswith("imp.")
-        )
-
     def _collect_rizin_library_offsets_8616(evidence: object | None) -> set[int]:
         if evidence is None:
             return set()
         out: set[int] = set()
         for function_fact in evidence.functions:
-            if _is_library_function_name_8616(function_fact.name):
+            if is_library_like_function_name(function_fact.name):
                 out.add(function_fact.addr)
         for symbol_fact in evidence.symbols:
-            if _is_library_function_name_8616(symbol_fact.name):
+            if is_library_like_function_name(symbol_fact.name):
                 out.add(symbol_fact.vaddr)
         return out
 
@@ -904,6 +925,21 @@ def _direct_addr_wall_clock_budget(
         explicit_timeout_floor=base if explicit_timeout else None,
     )
 
+
+def _direct_addr_validation_retry_count_8616(*, timeout_was_explicit: bool, args_timeout) -> int:
+    # An explicit direct-address timeout is a wall-clock contract. Do not multiply
+    # it with hidden validation retries; fallback lanes remain separately bounded.
+    if timeout_was_explicit and isinstance(args_timeout, int):
+        return 0
+    return 2
+
+
+def _direct_addr_robust_retry_enabled_8616(*, timeout_was_explicit: bool) -> bool:
+    # Robust retry is useful for default interactive recovery, but it must not
+    # silently double a caller-provided direct-address timeout budget.
+    return not timeout_was_explicit
+
+
 def _prepare_ranked_binary_preview_items(
     project: angr.Project,
     ranked_binary_offsets: Sequence[int],
@@ -984,8 +1020,8 @@ def _prepare_ranked_binary_preview_items(
     return _impl()
 
 def _preserve_source_label_for_recovered_function_8616(source_function, recovered_function) -> bool:
-    source_addr = getattr(source_function, "addr", None)
-    recovered_addr = getattr(recovered_function, "addr", None)
+    source_addr = function_original_addr(source_function)
+    recovered_addr = function_original_addr(recovered_function)
     if not isinstance(source_addr, int) or not isinstance(recovered_addr, int) or source_addr != recovered_addr:
         return False
     source_name = getattr(source_function, "name", None)
@@ -996,6 +1032,7 @@ def _preserve_source_label_for_recovered_function_8616(source_function, recovere
         return False
     try:
         recovered_function.name = source_name
+        mark_function_original_addr(recovered_function, source_addr)
         source_prototype = getattr(source_function, "prototype", None)
         if source_prototype is not None:
             recovered_function.prototype = source_prototype
@@ -1249,6 +1286,29 @@ def _function_work_cache_lookup(
 
     return _impl()
 
+
+def _isolated_project_recovery_target_8616(
+    function,
+    isolated_project,
+    fallback_linked_base: int,
+    fallback_max_addr: int,
+) -> tuple[int, int]:
+    candidate_addr = function_original_addr(function)
+    isolated_main_object = getattr(getattr(isolated_project, "loader", None), "main_object", None)
+    isolated_linked_base = getattr(isolated_main_object, "linked_base", fallback_linked_base)
+    isolated_max_addr = getattr(isolated_main_object, "max_addr", fallback_max_addr)
+    if not isinstance(isolated_linked_base, int):
+        isolated_linked_base = fallback_linked_base
+    if not isinstance(isolated_max_addr, int):
+        isolated_max_addr = fallback_max_addr
+    isolated_image_end = (
+        isolated_max_addr + 1
+        if isolated_max_addr >= isolated_linked_base
+        else isolated_linked_base + isolated_max_addr + 1
+    )
+    return candidate_addr, isolated_image_end
+
+
 @trace_function(name="function.work_item")
 def _run_function_work_item(
     item: FunctionWorkItem,
@@ -1371,6 +1431,11 @@ def _run_function_work_item(
                         tail_validation_enabled=tail_validation_enabled,
                         expected_validation_stages=expected_validation_stages,
                         c_target=getattr(decompile_project, "_inertia_c_target", "portable-flat"),
+                        source_evidence_payload=_source_evidence_payload_for_function_8616(
+                            binary_path=binary_path,
+                            function_name=item.function.name,
+                            payload=recovered_payload,
+                        ),
                     )
                     if recovered_acceptance.status == "ok" and recovered_acceptance.blocker is None:
                         status = recovered_acceptance.status
@@ -1387,6 +1452,11 @@ def _run_function_work_item(
                     tail_validation_enabled=tail_validation_enabled,
                     expected_validation_stages=expected_validation_stages,
                     c_target=getattr(decompile_project, "_inertia_c_target", "portable-flat"),
+                    source_evidence_payload=_source_evidence_payload_for_function_8616(
+                        binary_path=binary_path,
+                        function_name=item.function.name,
+                        payload=partial_payload,
+                    ),
                 )
                 if partial_acceptance.status == "ok" and partial_acceptance.blocker is None:
                     status = partial_acceptance.status
@@ -1463,6 +1533,7 @@ def _run_function_work_item(
         decompile_project = item.function.project
         decompile_cfg = item.function_cfg
         decompile_function = item.function
+        attach_lst_metadata_to_project(decompile_project, lst_metadata)
         failure_family_state = FailureFamilyState()
         fast_direct_probe = bool(getattr(decompile_project, "_inertia_fast_direct_probe", False))
         helper_result = _maybe_return_known_helper_result(
@@ -1580,16 +1651,24 @@ def _run_function_work_item(
                         base_addr=linked_base,
                         entry_point=getattr(item.function.project, "entry", linked_base),
                     )
+                    attach_lst_metadata_to_project(isolated_project, lst_metadata)
                     _inherit_tail_validation_runtime_policy(isolated_project, item.function.project)
+                    candidate_addr, isolated_image_end = _isolated_project_recovery_target_8616(
+                        item.function,
+                        isolated_project,
+                        linked_base,
+                        max_addr,
+                    )
                     isolated_cfg, isolated_function = _recover_candidate_function_pair(
                         isolated_project,
-                        candidate_addr=item.function.addr,
-                        image_end=linked_base + max_addr + 1,
+                        candidate_addr=candidate_addr,
+                        image_end=isolated_image_end,
                         metadata=lst_metadata,
                         project_entry=isolated_project.entry,
                         region_span=max(0x180, _function_complexity(item.function)[1] + 0x80),
                     )
                     _preserve_source_label_for_recovered_function_8616(item.function, isolated_function)
+                    mark_function_original_addr(isolated_function, candidate_addr)
                     decompile_project = isolated_project
                     decompile_cfg = isolated_cfg
                     decompile_function = isolated_function
@@ -1815,6 +1894,9 @@ def _validated_generated_c_acceptance_8616(
     emit_failure_diagnostics: bool = True,
     source_evidence_payload: str | None = None,
 ) -> CAcceptanceResult8616:
+    if isinstance(tail_validation_snapshot, dict):
+        tail_validation_snapshot = copy.deepcopy(tail_validation_snapshot)
+
     def _impl():
         baseline_payload = payload if isinstance(payload, str) else ""
         if status != "ok":
@@ -1908,7 +1990,7 @@ def _validated_generated_c_acceptance_8616(
         arg_class = _arg_class_violations_8616(accepted_payload)
         if arg_class:
             return _validation_fail("Source-evidenced pointer/value argument class mismatch: " + ", ".join(arg_class[:6]))
-        call_order = _call_order_gate_violations_8616(accepted_payload)
+        call_order = _call_order_gate_violations_8616(semantic_gate_payload)
         if call_order:
             return _validation_fail("Source-evidenced call order mismatch/missing: " + ", ".join(call_order[:6]))
         if _loop_presence_violation_8616(accepted_payload):
@@ -2011,17 +2093,11 @@ def _mark_tail_validation_failed_with_blocker_8616(
     entry["verdict"] = f"{stage} whole-tail validation [live_out] changed: {detail}"
 
 
-_FAILED_TIMEOUT_ACCEPTANCE_HINTS_8616: tuple[str, ...] = (
-    "Source-evidenced loop call was hoisted outside loop in emitted C.",
-    "Unreachable call statements present after return in emitted C.",
-)
-
-
 def _emit_failed_timeout_acceptance_hints_8616() -> None:
-    # Timeout/asm-fallback lanes cannot always materialize a final C payload,
-    # so emit concrete acceptance-gate blocker hints rather than unknown status.
-    for detail in _FAILED_TIMEOUT_ACCEPTANCE_HINTS_8616:
-        print(f"/* acceptance-gate unresolved: {detail} */")
+    # No static hints here: stale canned blockers are worse than an honest
+    # timeout/validation detail. Real acceptance failures are emitted by
+    # _validated_generated_c_acceptance_8616 with payload-specific evidence.
+    return
 
 
 _EMBEDDED_CALLS_RE = re.compile(r"(?m)^\s*\*\s*calls\s*=\s*(.+?)\s*$")
@@ -2143,7 +2219,7 @@ def _extract_original_c_comment_block_8616(emitted_c: str) -> str:
             line = stripped[3:].strip()
             if line:
                 lines.append(line)
-        return "\n".join(lines)
+        return _filter_inactive_selftest_source_branches_8616("\n".join(lines))
     end = _ORIGINAL_C_END_RE.search(emitted_c, start.end())
     segment = emitted_c[start.end() : end.start() if end is not None else len(emitted_c)]
     lines: list[str] = []
@@ -2151,7 +2227,125 @@ def _extract_original_c_comment_block_8616(emitted_c: str) -> str:
         stripped = raw.strip()
         if stripped.startswith("///"):
             lines.append(stripped[3:].strip())
-    return "\n".join(lines)
+    return _filter_inactive_selftest_source_branches_8616("\n".join(lines))
+
+
+_SOURCE_EVIDENCE_DEFINED_MACROS_8616 = frozenset()
+_SOURCE_EVIDENCE_UNDEFINED_MACROS_8616 = frozenset({"SORTDEMO_FUNCTION_SELFTEST", "OS2"})
+
+
+def _source_preprocessor_macro_state_8616(macro: str) -> _SourcePreprocessorCondition8616:
+    normalized = macro.strip()
+    if normalized in _SOURCE_EVIDENCE_DEFINED_MACROS_8616:
+        return _SourcePreprocessorCondition8616.TRUE
+    if normalized in _SOURCE_EVIDENCE_UNDEFINED_MACROS_8616:
+        return _SourcePreprocessorCondition8616.FALSE
+    return _SourcePreprocessorCondition8616.UNKNOWN
+
+
+def _invert_source_preprocessor_condition_8616(
+    condition: _SourcePreprocessorCondition8616,
+) -> _SourcePreprocessorCondition8616:
+    if condition is _SourcePreprocessorCondition8616.TRUE:
+        return _SourcePreprocessorCondition8616.FALSE
+    if condition is _SourcePreprocessorCondition8616.FALSE:
+        return _SourcePreprocessorCondition8616.TRUE
+    return _SourcePreprocessorCondition8616.UNKNOWN
+
+
+def _evaluate_source_preprocessor_condition_8616(directive: str) -> _SourcePreprocessorCondition8616:
+    directive = directive.strip()
+    directive_lower = directive.lower()
+    if directive_lower.startswith("ifdef "):
+        return _source_preprocessor_macro_state_8616(directive.split(None, 1)[1])
+    if directive_lower.startswith("ifndef "):
+        return _invert_source_preprocessor_condition_8616(
+            _source_preprocessor_macro_state_8616(directive.split(None, 1)[1])
+        )
+    if not directive_lower.startswith(("if ", "elif ")):
+        return _SourcePreprocessorCondition8616.UNKNOWN
+    expr = directive.split(None, 1)[1].strip()
+    if expr in {"0", "0L", "0l"}:
+        return _SourcePreprocessorCondition8616.FALSE
+    if expr in {"1", "1L", "1l"}:
+        return _SourcePreprocessorCondition8616.TRUE
+    defined_match = re.fullmatch(r"defined\s*(?:\(\s*([A-Za-z_]\w*)\s*\)|([A-Za-z_]\w*))", expr)
+    if defined_match is not None:
+        return _source_preprocessor_macro_state_8616(defined_match.group(1) or defined_match.group(2) or "")
+    not_defined_match = re.fullmatch(r"!\s*defined\s*(?:\(\s*([A-Za-z_]\w*)\s*\)|([A-Za-z_]\w*))", expr)
+    if not_defined_match is not None:
+        return _invert_source_preprocessor_condition_8616(
+            _source_preprocessor_macro_state_8616(
+                not_defined_match.group(1) or not_defined_match.group(2) or ""
+            )
+        )
+    return _SourcePreprocessorCondition8616.UNKNOWN
+
+
+def _source_preprocessor_active_8616(
+    parent_active: bool,
+    condition: _SourcePreprocessorCondition8616,
+) -> bool:
+    if not parent_active:
+        return False
+    # Unknown means keep: the source gate must not hide potentially required
+    # semantics when the target configuration is not known.
+    return condition is not _SourcePreprocessorCondition8616.FALSE
+
+
+def _filter_inactive_selftest_source_branches_8616(source_text: str) -> str:
+    out: list[str] = []
+    frames: list[dict[str, object]] = [
+        {
+            "active": True,
+            "parent_active": True,
+            "condition": _SourcePreprocessorCondition8616.TRUE,
+        }
+    ]
+    for raw_line in source_text.splitlines():
+        stripped = raw_line.strip()
+        directive = stripped.lstrip("#").strip()
+        directive_lower = directive.lower()
+        if directive_lower.startswith(("if ", "ifdef ", "ifndef ")):
+            parent_active = bool(frames[-1]["active"])
+            condition = _evaluate_source_preprocessor_condition_8616(directive)
+            frames.append(
+                {
+                    "active": _source_preprocessor_active_8616(parent_active, condition),
+                    "parent_active": parent_active,
+                    "condition": condition,
+                }
+            )
+            continue
+        if directive_lower.startswith("elif "):
+            if len(frames) > 1:
+                frame = frames[-1]
+                parent_active = bool(frame.get("parent_active", True))
+                previous = frame.get("condition", _SourcePreprocessorCondition8616.UNKNOWN)
+                if previous is _SourcePreprocessorCondition8616.TRUE:
+                    frame["active"] = False
+                    frame["condition"] = _SourcePreprocessorCondition8616.FALSE
+                elif previous is _SourcePreprocessorCondition8616.UNKNOWN:
+                    frame["active"] = parent_active
+                else:
+                    condition = _evaluate_source_preprocessor_condition_8616(directive)
+                    frame["active"] = _source_preprocessor_active_8616(parent_active, condition)
+                    frame["condition"] = condition
+            continue
+        if directive_lower.startswith("else"):
+            if len(frames) > 1:
+                frame = frames[-1]
+                parent_active = bool(frame.get("parent_active", True))
+                condition = frame.get("condition", _SourcePreprocessorCondition8616.UNKNOWN)
+                frame["active"] = parent_active and condition is not _SourcePreprocessorCondition8616.TRUE
+            continue
+        if directive_lower.startswith("endif"):
+            if len(frames) > 1:
+                frames.pop()
+            continue
+        if bool(frames[-1]["active"]):
+            out.append(raw_line)
+    return "\n".join(out)
 
 
 def _normalize_return_expr_for_evidence_gate_8616(
@@ -2472,6 +2666,117 @@ def _expected_call_order_from_original_8616(emitted_c: str) -> list[str]:
     return order
 
 
+def _call_order_source_tokens_8616(text: str, *, function_name: str | None = None) -> list[str]:
+    order: list[str] = []
+    for name in _CALL_TOKEN_RE.findall(text):
+        if (
+            name in {"if", "for", "while", "switch", "return", "sizeof"}
+            or name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616
+            or name.upper() in _INDIRECT_CALL_EVIDENCE_MARKERS_8616
+        ):
+            continue
+        if isinstance(function_name, str) and name == function_name:
+            continue
+        if not order or order[-1] != name:
+            order.append(name)
+    return order
+
+
+def _expected_switch_case_call_groups_from_original_8616(emitted_c: str) -> list[tuple[str, ...]]:
+    original_c = _extract_original_c_comment_block_8616(emitted_c)
+    if not original_c:
+        return []
+    if not re.search(r"\bswitch\s*\(", original_c) or not re.search(r"(?m)^\s*(?:case\b|default\b)", original_c):
+        return []
+    function_name = _extract_emitted_function_name_8616(emitted_c)
+    markers = list(re.finditer(r"(?m)^\s*(?:case\b[^:]*|default)\s*:", original_c))
+    groups: list[tuple[str, ...]] = []
+    for idx, marker in enumerate(markers):
+        start = marker.end()
+        end = markers[idx + 1].start() if idx + 1 < len(markers) else len(original_c)
+        case_call_evidence = _extract_original_call_evidence_lines_8616(original_c[start:end])
+        calls = tuple(_call_order_source_tokens_8616(case_call_evidence, function_name=function_name))
+        if len(calls) >= 2:
+            groups.append(calls)
+    return groups
+
+
+def _call_order_subsequence_missing_8616(expected_order: Sequence[str], actual_order: Sequence[str]) -> list[str]:
+    current_pos = 0
+    missing_or_reordered: list[str] = []
+    for name in expected_order:
+        normalized = name.lstrip("_")
+        for pos in range(current_pos, len(actual_order)):
+            if actual_order[pos] == normalized:
+                current_pos = pos + 1
+                break
+        else:
+            missing_or_reordered.append(normalized)
+    return missing_or_reordered
+
+
+def _ordered_call_names_from_text_8616(text: str) -> list[str]:
+    if not isinstance(text, str) or not text:
+        return []
+    text = _strip_comment_blocks_8616(text)
+    keywords = {"if", "for", "while", "switch", "return", "sizeof"}
+
+    def skip_string(index: int, quote: str) -> int:
+        index += 1
+        while index < len(text):
+            if text[index] == "\\":
+                index += 2
+                continue
+            if text[index] == quote:
+                return index + 1
+            index += 1
+        return index
+
+    def skip_ws(index: int) -> int:
+        while index < len(text) and text[index].isspace():
+            index += 1
+        return index
+
+    def parse_until(index: int, stop_char: str | None = None) -> tuple[list[str], int]:
+        names: list[str] = []
+        while index < len(text):
+            ch = text[index]
+            if stop_char is not None and ch == stop_char:
+                return names, index + 1
+            if ch in {'"', "'"}:
+                index = skip_string(index, ch)
+                continue
+            if ch == "(":
+                nested, index = parse_until(index + 1, ")")
+                names.extend(nested)
+                continue
+            if ch == "_" or ch.isalpha():
+                start = index
+                index += 1
+                while index < len(text) and (text[index] == "_" or text[index].isalnum()):
+                    index += 1
+                raw_name = text[start:index]
+                paren = skip_ws(index)
+                if paren < len(text) and text[paren] == "(":
+                    nested, index = parse_until(paren + 1, ")")
+                    names.extend(nested)
+                    name = raw_name.lstrip("_")
+                    if (
+                        name
+                        and name not in keywords
+                        and name not in _CALL_FLOOR_SCAFFOLD_HELPERS_8616
+                        and name.upper() not in _INDIRECT_CALL_EVIDENCE_MARKERS_8616
+                    ):
+                        names.append(name)
+                    continue
+                continue
+            index += 1
+        return names, index
+
+    names, _end = parse_until(0)
+    return names
+
+
 def _extract_emitted_function_name_8616(emitted_c: str) -> str | None:
     if not isinstance(emitted_c, str) or not emitted_c:
         return None
@@ -2486,20 +2791,22 @@ def _extract_emitted_function_name_8616(emitted_c: str) -> str | None:
 
 
 def _call_order_gate_violations_8616(emitted_c: str) -> list[str]:
+    body = _extract_function_body_text_8616(emitted_c)
+    actual_order = _ordered_call_names_from_text_8616(body)
+    switch_groups = _expected_switch_case_call_groups_from_original_8616(emitted_c)
+    if switch_groups:
+        mode = _SourceCallOrderMode8616.SWITCH_CASE_GROUPS
+        missing_groups = []
+        for group in switch_groups:
+            if _call_order_subsequence_missing_8616(group, actual_order):
+                missing_groups.append("->".join(name.lstrip("_") for name in group))
+        return missing_groups if mode is _SourceCallOrderMode8616.SWITCH_CASE_GROUPS else []
+
+    mode = _SourceCallOrderMode8616.LINEAR_SUBSEQUENCE
     expected_order = _expected_call_order_from_original_8616(emitted_c)
     if len(expected_order) < 2:
         return []
-    body = _extract_function_body_text_8616(emitted_c)
-    current_pos = -1
-    missing_or_reordered: list[str] = []
-    for name in expected_order:
-        search_from = current_pos + 1 if current_pos >= 0 else 0
-        pos = body.find(f"{name}(", search_from)
-        if pos < 0:
-            missing_or_reordered.append(name)
-            continue
-        current_pos = pos
-    return missing_or_reordered
+    return _call_order_subsequence_missing_8616(expected_order, actual_order) if mode is _SourceCallOrderMode8616.LINEAR_SUBSEQUENCE else []
 
 
 def _loop_presence_violation_8616(emitted_c: str) -> bool:
@@ -3678,6 +3985,7 @@ def main(argv: list[str] | None = None) -> int:
                         print("\n/* == asm fallback == */")
                         print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
                         sys.stdout.flush()
+                        emit_compact_summary()
                         sys.stderr.flush()
                         os._exit(4)
                 _emit_timeout_and_exit(args.timeout, detail)
@@ -4308,7 +4616,16 @@ def main(argv: list[str] | None = None) -> int:
                     prev_fast_block_peephole = getattr(direct_project, "_inertia_fast_block_peephole", False)
                     prev_peephole_cap = getattr(direct_project, "_inertia_clinic_peephole_cap", None)
                     direct_arch_name = getattr(getattr(direct_project, "arch", None), "name", "")
-                    direct_callsite_count = _safe_function_callsite_count_8616(func)
+                    direct_callsite_count = (
+                        _safe_function_callsite_count_8616(func)
+                        if _clinic_policy_needs_callsite_count_8616(
+                            arch_name=direct_arch_name,
+                            direct_addr_mode=args.addr is not None,
+                            block_count=_bcount,
+                            byte_count=_bbytes,
+                        )
+                        else 0
+                    )
                     direct_clinic_policy = _direct_clinic_policy_8616(
                         arch_name=direct_arch_name,
                         direct_addr_mode=args.addr is not None,
@@ -4484,19 +4801,21 @@ def main(argv: list[str] | None = None) -> int:
                 partial_payload=partial_payload,
                 tail_validation=direct_tail_validation_snapshot or _tail_validation_snapshot_for_function_run(direct_project, func),
             )
+            direct_payload_for_validation = _with_source_evidence_comments_8616(
+                args.binary,
+                func.name,
+                direct_result.payload,
+                enabled=bool(args.alternate_source_c),
+            )
             direct_acceptance = _validated_generated_c_acceptance_8616(
                 status=direct_result.status,
-                payload=_with_source_evidence_comments_8616(
-                    args.binary,
-                    func.name,
-                    direct_result.payload,
-                    enabled=bool(args.alternate_source_c),
-                ),
+                payload=direct_payload_for_validation,
                 tail_validation_snapshot=direct_result.tail_validation,
                 tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                 expected_validation_stages=["structuring", "postprocess"],
                 c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
-                emit_failure_diagnostics=False,
+                emit_failure_diagnostics=_env_truthy_8616("INERTIA_DUMP_VALIDATION_FAILED_PAYLOAD"),
+                source_evidence_payload=direct_payload_for_validation,
             )
             direct_status = direct_acceptance.status
             direct_blocker = direct_acceptance.blocker
@@ -4525,8 +4844,20 @@ def main(argv: list[str] | None = None) -> int:
 
                 return max(candidates, key=_rank)
 
+            def _preserve_acceptance_candidate_or_best_failure(
+                acceptance: CAcceptanceResult8616,
+                result: FunctionWorkResult,
+            ) -> str | None:
+                checked_payload = getattr(acceptance, "gcc_checked_payload", None)
+                if isinstance(checked_payload, str) and checked_payload.strip():
+                    return checked_payload
+                validated_payload = getattr(acceptance, "validated_payload", None)
+                if isinstance(validated_payload, str) and validated_payload.strip():
+                    return validated_payload
+                return _preserve_best_failure_candidate(result)
+
             if direct_status != direct_result.status or direct_blocker is not None:
-                preserved_candidate = _preserve_best_failure_candidate(direct_result)
+                preserved_candidate = _preserve_acceptance_candidate_or_best_failure(direct_acceptance, direct_result)
                 direct_payload = direct_acceptance.gcc_checked_payload
             else:
                 direct_payload = direct_result.payload
@@ -4550,6 +4881,11 @@ def main(argv: list[str] | None = None) -> int:
                         expected_validation_stages=["structuring", "postprocess"],
                         c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
                         emit_failure_diagnostics=False,
+                        source_evidence_payload=_source_evidence_payload_for_function_8616(
+                            binary_path=args.binary,
+                            function_name=func.name,
+                            payload=evidence_payload,
+                        ),
                     )
                     if evidence_acceptance.status == "ok" and evidence_acceptance.blocker is None:
                         direct_result = replace(
@@ -4572,6 +4908,11 @@ def main(argv: list[str] | None = None) -> int:
                     expected_validation_stages=["structuring", "postprocess"],
                     c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
                     emit_failure_diagnostics=False,
+                    source_evidence_payload=_source_evidence_payload_for_function_8616(
+                        binary_path=args.binary,
+                        function_name=func.name,
+                        payload=direct_result.partial_payload,
+                    ),
                 )
                 if partial_acceptance.status == "ok" and partial_acceptance.blocker is None:
                     direct_result = replace(
@@ -4636,7 +4977,11 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
             )
-            if direct_result.status != "ok" and not clinic_core_timeout:
+            if (
+                direct_result.status != "ok"
+                and not clinic_core_timeout
+                and _direct_addr_robust_retry_enabled_8616(timeout_was_explicit=timeout_was_explicit)
+            ):
                 # Robust direct-address retry lane: reuse the same function-work
                 # decompile path as whole-file sweeps. This avoids direct-only
                 # recovery/decompile divergence for functions that are stable in
@@ -4668,19 +5013,21 @@ def main(argv: list[str] | None = None) -> int:
                     robust_snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
                     if not robust_snapshot and isinstance(getattr(robust_result, "tail_validation", None), dict):
                         robust_snapshot = dict(robust_result.tail_validation)
+                    robust_payload_for_validation = _with_source_evidence_comments_8616(
+                        args.binary,
+                        func.name,
+                        robust_result.payload,
+                        enabled=bool(args.alternate_source_c),
+                    )
                     robust_acceptance = _validated_generated_c_acceptance_8616(
                         status="ok",
-                        payload=_with_source_evidence_comments_8616(
-                            args.binary,
-                            func.name,
-                            robust_result.payload,
-                            enabled=bool(args.alternate_source_c),
-                        ),
+                        payload=robust_payload_for_validation,
                         tail_validation_snapshot=robust_snapshot,
                         tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                         expected_validation_stages=["structuring", "postprocess"],
                         c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
                         emit_failure_diagnostics=False,
+                        source_evidence_payload=robust_payload_for_validation,
                     )
                     if robust_acceptance.status == "ok" and robust_acceptance.blocker is None:
                         direct_result = replace(
@@ -4791,7 +5138,10 @@ def main(argv: list[str] | None = None) -> int:
                 if direct_result.status == "validation_failed":
                     best_direct_candidate = direct_result
                     best_direct_rank = _candidate_rank(direct_result)
-                    retry_count = 0 if (timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6) else 2
+                    retry_count = _direct_addr_validation_retry_count_8616(
+                        timeout_was_explicit=timeout_was_explicit,
+                        args_timeout=args.timeout,
+                    )
                     for retry_idx in range(retry_count):
                         try:
                             retry_status, retry_payload, retry_partial, *retry_extra = _run_with_timeout_in_daemon_thread(
@@ -4814,24 +5164,29 @@ def main(argv: list[str] | None = None) -> int:
                                 tail_validation=retry_tail_validation
                                 or _tail_validation_snapshot_for_function_run(direct_project, func),
                             )
+                            retry_payload_for_validation = _with_source_evidence_comments_8616(
+                                args.binary,
+                                func.name,
+                                retry_result.payload,
+                                enabled=bool(args.alternate_source_c),
+                            )
                             retry_acceptance = _validated_generated_c_acceptance_8616(
                                 status=retry_result.status,
-                                payload=_with_source_evidence_comments_8616(
-                                    args.binary,
-                                    func.name,
-                                    retry_result.payload,
-                                    enabled=bool(args.alternate_source_c),
-                                ),
+                                payload=retry_payload_for_validation,
                                 tail_validation_snapshot=retry_result.tail_validation,
                                 tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
                                 expected_validation_stages=["structuring", "postprocess"],
                                 c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
                                 emit_failure_diagnostics=False,
+                                source_evidence_payload=retry_payload_for_validation,
                             )
                             retry_checked_status = retry_acceptance.status
                             retry_blocker = retry_acceptance.blocker
                             if retry_checked_status != retry_result.status or retry_blocker is not None:
-                                retry_preserved_candidate = _preserve_best_failure_candidate(retry_result)
+                                retry_preserved_candidate = _preserve_acceptance_candidate_or_best_failure(
+                                    retry_acceptance,
+                                    retry_result,
+                                )
                                 retry_result = replace(
                                     retry_result,
                                     status=retry_checked_status,
@@ -4913,6 +5268,7 @@ def main(argv: list[str] | None = None) -> int:
                         expected_validation_stages=["structuring", "postprocess"],
                         c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
                         emit_failure_diagnostics=False,
+                        source_evidence_payload=payload_for_validation,
                     )
                     checked_status = checked_acceptance.status
                     checked_blocker = checked_acceptance.blocker
@@ -4941,6 +5297,11 @@ def main(argv: list[str] | None = None) -> int:
                             expected_validation_stages=["structuring", "postprocess"],
                             c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
                             emit_failure_diagnostics=False,
+                            source_evidence_payload=_source_evidence_payload_for_function_8616(
+                                binary_path=args.binary,
+                                function_name=func.name,
+                                payload=partial_payload_text,
+                            ),
                         )
                         checked_status = checked_acceptance.status
                         checked_blocker = checked_acceptance.blocker
@@ -5025,6 +5386,11 @@ def main(argv: list[str] | None = None) -> int:
                                     tail_validation_enabled=_tail_validation_runtime_enabled(project),
                                     expected_validation_stages=["structuring", "postprocess"],
                                     c_target=getattr(project, "_inertia_c_target", "portable-flat"),
+                                    source_evidence_payload=_source_evidence_payload_for_function_8616(
+                                        binary_path=args.binary,
+                                        function_name=side_func.name,
+                                        payload=side_payload,
+                                    ),
                                 )
                                 side_status_checked = side_acceptance.status
                                 side_payload_checked = side_acceptance.gcc_checked_payload
@@ -5498,18 +5864,24 @@ def main(argv: list[str] | None = None) -> int:
         visible_code_labels = _visible_code_labels(lst_metadata)
         recovery_code_labels = _recovery_code_labels(lst_metadata) if lst_metadata is not None else {}
         include_library_functions = bool(getattr(args, "include_library_functions", False))
+        library_label_skipped_count = 0
         if include_library_functions and lst_metadata is not None:
             visible_code_labels = dict(getattr(lst_metadata, "code_labels", {}) or {})
             recovery_code_labels = dict(visible_code_labels)
-        elif lst_metadata is not None and not visible_code_labels and recovery_code_labels:
-            # Sidecar has only signature/library labels. Use them as bounded catalog
-            # instead of speculative ranked scans that are often noisy on packed EXEs.
-            include_library_functions = True
-            setattr(project, "_inertia_hidden_signature_mode", True)
-            print("/* sidecar provides only signature labels; auto-enabling library-labeled function catalog for stable recovery. */")
+        elif lst_metadata is not None:
+            visible_filter = filter_code_labels_for_library_policy(lst_metadata, visible_code_labels)
+            recovery_filter = filter_code_labels_for_library_policy(lst_metadata, recovery_code_labels)
+            visible_code_labels = visible_filter.labels
+            recovery_code_labels = recovery_filter.labels
+            library_label_skipped_count = max(visible_filter.skipped_count, recovery_filter.skipped_count)
+            if not visible_code_labels and not recovery_code_labels and getattr(lst_metadata, "code_labels", None):
+                print(
+                    "/* sidecar labels are signature/library-only; skipping them by default "
+                    "(use --include-library-functions to include). */"
+                )
         seed_code_labels = visible_code_labels or recovery_code_labels
         skipped_signature_labels = (
-            len(getattr(lst_metadata, "code_labels", {})) - len(visible_code_labels) if lst_metadata is not None else 0
+            len(_signature_matched_code_addrs(lst_metadata)) if lst_metadata is not None and not include_library_functions else 0
         )
         if low_memory_path:
             print("/* Low-memory mode: using a smaller, safer function-discovery pass. */")
@@ -5770,6 +6142,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if skipped_signature_labels > 0:
             print(f"/* skipping {skipped_signature_labels} signature-matched function(s) by default. */")
+        if library_label_skipped_count > 0:
+            print(f"/* skipping {library_label_skipped_count} library-like sidecar function(s) by default. */")
         elif include_library_functions and lst_metadata is not None:
             print("/* including signature/library-labeled functions as requested. */")
 
@@ -5868,7 +6242,7 @@ def main(argv: list[str] | None = None) -> int:
             sidecar_preview_limit = args.max_functions
         if lst_metadata is not None and visible_code_labels:
             print("/* == known function catalog (sidecar-backed) == */")
-            print(_format_sidecar_function_catalog(lst_metadata, limit=sidecar_preview_limit))
+            print(_format_sidecar_function_catalog(lst_metadata, limit=sidecar_preview_limit, code_labels=visible_code_labels))
             if sidecar_preview_limit is not None and total_functions > sidecar_preview_limit:
                 print(
                     f"/* catalog preview limited to first {sidecar_preview_limit} entries for responsiveness. */"

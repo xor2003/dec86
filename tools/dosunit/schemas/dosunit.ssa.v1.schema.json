@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.ssa.v1",
+  "title": "DOS Unit Straight-Line SSA",
+  "type": "object",
+  "required": ["schema", "exe", "source_ir", "module", "parameters", "functions", "refusals", "counters"],
+  "properties": {
+    "schema": { "const": "dosunit.ssa.v1" },
+    "id": { "type": "string" },
+    "exe": { "type": "string" },
+    "source_ir": { "const": "vex" },
+    "module": { "type": "string" },
+    "parameters": { "type": "object" },
+    "functions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["function", "entry", "source", "inputs", "outputs", "assignments"],
+        "properties": {
+          "id": { "type": "string" },
+          "function": { "type": "object" },
+          "entry": { "type": "object" },
+          "source": { "type": "object" },
+          "inputs": { "type": "array" },
+          "outputs": { "type": "object" },
+          "assignments": { "type": "array" }
+        }
+      }
+    },
+    "refusals": { "type": "array" },
+    "counters": { "type": "object" }
+  }
+}

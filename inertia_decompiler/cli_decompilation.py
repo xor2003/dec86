@@ -72,7 +72,10 @@ from angr_platforms.X86_16.decompiler_postprocess_flags import (
     _rewrite_flag_condition_pairs_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_jcc import _rewrite_decoded_jcc_conditions_8616
-from angr_platforms.X86_16.decompiler_postprocess_stage import _materialize_missing_terminal_ax_return_8616
+from angr_platforms.X86_16.decompiler_postprocess_stage import (
+    _dead_code_elimination_after_flag_prune_8616,
+    _materialize_missing_terminal_ax_return_8616,
+)
 from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
@@ -122,6 +125,7 @@ from inertia_decompiler.sidecar_metadata import (
     _recovery_code_labels,
     _signature_matched_code_addrs,
     _visible_code_labels,
+    attach_lst_metadata_to_project,
 )
 
 from inertia_decompiler.sidecar_parsers import _parse_ida_map_metadata
@@ -1328,6 +1332,19 @@ def _snapshot_codegen_text(codegen) -> str:
         return ""
 
 
+def _select_evidence_recovered_c_8616(formatted: str, evidence_recovered_c: str | None) -> str:
+    """Use whole-body evidence recovery only as a rescue, never as a late AST override."""
+
+    if not isinstance(evidence_recovered_c, str) or not evidence_recovered_c.strip():
+        return formatted
+    if not isinstance(formatted, str) or not formatted.strip():
+        return evidence_recovered_c
+    quality = assess_decompiled_c_text(formatted)
+    if quality.reject_as_decompiled:
+        return evidence_recovered_c
+    return formatted
+
+
 def _bind_codegen_render_variable_types_8616(codegen) -> None:
     def _impl():
         project = getattr(codegen, "project", None)
@@ -1715,6 +1732,10 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
     def _impl():
         fallback_text = _snapshot_codegen_text(codegen)
         log = logging.getLogger(__name__)
+        try:
+            selector_return_contract_active = bool(codegen._inertia_return_selector_materialized_8616)
+        except AttributeError:
+            selector_return_contract_active = False
         # Rendering rule:
         # Once AST-level rewrites have run, prefer regenerating text from the updated
         # codegen tree. Cached snapshots are fallback-only; do not let the final text
@@ -1758,15 +1779,15 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
 
                 _normalize_stack_variable_identifiers_8616(codegen)
             _bind_codegen_render_variable_types_8616(codegen)
-            if getattr(codegen, "_inertia_callsite_args_ast_materialized_8616", False):
+            if getattr(codegen, "_inertia_callsite_args_ast_materialized_8616", False) and not selector_return_contract_active:
                 with contextlib.suppress(Exception):
-                    if replay_callsite_stack_arguments_after_regeneration_8616(
+                    replay_callsite_stack_arguments_after_regeneration_8616(
                         getattr(codegen, "project", None),
                         codegen,
-                    ):
-                        direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-pre-replay")
-                        if direct_text is not None:
-                            return direct_text, True
+                    )
+                direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-call-arg-materialization")
+                if direct_text is not None:
+                    return direct_text, True
             if getattr(codegen, "_inertia_postprocess_changed", False):
                 direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-before-regenerate")
                 if direct_text is not None:
@@ -1776,10 +1797,11 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
                     return rendered_text, True
             codegen.regenerate_text()
             replay_changed = False
-            with contextlib.suppress(Exception):
-                replay_changed = bool(
-                    replay_callsite_stack_arguments_after_regeneration_8616(getattr(codegen, "project", None), codegen)
-                )
+            if not selector_return_contract_active:
+                with contextlib.suppress(Exception):
+                    replay_changed = bool(
+                        replay_callsite_stack_arguments_after_regeneration_8616(getattr(codegen, "project", None), codegen)
+                    )
             if replay_changed:
                 direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-post-replay")
                 if direct_text is not None:
@@ -1816,12 +1838,43 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
 
 
 def _codegen_requires_render_refresh_8616(codegen) -> bool:
-    return bool(getattr(codegen, "_inertia_codegen_decl_refresh_required_8616", False))
+    return bool(
+        getattr(codegen, "_inertia_codegen_decl_refresh_required_8616", False)
+        or getattr(codegen, "_inertia_codegen_call_args_render_refresh_required_8616", False)
+        or getattr(codegen, "_inertia_force_codegen_regeneration_8616", False)
+    )
+
+
+def _postprocess_regenerated_text_available_8616(codegen) -> bool:
+    text = getattr(codegen, "text", None)
+    if not isinstance(text, str) or not text.strip():
+        return False
+    if getattr(codegen, "_inertia_regeneration_failed", None) is not False:
+        return False
+    context = getattr(codegen, "_inertia_regeneration_context", None)
+    return isinstance(context, str) and bool(context.strip())
+
+
+def _should_refuse_legacy_cli_rewrite_8616(
+    project: angr.Project,
+    *,
+    small_function: bool,
+    tail_validation_passed: bool,
+) -> bool:
+    return bool(
+        getattr(getattr(project, "arch", None), "name", None) == "86_16"
+        and not small_function
+        and tail_validation_passed
+    )
 
 
 def _clear_codegen_render_refresh_8616(codegen) -> None:
     with contextlib.suppress(Exception):
         setattr(codegen, "_inertia_codegen_decl_refresh_required_8616", False)
+    with contextlib.suppress(Exception):
+        setattr(codegen, "_inertia_codegen_call_args_render_refresh_required_8616", False)
+    with contextlib.suppress(Exception):
+        setattr(codegen, "_inertia_force_codegen_regeneration_8616", False)
 
 def _emit_optional_source_sidecar_c_block(
     binary_path: Path | None,
@@ -2162,6 +2215,21 @@ def _implicit_placeholder_artifact_count_8616(rendered_text: str) -> int:
     return _impl()
 
 
+def _render_candidate_score_8616(rendered_text: str, cod_metadata: CODProcMetadata | None) -> tuple[int, int, int, int, int]:
+    """Rank already-produced C candidates without creating new semantics."""
+    if not isinstance(rendered_text, str) or not rendered_text.strip():
+        return (-10**9, -10**9, -10**9, -10**9, -10**9)
+    quality = assess_decompiled_c_text(rendered_text)
+    quality_penalty = len(quality.markers) if quality.reject_as_decompiled else 0
+    return (
+        _expected_call_presence_score_8616(rendered_text, cod_metadata),
+        _expected_call_arity_score_8616(rendered_text, cod_metadata),
+        -quality_penalty,
+        _final_c_unreachable_after_return_penalty_8616(rendered_text),
+        -_implicit_placeholder_artifact_count_8616(rendered_text),
+    )
+
+
 def _candidate_expected_global_names_8616(
     cod_metadata: CODProcMetadata | None,
     synthetic_globals: dict[int, tuple[str, int]] | None,
@@ -2254,6 +2322,13 @@ def _rehydrate_missing_evidenced_calls_on_live_codegen_8616(
                     "[call-recover-live] skip=no-metadata-or-codegen codegen_id=%#x has_metadata=%s",
                     id(codegen) if codegen is not None else 0,
                     bool(cod_metadata is not None),
+                )
+            return rendered_text
+        if not isinstance(rendered_text, str) or not rendered_text.strip():
+            if debug_enabled:
+                logging.getLogger(__name__).warning(
+                    "[call-recover-live] skip=no-rendered-snapshot codegen_id=%#x",
+                    id(codegen),
                 )
             return rendered_text
         expected = [str(name).lstrip("_") for name in tuple(dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ())) if str(name).lstrip("_") not in {"", "aNchkstk"}]
@@ -2467,6 +2542,7 @@ def _decompile_function(
     failure_family_state: FailureFamilyState | None = None,
 ) -> tuple[str, str]:
     def _impl():
+        attach_lst_metadata_to_project(project, lst_metadata)
         setattr(project, "_inertia_partial_codegen_text", None)
         current_func_addr = function_original_addr(function)
         active_func_addr = getattr(project, "_inertia_tv_active_function_addr", None)
@@ -2577,6 +2653,7 @@ def _decompile_function(
                         and int(profile.get("call_site_count", 0) or 0) == 0
                         and int(profile.get("internal_call_count", 0) or 0) == 0
                     ),
+                    large_16bit_function=bool(project.arch.name == "86_16" and block_count >= 64 and byte_count >= 0x180),
                 )
                 expr_collapse_depth = _preferred_expr_collapse_depth(
                     block_count,
@@ -2769,6 +2846,7 @@ def _decompile_function(
                     base_addr=linked_base,
                     entry_point=project.entry,
                 )
+                attach_lst_metadata_to_project(isolated_project, lst_metadata)
                 _inherit_tail_validation_runtime_policy(isolated_project, project)
                 retry_addr = function_original_addr(function)
                 isolated_cfg, isolated_function = _recover_candidate_function_pair(
@@ -2802,6 +2880,15 @@ def _decompile_function(
                 allow_isolated_retry=False,
                 deadline=deadline,
                 failure_family_state=failure_family_state,
+            )
+
+        def _debug_cli_stage_marker_8616(label: str) -> None:
+            if os.environ.get("INERTIA_DEBUG_CLI_STAGE_MARKERS") != "1":
+                return
+            print(
+                f"[dbg] cli-stage {function_original_addr(function):#x} {getattr(function, 'name', 'sub')} {label}",
+                file=sys.stderr,
+                flush=True,
             )
 
         dec = None
@@ -3057,6 +3144,7 @@ def _decompile_function(
                         bool(lower_stable_ss_linear_stack_dereferences_8616(dec.codegen, project=project))
                         or stack_semantics_changed
                     )
+                    stack_semantics_changed = bool(_dead_code_elimination_8616(dec.codegen)) or stack_semantics_changed
                     if stack_semantics_changed:
                         dec.codegen._inertia_codegen_decl_refresh_required_8616 = True
                 except PipelineHardError:
@@ -3153,6 +3241,7 @@ def _decompile_function(
             )
             setattr(project, "_inertia_partial_codegen_text", None)
             return "ok", formatted
+        _debug_cli_stage_marker_8616("postprocess-cli-entry")
         setattr(project, "_inertia_rewrite_cache", {})
         if synthetic_globals:
             setattr(project, "_inertia_synthetic_globals", synthetic_globals)
@@ -3313,6 +3402,13 @@ def _decompile_function(
         def _snapshot_codegen_cfunc():
             if large_x86_16_function:
                 return None
+            if project.arch.name == "86_16" and not small_function:
+                setattr(
+                    dec.codegen,
+                    "_inertia_call_loss_snapshot_refused_nontrivial_8616",
+                    int(getattr(dec.codegen, "_inertia_call_loss_snapshot_refused_nontrivial_8616", 0) or 0) + 1,
+                )
+                return None
             cfunc = getattr(dec.codegen, "cfunc", None)
             if cfunc is None:
                 return None
@@ -3405,7 +3501,7 @@ def _decompile_function(
             return _simplify_structured_c_expressions(dec.codegen)
 
         def _run_evidence_dce_pass() -> bool:
-            return bool(_dead_code_elimination_8616(dec.codegen))
+            return bool(_dead_code_elimination_after_flag_prune_8616(dec.codegen))
 
         def _run_materialize_missing_terminal_ax_return_pass() -> bool:
             return _materialize_missing_terminal_ax_return_8616(project, dec.codegen)
@@ -3476,8 +3572,8 @@ def _decompile_function(
             lambda: _simplify_nested_mk_fp_calls(dec.codegen),
             lambda: _attach_access_trait_field_names(project, dec.codegen),
             lambda: _attach_pointer_member_names(project, dec.codegen),
-            lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
-            lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
+            lambda: _attach_cod_variable_names(dec.codegen, effective_cod_metadata),
+            lambda: _attach_cod_callee_names(project, dec.codegen, effective_cod_metadata),
             _run_simplify_structured_c_expressions_pass,
             lambda: _simplify_basic_algebraic_identities(dec.codegen),
             _run_materialize_missing_terminal_ax_return_pass,
@@ -3490,6 +3586,7 @@ def _decompile_function(
             _run_fact_backed_stack_rewrite_pass,
             _run_stack_lowering_pass,
             lambda: _run_typed_widening_pass(project, dec.codegen),
+            lambda: _attach_cod_variable_names(dec.codegen, effective_cod_metadata),
             lambda: _prune_dead_local_assignments(dec.codegen),
             lambda: _prune_unused_local_declarations(dec.codegen),
         )
@@ -3531,8 +3628,8 @@ def _decompile_function(
                 lambda: _simplify_nested_mk_fp_calls(dec.codegen),
                 lambda: _attach_access_trait_field_names(project, dec.codegen),
                 lambda: _attach_pointer_member_names(project, dec.codegen),
-                lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
-                lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
+                lambda: _attach_cod_variable_names(dec.codegen, effective_cod_metadata),
+                lambda: _attach_cod_callee_names(project, dec.codegen, effective_cod_metadata),
                 _run_simplify_structured_c_expressions_pass,
                 lambda: _simplify_basic_algebraic_identities(dec.codegen),
                 _run_materialize_missing_terminal_ax_return_pass,
@@ -3545,6 +3642,7 @@ def _decompile_function(
                 _run_fact_backed_stack_rewrite_pass,
                 _run_stack_lowering_pass,
                 lambda: _run_typed_widening_pass(project, dec.codegen),
+                lambda: _attach_cod_variable_names(dec.codegen, effective_cod_metadata),
                 lambda: _prune_dead_local_assignments(dec.codegen),
                 lambda: _prune_unused_local_declarations(dec.codegen),
             )
@@ -3600,23 +3698,45 @@ def _decompile_function(
                 binary_path,
                 lst_metadata,
             )
+            _debug_cli_stage_marker_8616("before-live-snapshot")
             _live_snapshot = _snapshot_codegen_text(dec.codegen)
+            _debug_cli_stage_marker_8616("after-live-snapshot")
             _rehydrated = _rehydrate_missing_evidenced_calls_on_live_codegen_8616(
                 project,
                 dec.codegen,
                 rehydrate_metadata,
                 _live_snapshot,
             )
+            _debug_cli_stage_marker_8616("after-live-rehydrate")
             if isinstance(_rehydrated, str) and _rehydrated.strip():
                 setattr(project, "_inertia_partial_codegen_text", _rehydrated)
         except Exception as ex:
             logging.getLogger(__name__).debug("live call rehydration skipped: %s", ex)
-        if (
-            getattr(getattr(project, "arch", None), "name", "") == "86_16"
-            and block_count >= 40
-            and isinstance(_live_snapshot, str)
-            and len(_live_snapshot) >= 50_000
-            and x86_16_tail_validation_snapshot_passed(_tail_validation_snapshot_for_function_run(project, function))
+        before_safe_dce_calls = _codegen_call_expr_count() if call_loss_guard_active else 0
+        safe_dce_changed = _run_evidence_dce_pass()
+        if safe_dce_changed:
+            after_safe_dce_calls = _codegen_call_expr_count() if call_loss_guard_active else before_safe_dce_calls
+            if after_safe_dce_calls < before_safe_dce_calls:
+                raise PipelineHardError(
+                    "safe DCE removed call expressions",
+                    layer="optimization",
+                    function_addr=function_original_addr(function),
+                    details={
+                        "before_calls": before_safe_dce_calls,
+                        "after_calls": after_safe_dce_calls,
+                    },
+                )
+            changed = True
+            dec.codegen._inertia_codegen_decl_refresh_required_8616 = True
+            dec.codegen._inertia_force_codegen_regeneration_8616 = True
+            _live_snapshot = ""
+        tail_validation_passed_for_rewrite_gate = x86_16_tail_validation_snapshot_passed(
+            _tail_validation_snapshot_for_function_run(project, function)
+        )
+        if _should_refuse_legacy_cli_rewrite_8616(
+            project,
+            small_function=small_function,
+            tail_validation_passed=tail_validation_passed_for_rewrite_gate,
         ):
             setattr(
                 dec.codegen,
@@ -3624,10 +3744,10 @@ def _decompile_function(
                 int(getattr(dec.codegen, "_inertia_legacy_cli_rewrite_refused_large_validated_ast", 0) or 0) + 1,
             )
             logging.getLogger(__name__).warning(
-                "Skipping legacy CLI rewrite loop for large validated x86-16 AST at function=%#x blocks=%d text_bytes=%d",
+                "Skipping legacy CLI rewrite loop for validated nontrivial x86-16 AST at function=%#x blocks=%d text_bytes=%d",
                 function_original_addr(function),
                 block_count,
-                len(_live_snapshot),
+                len(_live_snapshot) if isinstance(_live_snapshot, str) else 0,
             )
             rewrite_passes = ()
         if os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
@@ -3640,6 +3760,7 @@ def _decompile_function(
                 )
             except Exception:
                 pass
+        _debug_cli_stage_marker_8616("before-cli-rewrite-loop")
         for round_idx in range(2):
             iter_changed = False
             stack_lowering_dirty = not _stack_lowering_already_attempted
@@ -3753,6 +3874,7 @@ def _decompile_function(
             if not iter_changed:
                 break
             changed = True
+        _debug_cli_stage_marker_8616("after-cli-rewrite-loop")
         if function_has_call_evidence and not large_x86_16_function:
             before_calls = _codegen_call_expr_count() if call_loss_guard_active else 0
             snapshot = _snapshot_codegen_cfunc()
@@ -3779,6 +3901,7 @@ def _decompile_function(
                     )
             if final_callsite_changed:
                 changed = True
+        _debug_cli_stage_marker_8616("after-final-callsite-pass")
         stack_probe_fact_stats = format_stack_probe_fact_stats_8616(dec.codegen)
         if stack_probe_fact_stats is not None:
             logging.getLogger(__name__).debug(
@@ -3795,24 +3918,32 @@ def _decompile_function(
             or postprocess_semantic_changed
             or _codegen_requires_render_refresh_8616(dec.codegen)
         )
+        call_args_render_refresh_required = bool(
+            getattr(dec.codegen, "_inertia_codegen_call_args_render_refresh_required_8616", False)
+        )
+        force_codegen_regeneration = bool(getattr(dec.codegen, "_inertia_force_codegen_regeneration_8616", False))
         if os.environ.get("INERTIA_DEBUG_CLI_RENDER_REFRESH") == "1":
-            cfunc_repr = ""
-            with contextlib.suppress(Exception):
-                cfunc = getattr(dec.codegen, "cfunc", None)
-                c_repr = getattr(cfunc, "c_repr", None)
-                if callable(c_repr):
-                    cfunc_repr = _normalize_text_payload_8616(c_repr())
+            cfunc_repr = _normalize_text_payload_8616(getattr(dec.codegen, "text", "") or "")
             logging.getLogger(__name__).warning(
-                "[cli-render-refresh] function=%#x changed=%s postprocess_changed=%r pointer_memory=%r refresh=%s codegen=%#x cfunc=%r",
+                "[cli-render-refresh] function=%#x changed=%s postprocess_changed=%r pointer_memory=%r refresh=%s postprocess_regenerated=%s codegen=%#x text=%r",
                 function_original_addr(function),
                 changed,
                 getattr(dec.codegen, "_inertia_postprocess_changed", None),
                 getattr(dec.codegen, "_inertia_pointer_memory_materialized_8616", None),
                 render_refresh_required,
+                _postprocess_regenerated_text_available_8616(dec.codegen),
                 id(dec.codegen),
                 "\n".join(cfunc_repr.splitlines()[:8]),
             )
-        if render_refresh_required:
+        if (
+            render_refresh_required
+            and not force_codegen_regeneration
+            and not call_args_render_refresh_required
+            and _postprocess_regenerated_text_available_8616(dec.codegen)
+        ):
+            rendered_text = _snapshot_codegen_text(dec.codegen)
+            _clear_codegen_render_refresh_8616(dec.codegen)
+        elif render_refresh_required:
             cached_rendered_text = _snapshot_codegen_text(dec.codegen)
             live_call_baseline_text = _live_snapshot if isinstance(_live_snapshot, str) else ""
             recurrence_rebound = bool(
@@ -3862,29 +3993,13 @@ def _decompile_function(
             ):
                 rendered_text = cached_rendered_text
             if regenerated and isinstance(cached_rendered_text, str) and cached_rendered_text.strip():
-                cached_score = (
-                    _final_c_unreachable_after_return_penalty_8616(cached_rendered_text),
-                    _expected_call_presence_score_8616(cached_rendered_text, effective_cod_metadata),
-                    _expected_call_arity_score_8616(cached_rendered_text, effective_cod_metadata),
-                )
-                rendered_score = (
-                    _final_c_unreachable_after_return_penalty_8616(rendered_text),
-                    _expected_call_presence_score_8616(rendered_text, effective_cod_metadata),
-                    _expected_call_arity_score_8616(rendered_text, effective_cod_metadata),
-                )
+                cached_score = _render_candidate_score_8616(cached_rendered_text, effective_cod_metadata)
+                rendered_score = _render_candidate_score_8616(rendered_text, effective_cod_metadata)
                 if cached_score > rendered_score:
                     rendered_text = cached_rendered_text
             if isinstance(live_call_baseline_text, str) and live_call_baseline_text.strip():
-                baseline_score = (
-                    _final_c_unreachable_after_return_penalty_8616(live_call_baseline_text),
-                    _expected_call_presence_score_8616(live_call_baseline_text, effective_cod_metadata),
-                    _expected_call_arity_score_8616(live_call_baseline_text, effective_cod_metadata),
-                )
-                rendered_score = (
-                    _final_c_unreachable_after_return_penalty_8616(rendered_text),
-                    _expected_call_presence_score_8616(rendered_text, effective_cod_metadata),
-                    _expected_call_arity_score_8616(rendered_text, effective_cod_metadata),
-                )
+                baseline_score = _render_candidate_score_8616(live_call_baseline_text, effective_cod_metadata)
+                rendered_score = _render_candidate_score_8616(rendered_text, effective_cod_metadata)
                 if baseline_score > rendered_score:
                     rendered_text = live_call_baseline_text
         else:
@@ -4148,16 +4263,14 @@ def _decompile_function(
                 _pre_helper_format_text,
             ]
 
-            def _semantic_rank(text: str) -> tuple[int, int, int, int, int]:
+            def _semantic_rank(text: str) -> tuple[int, int, int, int, int, int, int]:
                 if not isinstance(text, str) or not text.strip():
-                    return (-10**9, 0, 0, 0, 0)
+                    return (-10**9, 0, 0, 0, 0, 0, 0)
+                base_score = _render_candidate_score_8616(text, effective_cod_metadata)
                 return (
-                    -_final_c_unreachable_after_return_penalty_8616(text),
-                    _expected_call_presence_score_8616(text, effective_cod_metadata),
-                    _expected_call_arity_score_8616(text, effective_cod_metadata),
+                    *base_score,
                     _cod_signature_and_stack_alias_score_8616(text, function, effective_cod_metadata),
                     _global_declaration_coverage_score_8616(text, effective_cod_metadata, synthetic_globals),
-                    -_implicit_placeholder_artifact_count_8616(text),
                 )
 
             best_text = max(fallback_candidates, key=_semantic_rank)
@@ -4200,9 +4313,11 @@ def _decompile_function(
             formatted = normalize_unresolved_c_text(formatted)
             formatted = _materialize_missing_generic_local_declarations_text(formatted)
             formatted = _hoist_c89_local_declarations_text(formatted)
+            formatted = _dedupe_duplicate_local_declarations_text(formatted)
             formatted = _preserve_return_chain_text_8616(project, function, dec.codegen, formatted)
-        if isinstance(evidence_recovered_c, str) and evidence_recovered_c.strip():
-            formatted = evidence_recovered_c
+        formatted = _select_evidence_recovered_c_8616(formatted, evidence_recovered_c)
+        formatted = _dedupe_duplicate_local_declarations_text(formatted)
+        formatted = _hoist_c89_local_declarations_text(formatted)
 
         _emit_c_stage_trace(
             project,
@@ -4226,6 +4341,10 @@ def _decompile_function(
                 marker_summary += ", ..."
             return "empty", f"Decompiler produced unresolved IR-shaped C ({marker_summary})."
         _remember_tail_validation_snapshot(dec.codegen)
+        # If a hard final gate rejects this function, preserve the exact C that
+        # failed the gate. Earlier live snapshots can be much larger stale
+        # artifacts and hide the true blocker from diagnostics.
+        setattr(project, "_inertia_partial_codegen_text", formatted)
         with span(
             "decompile.final_gates",
             addr=hex(current_func_addr),
@@ -4442,24 +4561,48 @@ def _original_callee_name_8616(project: angr.Project, slice_target: int) -> str 
     original_delta = getattr(project, "_inertia_original_linear_delta", None)
     if original_project is None or not isinstance(original_delta, int):
         return _cache_result(None)
-    original_target = slice_target + original_delta
-    function_name = _function_name_at_addr_8616(original_project, original_target)
-    if isinstance(function_name, str) and function_name:
-        return _cache_result(function_name)
-    helper_name = _compiler_helper_name_at_addr_8616(original_project, original_target)
-    if isinstance(helper_name, str) and helper_name:
-        return _cache_result(helper_name)
-    label = _label_at_addr_8616(original_project, original_target)
-    if isinstance(label, str) and label:
-        return _cache_result(label)
+    original_targets: list[int] = []
+    for candidate in (slice_target + original_delta, slice_target):
+        if isinstance(candidate, int) and candidate >= 0 and candidate not in original_targets:
+            original_targets.append(candidate)
+
+    def _helper_overrides_generic_name(helper_name: str | None, known_name: str | None) -> bool:
+        if not isinstance(helper_name, str) or not helper_name:
+            return False
+        normalized = normalize_callee_name_8616(known_name)
+        return (
+            not isinstance(normalized, str)
+            or not normalized
+            or normalized.startswith("sub_")
+            or normalized.startswith("loc_")
+        )
+
     metadata = getattr(original_project, "_inertia_lst_metadata", None)
-    if metadata is None:
-        return _cache_result(None)
-    label = normalize_callee_name_8616(getattr(metadata, "code_labels", {}).get(original_target))
-    if isinstance(label, str) and label:
-        return _cache_result(label)
-    span_label = normalize_callee_name_8616(_sidecar_enclosing_label_8616(metadata, original_target))
-    return _cache_result(span_label if isinstance(span_label, str) and span_label else None)
+    for original_target in original_targets:
+        function_name = _function_name_at_addr_8616(original_project, original_target)
+        helper_name = _compiler_helper_name_at_addr_8616(original_project, original_target)
+        if _helper_overrides_generic_name(helper_name, function_name):
+            return _cache_result(helper_name)
+        if isinstance(function_name, str) and function_name:
+            return _cache_result(function_name)
+        label = _label_at_addr_8616(original_project, original_target)
+        if _helper_overrides_generic_name(helper_name, label):
+            return _cache_result(helper_name)
+        if isinstance(label, str) and label:
+            return _cache_result(label)
+        if metadata is None:
+            continue
+        label = normalize_callee_name_8616(getattr(metadata, "code_labels", {}).get(original_target))
+        if _helper_overrides_generic_name(helper_name, label):
+            return _cache_result(helper_name)
+        if isinstance(label, str) and label:
+            return _cache_result(label)
+        span_label = normalize_callee_name_8616(_sidecar_enclosing_label_8616(metadata, original_target))
+        if _helper_overrides_generic_name(helper_name, span_label):
+            return _cache_result(helper_name)
+        if isinstance(span_label, str) and span_label:
+            return _cache_result(span_label)
+    return _cache_result(None)
 
 
 def _callee_names_equivalent_8616(left: str | None, right: str | None) -> bool:
@@ -4576,6 +4719,47 @@ def _iter_capstone_direct_calls_8616(project: angr.Project, function):
     return _impl()
 
 
+def _iter_linear_region_direct_calls_8616(project: angr.Project, regions: list[tuple[int, int]] | tuple[tuple[int, int], ...]):
+    def _impl():
+        loader_memory = getattr(getattr(project, "loader", None), "memory", None)
+        arch = getattr(project, "arch", None)
+        capstone = getattr(arch, "capstone", None)
+        if loader_memory is None or capstone is None:
+            return
+        for start, end in regions:
+            if not isinstance(start, int) or not isinstance(end, int) or end <= start:
+                continue
+            size = end - start
+            if size > 0x1000:
+                continue
+            try:
+                code = bytes(loader_memory.load(start, size))
+            except Exception as ex:
+                logging.getLogger(__name__).debug(
+                    "Direct call linear region decode failed at region=%#x-%#x: %s",
+                    start,
+                    end,
+                    ex,
+                )
+                continue
+            for insn in capstone.disasm(code, start):
+                insn_addr = getattr(insn, "address", None)
+                if not isinstance(insn_addr, int) or not (start <= insn_addr < end):
+                    continue
+                if str(getattr(insn, "mnemonic", "") or "").lower() not in {"call", "lcall"}:
+                    continue
+                target = _parse_direct_call_target_8616(insn)
+                if not isinstance(target, int):
+                    continue
+                insn_size = getattr(getattr(insn, "insn", None), "size", None)
+                if not isinstance(insn_size, int) or insn_size <= 0:
+                    insn_size = getattr(insn, "size", None)
+                ret_addr = (insn_addr + insn_size) if isinstance(insn_size, int) and insn_size > 0 else None
+                yield insn_addr, target, ret_addr
+
+    return _impl()
+
+
 def _callsite_addr_points_to_call_insn_8616(project: angr.Project, function, callsite: int) -> bool:
     factory = getattr(project, "factory", None)
     if factory is None:
@@ -4643,10 +4827,8 @@ def _choose_preferred_candidate_8616(
 
 def _collect_direct_calls_8616(project: angr.Project, function) -> list[tuple[int | None, int, int | None]]:
     direct_calls: list[tuple[int | None, int, int | None]] = []
-    skipped_invalid_callsite = False
     for callsite in getattr(function, "get_call_sites", lambda: [])() or ():
         if isinstance(callsite, int) and not _callsite_addr_points_to_call_insn_8616(project, function, callsite):
-            skipped_invalid_callsite = True
             continue
         try:
             target = function.get_call_target(callsite)
@@ -4662,12 +4844,21 @@ def _collect_direct_calls_8616(project: angr.Project, function) -> list[tuple[in
         with contextlib.suppress(Exception):
             ret_addr = function.get_call_return(callsite)
         direct_calls.append((callsite, target, ret_addr))
-    if not direct_calls or skipped_invalid_callsite:
-        known_callsites = {callsite for callsite, _target, _ret_addr in direct_calls if isinstance(callsite, int)}
-        for callsite, target, ret_addr in _iter_capstone_direct_calls_8616(project, function):
+    known_callsites = {callsite for callsite, _target, _ret_addr in direct_calls if isinstance(callsite, int)}
+    for callsite, target, ret_addr in _iter_capstone_direct_calls_8616(project, function):
+        if isinstance(callsite, int) and callsite in known_callsites:
+            continue
+        direct_calls.append((callsite, target, ret_addr))
+        if isinstance(callsite, int):
+            known_callsites.add(callsite)
+    if isinstance(getattr(project, "_inertia_original_linear_delta", None), int):
+        local_ranges, _original_region = _direct_call_stub_filter_regions(project, function)
+        for callsite, target, ret_addr in _iter_linear_region_direct_calls_8616(project, local_ranges):
             if isinstance(callsite, int) and callsite in known_callsites:
                 continue
             direct_calls.append((callsite, target, ret_addr))
+            if isinstance(callsite, int):
+                known_callsites.add(callsite)
     return direct_calls
 
 
@@ -4766,6 +4957,19 @@ def _create_or_update_direct_call_stub_8616(
     return _impl()
 
 
+def _record_direct_callsite_target_8616(function, callsite_addr: int | None, ret_addr: int | None, candidate: int) -> bool:
+    if not isinstance(callsite_addr, int):
+        return False
+    try:
+        call_return = ret_addr
+        if not isinstance(call_return, int):
+            call_return = function.get_call_return(callsite_addr)
+        function._call_sites[callsite_addr] = (candidate, call_return)
+        return True
+    except Exception:
+        return False
+
+
 def _register_direct_call_target_function_stubs(project: angr.Project, function, cod_metadata: CODProcMetadata | None = None) -> int:
     def _impl():
         if getattr(getattr(project, "arch", None), "name", None) != "86_16":
@@ -4804,13 +5008,20 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
 
             if measure_single_function_context:
                 metric_candidates += len(candidates)
-            for candidate in candidates:
-                if candidate in seen or _candidate_is_filtered_8616(
+            eligible_candidates = [
+                candidate
+                for candidate in sorted(candidates)
+                if not _candidate_is_filtered_8616(
                     candidate,
                     original_delta=original_delta,
                     local_ranges=local_ranges,
                     original_region=original_region,
-                ):
+                )
+            ]
+            if preferred_candidate in seen:
+                _record_direct_callsite_target_8616(function, callsite_addr, ret_addr, preferred_candidate)
+            for candidate in eligible_candidates:
+                if candidate in seen:
                     continue
                 seen.add(candidate)
                 if _create_or_update_direct_call_stub_8616(
@@ -5070,6 +5281,7 @@ def _preferred_decompiler_options(
     wrapper_like: bool = False,
     tiny_single_call_helper: bool = False,
     no_call_helper: bool = False,
+    large_16bit_function: bool = False,
 ) -> list[tuple[str, str]] | None:
     """Choose a cheaper decompiler structurer for true wrapper-like functions."""
     if wrapper_like or tiny_single_call_helper:
@@ -5077,6 +5289,12 @@ def _preferred_decompiler_options(
     if no_call_helper:
         return [
             ("structurer_cls", "Phoenix"),
+            ("rewrite_ites_to_diamonds", False),
+            ("semvar_naming", False),
+            ("remove_dead_memdefs", False),
+        ]
+    if large_16bit_function:
+        return [
             ("rewrite_ites_to_diamonds", False),
             ("semvar_naming", False),
             ("remove_dead_memdefs", False),

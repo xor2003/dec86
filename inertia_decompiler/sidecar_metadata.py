@@ -471,6 +471,33 @@ def _load_lst_metadata(
     return _impl()
 
 
+def attach_lst_metadata_to_project(project: angr.Project | None, metadata: LSTMetadata | None) -> bool:
+    """Attach already-loaded sidecar metadata to a fresh project instance.
+
+    Fresh retry/isolation projects are intentionally rebuilt without re-parsing
+    sidecars. Semantic consumers still need the same metadata on the project
+    object, and labels must be present in the KB label map.
+    """
+    if project is None or metadata is None:
+        return False
+    changed = False
+    if getattr(project, "_inertia_lst_metadata", None) is not metadata:
+        project._inertia_lst_metadata = metadata
+        changed = True
+    labels = getattr(getattr(project, "kb", None), "labels", None)
+    if labels is None:
+        return changed
+    for addr, name in getattr(metadata, "data_labels", {}).items():
+        if labels.get(addr) != name:
+            labels[addr] = name
+            changed = True
+    for addr, name in getattr(metadata, "code_labels", {}).items():
+        if labels.get(addr) != name:
+            labels[addr] = name
+            changed = True
+    return changed
+
+
 def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | None:
     if metadata is None or offset is None:
         return None

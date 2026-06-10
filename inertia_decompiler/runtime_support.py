@@ -896,6 +896,18 @@ def raise_timeout(_signum, _frame):
     raise AnalysisTimeout()
 
 
+def _faulthandler_output_file():
+    for stream in (getattr(sys, "stderr", None), getattr(sys, "__stderr__", None)):
+        if stream is None:
+            continue
+        try:
+            stream.fileno()
+        except Exception:
+            continue
+        return stream
+    return None
+
+
 @contextlib.contextmanager
 def analysis_timeout(timeout: int) -> typing.Iterator[None]:
     if timeout <= 0:
@@ -926,9 +938,21 @@ def run_with_timeout_in_daemon_thread(
     except Exception:
         return func()
     future = executor.submit(func)
+    stack_dump_sec = None
+    stack_dump_raw = os.environ.get("INERTIA_THREAD_STACK_DUMP_SEC", "").strip()
+    if stack_dump_raw:
+        with contextlib.suppress(Exception):
+            stack_dump_sec = max(1, int(float(stack_dump_raw)))
+            stack_dump_file = _faulthandler_output_file()
+            if stack_dump_file is not None:
+                faulthandler.enable(file=stack_dump_file, all_threads=True)
+                faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=stack_dump_file)
     try:
         return future.result(timeout=max(1, timeout))
     finally:
+        if stack_dump_sec is not None:
+            with contextlib.suppress(Exception):
+                faulthandler.cancel_dump_traceback_later()
         finished = future.done()
         executor.shutdown(wait=finished, cancel_futures=not finished)
 
@@ -956,8 +980,10 @@ def run_with_timeout_in_fork(
                 if stack_dump_raw:
                     with contextlib.suppress(Exception):
                         stack_dump_sec = max(1, int(float(stack_dump_raw)))
-                        faulthandler.enable(file=sys.stderr, all_threads=True)
-                        faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=sys.stderr)
+                        stack_dump_file = _faulthandler_output_file()
+                        if stack_dump_file is not None:
+                            faulthandler.enable(file=stack_dump_file, all_threads=True)
+                            faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=stack_dump_file)
                 try:
                     payload = ("ok", func())
                 except BaseException as ex:  # noqa: BLE001

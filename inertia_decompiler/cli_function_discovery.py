@@ -4253,9 +4253,14 @@ def _select_sidecar_showcase_entries(
 
     return _impl()
 
-def _format_sidecar_function_catalog(metadata: LSTMetadata, *, limit: int | None = None) -> str:
+def _format_sidecar_function_catalog(
+    metadata: LSTMetadata,
+    *,
+    limit: int | None = None,
+    code_labels: Mapping[int, str] | None = None,
+) -> str:
     lines: list[str] = []
-    entries = sorted(_visible_code_labels(metadata).items())
+    entries = sorted((code_labels if code_labels is not None else _visible_code_labels(metadata)).items())
     if limit is not None and limit > 0:
         entries = entries[:limit]
     for addr, name in entries:

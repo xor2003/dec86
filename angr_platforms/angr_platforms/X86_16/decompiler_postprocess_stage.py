@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
@@ -37,7 +37,7 @@ from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeLo
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
-from inertia_decompiler.telemetry import span
+from inertia_decompiler.telemetry import annotate_current_span, span
 
 from . import decompiler_postprocess as _post
 from . import decompiler_postprocess_calls as _calls
@@ -56,7 +56,11 @@ from .condition_trace import (
 )
 from .compiler_helpers import identify_x86_16_compiler_helper_at_8616, is_x86_16_stack_probe_name_8616
 from .decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
-from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
+from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _structured_slot_names_8616
+from .ir.condition_ir import (
+    normalize_condition_fingerprint_algebraic_8616,
+    normalize_condition_fingerprint_string_8616,
+)
 from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
 from .lowering.real_mode_linear import (
@@ -91,7 +95,7 @@ from .tail_validation import (
     persist_x86_16_tail_validation_snapshot,
     x86_16_tail_validation_result_passed,
 )
-from .tail_validation_fingerprint import _expr_fingerprint
+from .tail_validation_fingerprint import _expr_fingerprint, _stack_slot_fingerprint_from_slot_8616
 
 __all__ = [
     "DecompilerPostprocessPassSpec",
@@ -149,12 +153,27 @@ class _PostprocessValidationDeltaKind8616(Enum):
     NAME_ONLY_HELPER_ANNOTATION = "name_only_helper_annotation"
     JCC_CALL_RETURN_CONDITION_REBINDING = "jcc_call_return_condition_rebinding"
     JCC_CONDITION_MATERIALIZATION = "jcc_condition_materialization"
+    DIRECT_GLOBAL_UPDATE_MATERIALIZATION = "direct_global_update_materialization"
+    DIRECT_STACK_UPDATE_MATERIALIZATION = "direct_stack_update_materialization"
+    DIRECT_STACK_MOVE_MATERIALIZATION = "direct_stack_move_materialization"
     UNREACHABLE_AFTER_RETURN_PRUNE = "unreachable_after_return_prune"
     CALLSITE_STACK_ARGUMENT_MATERIALIZATION = "callsite_stack_argument_materialization"
     STACK_PROBE_HELPER_CLEANUP = "stack_probe_helper_cleanup"
     MISSING_TERMINAL_AX_RETURN = "missing_terminal_ax_return"
     CFG_RETURN_CHAIN_MATERIALIZATION = "cfg_return_chain_materialization"
     CFG_RETURN_EXPR_CHAIN_MATERIALIZATION = "cfg_return_expr_chain_materialization"
+
+
+class _CfgReturnExprDeltaRefusal8616(Enum):
+    MISSING_EVIDENCE = "missing_evidence"
+    MISSING_DELTA = "missing_delta"
+    UNEXPECTED_FIELDS = "unexpected_fields"
+    MISSING_RETURNS_DELTA = "missing_returns_delta"
+    UNEXPECTED_ADDED_RETURNS = "unexpected_added_returns"
+    UNEXPECTED_REMOVED_RETURNS = "unexpected_removed_returns"
+    UNEXPECTED_ADDED_CONDITIONS = "unexpected_added_conditions"
+    UNEXPECTED_ADDED_CONTROL = "unexpected_added_control"
+    UNEXPECTED_HELPER_DELTA = "unexpected_helper_delta"
 
 
 class _VoidEmptyReturnGuardDecision8616(Enum):
@@ -178,6 +197,11 @@ class _SurplusIfGuardKind8616(Enum):
     EMPTY_NOOP = "empty_noop"
 
 
+class _PostprocessPassRefusalReason8616(Enum):
+    LARGE_FUNCTION_LOCAL_VALIDATION_UNAVAILABLE = "large_function_local_validation_unavailable"
+    VERY_LARGE_FUNCTION_LOCAL_VALIDATION_UNAVAILABLE = "very_large_function_local_validation_unavailable"
+
+
 _MISSING_TERMINAL_AX_RETURN_PASS_NAMES_8616 = frozenset(
     {
         "_materialize_missing_terminal_ax_return_8616",
@@ -192,11 +216,117 @@ _JCC_REWRITE_VALIDATION_PASS_NAMES_8616 = frozenset(
     }
 )
 
+_DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616 = frozenset(
+    {
+        "_materialize_direct_global_incdec_instructions_8616",
+        "_materialize_direct_global_incdec_instructions_final_8616",
+    }
+)
+
+_DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616 = frozenset(
+    {
+        "_materialize_direct_stack_incdec_instructions_8616",
+        "_materialize_direct_stack_incdec_instructions_final_8616",
+    }
+)
+
+_DIRECT_STACK_MOVE_VALIDATION_PASS_NAMES_8616 = frozenset(
+    {
+        "_materialize_direct_stack_mov_instructions_8616",
+        "_materialize_direct_stack_mov_instructions_final_8616",
+    }
+)
+
 _HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616 = _JCC_REWRITE_VALIDATION_PASS_NAMES_8616 | frozenset(
     {
         "_materialize_callsite_stack_arguments_8616",
     }
 )
+
+_LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616 = (
+    frozenset(
+        {
+            "optimization",
+            "_apply_annotations_8616",
+            "_apply_word_global_types_8616",
+            "_materialize_stable_stack_semantics_bootstrap_8616",
+            "_materialize_stable_stack_semantics_early_8616",
+            "_promote_stack_prototype_from_bp_loads_8616",
+            "_prune_return_address_stack_arguments_8616",
+            "_apply_typed_conditions_to_codegen_8616",
+            "_simplify_boolean_cites_8616",
+            "_simplify_structured_expressions_8616",
+            "_maybe_eliminate_single_use_temporaries_8616",
+            "_lower_stable_ss_stack_accesses_8616",
+            "_simplify_structured_expressions_after_stack_lowering_8616",
+            "_materialize_stable_stack_semantics_postprocess_8616",
+            "_materialize_stable_stack_semantics_final_8616",
+            "_dead_code_elimination_after_callsite_stack_arguments_8616",
+            "_dead_code_elimination_after_flag_prune_8616",
+            "_dead_code_elimination_after_stable_stack_final_8616",
+            "_rewrite_flag_condition_pairs_8616",
+            "_rewrite_flag_bit_value_uses_8616",
+            "_prune_unused_flag_assignments_8616",
+            "_prune_overwritten_flag_assignments_8616",
+            "_fix_interval_guard_conditions_8616",
+            "_materialize_global_byte_index_sum_loop_8616",
+            "_materialize_nested_stack_counter_accumulator_loop_8616",
+            "_materialize_stack_arg_accumulator_loop_8616",
+            "_materialize_cfg_selector_return_branches_early_8616",
+            "_materialize_cfg_mask_accumulator_8616",
+            "_materialize_cfg_selector_return_branches_8616",
+            "_repair_loop_exit_return_guards_8616",
+            "_repair_unresolved_function_exit_gotos_8616",
+            "_simplify_structured_expressions_after_call_stack_lowering_8616",
+            "_recover_missing_direct_calls_from_evidence_early_8616",
+            "_recover_missing_direct_calls_from_evidence_8616",
+            "_normalize_fact_backed_stack_accesses_8616",
+            "_normalize_call_target_names_8616",
+            "_normalize_recovered_call_target_names_8616",
+            "_materialize_callsite_stack_arguments_8616",
+            "_materialize_callsite_prototypes_8616",
+            "_materialize_recovered_callsite_stack_arguments_8616",
+            "_materialize_stack_byte_pair_return_8616",
+            "_recover_missing_direct_calls_final_8616",
+            "_materialize_pointer_memory_idioms_8616",
+            "_materialize_empty_if_return_branches_8616",
+            "_prune_surplus_void_empty_return_guards_8616",
+            "_prune_surplus_void_empty_return_guards_final_8616",
+            "_prune_unreachable_after_return_final_8616",
+            "_materialize_empty_if_return_branches_final_8616",
+            "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
+            "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
+        }
+    )
+    | _JCC_REWRITE_VALIDATION_PASS_NAMES_8616
+    | _DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616
+    | _DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616
+    | _DIRECT_STACK_MOVE_VALIDATION_PASS_NAMES_8616
+)
+
+_MANDATORY_VALIDATION_PASS_NAMES_8616 = frozenset(
+    {
+        "_apply_annotations_8616",
+    }
+)
+
+_PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616 = frozenset(
+    {
+        "_apply_annotations_8616",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _PostprocessFunctionComplexity8616:
+    block_count: int = 0
+    byte_count: int = 0
+    source: str = "missing"
+
+    @property
+    def is_expensive_for_local_validation(self) -> bool:
+        return self.block_count >= 40 or self.byte_count >= 640
+
 
 _C_AST_CHILD_ATTRS_8616 = (
     "statements",
@@ -431,18 +561,38 @@ def _rerun_stack_lowering_consumers_after_calls_8616(project, codegen) -> bool:
         _rewrite_ss_stack_byte_offsets as _rewrite_stack_byte_offsets,
     )
 
-    return run_stack_lowering_pass_8616(
-        lower_stable_ss_stack_accesses=lambda: False,
-        rewrite_ss_stack_byte_offsets=lambda: _rewrite_stack_byte_offsets(project, codegen),
-        canonicalize_stack_cvars=lambda: _rewrite_canonicalize_stack_cvars(codegen),
-        codegen=codegen,
-        project=project,
-        # This is a late consumer rerun after callsite materialization. Earlier
-        # passes already ran the full stack/global lowering sequence; repeating
-        # on an expanded structured AST can re-walk materialized global address
-        # trees without adding new call evidence.
-        max_rounds=1,
+    if getattr(codegen, "_inertia_skip_per_pass_validation_large_function", False):
+        codegen._inertia_stack_lowering_large_function_byte_only_8616 = int(
+            getattr(codegen, "_inertia_stack_lowering_large_function_byte_only_8616", 0) or 0
+        ) + 1
+        return _rewrite_stack_byte_offsets(project, codegen)
+
+    previous_budget_exists = hasattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616")
+    previous_budget = getattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616", None)
+    current_budget = previous_budget if isinstance(previous_budget, int) and previous_budget > 0 else 64
+    codegen._inertia_stack_lowering_canonicalize_max_depth_8616 = min(current_budget, 16)
+    codegen._inertia_stack_lowering_after_call_canonicalize_budget_8616 = int(
+        getattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616", 16) or 16
     )
+    try:
+        return run_stack_lowering_pass_8616(
+            lower_stable_ss_stack_accesses=lambda: False,
+            rewrite_ss_stack_byte_offsets=lambda: _rewrite_stack_byte_offsets(project, codegen),
+            canonicalize_stack_cvars=lambda: _rewrite_canonicalize_stack_cvars(codegen),
+            codegen=codegen,
+            project=project,
+            # This is a late consumer rerun after callsite materialization. Keep
+            # expensive global lowering disabled, but run runtime segment lowering
+            # once because call materialization can expose fresh segment carriers.
+            max_rounds=1,
+            lower_global_segment_accesses=False,
+            lower_runtime_segment_accesses=True,
+        )
+    finally:
+        if previous_budget_exists:
+            codegen._inertia_stack_lowering_canonicalize_max_depth_8616 = previous_budget
+        elif hasattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616"):
+            delattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616")
 
 
 def _normalize_fact_backed_stack_accesses_8616(project, codegen) -> bool:
@@ -4266,63 +4416,61 @@ def _ordered_32bit_mask_update_pairs_from_cfg_8616(project, codegen, slot_offset
     func_addr = getattr(cfunc, "addr", None)
     if not isinstance(func_addr, int):
         return []
-    try:
-        function = project.kb.functions.function(addr=func_addr, create=False)
-    except Exception:
-        return []
-    if function is None:
-        return []
     pairs: list[tuple[object, int]] = []
     seen_conditions: set[str] = set()
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
     log = logging.getLogger(__name__)
-    for block_addr in sorted(int(addr) for addr in getattr(function, "block_addrs_set", set()) or ()):
-        try:
-            block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
+    for block_addr, insn in _linear_jcc_block_starts_8616(project, codegen):
+        mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+        if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
             continue
-        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
-            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
-            if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
-                continue
-            targets = _selector_targets_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
-            target = targets[0] if targets is not None else _equality_return_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
-            if target is None:
-                target = _inequality_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
-            if target is None:
-                branch_target = _jcc._branch_target_imm_8616(insn)
-                if branch_target is not None and _or_stack_update_imm_8616(project, int(branch_target), slot_offset) is not None:
-                    target = int(branch_target)
-            if target is None:
-                false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address))
-                if false_target is not None and _or_stack_update_imm_8616(project, false_target, slot_offset) is not None:
-                    target = int(false_target)
-            if target is None:
-                if debug:
-                    log.warning(
-                        "[cfg-mask-accum] no-update jcc=%#x mnemonic=%s false=%r branch=%r",
-                        int(insn.address),
-                        mnemonic,
-                        _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address)),
-                        _jcc._branch_target_imm_8616(insn),
-                    )
-                continue
-            imm = _or_stack_update_imm_8616(project, target, slot_offset)
-            if imm is None:
-                if debug:
-                    log.warning("[cfg-mask-accum] target-no-or jcc=%#x target=%#x", int(insn.address), int(target))
-                continue
-            decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
-            if decoded is None:
-                continue
-            cond = getattr(decoded, "expr", None)
-            if cond is None:
-                cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
-            fingerprint = _expr_fingerprint(cond, project)
-            if fingerprint in seen_conditions:
-                continue
-            seen_conditions.add(fingerprint)
-            pairs.append((cond, int(imm)))
+        targets = _selector_targets_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+        target = targets[0] if targets is not None else _equality_return_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+        if target is None:
+            target = _inequality_target_from_32bit_jcc_chain_8616(project, int(block_addr), insn)
+        if target is None:
+            branch_target = _jcc._branch_target_imm_8616(insn)
+            if branch_target is not None and _or_stack_update_imm_8616(project, int(branch_target), slot_offset) is not None:
+                target = int(branch_target)
+        if target is None:
+            false_target = _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address))
+            if false_target is not None and _or_stack_update_imm_8616(project, false_target, slot_offset) is not None:
+                target = int(false_target)
+        if target is None:
+            if debug:
+                log.warning(
+                    "[cfg-mask-accum] no-update jcc=%#x mnemonic=%s false=%r branch=%r",
+                    int(insn.address),
+                    mnemonic,
+                    _next_unconditional_target_after_jcc_8616(project, int(block_addr), int(insn.address)),
+                    _jcc._branch_target_imm_8616(insn),
+                )
+            continue
+        imm = _or_stack_update_imm_8616(project, target, slot_offset)
+        if imm is None:
+            if debug:
+                log.warning("[cfg-mask-accum] target-no-or jcc=%#x target=%#x", int(insn.address), int(target))
+            continue
+        decoded = _jcc._translate_cmp_jcc_guard_8616(project, codegen, int(block_addr), int(insn.address))
+        if decoded is None:
+            continue
+        cond = getattr(decoded, "expr", None)
+        if cond is None:
+            cond = CBinaryOp(getattr(decoded, "op"), getattr(decoded, "lhs"), getattr(decoded, "rhs"), codegen=codegen)
+        fingerprint = _expr_fingerprint(cond, project)
+        if fingerprint in seen_conditions:
+            continue
+        seen_conditions.add(fingerprint)
+        pairs.append((cond, int(imm)))
+        if debug:
+            log.warning(
+                "[cfg-mask-accum] pair jcc=%#x mnemonic=%s target=%#x imm=%#x cond=%s",
+                int(insn.address),
+                mnemonic,
+                int(target),
+                int(imm),
+                fingerprint,
+            )
     return pairs
 
 
@@ -4458,10 +4606,19 @@ def _materialize_cfg_selector_return_branches_8616(project, codegen) -> bool:
     stats["materialized"] += len(pairs)
     codegen._inertia_return_expr_chain_materialized_8616 = True
     codegen._inertia_return_selector_materialized_8616 = True
-    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
-        _expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in pairs
+    condition_fingerprints = tuple(_expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in pairs)
+    previous_condition_fingerprints = tuple(
+        getattr(codegen, "_inertia_return_chain_materialized_condition_fingerprints_8616", ()) or ()
     )
-    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(return_fingerprints)
+    previous_return_fingerprints = tuple(
+        getattr(codegen, "_inertia_return_expr_chain_materialized_return_fingerprints_8616", ()) or ()
+    )
+    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
+        dict.fromkeys((*previous_condition_fingerprints, *condition_fingerprints))
+    )
+    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
+        dict.fromkeys((*previous_return_fingerprints, *return_fingerprints))
+    )
     if debug:
         first_stmt = next(iter(getattr(codegen.cfunc.statements, "statements", ()) or ()), None)
         first_cond = None
@@ -4624,6 +4781,11 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
         stats = {"candidates": 0, "materialized": 0, "refused": 0}
         codegen._inertia_empty_return_branch_stats_8616 = stats
     ordered_return_values = _ordered_conditional_return_values_8616(project, codegen)
+    unsafe_effects = _selector_function_has_unsafe_effects_8616(project, codegen)
+    if unsafe_effects:
+        codegen._inertia_empty_return_branch_refused_unsafe_effects_8616 = (
+            int(getattr(codegen, "_inertia_empty_return_branch_refused_unsafe_effects_8616", 0) or 0) + 1
+        )
     ordered_index = 0
     cond_return_pairs: list[tuple[object, int]] = []
     empty_if_nodes: list[object] = []
@@ -4719,6 +4881,14 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
         empty_if_nodes.append(node)
         stats["candidates"] += 1
         if not _body_is_empty(body):
+            continue
+        if unsafe_effects:
+            stats["refused"] += 1
+            if debug:
+                log.warning(
+                    "[empty-return-branch] refused unsafe function effects cond_key=%r",
+                    _jcc._condition_tags_8616(cond),
+                )
             continue
         value = _condition_branch_return_value_8616(project, cond)
         tag_evidence = _condition_branch_tag_evidence_8616(project, cond)
@@ -4828,8 +4998,16 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
     if not cond_return_pairs:
         cfg_return_pairs = _ordered_32bit_conditional_return_pairs_from_cfg_8616(project, codegen)
         if len(cfg_return_pairs) >= 2:
-            changed = _flatten_conditional_return_chain_8616(project, codegen, cfg_return_pairs) or changed
-            cond_return_pairs = cfg_return_pairs
+            if unsafe_effects:
+                stats["refused"] += len(cfg_return_pairs)
+                if debug:
+                    log.warning(
+                        "[cfg-return-chain] 32-bit flatten refused unsafe effects pairs=%d",
+                        len(cfg_return_pairs),
+                    )
+            else:
+                changed = _flatten_conditional_return_chain_8616(project, codegen, cfg_return_pairs) or changed
+                cond_return_pairs = cfg_return_pairs
     if not cond_return_pairs:
         cfg_return_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
         if len(cfg_return_pairs) >= 2:
@@ -4845,7 +5023,14 @@ def _materialize_empty_if_return_branches_8616(project, codegen) -> bool:
                 cond_return_pairs = cfg_return_pairs
     if not cond_return_pairs and not getattr(codegen, "_inertia_return_chain_suffix_materialized_8616", False):
         cfg_return_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
-        if _materialize_cfg_conditional_return_suffix_8616(project, codegen, cfg_return_pairs):
+        if unsafe_effects and cfg_return_pairs:
+            stats["refused"] += len(cfg_return_pairs)
+            if debug:
+                log.warning(
+                    "[cfg-return-chain] suffix materialization refused unsafe effects pairs=%d",
+                    len(cfg_return_pairs),
+                )
+        elif _materialize_cfg_conditional_return_suffix_8616(project, codegen, cfg_return_pairs):
             stats["materialized"] += len(cfg_return_pairs)
             changed = True
             cond_return_pairs = cfg_return_pairs
@@ -5333,10 +5518,27 @@ class DecompilerPostprocessPassSpec:
     callsite_final_gate: bool = False
 
 
+def _codegen_has_structured_condition_8616(codegen) -> bool:
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if root is None:
+        return False
+    for node in (root, *_iter_c_nodes_deep_8616(root)):
+        if isinstance(node, (CIfBreak, CIfElse, CWhileLoop, CDoWhileLoop, CForLoop)):
+            return True
+        if getattr(node, "condition", None) is not None or getattr(node, "cond", None) is not None:
+            return True
+        if getattr(node, "condition_and_nodes", None):
+            return True
+    return False
+
+
 def _dead_code_elimination_after_flag_prune_8616(codegen) -> bool:
     had_attr = hasattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616")
     previous = getattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616", None)
+    had_dirty_read_attr = hasattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616")
+    previous_dirty_read = getattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616", None)
     codegen._inertia_dce_allow_storage_free_dirty_8616 = True
+    codegen._inertia_dce_allow_dirty_value_reads_8616 = True
     try:
         return _dead_code_elimination_8616(codegen)
     finally:
@@ -5345,6 +5547,11 @@ def _dead_code_elimination_after_flag_prune_8616(codegen) -> bool:
         else:
             with contextlib.suppress(Exception):
                 delattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616")
+        if had_dirty_read_attr:
+            codegen._inertia_dce_allow_dirty_value_reads_8616 = previous_dirty_read
+        else:
+            with contextlib.suppress(Exception):
+                delattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616")
 
 
 def _materialize_stable_stack_semantics_postprocess_8616(project, codegen) -> bool:
@@ -5951,6 +6158,11 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
+            "_recover_missing_direct_calls_from_evidence_early_8616",
+            _calls._recover_missing_direct_calls_from_evidence_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_lower_stable_ss_stack_accesses_8616",
             _segmented_mem._lower_stable_ss_stack_accesses_8616,
             False,
@@ -6214,6 +6426,7 @@ def _wrapper_passes_8616() -> tuple[DecompilerPostprocessPassSpec, ...]:
     wrapper_pass_names = {
         "_lower_stable_ss_stack_accesses_8616",
         "_attach_callsite_summaries_8616",
+        "_recover_missing_direct_calls_from_evidence_early_8616",
         "_materialize_callsite_stack_arguments_8616",
         "_materialize_missing_terminal_ax_return_8616",
         "_materialize_recovered_callsite_stack_arguments_8616",
@@ -6244,6 +6457,8 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
             skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
         if not _fact_backed_stack_normalize_enabled_8616():
             skip_names.add("_normalize_fact_backed_stack_accesses_8616")
+        if getattr(codegen, "_inertia_pre_validation_callsite_summaries_primed", False):
+            skip_names.add("_attach_callsite_summaries_8616")
         # Evidence-driven default: keep callsite summary/materialization enabled.
         # Disabling it drops proven call-argument facts and can erase semantics.
         callsite_rewrite_enabled = _truthy_env_8616("INERTIA_ENABLE_CALLSITE_REWRITE", default=True)
@@ -6258,11 +6473,12 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
                     "_normalize_recovered_call_target_names_8616",
                 }
             )
-        direct_call_floor_recovery_enabled = _truthy_env_8616("INERTIA_ENABLE_DIRECT_CALL_FLOOR_RECOVERY")
+        direct_call_floor_recovery_enabled = _truthy_env_8616("INERTIA_ENABLE_DIRECT_CALL_FLOOR_RECOVERY", default=True)
         if not direct_call_floor_recovery_enabled:
             skip_names.update(
                 {
                     "_recover_missing_direct_calls_from_evidence_8616",
+                    "_recover_missing_direct_calls_from_evidence_early_8616",
                     "_recover_missing_direct_calls_final_8616",
                     "_materialize_recovered_callsite_stack_arguments_8616",
                     "_materialize_callsite_stack_arguments_final_8616",
@@ -6369,6 +6585,112 @@ def _restore_codegen_cfunc(codegen, snapshot) -> bool:
             setattr(node, "codegen", codegen)
     _invalidate_tail_validation_derived_caches_8616(codegen)
     return True
+
+
+_PROJECT_FUNCTION_METADATA_SNAPSHOT_ATTRS_8616 = (
+    "name",
+    "prototype",
+    "calling_convention",
+    "returning",
+    "is_prototype_guessed",
+    "info",
+)
+
+
+def _project_function_for_postprocess_snapshot_8616(project, func_addr: int | None):
+    if not isinstance(func_addr, int):
+        return None
+    functions = getattr(getattr(project, "kb", None), "functions", None)
+    lookup = getattr(functions, "function", None)
+    if not callable(lookup):
+        return None
+    with contextlib.suppress(Exception):
+        return lookup(addr=func_addr, create=False)
+    return None
+
+
+def _snapshot_project_function_metadata_8616(project, func_addr: int | None):
+    function = _project_function_for_postprocess_snapshot_8616(project, func_addr)
+    if function is None:
+        return None
+    values = {}
+    for attr in _PROJECT_FUNCTION_METADATA_SNAPSHOT_ATTRS_8616:
+        if hasattr(function, attr):
+            with contextlib.suppress(Exception):
+                values[attr] = copy.deepcopy(getattr(function, attr))
+    labels = getattr(getattr(project, "kb", None), "labels", None)
+    labels_snapshot = copy.deepcopy(labels) if isinstance(labels, MutableMapping) else None
+    return {
+        "function": function,
+        "values": values,
+        "labels": labels_snapshot,
+        "project": project,
+    }
+
+
+def _restore_project_function_metadata_8616(snapshot) -> bool:
+    if not isinstance(snapshot, Mapping):
+        return False
+    function = snapshot.get("function")
+    values = snapshot.get("values")
+    if isinstance(values, Mapping):
+        for attr, value in values.items():
+            if isinstance(attr, str):
+                with contextlib.suppress(Exception):
+                    setattr(function, attr, copy.deepcopy(value))
+    project = snapshot.get("project")
+    labels_snapshot = snapshot.get("labels")
+    labels = getattr(getattr(project, "kb", None), "labels", None)
+    if isinstance(labels, MutableMapping) and isinstance(labels_snapshot, Mapping):
+        labels.clear()
+        labels.update(copy.deepcopy(dict(labels_snapshot)))
+    return True
+
+
+def _clone_cfunc_validation_fields_8616(cfunc, cloned, memo: dict[int, object]) -> None:
+    """Clone the full CFunction surface used by validation rollback.
+
+    Validation reads more than the statement list: function args, body aliases,
+    and structured-codegen slot fields can all carry condition/call/type state.
+    A rollback snapshot is only evidence if these fields are independent of the
+    live postprocess-mutated function.
+    """
+    attrs: set[str] = set()
+    with contextlib.suppress(Exception):
+        attrs.update(_structured_slot_names_8616(cfunc))
+    attrs.update(
+        {
+            "arg_list",
+            "body",
+            "statements",
+            "unified_local_vars",
+            "variable_kb",
+            "variables_in_use",
+        }
+    )
+    value_dict = getattr(cfunc, "__dict__", None)
+    if isinstance(value_dict, dict):
+        attrs.update(
+            attr
+            for attr in value_dict
+            if isinstance(attr, str) and not attr.startswith("_") and attr not in _SNAPSHOT_IDENTITY_ATTRS_8616
+        )
+
+    source_statements = getattr(cfunc, "statements", None)
+    cloned_statements = getattr(cloned, "statements", None)
+    for attr in sorted(attrs):
+        if attr in _SNAPSHOT_IDENTITY_ATTRS_8616 or not hasattr(cfunc, attr):
+            continue
+        with contextlib.suppress(Exception):
+            value = getattr(cfunc, attr)
+            if attr == "body" and value is source_statements:
+                setattr(cloned, attr, cloned_statements)
+                continue
+            setattr(cloned, attr, _snapshot_c_ast_value_for_validation_8616(value, memo))
+
+    with contextlib.suppress(Exception):
+        if getattr(cfunc, "body", None) is source_statements:
+            cloned.body = cloned.statements
 
 
 def _snapshot_codegen_inertia_metadata_8616(codegen) -> dict[str, object]:
@@ -6520,20 +6842,14 @@ def _deepcopy_cfunc_for_validation_8616(cfunc):
             # pickled by deepcopy. Preserve that metadata by identity while
             # still cloning the emitted C statement tree; otherwise validation
             # cannot safely roll back semantic postprocess regressions.
+            memo = _validation_snapshot_identity_memo_8616(cfunc)
             cloned.statements = _snapshot_c_ast_value_for_validation_8616(
                 statements,
-                _validation_snapshot_identity_memo_8616(cfunc),
+                memo,
             )
             with contextlib.suppress(Exception):
                 setattr(cloned, "_inertia_validation_snapshot_fallback", "ctypes_metadata_identity")
-        for attr in ("variables_in_use", "unified_local_vars", "variable_kb"):
-            value = getattr(cfunc, attr, None)
-            if isinstance(value, dict):
-                with contextlib.suppress(Exception):
-                    setattr(cloned, attr, dict(value))
-            else:
-                with contextlib.suppress(Exception):
-                    setattr(cloned, attr, value)
+        _clone_cfunc_validation_fields_8616(cfunc, cloned, memo)
         return cloned
     except Exception:
         with contextlib.suppress(Exception):
@@ -6542,14 +6858,7 @@ def _deepcopy_cfunc_for_validation_8616(cfunc):
             statements = getattr(cfunc, "statements", None)
             with contextlib.suppress(Exception):
                 fallback.statements = _snapshot_c_ast_value_for_validation_8616(statements, memo)
-            for attr in ("variables_in_use", "unified_local_vars", "variable_kb"):
-                value = getattr(cfunc, attr, None)
-                if isinstance(value, dict):
-                    with contextlib.suppress(Exception):
-                        setattr(fallback, attr, dict(value))
-                else:
-                    with contextlib.suppress(Exception):
-                        setattr(fallback, attr, value)
+            _clone_cfunc_validation_fields_8616(cfunc, fallback, memo)
             with contextlib.suppress(Exception):
                 setattr(fallback, "_inertia_validation_snapshot_fallback", "manual")
             return fallback
@@ -6639,7 +6948,7 @@ def _snapshot_c_ast_value_for_validation_8616(value, memo: dict[int, object]):
             with contextlib.suppress(Exception):
                 setattr(cloned, attr, cloned_value)
 
-    for attr in _C_AST_CHILD_ATTRS_8616:
+    for attr in _structured_slot_names_8616(value):
         if isinstance(value_dict, dict) and attr in value_dict:
             continue
         if not hasattr(value, attr):
@@ -6695,6 +7004,7 @@ def _clear_tail_validation_clone_caches_8616(codegen) -> None:
         "_inertia_stack_lowering_debug",
         "_inertia_has_rebound_materialized_recurrence",
         "_inertia_pre_validation_stack_semantics_primed",
+        "_inertia_pre_validation_callsite_summaries_primed",
         "_inertia_recurrence_state",
         "_inertia_cached_text",
         "_inertia_regenerated_text",
@@ -6702,6 +7012,7 @@ def _clear_tail_validation_clone_caches_8616(codegen) -> None:
         "_inertia_semantic_facts_transferred",
         "_inertia_typed_conditions_transferred",
         "_inertia_tail_validation_widened_carriers",
+        "_inertia_jcc_register_exprs_by_ins_addr_8616",
     ):
         with contextlib.suppress(Exception):
             setattr(codegen, attr, None)
@@ -6718,12 +7029,38 @@ def _invalidate_tail_validation_derived_caches_8616(codegen) -> None:
         "_inertia_assignment_maps",
         "_inertia_stack_offset_cache",
         "_inertia_stack_pointer_aliases_for_cvars",
+        "_inertia_jcc_register_exprs_by_ins_addr_8616",
     ):
         with contextlib.suppress(Exception):
             setattr(codegen, attr, None)
     with contextlib.suppress(Exception):
         if hasattr(codegen, "_x86_16_tail_validation_cache"):
             delattr(codegen, "_x86_16_tail_validation_cache")
+
+
+_CODEGEN_TEXT_SNAPSHOT_MISSING_8616 = object()
+_CODEGEN_TEXT_SNAPSHOT_ATTRS_8616 = ("text", "_text")
+
+
+def _snapshot_codegen_text_state_8616(codegen) -> dict[str, object]:
+    if codegen is None:
+        return {}
+    return {
+        attr: getattr(codegen, attr, _CODEGEN_TEXT_SNAPSHOT_MISSING_8616)
+        for attr in _CODEGEN_TEXT_SNAPSHOT_ATTRS_8616
+    }
+
+
+def _restore_codegen_text_state_8616(codegen, snapshot: Mapping[str, object] | None) -> None:
+    if codegen is None or not isinstance(snapshot, Mapping):
+        return
+    for attr, value in snapshot.items():
+        if value is _CODEGEN_TEXT_SNAPSHOT_MISSING_8616:
+            with contextlib.suppress(Exception):
+                delattr(codegen, attr)
+            continue
+        with contextlib.suppress(Exception):
+            setattr(codegen, attr, value)
 
 
 def _attach_tail_validation_widened_carrier_provenance_8616(codegen, cfunc, *, function_addr: int) -> None:
@@ -7405,26 +7742,126 @@ def _repair_loop_exit_return_guards_8616(codegen) -> bool:
     return _impl()
 
 
-def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project, codegen, *, mode: str):
+def _coerce_nonnegative_int_8616(value) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int) and value >= 0:
+        return value
+    return 0
+
+
+def _postprocess_complexity_from_info_8616(info, *, source: str) -> _PostprocessFunctionComplexity8616:
+    if not isinstance(info, MutableMapping):
+        return _PostprocessFunctionComplexity8616(source=f"{source}:no_info")
+    cached = info.get("_inertia_function_complexity")
+    if not isinstance(cached, MutableMapping):
+        return _PostprocessFunctionComplexity8616(source=f"{source}:no_cached_complexity")
+    block_count = _coerce_nonnegative_int_8616(cached.get("blocks"))
+    byte_count = _coerce_nonnegative_int_8616(cached.get("bytes"))
+    block_addrs = cached.get("block_addrs")
+    if block_count == 0 and isinstance(block_addrs, (tuple, list, set, frozenset)):
+        block_count = len(block_addrs)
+    if block_count <= 0 and byte_count <= 0:
+        return _PostprocessFunctionComplexity8616(source=f"{source}:empty_cached_complexity")
+    cached_source = cached.get("source")
+    suffix = cached_source if isinstance(cached_source, str) and cached_source else "cached"
+    return _PostprocessFunctionComplexity8616(
+        block_count=block_count,
+        byte_count=byte_count,
+        source=f"{source}:{suffix}",
+    )
+
+
+def _postprocess_complexity_from_function_8616(function, *, source: str) -> _PostprocessFunctionComplexity8616:
+    if function is None:
+        return _PostprocessFunctionComplexity8616(source=f"{source}:missing")
+    info_complexity = _postprocess_complexity_from_info_8616(getattr(function, "info", None), source=source)
+    if info_complexity.block_count > 0 or info_complexity.byte_count > 0:
+        return info_complexity
+    local_blocks = tuple((getattr(function, "_local_blocks", {}) or {}).values())
+    if local_blocks:
+        total_bytes = sum(
+            _coerce_nonnegative_int_8616(getattr(block, "size", 0) or len(getattr(block, "bytestr", b"") or b""))
+            for block in local_blocks
+        )
+        return _PostprocessFunctionComplexity8616(
+            block_count=len(local_blocks),
+            byte_count=total_bytes,
+            source=f"{source}:local_blocks",
+        )
+    block_addrs = tuple(getattr(function, "block_addrs_set", ()) or ())
+    if block_addrs:
+        return _PostprocessFunctionComplexity8616(
+            block_count=len(block_addrs),
+            byte_count=0,
+            source=f"{source}:block_addrs_set",
+        )
+    return _PostprocessFunctionComplexity8616(source=f"{source}:empty_function")
+
+
+def _lookup_postprocess_kb_function_8616(project, func_addr: int | None):
+    if not isinstance(func_addr, int) or func_addr < 0:
+        return None
+    kb_funcs = getattr(getattr(project, "kb", None), "functions", None)
+    if kb_funcs is None:
+        return None
+    try:
+        return kb_funcs.function(func_addr, create=False)
+    except TypeError:
+        try:
+            return kb_funcs.function(addr=func_addr, create=False)
+        except TypeError:
+            return None
+    except Exception:
+        return None
+
+
+def _postprocess_function_complexity_8616(project, codegen, func_addr: int | None) -> _PostprocessFunctionComplexity8616:
+    current_function = getattr(codegen, "_inertia_current_function_8616", None)
+    current_complexity = _postprocess_complexity_from_function_8616(current_function, source="current_function")
+    if current_complexity.block_count > 0 or current_complexity.byte_count > 0:
+        return current_complexity
+
+    candidates: list[int] = []
+    if isinstance(func_addr, int):
+        candidates.append(func_addr)
+        delta = getattr(project, "_inertia_original_linear_delta", None)
+        if isinstance(delta, int):
+            candidates.extend((func_addr + delta, func_addr - delta))
+    seen: set[int] = set()
+    for candidate_addr in candidates:
+        if candidate_addr in seen:
+            continue
+        seen.add(candidate_addr)
+        fn = _lookup_postprocess_kb_function_8616(project, candidate_addr)
+        kb_complexity = _postprocess_complexity_from_function_8616(fn, source=f"kb:{candidate_addr:#x}")
+        if kb_complexity.block_count > 0 or kb_complexity.byte_count > 0:
+            return kb_complexity
+    return _PostprocessFunctionComplexity8616()
+
+
+def _collect_tail_validation_summary_with_baseline_canonicalization_8616(
+    project,
+    codegen,
+    *,
+    mode: str,
+    force_baseline_canonicalization: bool = False,
+):
     def _impl():
         canonicalization_setting = os.environ.get("INERTIA_ENABLE_TV_BASELINE_CANONICALIZATION", "1").strip().lower()
         if canonicalization_setting in {"0", "false", "no", "off"}:
             return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
         function_addr = getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1
+        if hasattr(codegen, "_inertia_postprocess_changed") and not force_baseline_canonicalization:
+            codegen._inertia_tail_validation_direct_final_summary_count_8616 = int(
+                getattr(codegen, "_inertia_tail_validation_direct_final_summary_count_8616", 0) or 0
+            ) + 1
+            return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
         # Large functions frequently time out in baseline clone canonicalization.
         # For those, use direct summary collection to keep validation deterministic
         # and avoid repeated timeout churn.
-        try:
-            kb_funcs = getattr(getattr(project, "kb", None), "functions", None)
-            fn = (
-                kb_funcs.function(function_addr, create=False)
-                if kb_funcs is not None and isinstance(function_addr, int) and function_addr >= 0
-                else None
-            )
-            block_count = len(getattr(fn, "block_addrs_set", ()) or ()) if fn is not None else 0
-        except Exception:
-            block_count = 0
-        if block_count >= 40:
+        complexity = _postprocess_function_complexity_8616(project, codegen, function_addr)
+        if complexity.is_expensive_for_local_validation:
             return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
 
         cloned_codegen = None
@@ -7506,6 +7943,24 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project
     return _impl()
 
 
+def _structuring_tail_validation_baseline_summary_8616(
+    codegen,
+    *,
+    mode: str,
+    before_fingerprint,
+):
+    del mode, before_fingerprint
+    # Fingerprint equality is not sufficient proof that the summary surface is
+    # identical: summaries retain width/provenance precision that can change
+    # without changing the boundary fingerprint. Keep this helper diagnostic-only
+    # until the summary cache has its own equivalence key.
+    if isinstance(getattr(codegen, "_inertia_structuring_tail_validation_artifacts_8616", None), Mapping):
+        codegen._inertia_tail_validation_structuring_baseline_reuse_refused_8616 = int(
+            getattr(codegen, "_inertia_tail_validation_structuring_baseline_reuse_refused_8616", 0) or 0
+        ) + 1
+    return None
+
+
 def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> bool:
     if getattr(codegen, "_inertia_pre_validation_stack_semantics_primed", False):
         return False
@@ -7541,6 +7996,25 @@ def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> 
     return changed
 
 
+def _prime_callsite_summaries_before_validation_baseline_8616(project, codegen) -> bool:
+    if getattr(codegen, "_inertia_pre_validation_callsite_summaries_primed", False):
+        return False
+    changed = False
+    try:
+        changed = bool(_calls._attach_callsite_summaries_8616(project, codegen))
+        if changed:
+            _invalidate_tail_validation_derived_caches_8616(codegen)
+    except Exception as ex:
+        logging.getLogger(__name__).debug(
+            "Pre-validation callsite summary priming failed at function=%#x stage=pre-validation-baseline: %s",
+            getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
+            ex,
+        )
+    finally:
+        codegen._inertia_pre_validation_callsite_summaries_primed = True
+    return changed
+
+
 def _postprocess_runtime_config_8616(project, codegen, pass_specs) -> tuple[int | None, bool, bool, set[str], object]:
     def _impl():
         func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
@@ -7554,21 +8028,17 @@ def _postprocess_runtime_config_8616(project, codegen, pass_specs) -> tuple[int 
             per_pass_validation_enabled = True
         if os.environ.get("INERTIA_FORCE_PER_PASS_TV"):
             per_pass_validation_enabled = True
-        large_function_for_per_pass_tv = False
-        try:
-            kb_funcs = getattr(getattr(project, "kb", None), "functions", None)
-            fn = (
-                kb_funcs.function(func_addr, create=False)
-                if kb_funcs is not None and isinstance(func_addr, int) and func_addr >= 0
-                else None
-            )
-            block_count = len(getattr(fn, "block_addrs_set", ()) or ()) if fn is not None else 0
-            large_function_for_per_pass_tv = block_count >= 40
-        except Exception:
-            large_function_for_per_pass_tv = False
+        complexity = _postprocess_function_complexity_8616(project, codegen, func_addr)
+        large_function_for_per_pass_tv = complexity.is_expensive_for_local_validation
         if large_function_for_per_pass_tv and not os.environ.get("INERTIA_FORCE_PER_PASS_TV"):
             per_pass_validation_enabled = False
         codegen._inertia_skip_per_pass_validation_large_function = large_function_for_per_pass_tv
+        codegen._inertia_postprocess_function_complexity_8616 = {
+            "blocks": complexity.block_count,
+            "bytes": complexity.byte_count,
+            "source": complexity.source,
+            "expensive": large_function_for_per_pass_tv,
+        }
         skip_env = os.environ.get("INERTIA_SKIP_POSTPROCESS_PASSES")
         skip_names: set[str] = set()
         if isinstance(skip_env, str) and skip_env.strip():
@@ -7600,16 +8070,7 @@ def _postprocess_runtime_config_8616(project, codegen, pass_specs) -> tuple[int 
 
 
 def _large_function_for_postprocess_snapshot_8616(project, func_addr: int | None) -> bool:
-    try:
-        kb_funcs = getattr(getattr(project, "kb", None), "functions", None)
-        fn = (
-            kb_funcs.function(func_addr, create=False)
-            if kb_funcs is not None and isinstance(func_addr, int) and func_addr >= 0
-            else None
-        )
-        return len(getattr(fn, "block_addrs_set", ()) or ()) >= 40 if fn is not None else False
-    except Exception:
-        return False
+    return _postprocess_function_complexity_8616(project, None, func_addr).is_expensive_for_local_validation
 
 
 def _postprocess_optimization_enabled_8616() -> bool:
@@ -7658,7 +8119,6 @@ def _selector_return_contract_skip_passes_8616() -> frozenset[str]:
             "_promote_stack_prototype_from_bp_loads_8616",
             "_prune_return_address_stack_arguments_8616",
             "_lower_stable_ss_stack_accesses_8616",
-            "_rerun_stack_lowering_consumers_after_calls_8616",
             "_normalize_function_prototype_arg_names_8616",
             "_unify_positive_bp_arg_stack_variables_8616",
             "_materialize_stable_stack_semantics_final_8616",
@@ -7671,10 +8131,57 @@ def _selector_return_contract_skip_passes_8616() -> frozenset[str]:
     )
 
 
+def _postprocess_pass_has_local_evidence_8616(pass_name: str, codegen) -> bool:
+    if pass_name != "_materialize_callsite_stack_arguments_8616":
+        return False
+    complexity = getattr(codegen, "_inertia_postprocess_function_complexity_8616", None)
+    if isinstance(complexity, Mapping):
+        block_count = _coerce_nonnegative_int_8616(complexity.get("blocks"))
+        byte_count = _coerce_nonnegative_int_8616(complexity.get("bytes"))
+        if block_count >= 64 or byte_count >= 0x200:
+            return False
+    summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
+    if not isinstance(summary_map, dict):
+        return False
+    for summary in summary_map.values():
+        push_sources = getattr(summary, "push_arg_sources", None)
+        if isinstance(push_sources, tuple) and any(source is not None for source in push_sources):
+            return True
+    return False
+
+
+def _postprocess_local_validation_refusal_reason_8616(
+    pass_name: str,
+    codegen,
+) -> _PostprocessPassRefusalReason8616:
+    if pass_name == "_materialize_callsite_stack_arguments_8616":
+        complexity = getattr(codegen, "_inertia_postprocess_function_complexity_8616", None)
+        if isinstance(complexity, Mapping):
+            block_count = _coerce_nonnegative_int_8616(complexity.get("blocks"))
+            byte_count = _coerce_nonnegative_int_8616(complexity.get("bytes"))
+            if block_count >= 64 or byte_count >= 0x200:
+                return _PostprocessPassRefusalReason8616.VERY_LARGE_FUNCTION_LOCAL_VALIDATION_UNAVAILABLE
+    return _PostprocessPassRefusalReason8616.LARGE_FUNCTION_LOCAL_VALIDATION_UNAVAILABLE
+
+
 def _postprocess_set_completion_state_8616(project, codegen, accepted_changed: bool) -> bool:
     codegen._inertia_postprocess_changed = accepted_changed
     project._inertia_decompiler_stage = "postprocess"
     return accepted_changed
+
+
+def _postprocess_codegen_has_text_8616(codegen) -> bool:
+    for attr in ("text", "_text"):
+        value = getattr(codegen, attr, None)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
+def _postprocess_should_regenerate_final_8616(codegen, accepted_changed: bool) -> bool:
+    if accepted_changed:
+        return True
+    return not _postprocess_codegen_has_text_8616(codegen)
 
 
 def _postprocess_run_bootstrap_steps_8616(project, codegen, skip_names: set[str], apply_step) -> bool:
@@ -7842,6 +8349,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             "_rewrite_decoded_jcc_conditions_8616",
             "_rewrite_decoded_jcc_conditions_after_calls_8616",
             "_repair_loop_exit_return_guards_8616",
+            "_recover_missing_direct_calls_from_evidence_early_8616",
             "_recover_missing_direct_calls_from_evidence_8616",
             "_normalize_fact_backed_stack_accesses_8616",
             "_normalize_call_target_names_8616",
@@ -7850,6 +8358,8 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             "_materialize_callsite_prototypes_8616",
             "_materialize_recovered_callsite_stack_arguments_8616",
             "_materialize_stack_byte_pair_return_8616",
+            "_materialize_direct_global_incdec_instructions_8616",
+            "_materialize_direct_global_incdec_instructions_final_8616",
             "_recover_missing_direct_calls_final_8616",
             "_materialize_pointer_memory_idioms_8616",
             "_materialize_empty_if_return_branches_8616",
@@ -7863,8 +8373,14 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         large_function_validation_required_passes = {
             "_rewrite_decoded_jcc_conditions_8616",
             "_rewrite_decoded_jcc_conditions_after_calls_8616",
+            "_recover_missing_direct_calls_from_evidence_early_8616",
+            "_recover_missing_direct_calls_from_evidence_8616",
             "_materialize_callsite_stack_arguments_8616",
+            "_materialize_recovered_callsite_stack_arguments_8616",
             "_materialize_stack_byte_pair_return_8616",
+            "_materialize_direct_global_incdec_instructions_8616",
+            "_materialize_direct_global_incdec_instructions_final_8616",
+            "_recover_missing_direct_calls_final_8616",
             "_materialize_pointer_memory_idioms_8616",
             "_materialize_empty_if_return_branches_8616",
             "_prune_surplus_void_empty_return_guards_8616",
@@ -7888,6 +8404,27 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             force_pass_validation = bool(os.environ.get("INERTIA_FORCE_PER_PASS_TV")) and pass_name in validation_required_passes and (
                 not large_function_skip or pass_name in large_function_validation_required_passes
             )
+            force_pass_validation = force_pass_validation or (
+                validation_enabled
+                and not large_function_skip
+                and pass_name in _MANDATORY_VALIDATION_PASS_NAMES_8616
+            )
+            if (
+                validation_enabled
+                and large_function_skip
+                and not per_pass_validation_enabled
+                and not force_pass_validation
+                and pass_name in _LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
+                and not _postprocess_pass_has_local_evidence_8616(pass_name, codegen)
+            ):
+                reason = _postprocess_local_validation_refusal_reason_8616(pass_name, codegen)
+                refused = list(getattr(codegen, "_inertia_postprocess_refused_passes_8616", ()) or ())
+                refused.append({"pass": pass_name, "reason": reason.value})
+                codegen._inertia_postprocess_refused_passes_8616 = tuple(refused)
+                skipped = list(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
+                skipped.append(pass_name)
+                codegen._inertia_postprocess_rejected_passes = tuple(skipped)
+                return True
             requires_snapshot = validation_enabled and (per_pass_validation_enabled or force_pass_validation)
             snapshot = _snapshot_codegen_cfunc(codegen) if requires_snapshot else None
             if requires_snapshot and snapshot is None:
@@ -7905,13 +8442,21 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             if return_chain_expected is not None and snapshot is None:
                 snapshot = _snapshot_codegen_cfunc(codegen)
             metadata_snapshot = _snapshot_codegen_inertia_metadata_8616(codegen) if snapshot is not None else None
+            text_snapshot = _snapshot_codegen_text_state_8616(codegen) if snapshot is not None else None
+            project_function_snapshot = (
+                _snapshot_project_function_metadata_8616(
+                    project,
+                    getattr(getattr(codegen, "cfunc", None), "addr", None),
+                )
+                if snapshot is not None
+                else None
+            )
 
             def _restore_step_state(*, context: str | None = None) -> None:
+                _restore_project_function_metadata_8616(project_function_snapshot)
                 _restore_codegen_cfunc(codegen, snapshot)
                 _restore_codegen_inertia_metadata_8616(codegen, metadata_snapshot)
-                if context is not None:
-                    if not getattr(codegen, "_inertia_postprocess_regeneration_disabled", False):
-                        _regenerate_text_safely(codegen, context=context)
+                _restore_codegen_text_state_8616(codegen, text_snapshot)
 
             try:
                 if isinstance(pass_timeout_seconds, int) and pass_timeout_seconds > 0:
@@ -7955,6 +8500,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                     pass_name,
                     last_changed_pass or "no earlier rewrite",
                     ex,
+                    exc_info=True,
                 )
                 return False
             if return_chain_expected is not None:
@@ -8021,13 +8567,14 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                         "Unreachable call statements present after return",
                         "Source-evidenced side-effect floor not met",
                     )
-                    is_blocking_delta = any(marker in summary_text for marker in blocking_markers)
+                    has_blocking_marker = any(marker in summary_text for marker in blocking_markers)
+                    is_blocking_delta = True
                     delta_kind = _classify_postprocess_validation_delta_8616(validation)
                     if (
                         pass_name in _HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616
                         and delta_kind is _PostprocessValidationDeltaKind8616.NAME_ONLY_HELPER_ANNOTATION
                     ):
-                        is_blocking_delta = any(marker in summary_text for marker in blocking_markers)
+                        is_blocking_delta = has_blocking_marker
                         if not is_blocking_delta:
                             accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
                             accepted.append(
@@ -8117,6 +8664,89 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                             )
                         else:
                             is_blocking_delta = True
+                    elif pass_name in _DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616:
+                        if _is_direct_global_update_materialization_delta_8616(codegen, validation):
+                            delta_kind = _PostprocessValidationDeltaKind8616.DIRECT_GLOBAL_UPDATE_MATERIALIZATION
+                            is_blocking_delta = False
+                            codegen._inertia_direct_global_update_validation_accepts_8616 = int(
+                                getattr(codegen, "_inertia_direct_global_update_validation_accepts_8616", 0) or 0
+                            ) + 1
+                            accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                            accepted.append(
+                                {
+                                    "pass": pass_name,
+                                    "kind": delta_kind.value,
+                                }
+                            )
+                            codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                            logging.getLogger(__name__).warning(
+                                "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                pass_name,
+                                delta_kind.value,
+                            )
+                        else:
+                            is_blocking_delta = True
+                    elif pass_name in _DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616:
+                        direct_update_delta = _is_direct_stack_update_materialization_delta_8616(codegen, validation)
+                        direct_move_delta = _is_direct_stack_move_idiv_remainder_materialization_delta_8616(
+                            codegen,
+                            validation,
+                        )
+                        if direct_update_delta or direct_move_delta:
+                            delta_kind = (
+                                _PostprocessValidationDeltaKind8616.DIRECT_STACK_UPDATE_MATERIALIZATION
+                                if direct_update_delta
+                                else _PostprocessValidationDeltaKind8616.DIRECT_STACK_MOVE_MATERIALIZATION
+                            )
+                            is_blocking_delta = False
+                            if direct_update_delta:
+                                codegen._inertia_direct_stack_update_validation_accepts_8616 = int(
+                                    getattr(codegen, "_inertia_direct_stack_update_validation_accepts_8616", 0) or 0
+                                ) + 1
+                            if direct_move_delta:
+                                codegen._inertia_direct_stack_move_validation_accepts_8616 = int(
+                                    getattr(codegen, "_inertia_direct_stack_move_validation_accepts_8616", 0) or 0
+                                ) + 1
+                            accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                            accepted.append(
+                                {
+                                    "pass": pass_name,
+                                    "kind": delta_kind.value,
+                                }
+                            )
+                            codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                            logging.getLogger(__name__).warning(
+                                "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                pass_name,
+                                delta_kind.value,
+                            )
+                        else:
+                            is_blocking_delta = True
+                    elif pass_name in _DIRECT_STACK_MOVE_VALIDATION_PASS_NAMES_8616:
+                        if _is_direct_stack_move_idiv_remainder_materialization_delta_8616(codegen, validation):
+                            delta_kind = _PostprocessValidationDeltaKind8616.DIRECT_STACK_MOVE_MATERIALIZATION
+                            is_blocking_delta = False
+                            codegen._inertia_direct_stack_move_validation_accepts_8616 = int(
+                                getattr(codegen, "_inertia_direct_stack_move_validation_accepts_8616", 0) or 0
+                            ) + 1
+                            accepted = list(getattr(codegen, "_inertia_postprocess_accepted_validation_deltas", ()) or ())
+                            accepted.append(
+                                {
+                                    "pass": pass_name,
+                                    "kind": delta_kind.value,
+                                }
+                            )
+                            codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                            logging.getLogger(__name__).warning(
+                                "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                pass_name,
+                                delta_kind.value,
+                            )
+                        else:
+                            is_blocking_delta = True
                     elif pass_name == "_prune_unreachable_after_return_final_8616":
                         if int(getattr(codegen, "_inertia_unreachable_after_return_pruned_8616", 0) or 0) > 0:
                             delta_kind = _PostprocessValidationDeltaKind8616.UNREACHABLE_AFTER_RETURN_PRUNE
@@ -8138,6 +8768,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                         else:
                             is_blocking_delta = True
                     elif pass_name in {
+                        "_recover_missing_direct_calls_from_evidence_early_8616",
                         "_recover_missing_direct_calls_from_evidence_8616",
                         "_normalize_fact_backed_stack_accesses_8616",
                         "_normalize_call_target_names_8616",
@@ -8286,8 +8917,15 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                             else f"postprocess:{pass_name}:restore"
                         ),
                     )
-                    # Pass-local reject: keep baseline snapshot and continue with later passes.
-                    return True
+                    if pass_name in _PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616:
+                        # Optional metadata pass: keep baseline snapshot and
+                        # continue. Semantic rewrites still require typed
+                        # acceptance above or they fail the stage.
+                        return True
+                    codegen._inertia_postprocess_validation_failed = True
+                    codegen._inertia_postprocess_validation_failure_pass = pass_name
+                    codegen._inertia_postprocess_validation_failure_error = summary_text
+                    return False
 
             if step_changed:
                 accepted_changed = True
@@ -8317,7 +8955,10 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
 
         _postprocess_run_pass_specs_8616(project, codegen, pass_specs, trace_func_addr, _apply_step)
         if not codegen._inertia_postprocess_validation_failed:
-            if not getattr(codegen, "_inertia_postprocess_regeneration_disabled", False):
+            if (
+                not getattr(codegen, "_inertia_postprocess_regeneration_disabled", False)
+                and _postprocess_should_regenerate_final_8616(codegen, accepted_changed)
+            ):
                 final_context = (
                     f"{trace_func_addr:#x} postprocess:final" if isinstance(trace_func_addr, int) else "postprocess:final"
                 )
@@ -8759,6 +9400,244 @@ def _is_segmented_stack_slot_size_precision_delta_8616(validation: dict[str, obj
     return normalized_added == normalized_removed
 
 
+def _stack_offset_marker_8616(offset: int) -> str:
+    sign = "-" if offset < 0 else "+"
+    return f"BP{sign}0x{abs(int(offset)):x}"
+
+
+def _direct_global_update_evidence_addresses_8616(codegen) -> frozenset[int]:
+    addresses: set[int] = set()
+    for evidence in tuple(getattr(codegen, "_inertia_direct_global_update_evidence_8616", ()) or ()):
+        if not isinstance(evidence, (tuple, list)):
+            continue
+        for item in tuple(evidence):
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                continue
+            key, value = item
+            if key == "displacement" and isinstance(value, int):
+                addresses.add(value & 0xFFFF)
+    return frozenset(addresses)
+
+
+def _global_addr_token_matches_direct_global_evidence_8616(token: object, addresses: frozenset[int]) -> bool:
+    if not isinstance(token, str) or not addresses:
+        return False
+    lowered = token.lower()
+    global_match = re.search(r"global:0x([0-9a-f]+)", lowered)
+    if global_match is not None:
+        with contextlib.suppress(ValueError):
+            return int(global_match.group(1), 16) in addresses
+    if token.startswith("deref:") and not any(segment in lowered for segment in ("reg:ds", "reg:es")):
+        return False
+    for addr in addresses:
+        if f"const:{addr}" in token:
+            return True
+        # Some fingerprints preserve equivalent DS/ES address arithmetic as
+        # Add(Mul(DS,16), const:addr-1), const:1. Accept this only inside a
+        # memory-write token tied to a data segment.
+        if token.startswith("deref:") and f"const:{(addr - 1) & 0xFFFF}" in token and "const:1" in token:
+            return True
+    return False
+
+
+def _is_direct_global_update_materialization_delta_8616(codegen, validation: dict[str, object]) -> bool:
+    if not isinstance(validation, dict):
+        return False
+    stats = getattr(codegen, "_inertia_direct_global_update_lowering_8616", None)
+    if not isinstance(stats, dict) or int(stats.get("materialized_count", 0) or 0) <= 0:
+        return False
+    addresses = _direct_global_update_evidence_addresses_8616(codegen)
+    if not addresses:
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = _validation_delta_touched_fields_8616(delta)
+    allowed_fields = {"global_writes", "segmented_writes", "register_writes"}
+    if not touched_fields or touched_fields - allowed_fields:
+        return False
+
+    checked_write_token = False
+    for field_name in ("global_writes", "segmented_writes"):
+        field_delta = delta.get(field_name)
+        if not isinstance(field_delta, dict):
+            continue
+        for token in tuple(field_delta.get("added") or ()) + tuple(field_delta.get("removed") or ()):
+            if not _global_addr_token_matches_direct_global_evidence_8616(token, addresses):
+                return False
+            checked_write_token = True
+
+    register_delta = delta.get("register_writes")
+    if isinstance(register_delta, dict):
+        added_registers = tuple(register_delta.get("added") or ())
+        removed_registers = tuple(register_delta.get("removed") or ())
+        if added_registers:
+            return False
+        if any(not isinstance(token, str) or not token.startswith("reg:") for token in removed_registers):
+            return False
+
+    return checked_write_token
+
+
+def _direct_stack_update_evidence_offsets_8616(codegen) -> frozenset[int]:
+    offsets: set[int] = set()
+    for evidence in tuple(getattr(codegen, "_inertia_direct_stack_update_evidence_8616", ()) or ()):
+        if not isinstance(evidence, (tuple, list)):
+            continue
+        for item in tuple(evidence):
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                continue
+            key, value = item
+            if key == "offset" and isinstance(value, int):
+                offsets.add(value)
+    return frozenset(offsets)
+
+
+def _is_direct_stack_update_materialization_delta_8616(codegen, validation: dict[str, object]) -> bool:
+    if not isinstance(validation, dict):
+        return False
+    stats = getattr(codegen, "_inertia_direct_stack_update_lowering_8616", None)
+    if not isinstance(stats, dict) or int(stats.get("materialized_count", 0) or 0) <= 0:
+        return False
+    evidence_offsets = _direct_stack_update_evidence_offsets_8616(codegen)
+    if not evidence_offsets:
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = _validation_delta_touched_fields_8616(delta)
+    allowed_fields = {"segmented_writes", "stack_writes", "conditions", "control_flow_effects"}
+    if not touched_fields or touched_fields - allowed_fields:
+        return False
+
+    condition_delta = delta.get("conditions")
+    added_conditions: tuple[object, ...] = ()
+    removed_conditions: tuple[object, ...] = ()
+    if isinstance(condition_delta, dict):
+        added_conditions = tuple(condition_delta.get("added") or ())
+        removed_conditions = tuple(condition_delta.get("removed") or ())
+        if any(not isinstance(item, str) or not item.startswith("Cmp") for item in added_conditions + removed_conditions):
+            return False
+
+    control_delta = delta.get("control_flow_effects")
+    if isinstance(control_delta, dict):
+        added_control = tuple(control_delta.get("added") or ())
+        removed_control = tuple(control_delta.get("removed") or ())
+        expected_added = {f"for:{item}" for item in added_conditions} | {f"if:{item}" for item in added_conditions}
+        expected_removed = {f"for:{item}" for item in removed_conditions} | {f"if:{item}" for item in removed_conditions}
+        if set(added_control) - expected_added:
+            return False
+        if set(removed_control) - expected_removed:
+            return False
+
+    tokens: list[str] = []
+    for field_name in ("segmented_writes", "stack_writes", "conditions", "control_flow_effects"):
+        field_delta = delta.get(field_name)
+        if not isinstance(field_delta, dict):
+            continue
+        for item in tuple(field_delta.get("added") or ()) + tuple(field_delta.get("removed") or ()):
+            if not isinstance(item, str):
+                return False
+            tokens.append(item)
+    if not tokens:
+        return False
+
+    markers = {_stack_offset_marker_8616(offset) for offset in evidence_offsets}
+    if any(marker in token for marker in markers for token in tokens):
+        return True
+
+    # Some stack-array writes fingerprint only as CIndexedVariable after the
+    # stack update fact has been consumed. Keep this limited to added segmented
+    # write precision and only when direct stack-update evidence was consumed.
+    if touched_fields == {"segmented_writes"}:
+        segmented_delta = delta.get("segmented_writes")
+        if not isinstance(segmented_delta, dict):
+            return False
+        added = tuple(segmented_delta.get("added") or ())
+        removed = tuple(segmented_delta.get("removed") or ())
+        return bool(added) and not removed and all(
+            isinstance(item, str)
+            and item.startswith("deref:")
+            and "CIndexedVariable" in item
+            for item in added
+        )
+
+    return False
+
+
+def _direct_stack_move_has_signed_idiv_remainder_evidence_8616(codegen) -> bool:
+    stats = getattr(codegen, "_inertia_direct_stack_move_lowering_8616", None)
+    if not isinstance(stats, dict) or int(stats.get("materialized_count", 0) or 0) <= 0:
+        return False
+    for evidence in tuple(getattr(codegen, "_inertia_direct_stack_move_evidence_8616", ()) or ()):
+        if not isinstance(evidence, (tuple, list)):
+            continue
+        for item in tuple(evidence):
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                continue
+            key, value = item
+            if key != "source_kind":
+                continue
+            name = getattr(value, "name", None)
+            text = getattr(value, "value", None)
+            if name == "SIGNED_IDIV_REMAINDER" or text == "signed_idiv_remainder" or value == "SIGNED_IDIV_REMAINDER":
+                return True
+    return False
+
+
+def _helper_token_is_insert_artifact_8616(token: object) -> bool:
+    if not isinstance(token, str):
+        return False
+    return token in {"name:_INSERT", "name:__INSERT", "_INSERT", "__INSERT"} or token.endswith("._INSERT")
+
+
+def _is_direct_stack_move_idiv_remainder_aux_delta_8616(validation: dict[str, object]) -> bool:
+    delta = validation.get("delta") if isinstance(validation, dict) else None
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = _validation_delta_touched_fields_8616(delta)
+    if not touched_fields or touched_fields - {"helper_calls", "register_writes"}:
+        return False
+    helper_delta = delta.get("helper_calls")
+    if isinstance(helper_delta, dict):
+        helper_tokens = tuple(helper_delta.get("added") or ()) + tuple(helper_delta.get("removed") or ())
+        if not helper_tokens or any(not _helper_token_is_insert_artifact_8616(token) for token in helper_tokens):
+            return False
+    elif "helper_calls" in touched_fields:
+        return False
+    register_delta = delta.get("register_writes")
+    if isinstance(register_delta, dict):
+        reg_tokens = tuple(register_delta.get("added") or ()) + tuple(register_delta.get("removed") or ())
+        if not reg_tokens or any(token != "reg:ax" for token in reg_tokens):
+            return False
+    elif "register_writes" in touched_fields:
+        return False
+    return True
+
+
+def _validation_without_delta_fields_8616(validation: dict[str, object], fields: set[str]) -> dict[str, object]:
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return validation
+    stripped = dict(validation)
+    stripped["delta"] = {key: value for key, value in delta.items() if key not in fields}
+    return stripped
+
+
+def _is_direct_stack_move_idiv_remainder_materialization_delta_8616(codegen, validation: dict[str, object]) -> bool:
+    if not _direct_stack_move_has_signed_idiv_remainder_evidence_8616(codegen):
+        return False
+    if _is_direct_stack_move_idiv_remainder_aux_delta_8616(validation):
+        return True
+    stripped = _validation_without_delta_fields_8616(validation, {"helper_calls", "register_writes"})
+    stripped_delta = stripped.get("delta")
+    if not isinstance(stripped_delta, dict) or not stripped_delta:
+        return False
+    return _is_direct_stack_update_materialization_delta_8616(codegen, stripped) and _is_direct_stack_move_idiv_remainder_aux_delta_8616(
+        _validation_without_delta_fields_8616(validation, set(stripped_delta.keys()))
+    )
+
+
 def _helper_call_token_is_named_stack_probe_8616(project, token: object) -> bool:
     if not isinstance(token, str):
         return False
@@ -8791,6 +9670,7 @@ def _helper_call_token_is_stack_probe_evidenced_8616(project, codegen, token: ob
 
 
 _JCC_CONDITION_MATERIALIZATION_REMOVABLE_REG_WRITES_8616 = frozenset({"reg:ax"})
+_TAIL_VALIDATION_CONTROL_CONDITION_PREFIXES_8616 = frozenset({"if", "ifbreak", "while", "dowhile", "for"})
 
 
 def _helper_delta_added_targets_are_function_callsite_evidenced_8616(
@@ -8812,6 +9692,134 @@ def _helper_delta_added_targets_are_function_callsite_evidenced_8616(
     return bool(expected_targets) and set(added_helpers).issubset(expected_targets)
 
 
+def _normalize_validation_condition_token_8616(token: object) -> str | None:
+    if not isinstance(token, str) or not token:
+        return None
+    return normalize_condition_fingerprint_algebraic_8616(normalize_condition_fingerprint_string_8616(token))
+
+
+def _condition_token_from_control_effect_8616(token: object) -> str | None:
+    if not isinstance(token, str) or ":" not in token:
+        return None
+    prefix, condition_token = token.split(":", 1)
+    if prefix not in _TAIL_VALIDATION_CONTROL_CONDITION_PREFIXES_8616:
+        return None
+    return _normalize_validation_condition_token_8616(condition_token)
+
+
+def _jcc_condition_validation_evidence_8616(codegen) -> tuple[dict[str, str], ...]:
+    evidence_items: list[dict[str, str]] = []
+    for item in tuple(getattr(codegen, "_inertia_jcc_condition_validation_evidence_8616", ()) or ()):
+        if not isinstance(item, dict):
+            continue
+        removed = _normalize_validation_condition_token_8616(item.get("removed"))
+        added = _normalize_validation_condition_token_8616(item.get("added"))
+        if not removed or not added or removed == added:
+            continue
+        evidence_items.append({"removed": removed, "added": added})
+    return tuple(evidence_items)
+
+
+def _jcc_condition_delta_is_evidenced_8616(codegen, condition_delta, control_delta) -> bool:
+    normalized_delta = _normalized_jcc_condition_delta_sets_8616(condition_delta, control_delta)
+    if normalized_delta is None:
+        return False
+    added_conditions, removed_conditions, added_control_conditions, removed_control_conditions = normalized_delta
+    if not (added_conditions or removed_conditions or added_control_conditions or removed_control_conditions):
+        return True
+
+    evidence = _jcc_condition_validation_evidence_8616(codegen)
+    if evidence:
+        evidenced_added = {item["added"] for item in evidence}
+        evidenced_removed = {item["removed"] for item in evidence}
+        if not added_conditions - evidenced_added and not removed_conditions - evidenced_removed:
+            if not added_control_conditions - evidenced_added and not removed_control_conditions - evidenced_removed:
+                return True
+    if _jcc_condition_delta_matches_decoded_fingerprints_8616(codegen, normalized_delta):
+        return True
+    return _jcc_condition_delta_matches_structuring_evidence_8616(codegen, normalized_delta)
+
+
+def _normalized_jcc_condition_delta_sets_8616(condition_delta, control_delta) -> tuple[set[str], set[str], set[str], set[str]] | None:
+    added_conditions: set[str] = set()
+    removed_conditions: set[str] = set()
+    if isinstance(condition_delta, dict):
+        for token in tuple(condition_delta.get("added") or ()):
+            normalized = _normalize_validation_condition_token_8616(token)
+            if normalized is None:
+                return None
+            added_conditions.add(normalized)
+        for token in tuple(condition_delta.get("removed") or ()):
+            normalized = _normalize_validation_condition_token_8616(token)
+            if normalized is None:
+                return None
+            removed_conditions.add(normalized)
+
+    added_control_conditions: set[str] = set()
+    removed_control_conditions: set[str] = set()
+    if isinstance(control_delta, dict):
+        for token in tuple(control_delta.get("added") or ()):
+            normalized = _condition_token_from_control_effect_8616(token)
+            if normalized is None:
+                return None
+            added_control_conditions.add(normalized)
+        for token in tuple(control_delta.get("removed") or ()):
+            normalized = _condition_token_from_control_effect_8616(token)
+            if normalized is None:
+                return None
+            removed_control_conditions.add(normalized)
+    return added_conditions, removed_conditions, added_control_conditions, removed_control_conditions
+
+
+def _jcc_condition_delta_matches_structuring_evidence_8616(
+    codegen,
+    normalized_delta: tuple[set[str], set[str], set[str], set[str]],
+) -> bool:
+    added_conditions, removed_conditions, added_control_conditions, removed_control_conditions = normalized_delta
+    for item in tuple(getattr(codegen, "_inertia_structuring_jcc_condition_validation_deltas_8616", ()) or ()):
+        if not isinstance(item, dict):
+            continue
+        candidate = _normalized_jcc_condition_delta_sets_8616(
+            item.get("conditions"),
+            item.get("control_flow_effects"),
+        )
+        if candidate is None:
+            continue
+        (
+            candidate_added_conditions,
+            candidate_removed_conditions,
+            candidate_added_control_conditions,
+            candidate_removed_control_conditions,
+        ) = candidate
+        if (
+            added_conditions == candidate_added_conditions
+            and removed_conditions == candidate_removed_conditions
+            and added_control_conditions == candidate_added_control_conditions
+            and removed_control_conditions == candidate_removed_control_conditions
+        ):
+            return True
+    return False
+
+
+def _jcc_condition_delta_matches_decoded_fingerprints_8616(
+    codegen,
+    normalized_delta: tuple[set[str], set[str], set[str], set[str]],
+) -> bool:
+    added_conditions, removed_conditions, added_control_conditions, removed_control_conditions = normalized_delta
+    if not added_conditions or len(added_conditions) != len(removed_conditions):
+        return False
+    if added_control_conditions != added_conditions or removed_control_conditions != removed_conditions:
+        return False
+    decoded: set[str] = set()
+    for token in tuple(getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ()) or ()):
+        normalized = _normalize_validation_condition_token_8616(token)
+        if normalized is not None:
+            decoded.add(normalized)
+    if not decoded or added_conditions - decoded:
+        return False
+    return True
+
+
 def _is_jcc_condition_materialization_validation_delta_8616(
     project,
     codegen,
@@ -8821,13 +9829,29 @@ def _is_jcc_condition_materialization_validation_delta_8616(
 ) -> bool:
     if not isinstance(validation, dict):
         return False
-    if int(getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) or 0) <= 0:
+    if (
+        int(getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) or 0) <= 0
+        and int(getattr(codegen, "_inertia_structuring_jcc_condition_validation_accepts_8616", 0) or 0) <= 0
+        and not tuple(getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ()) or ())
+    ):
         return False
     delta = validation.get("delta")
     if not isinstance(delta, dict):
         return False
     touched_fields = _validation_delta_touched_fields_8616(delta)
-    if not touched_fields or touched_fields - {"helper_calls", "global_writes", "register_writes"}:
+    if not touched_fields or touched_fields - {
+        "conditions",
+        "control_flow_effects",
+        "helper_calls",
+        "global_writes",
+        "register_writes",
+    }:
+        return False
+    if not _jcc_condition_delta_is_evidenced_8616(
+        codegen,
+        delta.get("conditions"),
+        delta.get("control_flow_effects"),
+    ):
         return False
 
     helper_delta = delta.get("helper_calls")
@@ -8874,6 +9898,33 @@ def _is_jcc_condition_materialization_validation_delta_8616(
     return True
 
 
+def _is_combined_jcc_callsite_stack_validation_delta_8616(project, function, codegen, validation: dict[str, object]) -> bool:
+    if not isinstance(validation, dict):
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    touched_fields = _validation_delta_touched_fields_8616(delta)
+    if not {"conditions", "control_flow_effects"} & touched_fields:
+        return False
+    if not {"global_writes", "segmented_writes"} & touched_fields:
+        return False
+    jcc_validation = _validation_without_delta_fields_8616(
+        validation,
+        {"segmented_writes", "stack_writes", "returns"},
+    )
+    callsite_validation = _validation_without_delta_fields_8616(
+        validation,
+        {"conditions", "control_flow_effects", "helper_calls", "register_writes"},
+    )
+    return _is_jcc_condition_materialization_validation_delta_8616(
+        project,
+        codegen,
+        jcc_validation,
+        function=function,
+    ) and _is_callsite_stack_argument_materialization_delta_8616(codegen, callsite_validation)
+
+
 def _call_fingerprint_args_text_8616(token: object) -> str | None:
     if not isinstance(token, str) or not token.startswith("call:"):
         return None
@@ -8915,6 +9966,18 @@ def _is_callsite_stack_argument_materialization_delta_8616(codegen, validation: 
         return False
     touched_fields = _validation_delta_touched_fields_8616(delta)
     if touched_fields and touched_fields <= {"global_writes", "segmented_writes"}:
+        global_delta = delta.get("global_writes")
+        if isinstance(global_delta, dict):
+            added_globals = tuple(global_delta.get("added") or ())
+            removed_globals = tuple(global_delta.get("removed") or ())
+            if removed_globals:
+                _debug_refusal("global_writes_removed", removed=removed_globals[:6])
+                return False
+            if added_globals and not all(
+                _is_adjacent_global_high_byte_precision_delta_8616(token, validation) for token in added_globals
+            ):
+                _debug_refusal("global_writes_not_adjacent_high_byte", added=added_globals[:6])
+                return False
         for field_name in ("helper_calls", "register_writes", "stack_writes", "returns", "conditions", "control_flow_effects"):
             field_delta = delta.get(field_name)
             if not isinstance(field_delta, dict):
@@ -9168,7 +10231,7 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
         for key, field_delta in delta.items()
         if isinstance(field_delta, dict) and ((field_delta.get("added") or ()) or (field_delta.get("removed") or ()))
     }
-    allowed_fields = {"helper_calls", "returns", "segmented_writes", "conditions", "control_flow_effects"}
+    allowed_fields = {"returns", "segmented_writes", "conditions", "control_flow_effects"}
     if not touched_fields or touched_fields - allowed_fields:
         return False
 
@@ -9228,26 +10291,75 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
             if consumed <= 0 and arg_materialized <= 0 and not _has_stack_probe_cleanup_evidence_8616(codegen):
                 return False
 
-    helper_delta = delta.get("helper_calls")
-    if isinstance(helper_delta, dict) and ((helper_delta.get("added") or ()) or (helper_delta.get("removed") or ())):
-        if function is None:
-            return False
-        helper_validation = dict(validation)
-        helper_validation["delta"] = {"helper_calls": helper_delta}
-        if not _is_direct_callsite_helper_delta_only_8616(project, function, helper_validation):
-            return False
-
     return True
 
 
+def _selector_return_expected_raw_stack_slots_8616(project, codegen, expected_returns: set[str]) -> set[str]:
+    """Map expected selector-return arguments back to their raw BP stack slots."""
+
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None or not expected_returns:
+        return set()
+    raw_slots: set[str] = set()
+    for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
+        variable = getattr(arg, "variable", None)
+        if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
+            continue
+        offset = getattr(variable, "offset", None)
+        if not isinstance(offset, int) or offset <= 0:
+            continue
+        size = getattr(variable, "size", None)
+        try:
+            arg_fingerprint = _expr_fingerprint(arg, project)
+        except Exception as ex:
+            logging.getLogger(__name__).debug("selector-return arg fingerprint failed: %s", ex)
+            continue
+        if arg_fingerprint not in expected_returns:
+            continue
+        if isinstance(size, int) and size > 0:
+            raw_slots.add(_stack_slot_fingerprint_from_slot_8616(offset, size))
+        raw_slots.add(_stack_slot_fingerprint_from_slot_8616(offset, None))
+    return raw_slots
+
+
+def _selector_return_current_condition_fingerprints_8616(project, codegen) -> set[str]:
+    cfunc = getattr(codegen, "cfunc", None)
+    root = getattr(cfunc, "statements", None) if cfunc is not None else None
+    if root is None:
+        return set()
+    fingerprints: set[str] = set()
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CIfElse):
+            continue
+        for cond, _body in tuple(getattr(node, "condition_and_nodes", ()) or ()):
+            try:
+                fingerprints.add(_expr_fingerprint(cond, project))
+            except Exception as ex:
+                logging.getLogger(__name__).debug("selector-return current condition fingerprint failed: %s", ex)
+    return fingerprints
+
+
 def _is_cfg_return_expr_chain_materialization_delta_8616(project, function, codegen, validation: dict[str, object]) -> bool:
-    if function is None or not isinstance(validation, dict):
+    _ = function
+    def _reject(reason: _CfgReturnExprDeltaRefusal8616, **details) -> bool:
+        refusals = list(getattr(codegen, "_inertia_cfg_return_expr_delta_refusals_8616", ()) or ())
+        refusals.append({"reason": reason, "details": details})
+        codegen._inertia_cfg_return_expr_delta_refusals_8616 = tuple(refusals)
+        if os.environ.get("INERTIA_DEBUG_RETURN_BRANCH"):
+            logging.getLogger(__name__).warning(
+                "[cfg-selector-return] validation-delta refused reason=%s details=%r",
+                reason.value,
+                details,
+            )
         return False
+
+    if not isinstance(validation, dict):
+        return _reject(_CfgReturnExprDeltaRefusal8616.MISSING_DELTA, validation_type=type(validation).__name__)
     if not getattr(codegen, "_inertia_return_expr_chain_materialized_8616", False):
-        return False
+        return _reject(_CfgReturnExprDeltaRefusal8616.MISSING_EVIDENCE)
     delta = validation.get("delta")
     if not isinstance(delta, dict):
-        return False
+        return _reject(_CfgReturnExprDeltaRefusal8616.MISSING_DELTA)
     touched_fields = {
         key
         for key, field_delta in delta.items()
@@ -9257,45 +10369,79 @@ def _is_cfg_return_expr_chain_materialization_delta_8616(project, function, code
     if getattr(codegen, "_inertia_return_selector_materialized_8616", False):
         allowed_fields = {"returns", "conditions", "control_flow_effects", "helper_calls"}
     if not touched_fields or touched_fields - allowed_fields or "returns" not in touched_fields:
-        return False
+        return _reject(
+            _CfgReturnExprDeltaRefusal8616.UNEXPECTED_FIELDS,
+            touched_fields=tuple(sorted(touched_fields)),
+            allowed_fields=tuple(sorted(allowed_fields)),
+        )
     returns_delta = delta.get("returns")
     if not isinstance(returns_delta, dict):
-        return False
+        return _reject(_CfgReturnExprDeltaRefusal8616.MISSING_RETURNS_DELTA)
     added_returns = set(returns_delta.get("added") or ())
     removed_returns = set(returns_delta.get("removed") or ())
     expected_returns = set(getattr(codegen, "_inertia_return_expr_chain_materialized_return_fingerprints_8616", ()) or ())
     if not expected_returns or added_returns - expected_returns:
-        return False
-    if any(
-        item not in {"CDirtyExpression", "none"}
-        and "CDirtyExpression" not in item
-        and not item.startswith(("Concat(", "Or("))
-        for item in removed_returns
-    ):
-        return False
+        return _reject(
+            _CfgReturnExprDeltaRefusal8616.UNEXPECTED_ADDED_RETURNS,
+            added=tuple(sorted(added_returns)),
+            expected=tuple(sorted(expected_returns)),
+        )
+    expected_raw_stack_slots = _selector_return_expected_raw_stack_slots_8616(project, codegen, expected_returns)
+    unexpected_removed = tuple(
+        sorted(
+            item
+            for item in removed_returns
+            if item not in {"CDirtyExpression", "none"}
+            and item not in expected_raw_stack_slots
+            and "CDirtyExpression" not in item
+            and not item.startswith(("Concat(", "Or("))
+        )
+    )
+    if unexpected_removed:
+        return _reject(
+            _CfgReturnExprDeltaRefusal8616.UNEXPECTED_REMOVED_RETURNS,
+            removed=unexpected_removed,
+            expected_raw_stack_slots=tuple(sorted(expected_raw_stack_slots)),
+            expected=tuple(sorted(expected_returns)),
+        )
     if getattr(codegen, "_inertia_return_selector_materialized_8616", False):
         expected_conditions = set(
             getattr(codegen, "_inertia_return_chain_materialized_condition_fingerprints_8616", ()) or ()
         )
+        expected_conditions |= _selector_return_current_condition_fingerprints_8616(project, codegen)
         condition_delta = delta.get("conditions")
         if isinstance(condition_delta, dict):
             added_conditions = set(condition_delta.get("added") or ())
             if not expected_conditions or added_conditions - expected_conditions:
-                return False
+                return _reject(
+                    _CfgReturnExprDeltaRefusal8616.UNEXPECTED_ADDED_CONDITIONS,
+                    added=tuple(sorted(added_conditions)),
+                    expected=tuple(sorted(expected_conditions)),
+                )
         control_delta = delta.get("control_flow_effects")
         if isinstance(control_delta, dict):
             added_control = set(control_delta.get("added") or ())
             expected_control = {f"if:{fp}" for fp in expected_conditions}
             if added_control - expected_control:
-                return False
+                return _reject(
+                    _CfgReturnExprDeltaRefusal8616.UNEXPECTED_ADDED_CONTROL,
+                    added=tuple(sorted(added_control)),
+                    expected=tuple(sorted(expected_control)),
+                )
         helper_delta = delta.get("helper_calls")
         if isinstance(helper_delta, dict) and ((helper_delta.get("added") or ()) or (helper_delta.get("removed") or ())):
             if tuple(helper_delta.get("added") or ()):
-                return False
+                return _reject(
+                    _CfgReturnExprDeltaRefusal8616.UNEXPECTED_HELPER_DELTA,
+                    helper_delta=helper_delta,
+                )
             helper_validation = dict(validation)
             helper_validation["delta"] = {"helper_calls": helper_delta}
             if not _is_stack_probe_helper_cleanup_delta_8616(codegen, helper_validation):
-                return False
+                return _reject(
+                    _CfgReturnExprDeltaRefusal8616.UNEXPECTED_HELPER_DELTA,
+                    helper_delta=helper_delta,
+                )
     return True
 
 
@@ -9636,6 +10782,24 @@ def _normalize_stack_variable_identifiers_8616(codegen) -> None:
         if isinstance(vars_in_use, dict):
             local_maps.append(vars_in_use)
         stack_name_pat = re.compile(r"^(?:s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|arg_[0-9a-fA-F]+)$")
+
+        def _install_live_stack_local(node, var, offset: int) -> None:
+            if offset in arg_name_by_offset:
+                return
+            variables_in_use = getattr(cfunc, "variables_in_use", None)
+            if isinstance(variables_in_use, dict) and var not in variables_in_use:
+                variables_in_use[var] = node
+            unified_locals = getattr(cfunc, "unified_local_vars", None)
+            if not isinstance(unified_locals, dict):
+                unified_locals = {}
+                with contextlib.suppress(Exception):
+                    cfunc.unified_local_vars = unified_locals
+            if isinstance(unified_locals, dict) and var not in unified_locals:
+                unified_locals[var] = {(node, getattr(node, "variable_type", None))}
+                codegen._inertia_stack_identifier_live_node_declarations_8616 = int(
+                    getattr(codegen, "_inertia_stack_identifier_live_node_declarations_8616", 0) or 0
+                ) + 1
+
         for mapping in local_maps:
             for var, cvar in tuple(mapping.items()):
                 if var.__class__.__name__ != "SimStackVariable":
@@ -9682,6 +10846,10 @@ def _normalize_stack_variable_identifiers_8616(codegen) -> None:
                         continue
                     new_name = arg_name_by_offset.get(offset)
                     if new_name is None:
+                        current_name = getattr(node, "name", None) or getattr(var, "name", None)
+                        if isinstance(current_name, str) and stack_name_pat.match(current_name):
+                            new_name = _stack_object_name(offset, codegen=codegen)
+                    if new_name is None:
                         continue
                     try:
                         var.name = new_name
@@ -9689,6 +10857,7 @@ def _normalize_stack_variable_identifiers_8616(codegen) -> None:
                         continue
                     with contextlib.suppress(Exception):
                         node.name = new_name
+                    _install_live_stack_local(node, var, offset)
 
     return _impl()
 
@@ -9861,7 +11030,11 @@ def _decompile_8616(self):
             _decompile_8616._orig_decompiler_decompile = _orig_decompiler_decompile
         core_started = time.perf_counter()
         self.project._inertia_decompiler_stage = "core"
-        _orig_decompiler_decompile(self)
+        with span(
+            "x86_16.decompile.core",
+            function=getattr(getattr(self, "function", None) or getattr(self, "func", None), "addr", None),
+        ):
+            _orig_decompiler_decompile(self)
         core_elapsed = time.perf_counter() - core_started
         cfunc = getattr(self.codegen, "cfunc", None)
         func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
@@ -9918,19 +11091,68 @@ def _decompile_8616(self):
 
         _tv_sys3.stderr.write(f"[dbg] _decompile_8616 ENTER validation path: addr={func_addr} id={id(self.codegen)}\n")
         _tv_sys3.stderr.flush()
-        before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
-        before_collect_started = time.perf_counter()
-        before_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
-            self.project,
-            self.codegen,
-            mode=validation_mode,
+        with span("x86_16.decompile.pre_validation_prime", function=func_addr):
+            _prime_stack_semantics_before_validation_baseline_8616(self.project, self.codegen)
+            _prime_callsite_summaries_before_validation_baseline_8616(self.project, self.codegen)
+            _repair_cfunc_statements_wrapper(self.codegen)
+        baseline_cfunc_snapshot = _snapshot_codegen_cfunc(self.codegen)
+        baseline_metadata_snapshot = (
+            _snapshot_codegen_inertia_metadata_8616(self.codegen)
+            if baseline_cfunc_snapshot is not None
+            else None
         )
-        setattr(self.codegen, "_inertia_postprocess_pre_validation_summary", before_summary)
+        baseline_text_snapshot = (
+            _snapshot_codegen_text_state_8616(self.codegen)
+            if baseline_cfunc_snapshot is not None
+            else None
+        )
+        baseline_project_function_snapshot = (
+            _snapshot_project_function_metadata_8616(self.project, func_addr)
+            if baseline_cfunc_snapshot is not None
+            else None
+        )
+        with span("x86_16.decompile.validation.before_fingerprint", function=func_addr):
+            before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
+        before_collect_started = time.perf_counter()
+        with span("x86_16.decompile.validation.before_summary", function=func_addr):
+            before_summary = _structuring_tail_validation_baseline_summary_8616(
+                self.codegen,
+                mode=validation_mode,
+                before_fingerprint=before_fingerprint,
+            )
+            annotate_current_span(reused_structuring_baseline=before_summary is not None)
+            if before_summary is None:
+                before_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
+                    self.project,
+                    self.codegen,
+                    mode=validation_mode,
+                )
         before_collect_elapsed = time.perf_counter() - before_collect_started
+        if baseline_cfunc_snapshot is not None:
+            _restore_project_function_metadata_8616(baseline_project_function_snapshot)
+            _restore_codegen_cfunc(self.codegen, baseline_cfunc_snapshot)
+            _restore_codegen_inertia_metadata_8616(self.codegen, baseline_metadata_snapshot)
+            _restore_codegen_text_state_8616(self.codegen, baseline_text_snapshot)
+        setattr(self.codegen, "_inertia_postprocess_pre_validation_summary", before_summary)
         # Snapshot pre-postprocess codegen for the semantic gate. In the
         # validation-enabled path, mutating postprocess is only safe when a
         # rejected result can be restored.
         pre_postprocess_cfunc_snapshot = _snapshot_codegen_cfunc(self.codegen)
+        pre_postprocess_metadata_snapshot = (
+            _snapshot_codegen_inertia_metadata_8616(self.codegen)
+            if pre_postprocess_cfunc_snapshot is not None
+            else None
+        )
+        pre_postprocess_text_snapshot = (
+            _snapshot_codegen_text_state_8616(self.codegen)
+            if pre_postprocess_cfunc_snapshot is not None
+            else None
+        )
+        pre_postprocess_project_function_snapshot = (
+            _snapshot_project_function_metadata_8616(self.project, func_addr)
+            if pre_postprocess_cfunc_snapshot is not None
+            else None
+        )
         postprocess_started = time.perf_counter()
         postprocess_exception: Exception | None = None
         if pre_postprocess_cfunc_snapshot is None:
@@ -9944,7 +11166,12 @@ def _decompile_8616(self):
             )
         else:
             try:
-                changed = _postprocess_codegen_8616(self.project, self.codegen)
+                with span("x86_16.decompile.postprocess", function=func_addr):
+                    changed = _postprocess_codegen_8616(self.project, self.codegen)
+                    annotate_current_span(
+                        changed=bool(changed),
+                        last_pass=getattr(self.codegen, "_inertia_last_postprocess_pass", None),
+                    )
             except Exception as ex:  # pragma: no cover - defensive stage-finalization path
                 postprocess_exception = ex
                 changed = False
@@ -9955,7 +11182,10 @@ def _decompile_8616(self):
                     exc_info=True,
                 )
                 with contextlib.suppress(Exception):
+                    _restore_project_function_metadata_8616(pre_postprocess_project_function_snapshot)
                     _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
+                    _restore_codegen_inertia_metadata_8616(self.codegen, pre_postprocess_metadata_snapshot)
+                    _restore_codegen_text_state_8616(self.codegen, pre_postprocess_text_snapshot)
                 setattr(self.codegen, "_inertia_postprocess_exception", repr(ex))
                 setattr(
                     self.codegen,
@@ -9963,6 +11193,11 @@ def _decompile_8616(self):
                     getattr(self.codegen, "_inertia_last_postprocess_pass", None),
                 )
         postprocess_elapsed = time.perf_counter() - postprocess_started
+        if not changed and pre_postprocess_cfunc_snapshot is not None:
+            _restore_project_function_metadata_8616(pre_postprocess_project_function_snapshot)
+            _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
+            _restore_codegen_inertia_metadata_8616(self.codegen, pre_postprocess_metadata_snapshot)
+            _restore_codegen_text_state_8616(self.codegen, pre_postprocess_text_snapshot)
         function = getattr(self, "function", None) or getattr(self, "func", None)
         if function is None and getattr(getattr(self, "codegen", None), "cfunc", None) is not None:
             addr = getattr(self.codegen.cfunc, "addr", None)
@@ -9982,25 +11217,40 @@ def _decompile_8616(self):
         if os.environ.get("INERTIA_ENABLE_PRE_REWRITE_INVARIANT_GATE", "").strip().lower() in {"1", "true", "yes", "on"}:
             _inertia_run_pre_rewrite_invariant_gate(self.project, self.codegen, function)
         _invalidate_tail_validation_derived_caches_8616(self.codegen)
-        after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
-        after_collect_started = time.perf_counter()
-        after_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
-            self.project,
-            self.codegen,
-            mode=validation_mode,
-        )
-        after_collect_elapsed = time.perf_counter() - after_collect_started
+        if not changed and pre_postprocess_cfunc_snapshot is not None:
+            with span("x86_16.decompile.validation.after_fingerprint", function=func_addr, identity_restore=True):
+                after_fingerprint = before_fingerprint
+            after_collect_started = time.perf_counter()
+            with span("x86_16.decompile.validation.after_summary", function=func_addr, identity_restore=True):
+                after_summary = before_summary
+            after_collect_elapsed = time.perf_counter() - after_collect_started
+        else:
+            with span("x86_16.decompile.validation.after_fingerprint", function=func_addr):
+                after_fingerprint = fingerprint_x86_16_tail_validation_boundary(
+                    self.project,
+                    self.codegen,
+                    mode=validation_mode,
+                )
+            after_collect_started = time.perf_counter()
+            with span("x86_16.decompile.validation.after_summary", function=func_addr):
+                after_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
+                    self.project,
+                    self.codegen,
+                    mode=validation_mode,
+                )
+            after_collect_elapsed = time.perf_counter() - after_collect_started
         owner = getattr(function, "info", None) if function is not None else None
         validation_started = time.perf_counter()
-        validation = build_x86_16_tail_validation_cached_result(
-            owner=owner if isinstance(owner, MutableMapping) else None,
-            stage="postprocess",
-            mode=validation_mode,
-            before_fingerprint=before_fingerprint,
-            after_fingerprint=after_fingerprint,
-            before_summary=before_summary,
-            after_summary=after_summary,
-        )
+        with span("x86_16.decompile.validation.compare", function=func_addr):
+            validation = build_x86_16_tail_validation_cached_result(
+                owner=owner if isinstance(owner, MutableMapping) else None,
+                stage="postprocess",
+                mode=validation_mode,
+                before_fingerprint=before_fingerprint,
+                after_fingerprint=after_fingerprint,
+                before_summary=before_summary,
+                after_summary=after_summary,
+            )
         if postprocess_exception is not None:
             validation["changed"] = True
             validation["status"] = "changed"
@@ -10022,6 +11272,17 @@ def _decompile_8616(self):
         }
         validation["timings"] = validation_timings
         validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
+        if os.environ.get("INERTIA_DEBUG_TV_POSTPROCESS"):
+            import sys as _tv_sys4
+
+            _tv_sys4.stderr.write(
+                "[dbg] _decompile_8616 summaries: "
+                f"before_conditions={tuple(getattr(before_summary, 'conditions', ()) or ())!r} "
+                f"after_conditions={tuple(getattr(after_summary, 'conditions', ()) or ())!r} "
+                f"before_control={tuple(getattr(before_summary, 'control_flow_effects', ()) or ())!r} "
+                f"after_control={tuple(getattr(after_summary, 'control_flow_effects', ()) or ())!r}\n"
+            )
+            _tv_sys4.stderr.flush()
         snapshot_function_info = None
         if function is not None:
             info = getattr(function, "info", None)
@@ -10091,6 +11352,7 @@ def _decompile_8616(self):
                 "before_fingerprint": before_fingerprint,
                 "before_summary": before_summary,
                 "pre_postprocess_cfunc_snapshot": pre_postprocess_cfunc_snapshot,
+                "pre_postprocess_metadata_snapshot": pre_postprocess_metadata_snapshot,
                 "validation_timings": validation_timings,
                 "func_addr": func_addr,
                 "postprocess_exception": postprocess_exception,
@@ -10143,6 +11405,7 @@ def _handle_failed_postprocess_validation_8616(self, *, validation, log, context
     before_fingerprint = context.get("before_fingerprint")
     before_summary = context.get("before_summary")
     pre_postprocess_cfunc_snapshot = context.get("pre_postprocess_cfunc_snapshot")
+    pre_postprocess_metadata_snapshot = context.get("pre_postprocess_metadata_snapshot")
     validation_timings = context.get("validation_timings")
     func_addr = context.get("func_addr")
     validation_verdict_text = _rescue_missing_source_calls_8616(
@@ -10173,6 +11436,7 @@ def _handle_failed_postprocess_validation_8616(self, *, validation, log, context
         before_fingerprint=before_fingerprint,
         before_summary=before_summary,
         pre_postprocess_cfunc_snapshot=pre_postprocess_cfunc_snapshot,
+        pre_postprocess_metadata_snapshot=pre_postprocess_metadata_snapshot,
         validation_timings=validation_timings,
         function=function,
         log=log,
@@ -10332,6 +11596,16 @@ def _try_accept_failed_postprocess_validation_8616(
             ) + 1
             _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
             return True
+        if _is_combined_jcc_callsite_stack_validation_delta_8616(self.project, function, self.codegen, validation):
+            log.warning(
+                "Postprocess validation combined JCC/callsite delta accepted from consumed evidence: %s",
+                validation.get("verdict"),
+            )
+            self.codegen._inertia_combined_jcc_callsite_validation_accepts_8616 = int(
+                getattr(self.codegen, "_inertia_combined_jcc_callsite_validation_accepts_8616", 0) or 0
+            ) + 1
+            _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
+            return True
         if _is_jcc_condition_materialization_validation_delta_8616(
             self.project,
             self.codegen,
@@ -10354,6 +11628,36 @@ def _try_accept_failed_postprocess_validation_8616(
             )
             self.codegen._inertia_segmented_stack_slot_size_precision_validation_accepts = int(
                 getattr(self.codegen, "_inertia_segmented_stack_slot_size_precision_validation_accepts", 0) or 0
+            ) + 1
+            _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
+            return True
+        if _is_direct_global_update_materialization_delta_8616(self.codegen, validation):
+            log.warning(
+                "Postprocess validation direct global update materialization delta accepted from consumed evidence: %s",
+                validation.get("verdict"),
+            )
+            self.codegen._inertia_direct_global_update_validation_accepts_8616 = int(
+                getattr(self.codegen, "_inertia_direct_global_update_validation_accepts_8616", 0) or 0
+            ) + 1
+            _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
+            return True
+        if _is_direct_stack_update_materialization_delta_8616(self.codegen, validation):
+            log.warning(
+                "Postprocess validation direct stack update materialization delta accepted from consumed evidence: %s",
+                validation.get("verdict"),
+            )
+            self.codegen._inertia_direct_stack_update_validation_accepts_8616 = int(
+                getattr(self.codegen, "_inertia_direct_stack_update_validation_accepts_8616", 0) or 0
+            ) + 1
+            _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
+            return True
+        if _is_direct_stack_move_idiv_remainder_materialization_delta_8616(self.codegen, validation):
+            log.warning(
+                "Postprocess validation direct stack move materialization delta accepted from consumed evidence: %s",
+                validation.get("verdict"),
+            )
+            self.codegen._inertia_direct_stack_move_validation_accepts_8616 = int(
+                getattr(self.codegen, "_inertia_direct_stack_move_validation_accepts_8616", 0) or 0
             ) + 1
             _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
             return True
@@ -10429,6 +11733,7 @@ def _discard_failed_postprocess_result_8616(
     before_fingerprint,
     before_summary,
     pre_postprocess_cfunc_snapshot,
+    pre_postprocess_metadata_snapshot,
     validation_timings,
     function,
     log,
@@ -10460,27 +11765,30 @@ def _discard_failed_postprocess_result_8616(
         getattr(self.codegen, "_inertia_postprocess_validation_failure_pass", None),
     )
     _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
+    _restore_codegen_inertia_metadata_8616(self.codegen, pre_postprocess_metadata_snapshot)
+    _invalidate_tail_validation_derived_caches_8616(self.codegen)
     self.codegen._inertia_postprocess_discarded = True
     self.codegen._inertia_postprocess_discard_verdict = validation_verdict_text
     restored_after_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
         self.project,
         self.codegen,
         mode=validation_mode,
+        force_baseline_canonicalization=True,
     )
     restored_after_fingerprint = fingerprint_x86_16_tail_validation_boundary(
         self.project,
         self.codegen,
         mode=validation_mode,
     )
-    restored_validation = build_x86_16_tail_validation_cached_result(
-        owner=snapshot_function_info,
-        stage="postprocess",
-        mode=validation_mode,
-        before_fingerprint=before_fingerprint,
-        after_fingerprint=restored_after_fingerprint,
-        before_summary=before_summary,
-        after_summary=restored_after_summary,
-    )
+    # Rollback validation must use the freshly collected summaries. The
+    # comparison cache is keyed by boundary fingerprints, and this path exists
+    # specifically because a rejected postprocess result polluted the live AST;
+    # reusing a stale changed comparison here would make a successful restore
+    # still look failed.
+    restored_validation = {
+        **compare_x86_16_tail_validation_summaries(before_summary, restored_after_summary),
+        "mode": validation_mode,
+    }
     restored_validation["timings"] = validation_timings
     restored_validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", restored_validation)
     persist_x86_16_tail_validation_snapshot(

@@ -129,11 +129,20 @@ def _unwrap_inverted_flag_test_node_8616(node):
 
 
 def _extract_direct_flag_and_match_8616(node, invert):
+    def _flag_operand_candidate_8616(value):
+        if isinstance(value, CVariable):
+            return value
+        if type(value).__name__ == "CDirtyExpression" and _c_register_offset_8616(value) is not None:
+            return value
+        return None
+
     if isinstance(node, CBinaryOp) and node.op == "And":
-        if isinstance(node.lhs, CVariable) and isinstance(node.rhs, CConstant) and isinstance(node.rhs.value, int):
-            return node.lhs, node.rhs.value, invert
-        if isinstance(node.rhs, CVariable) and isinstance(node.lhs, CConstant) and isinstance(node.lhs.value, int):
-            return node.rhs, node.lhs.value, invert
+        lhs_flag = _flag_operand_candidate_8616(node.lhs)
+        if lhs_flag is not None and isinstance(node.rhs, CConstant) and isinstance(node.rhs.value, int):
+            return lhs_flag, node.rhs.value, invert
+        rhs_flag = _flag_operand_candidate_8616(node.rhs)
+        if rhs_flag is not None and isinstance(node.lhs, CConstant) and isinstance(node.lhs.value, int):
+            return rhs_flag, node.lhs.value, invert
     return None
 
 
@@ -146,10 +155,19 @@ def _extract_mask_and_zero_8616(lhs, rhs):
 
 
 def _extract_and_bit_and_var_8616(expr):
-    if isinstance(expr.lhs, CConstant) and isinstance(expr.lhs.value, int) and isinstance(expr.rhs, CVariable):
-        return expr.lhs.value, expr.rhs
-    if isinstance(expr.rhs, CConstant) and isinstance(expr.rhs.value, int) and isinstance(expr.lhs, CVariable):
-        return expr.rhs.value, expr.lhs
+    def _flag_operand_candidate_8616(value):
+        if isinstance(value, CVariable):
+            return value
+        if type(value).__name__ == "CDirtyExpression" and _c_register_offset_8616(value) is not None:
+            return value
+        return None
+
+    rhs_flag = _flag_operand_candidate_8616(expr.rhs)
+    if isinstance(expr.lhs, CConstant) and isinstance(expr.lhs.value, int) and rhs_flag is not None:
+        return expr.lhs.value, rhs_flag
+    lhs_flag = _flag_operand_candidate_8616(expr.lhs)
+    if isinstance(expr.rhs, CConstant) and isinstance(expr.rhs.value, int) and lhs_flag is not None:
+        return expr.rhs.value, lhs_flag
     return None
 
 

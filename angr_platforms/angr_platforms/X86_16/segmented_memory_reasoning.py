@@ -34,6 +34,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _publish_segmented_memory_evidence_8616(codegen, summary: dict, lowering: dict) -> None:
+    codegen._inertia_segmented_memory_summary = summary
+    codegen._inertia_segmented_memory_lowering = lowering
+    project = getattr(codegen, "project", None)
+    if project is not None:
+        project._inertia_segmented_memory_summary = summary
+        project._inertia_segmented_memory_lowering = lowering
+
+
 def _typed_ir_address_spaces_8616(codegen) -> tuple[tuple[str, ...], tuple[str, ...]]:
     artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
     summary = getattr(artifact, "summary", None)
@@ -522,20 +531,18 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
                 analyzer.analyze(assignments)
                 summary = analyzer.summarize()
                 lowering = analyzer.lowering_summary()
-                codegen._inertia_segmented_memory_summary = summary
-                codegen._inertia_segmented_memory_lowering = lowering
+                _publish_segmented_memory_evidence_8616(codegen, summary, lowering)
                 codegen._inertia_segmented_memory_stats = {
                     "segment_assignments": len(assignments),
                     "associations_built": sum(len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")),
                     "far_pointers_detected": 0,
                 }
             else:
-                codegen._inertia_segmented_memory_summary = {
+                _publish_segmented_memory_evidence_8616(codegen, {
                     "stable": {},
                     "over_associated": {},
                     "unknown": {},
-                }
-                codegen._inertia_segmented_memory_lowering = {}
+                }, {})
 
             changed = False
             target = str(
@@ -607,8 +614,7 @@ def _apply_segmented_memory_analysis_only_8616(codegen) -> bool:
             analyzer.analyze(assignments)
             summary = analyzer.summarize()
             lowering = analyzer.lowering_summary()
-            codegen._inertia_segmented_memory_summary = summary
-            codegen._inertia_segmented_memory_lowering = lowering
+            _publish_segmented_memory_evidence_8616(codegen, summary, lowering)
             codegen._inertia_segmented_memory_stats = {
                 "segment_assignments": len(assignments),
                 "associations_built": sum(
@@ -617,8 +623,7 @@ def _apply_segmented_memory_analysis_only_8616(codegen) -> bool:
                 "far_pointers_detected": 0,
             }
         else:
-            codegen._inertia_segmented_memory_summary = _empty_segment_summary_8616()
-            codegen._inertia_segmented_memory_lowering = {}
+            _publish_segmented_memory_evidence_8616(codegen, _empty_segment_summary_8616(), {})
         # Do NOT transform codegen — let cli_decompilation.py lowering handle that
         return False
     except Exception as ex:

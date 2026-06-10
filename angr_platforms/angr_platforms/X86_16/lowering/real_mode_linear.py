@@ -22,13 +22,17 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 from capstone.x86_const import (
     X86_INS_ADC,
     X86_INS_ADD,
+    X86_INS_CBW,
+    X86_INS_CWDE,
     X86_INS_CALL,
     X86_INS_CDQ,
     X86_INS_CWD,
     X86_INS_DEC,
     X86_INS_INC,
+    X86_INS_IDIV,
     X86_INS_LCALL,
     X86_INS_MOV,
+    X86_INS_OR,
     X86_INS_POP,
     X86_INS_PUSH,
     X86_INS_RET,
@@ -39,13 +43,22 @@ from capstone.x86_const import (
     X86_OP_IMM,
     X86_OP_MEM,
     X86_OP_REG,
+    X86_REG_AL,
     X86_REG_AX,
     X86_REG_BP,
+    X86_REG_BX,
+    X86_REG_CX,
+    X86_REG_DI,
     X86_REG_DX,
+    X86_REG_DS,
+    X86_REG_ES,
     X86_REG_INVALID,
+    X86_REG_SI,
     X86_REG_SP,
+    X86_REG_SS,
 )
 
+from ..callee_name_normalization import normalize_callee_name_8616
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 from .stack_lowering_from_facts import _canonical_stack_offset_8616, _stack_object_name
 
@@ -76,6 +89,15 @@ class RealModeLinearStackAccess8616:
 
 
 @dataclass(frozen=True, slots=True)
+class RealModeIndexedStackAddress8616:
+    """BP-indexed stack address recovered from binary memory-operand evidence."""
+
+    base_displacement: int
+    residual_terms: tuple[tuple[int, object], ...]
+    width: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class RealModeLinearGlobalAddress8616:
     """Stable DS/ES address-valued expression recovered from real-mode linear math."""
 
@@ -83,6 +105,42 @@ class RealModeLinearGlobalAddress8616:
     displacement: int
     residual_terms: tuple[tuple[int, object], ...]
     width: int | None = None
+
+
+def _record_real_mode_global_lowering_evidence_8616(
+    codegen,
+    project,
+    access: RealModeLinearGlobalAddress8616,
+) -> None:
+    segment_name = access.segment_name.lower()
+    if segment_name not in {"ds", "es"}:
+        return
+    segment_key = segment_name.upper()
+    for owner in (codegen, project):
+        if owner is None:
+            continue
+        lowering = getattr(owner, "_inertia_segmented_memory_lowering", None)
+        if not isinstance(lowering, dict):
+            lowering = {}
+            setattr(owner, "_inertia_segmented_memory_lowering", lowering)
+        previous = lowering.get(segment_key)
+        entry = dict(previous) if isinstance(previous, dict) else {}
+        entry.update(
+            {
+                "classification": entry.get("classification") or "materialized_global_access",
+                "space": entry.get("space") or "data",
+                "allow_linear_lowering": True,
+                "allow_object_lowering": True,
+                "reason": entry.get("reason") or "materialized DS/ES linear global access",
+                "materialized_count": int(entry.get("materialized_count", 0) or 0) + 1,
+            }
+        )
+        lowering[segment_key] = entry
+    stats = getattr(codegen, "_inertia_real_mode_global_lowering_evidence", None)
+    if not isinstance(stats, dict):
+        stats = {"materialized_count": 0}
+        codegen._inertia_real_mode_global_lowering_evidence = stats
+    stats["materialized_count"] = int(stats.get("materialized_count", 0) or 0) + 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,14 +153,32 @@ class DirectGlobalUpdateFact8616:
     ins_addr: int
 
 
+class DirectStackUpdateSourceKind8616(Enum):
+    """Binary-proven source kind for a direct BP-relative stack arithmetic update."""
+
+    IMMEDIATE = "immediate"
+    STACK_SLOT = "stack_slot"
+
+
+class DirectStackUpdateOp8616(Enum):
+    """Binary-proven operation for a direct BP-relative stack update."""
+
+    ARITHMETIC = "arithmetic"
+    OR = "or"
+
+
 @dataclass(frozen=True, slots=True)
 class DirectStackUpdateFact8616:
-    """Binary-proven direct BP-relative stack INC/DEC side effect."""
+    """Binary-proven direct BP-relative stack arithmetic side effect."""
 
     offset: int
     width: int
     delta: int
     ins_addr: int
+    source_kind: DirectStackUpdateSourceKind8616 = DirectStackUpdateSourceKind8616.IMMEDIATE
+    source_value: int | None = 1
+    source_offset: int | None = None
+    operation: DirectStackUpdateOp8616 = DirectStackUpdateOp8616.ARITHMETIC
 
 
 class DirectStackMoveSourceKind8616(Enum):
@@ -111,6 +187,8 @@ class DirectStackMoveSourceKind8616(Enum):
     IMMEDIATE = "immediate"
     STACK_SLOT = "stack_slot"
     STACK_SLOT_EXPR = "stack_slot_expr"
+    SEGMENTED_MEMORY = "segmented_memory"
+    SIGNED_IDIV_REMAINDER = "signed_idiv_remainder"
     WIDE_CALL_RETURN_STACK_ARITH = "wide_call_return_stack_arith"
 
 
@@ -118,8 +196,42 @@ class DirectStackMoveExpressionOp8616(Enum):
     """Pure expression operation in a binary-proven stack MOV source."""
 
     ADD = "Add"
+    MOD = "Mod"
     SHL = "Shl"
     SIGNED_DIV2 = "Div"
+
+
+class DirectStackRegisterValueKind8616(Enum):
+    """Proven register-value provenance used while collecting stack MOV facts."""
+
+    STACK_SLOT = "stack_slot"
+    STACK_SLOT_EXPR = "stack_slot_expr"
+    SEGMENTED_MEMORY = "segmented_memory"
+
+
+class DirectStackFunctionTargetEvidence8616(Enum):
+    """Evidence source for a near-code pointer used as a function pointer."""
+
+    SYNTHETIC_GLOBAL = "synthetic_global"
+    LABEL = "label"
+    FUNCTION = "function"
+
+
+@dataclass(frozen=True, slots=True)
+class DirectStackRegisterValue8616:
+    """Small instruction-state fact for register values feeding BP stack stores."""
+
+    kind: DirectStackRegisterValueKind8616
+    stack_offset: int | None = None
+    width: int | None = None
+    source_op: DirectStackMoveExpressionOp8616 | None = None
+    source_immediate: int | None = None
+    segment_name: str | None = None
+    displacement: int | None = None
+    index_stack_offset: int | None = None
+    index_shift: int | None = None
+    access_width: int | None = None
+    sign_extend: bool = False
 
 
 class DirectGlobalUpdateMaterializationKind8616(Enum):
@@ -144,6 +256,34 @@ class DirectStackMoveFact8616:
     source_immediate: int | None = None
     source_call_target: int | None = None
     source_call_name: str | None = None
+    source_call_ins_addr: int | None = None
+    source_segment_name: str | None = None
+    source_displacement: int | None = None
+    source_index_offset: int | None = None
+    source_index_shift: int | None = None
+    source_access_width: int | None = None
+    source_sign_extend: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DirectStackFunctionTarget8616:
+    """Resolved near-code pointer target for a function-pointer stack store."""
+
+    name: str
+    addr: int
+    evidence: DirectStackFunctionTargetEvidence8616
+
+
+@dataclass(frozen=True, slots=True)
+class DirectStackReloadFact8616:
+    """Binary-proven register reload from a materialized BP-relative stack slot."""
+
+    source_offset: int
+    width: int
+    dst_reg_id: int
+    dst_reg_name: str
+    ins_addr: int
+    source_store_ins_addr: int
 
 
 class StackCarrierDeltaSource8616(Enum):
@@ -384,11 +524,22 @@ def _preferred_stack_object_name_8616(offset: int, codegen=None) -> str:
     stack_specs = annotations.get("stack_vars") if isinstance(annotations, dict) else None
     if not isinstance(stack_specs, dict):
         return default_name
-    candidate_offsets = (offset,)
+    candidate_offsets = [offset]
+    stack_base_bias = None
+    if isinstance(offset, int):
+        stack_base_bias = getattr(codegen, "_inertia_active_stack_base_bp_bias_8616", None) if codegen is not None else None
+        if not isinstance(stack_base_bias, int) and codegen is not None:
+            with contextlib.suppress(Exception):
+                stack_base_bias = _infer_stack_base_bp_bias_8616(codegen)
+        if not isinstance(stack_base_bias, int) and codegen is not None and _has_bp_stack_alias_evidence_8616(codegen):
+            stack_base_bias = 2
+        if isinstance(stack_base_bias, int) and stack_base_bias != 0:
+            candidate_offsets.append(offset - stack_base_bias)
     if isinstance(offset, int) and offset > 2:
         bias = _positive_stack_spec_lookup_bias_8616(stack_specs)
         if bias != 0:
-            candidate_offsets = (offset + bias,)
+            candidate_offsets.insert(0, offset + bias)
+    candidate_offsets = list(dict.fromkeys(candidate_offsets))
     for candidate_offset in candidate_offsets:
         spec = stack_specs.get(candidate_offset)
         if isinstance(spec, str) and spec:
@@ -548,9 +699,35 @@ def _has_bp_stack_alias_evidence_8616(codegen) -> bool:
 
 
 def _known_bp_stack_offsets_8616(codegen) -> set[int]:
+    def _token_part(obj) -> tuple[int, int | None]:
+        try:
+            return id(obj), len(obj)
+        except Exception:
+            return id(obj), None
+
+    cfunc = getattr(codegen, "cfunc", None)
+    facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+    bindings = getattr(codegen, "_inertia_stack_variable_bindings", None)
+    variables_in_use = getattr(cfunc, "variables_in_use", None)
+    arg_list = getattr(cfunc, "arg_list", ()) or ()
+    cache_token = (
+        _token_part(facts),
+        _token_part(bindings),
+        _token_part(variables_in_use),
+        _token_part(arg_list),
+        getattr(cfunc, "addr", None),
+    )
+    cached = getattr(codegen, "_inertia_known_bp_stack_offsets_cache_8616", None)
+    if (
+        isinstance(cached, tuple)
+        and len(cached) == 2
+        and cached[0] == cache_token
+        and isinstance(cached[1], frozenset)
+    ):
+        return set(cached[1])
+
     offsets: set[int] = set()
 
-    facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
     if isinstance(facts, list):
         for fact in facts:
             identity = getattr(fact, "identity", None)
@@ -563,7 +740,6 @@ def _known_bp_stack_offsets_8616(codegen) -> set[int]:
             if isinstance(offset, int):
                 offsets.add(offset)
 
-    bindings = getattr(codegen, "_inertia_stack_variable_bindings", None)
     if isinstance(bindings, tuple):
         for binding in bindings:
             offset = _canonical_stack_offset_8616(getattr(binding, "bp_offset", None))
@@ -572,7 +748,6 @@ def _known_bp_stack_offsets_8616(codegen) -> set[int]:
             if isinstance(offset, int):
                 offsets.add(offset)
 
-    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
     if isinstance(variables_in_use, dict):
         for variable in variables_in_use:
             if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
@@ -581,7 +756,7 @@ def _known_bp_stack_offsets_8616(codegen) -> set[int]:
             if isinstance(offset, int):
                 offsets.add(offset)
 
-    for arg in getattr(getattr(codegen, "cfunc", None), "arg_list", ()) or ():
+    for arg in arg_list:
         variable = getattr(arg, "variable", None)
         if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
             continue
@@ -599,6 +774,7 @@ def _known_bp_stack_offsets_8616(codegen) -> set[int]:
             tuple(sorted(offsets)),
         )
 
+    setattr(codegen, "_inertia_known_bp_stack_offsets_cache_8616", (cache_token, frozenset(offsets)))
     return offsets
 
 
@@ -781,8 +957,6 @@ def _iter_stack_base_displacements_8616(root) -> tuple[int, ...]:
             "stmts",
             "init",
             "initializer",
-            "condition",
-            "cond",
             "iftrue",
             "iffalse",
             "iteration",
@@ -912,7 +1086,6 @@ def _segment_base_name_8616_impl(
                 reg_name = getattr(project.arch, "register_names", {}).get(variable.reg)
                 if isinstance(reg_name, str) and reg_name in _SEGMENT_REGISTER_NAMES_8616:
                     return reg_name
-                return None
 
             variable_name = getattr(node, "name", None) or getattr(variable, "name", None)
             if isinstance(variable_name, str) and variable_name.startswith(("vvar_", "tmp_", "ir_")) and codegen is not None:
@@ -1004,10 +1177,48 @@ def _decompose_linear_global_terms_8616(
     node,
     project,
     codegen=None,
+    _seen_carriers: set[object] | None = None,
 ) -> tuple[str | None, int, tuple[tuple[int, object], ...]] | None:
     segment_name: str | None = None
     displacement = 0
     residual_terms: list[tuple[int, object]] = []
+    if _seen_carriers is None:
+        _seen_carriers = set()
+
+    def _linear_carrier_key(term) -> tuple[str, object] | None:
+        term = _strip_casts_8616(term)
+        dirty = getattr(term, "dirty", None)
+        if dirty is not None:
+            varid = getattr(dirty, "varid", None)
+            if isinstance(varid, int):
+                return "name", f"vvar_{varid}"
+            name = getattr(dirty, "name", None)
+            if isinstance(name, str) and name.startswith(("vvar_", "tmp_", "ir_")):
+                return "name", name
+        if not isinstance(term, structured_c.CVariable):
+            return None
+        variable = getattr(term, "variable", None)
+        name = getattr(term, "name", None) or getattr(variable, "name", None)
+        if isinstance(name, str) and name.startswith(("vvar_", "tmp_", "ir_")):
+            return "name", name
+        return None
+
+    def _single_assignment_linear_carrier_rhs(term):
+        if codegen is None:
+            return None
+        key = _linear_carrier_key(term)
+        if key is None or key in _seen_carriers:
+            return None
+        _seen_carriers.add(key)
+        term = _strip_casts_8616(term)
+        rhs = _single_assignment_rhs_8616(codegen, term) if isinstance(term, structured_c.CVariable) else None
+        if rhs is None and key[0] == "name" and isinstance(key[1], str):
+            rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, key[1])
+        if rhs is not None:
+            codegen._inertia_real_mode_global_carrier_resolved_count_8616 = int(
+                getattr(codegen, "_inertia_real_mode_global_carrier_resolved_count_8616", 0) or 0
+            ) + 1
+        return rhs
 
     terms = _flatten_signed_terms_8616(node)
     if terms is None:
@@ -1041,6 +1252,23 @@ def _decompose_linear_global_terms_8616(
         if const is not None:
             displacement += sign * const
             continue
+        carrier_rhs = _single_assignment_linear_carrier_rhs(term)
+        if carrier_rhs is not None:
+            decomposed_carrier = _decompose_linear_global_terms_8616(
+                carrier_rhs,
+                project,
+                codegen=codegen,
+                _seen_carriers=_seen_carriers,
+            )
+            if decomposed_carrier is not None:
+                carrier_segment, carrier_displacement, carrier_residual_terms = decomposed_carrier
+                if carrier_segment is not None:
+                    if sign != 1 or segment_name is not None:
+                        return None
+                    segment_name = carrier_segment
+                displacement += sign * carrier_displacement
+                residual_terms.extend((sign * carrier_sign, carrier_term) for carrier_sign, carrier_term in carrier_residual_terms)
+                continue
         if not _address_projection_term_is_safe_8616(term):
             return None
         residual_terms.append((sign, term))
@@ -1217,34 +1445,30 @@ def _build_assignment_maps_8616(codegen):
                     log.warning(
                         "[ss-linear-lowering] assignment-map dirty lhs text=%s varid=%r tmp_idx=%r reg_offset=%r variable_offset=%r category=%r was_reg=%r was_tmp=%r rhs=%s",
                         _debug_c_repr_8616(lhs),
-                        getattr(dirty_lhs, "varid", None),
-                        getattr(dirty_lhs, "tmp_idx", None),
-                        getattr(dirty_lhs, "reg_offset", None),
-                        getattr(dirty_lhs, "variable_offset", None),
-                        getattr(dirty_lhs, "category", None),
-                        getattr(dirty_lhs, "was_reg", None),
-                        getattr(dirty_lhs, "was_tmp", None),
+                        _safe_debug_attr_8616(dirty_lhs, "varid"),
+                        _safe_debug_attr_8616(dirty_lhs, "tmp_idx"),
+                        _safe_debug_attr_8616(dirty_lhs, "reg_offset"),
+                        _safe_debug_attr_8616(dirty_lhs, "variable_offset"),
+                        _safe_debug_attr_8616(dirty_lhs, "category"),
+                        _safe_debug_attr_8616(dirty_lhs, "was_reg"),
+                        _safe_debug_attr_8616(dirty_lhs, "was_tmp"),
                         _debug_c_repr_8616(rhs),
                     )
                 dirty_name = getattr(dirty_lhs, "name", None)
                 dirty_varid = getattr(dirty_lhs, "varid", None)
+                dirty_keys: set[str] = set()
                 if isinstance(dirty_name, str):
-                    if dirty_name not in first_name_map:
-                        first_name_map[dirty_name] = rhs
-                    if dirty_name in name_map:
-                        multi_name.add(dirty_name)
-                        name_map[dirty_name] = None
-                    elif dirty_name not in multi_name:
-                        name_map[dirty_name] = rhs
+                    dirty_keys.add(dirty_name)
                 if isinstance(dirty_varid, int):
-                    vvar_name = f"vvar_{dirty_varid}"
-                    if vvar_name not in first_name_map:
-                        first_name_map[vvar_name] = rhs
-                    if vvar_name in name_map:
-                        multi_name.add(vvar_name)
-                        name_map[vvar_name] = None
-                    elif vvar_name not in multi_name:
-                        name_map[vvar_name] = rhs
+                    dirty_keys.add(f"vvar_{dirty_varid}")
+                for dirty_key in dirty_keys:
+                    if dirty_key not in first_name_map:
+                        first_name_map[dirty_key] = rhs
+                    if dirty_key in name_map:
+                        multi_name.add(dirty_key)
+                        name_map[dirty_key] = None
+                    elif dirty_key not in multi_name:
+                        name_map[dirty_key] = rhs
                 continue
 
             var = getattr(lhs, "variable", None)
@@ -1676,6 +1900,64 @@ def _single_assignment_rhs_for_virtual_name_8616(codegen, target_name: str, *, a
     return None
 
 
+def _virtual_carrier_name_8616(node) -> str | None:
+    dirty = getattr(node, "dirty", None)
+    if dirty is not None:
+        varid = getattr(dirty, "varid", None)
+        if isinstance(varid, int):
+            return f"vvar_{varid}"
+        dirty_name = getattr(dirty, "name", None)
+        if isinstance(dirty_name, str) and dirty_name.startswith(("vvar_", "tmp_", "ir_")):
+            return dirty_name
+    if isinstance(node, structured_c.CVariable):
+        variable = getattr(node, "variable", None)
+        name = getattr(node, "name", None) or getattr(variable, "name", None)
+        if isinstance(name, str) and name.startswith(("vvar_", "tmp_", "ir_")):
+            return name
+    return None
+
+
+def _rhs_terms_contain_segment_scale_8616(terms: tuple[tuple[int, object], ...], project, codegen) -> bool:
+    for sign, term in terms:
+        if sign != 1:
+            continue
+        if _segment_base_name_8616(term, project, codegen=codegen) is not None:
+            return True
+        if _is_unresolved_segment_scale_candidate_8616(term):
+            return True
+    return False
+
+
+def _expand_virtual_linear_address_carrier_terms_8616(
+    terms: tuple[tuple[int, object], ...],
+    project,
+    codegen,
+) -> tuple[tuple[int, object], ...]:
+    expanded: list[tuple[int, object]] = []
+    changed = False
+    for sign, term in terms:
+        carrier_name = _virtual_carrier_name_8616(_strip_casts_8616(term))
+        if carrier_name is None:
+            expanded.append((sign, term))
+            continue
+        rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, carrier_name)
+        if rhs is None:
+            expanded.append((sign, term))
+            continue
+        rhs_terms = _flatten_signed_terms_8616(rhs)
+        if rhs_terms is None or not _rhs_terms_contain_segment_scale_8616(rhs_terms, project, codegen):
+            expanded.append((sign, term))
+            continue
+        changed = True
+        for rhs_sign, rhs_term in rhs_terms:
+            expanded.append((sign * rhs_sign, rhs_term))
+    if changed:
+        codegen._inertia_ss_linear_virtual_address_carrier_expanded_8616 = int(
+            getattr(codegen, "_inertia_ss_linear_virtual_address_carrier_expanded_8616", 0) or 0
+        ) + 1
+    return tuple(expanded)
+
+
 def _extract_vvar_id_8616(node) -> int | None:
     dirty = getattr(node, "dirty", None)
     varid = getattr(dirty, "varid", None)
@@ -2046,6 +2328,13 @@ def _debug_c_repr_8616(node) -> str:
         return repr(node)
 
 
+def _safe_debug_attr_8616(obj, attr: str):
+    try:
+        return getattr(obj, attr, None)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealModeLinearStackAccess8616 | None:
     def _impl():
         nonlocal node
@@ -2065,6 +2354,7 @@ def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealMode
         terms = _flatten_signed_terms_8616(node.operand)
         if terms is None:
             return None
+        terms = _expand_virtual_linear_address_carrier_terms_8616(terms, project, codegen)
         for sign, term in terms:
             seg = _segment_base_name_8616(term, project, codegen=codegen)
             if seg is not None:
@@ -2387,22 +2677,39 @@ def _is_mov_sp_bp_8616(insn) -> bool:
 
 
 def _decode_function_insns_at_8616(project, function_addr: int, *, limit: int = 0x100) -> tuple:
-    try:
-        code = bytes(project.loader.memory.load(function_addr, limit))
-        capstone = project.arch.capstone
-        previous_detail = getattr(capstone, "detail", False)
-        try:
-            capstone.detail = True
-            insns = []
-            for insn in capstone.disasm(code, function_addr):
-                insns.append(insn)
-                if getattr(insn, "id", None) == X86_INS_RET:
-                    break
-            return tuple(insns) if any(getattr(insn, "id", None) == X86_INS_RET for insn in insns) else ()
-        finally:
-            capstone.detail = previous_detail
-    except Exception:
+    cache = getattr(project, "_inertia_decode_function_insns_cache_8616", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        with contextlib.suppress(Exception):
+            setattr(project, "_inertia_decode_function_insns_cache_8616", cache)
+    key = (int(function_addr), int(limit))
+    cached = cache.get(key)
+    if isinstance(cached, tuple):
+        return cached
+
+    funcs = getattr(getattr(project, "kb", None), "functions", None)
+    function = None
+    if funcs is not None:
+        with contextlib.suppress(Exception):
+            function = funcs.function(addr=function_addr, create=False)
+    if function is None:
+        cache[key] = ()
         return ()
+
+    insns = []
+    for block in _direct_global_update_blocks_8616(project, function):
+        for wrapper in _capstone_insns_for_direct_global_update_8616(project, block):
+            insn = getattr(wrapper, "insn", wrapper)
+            if isinstance(getattr(insn, "address", None), int):
+                insns.append(insn)
+    ordered = []
+    for insn in sorted(insns, key=lambda item: int(getattr(item, "address", 0) or 0)):
+        ordered.append(insn)
+        if getattr(insn, "id", None) == X86_INS_RET:
+            break
+    result = tuple(ordered) if any(getattr(insn, "id", None) == X86_INS_RET for insn in ordered) else ()
+    cache[key] = result
+    return result
 
 
 def _decode_function_insns_8616(project, function_addr: int, *, limit: int = 0x100) -> tuple:
@@ -2416,8 +2723,17 @@ def _decode_function_insns_8616(project, function_addr: int, *, limit: int = 0x1
 
 
 def _callee_saved_register_names_from_frame_evidence_8616(project, function_addr: int) -> frozenset[str]:
+    cache = getattr(project, "_inertia_callee_saved_register_names_cache_8616", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        with contextlib.suppress(Exception):
+            setattr(project, "_inertia_callee_saved_register_names_cache_8616", cache)
+    cached = cache.get(int(function_addr))
+    if isinstance(cached, frozenset):
+        return cached
     insns = _decode_function_insns_8616(project, function_addr)
     if not insns:
+        cache[int(function_addr)] = frozenset()
         return frozenset()
     callee_saved = {"bx", "si", "di"}
     pushed: list[str] = []
@@ -2431,10 +2747,12 @@ def _callee_saved_register_names_from_frame_evidence_8616(project, function_addr
         if getattr(insn, "id", None) == X86_INS_RET:
             break
     if not pushed:
+        cache[int(function_addr)] = frozenset()
         return frozenset()
 
     ret_index = next((idx for idx, insn in enumerate(insns) if getattr(insn, "id", None) == X86_INS_RET), None)
     if ret_index is None:
+        cache[int(function_addr)] = frozenset()
         return frozenset()
     restored: list[str] = []
     scan = ret_index - 1
@@ -2457,8 +2775,11 @@ def _callee_saved_register_names_from_frame_evidence_8616(project, function_addr
             continue
         break
     if not restored:
+        cache[int(function_addr)] = frozenset()
         return frozenset()
-    return frozenset(set(pushed) & set(restored))
+    result = frozenset(set(pushed) & set(restored))
+    cache[int(function_addr)] = result
+    return result
 
 
 def _expr_register_name_8616(node, project) -> str | None:
@@ -2696,6 +3017,7 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
         access = match_stable_ds_es_linear_global_access_8616(node, project, codegen)
         if access is not None:
             changed = True
+            _record_real_mode_global_lowering_evidence_8616(codegen, project, access)
             return global_expr(access)
         return node
 
@@ -3022,9 +3344,14 @@ def _direct_global_update_blocks_8616(project, function):
 
 
 def _capstone_insns_for_direct_global_update_8616(project, block) -> tuple[object, ...]:
+    cached = getattr(block, "_inertia_capstone_insns_8616", None)
+    if isinstance(cached, tuple):
+        return cached
     capstone = getattr(block, "capstone", None)
     insns = tuple(getattr(capstone, "insns", ()) or ())
     if insns or project is None:
+        with contextlib.suppress(Exception):
+            setattr(block, "_inertia_capstone_insns_8616", insns)
         return insns
     block_addr = getattr(block, "addr", None)
     if not isinstance(block_addr, int):
@@ -3041,7 +3368,10 @@ def _capstone_insns_for_direct_global_update_8616(project, block) -> tuple[objec
             decoded = project.factory.block(block_addr, size=block_size, opt_level=0)
         else:
             decoded = project.factory.block(block_addr, opt_level=0)
-        return tuple(getattr(getattr(decoded, "capstone", None), "insns", ()) or ())
+        insns = tuple(getattr(getattr(decoded, "capstone", None), "insns", ()) or ())
+        with contextlib.suppress(Exception):
+            setattr(block, "_inertia_capstone_insns_8616", insns)
+        return insns
     return ()
 
 
@@ -3112,30 +3442,77 @@ def _direct_stack_update_instruction_facts_8616(project, function) -> tuple[Dire
         return cached
     facts: list[DirectStackUpdateFact8616] = []
     for block in _direct_global_update_blocks_8616(project, function):
-        for wrapper in _capstone_insns_for_direct_global_update_8616(project, block):
+        insns = _capstone_insns_for_direct_global_update_8616(project, block)
+        for index, wrapper in enumerate(insns):
             insn = getattr(wrapper, "insn", wrapper)
             insn_id = getattr(insn, "id", None)
-            if insn_id not in {X86_INS_INC, X86_INS_DEC}:
-                continue
             operands = tuple(getattr(insn, "operands", ()) or ())
-            if len(operands) != 1:
+            if insn_id in {X86_INS_INC, X86_INS_DEC}:
+                if len(operands) != 1:
+                    continue
+                slot = _stack_mem_operand_offset_width_8616(operands[0])
+                if slot is None:
+                    continue
+                offset, width = slot
+                ins_addr = getattr(insn, "address", None)
+                if not isinstance(ins_addr, int):
+                    continue
+                facts.append(DirectStackUpdateFact8616(offset, int(width), 1 if insn_id == X86_INS_INC else -1, ins_addr))
                 continue
-            operand = operands[0]
-            width = getattr(operand, "size", None)
-            if getattr(operand, "type", None) != X86_OP_MEM or width not in {1, 2}:
+
+            if insn_id not in {X86_INS_ADD, X86_INS_SUB, X86_INS_OR} or len(operands) != 2:
                 continue
-            mem = getattr(operand, "mem", None)
-            if mem is None:
+            slot = _stack_mem_operand_offset_width_8616(operands[0])
+            if slot is None:
                 continue
-            base = getattr(mem, "base", X86_REG_INVALID)
-            index = getattr(mem, "index", X86_REG_INVALID)
-            if base != X86_REG_BP or index not in {0, X86_REG_INVALID}:
-                continue
-            offset = _canonical_stack_offset_8616(getattr(mem, "disp", None))
+            offset, width = slot
             ins_addr = getattr(insn, "address", None)
             if not isinstance(offset, int) or not isinstance(ins_addr, int):
                 continue
-            facts.append(DirectStackUpdateFact8616(offset, int(width), 1 if insn_id == X86_INS_INC else -1, ins_addr))
+            operation = DirectStackUpdateOp8616.OR if insn_id == X86_INS_OR else DirectStackUpdateOp8616.ARITHMETIC
+            sign = -1 if insn_id == X86_INS_SUB else 1
+            source = operands[1]
+            source_type = getattr(source, "type", None)
+            if source_type == X86_OP_IMM:
+                value = getattr(source, "imm", None)
+                if not isinstance(value, int):
+                    continue
+                facts.append(
+                    DirectStackUpdateFact8616(
+                        offset,
+                        int(width),
+                        sign * abs(int(value)),
+                        ins_addr,
+                        DirectStackUpdateSourceKind8616.IMMEDIATE,
+                        abs(int(value)),
+                        None,
+                        operation,
+                    )
+                )
+                continue
+            if source_type != X86_OP_REG:
+                continue
+            reg_id = getattr(source, "reg", None)
+            if not isinstance(reg_id, int):
+                continue
+            source_slot = _previous_stack_load_for_register_8616(insns, index, reg_id)
+            if source_slot is None:
+                continue
+            source_offset, source_width = source_slot
+            if source_width != width:
+                continue
+            facts.append(
+                DirectStackUpdateFact8616(
+                    offset,
+                    int(width),
+                    sign,
+                    ins_addr,
+                    DirectStackUpdateSourceKind8616.STACK_SLOT,
+                    None,
+                    source_offset,
+                    operation,
+                )
+            )
     result = tuple(dict.fromkeys(facts))
     with contextlib.suppress(Exception):
         setattr(function, "_inertia_direct_stack_update_instruction_facts_8616", result)
@@ -3157,6 +3534,212 @@ def _stack_mem_operand_offset_width_8616(operand) -> tuple[int, int] | None:
     if not isinstance(offset, int):
         return None
     return offset, int(width)
+
+
+_DIRECT_STACK_MOVE_REGISTER_NAMES_8616 = {
+    X86_REG_AL: "al",
+    X86_REG_AX: "ax",
+    X86_REG_BX: "bx",
+    X86_REG_CX: "cx",
+    X86_REG_DX: "dx",
+    X86_REG_SI: "si",
+    X86_REG_DI: "di",
+    X86_REG_BP: "bp",
+    X86_REG_SP: "sp",
+    X86_REG_DS: "ds",
+    X86_REG_ES: "es",
+    X86_REG_SS: "ss",
+}
+
+
+def _direct_stack_move_register_name_8616(insn, reg_id: int | None) -> str | None:
+    if not isinstance(reg_id, int) or reg_id == X86_REG_INVALID:
+        return None
+    with contextlib.suppress(Exception):
+        name = insn.reg_name(reg_id)
+        if isinstance(name, str) and name:
+            return name.lower()
+    return _DIRECT_STACK_MOVE_REGISTER_NAMES_8616.get(int(reg_id))
+
+
+def _direct_stack_move_segment_name_8616(insn, reg_id: int | None) -> str | None:
+    if not isinstance(reg_id, int) or reg_id in {0, X86_REG_INVALID}:
+        return "ds"
+    name = _direct_stack_move_register_name_8616(insn, reg_id)
+    if name in {"ds", "es", "ss"}:
+        return name
+    return None
+
+
+def _direct_stack_move_forget_register_8616(
+    reg_state: dict[str, DirectStackRegisterValue8616],
+    reg_name: str | None,
+) -> None:
+    if not isinstance(reg_name, str) or not reg_name:
+        return
+    reg_state.pop(reg_name, None)
+    if reg_name == "al":
+        reg_state.pop("ax", None)
+        reg_state.pop("eax", None)
+    elif reg_name in {"ax", "eax"}:
+        reg_state.pop("al", None)
+
+
+def _direct_stack_move_segmented_source_for_register_8616(
+    insns: tuple[object, ...],
+    index: int,
+    reg_id: int,
+) -> DirectStackRegisterValue8616 | None:
+    """Recover a register value proven by prior instructions in the same block.
+
+    This deliberately tracks a narrow set of pure register transfers used by
+    MS C real-mode code:
+    stack slot -> index register -> shifted index -> DS/ES/SS memory byte/word
+    load -> optional sign extension -> BP-relative stack store.
+    Unknown writes erase provenance instead of guessing.
+    """
+
+    if index <= 0:
+        return None
+    reg_state: dict[str, DirectStackRegisterValue8616] = {}
+    target_reg_name: str | None = None
+    for pos in range(index):
+        insn = getattr(insns[pos], "insn", insns[pos])
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        insn_id = getattr(insn, "id", None)
+
+        if insn_id == X86_INS_MOV and len(operands) == 2:
+            dst, src = operands
+            if getattr(dst, "type", None) != X86_OP_REG:
+                continue
+            dst_name = _direct_stack_move_register_name_8616(insn, getattr(dst, "reg", None))
+            if dst_name is None:
+                continue
+            if pos == index - 1 and getattr(dst, "reg", None) == reg_id:
+                target_reg_name = dst_name
+
+            if getattr(src, "type", None) == X86_OP_MEM:
+                stack_slot = _stack_mem_operand_offset_width_8616(src)
+                if stack_slot is not None:
+                    source_offset, source_width = stack_slot
+                    reg_state[dst_name] = DirectStackRegisterValue8616(
+                        DirectStackRegisterValueKind8616.STACK_SLOT,
+                        stack_offset=source_offset,
+                        width=source_width,
+                    )
+                    continue
+
+                mem = getattr(src, "mem", None)
+                if mem is None:
+                    _direct_stack_move_forget_register_8616(reg_state, dst_name)
+                    continue
+                base_name = _direct_stack_move_register_name_8616(insn, getattr(mem, "base", None))
+                base_value = reg_state.get(base_name)
+                if base_value is None:
+                    _direct_stack_move_forget_register_8616(reg_state, dst_name)
+                    continue
+                if base_value.kind is DirectStackRegisterValueKind8616.STACK_SLOT:
+                    index_offset = base_value.stack_offset
+                    index_shift = 0
+                elif (
+                    base_value.kind is DirectStackRegisterValueKind8616.STACK_SLOT_EXPR
+                    and base_value.source_op is DirectStackMoveExpressionOp8616.SHL
+                ):
+                    index_offset = base_value.stack_offset
+                    index_shift = base_value.source_immediate
+                else:
+                    _direct_stack_move_forget_register_8616(reg_state, dst_name)
+                    continue
+                segment_name = _direct_stack_move_segment_name_8616(insn, getattr(mem, "segment", None))
+                displacement = getattr(mem, "disp", None)
+                access_width = getattr(src, "size", None)
+                if (
+                    segment_name is None
+                    or not isinstance(displacement, int)
+                    or not isinstance(index_offset, int)
+                    or not isinstance(index_shift, int)
+                    or access_width not in {1, 2}
+                ):
+                    _direct_stack_move_forget_register_8616(reg_state, dst_name)
+                    continue
+                reg_state[dst_name] = DirectStackRegisterValue8616(
+                    DirectStackRegisterValueKind8616.SEGMENTED_MEMORY,
+                    width=int(getattr(dst, "size", 0) or access_width),
+                    segment_name=segment_name,
+                    displacement=int(displacement),
+                    index_stack_offset=int(index_offset),
+                    index_shift=int(index_shift),
+                    access_width=int(access_width),
+                )
+                continue
+
+            if getattr(src, "type", None) == X86_OP_REG:
+                src_name = _direct_stack_move_register_name_8616(insn, getattr(src, "reg", None))
+                src_value = reg_state.get(src_name)
+                if src_value is not None:
+                    reg_state[dst_name] = src_value
+                else:
+                    _direct_stack_move_forget_register_8616(reg_state, dst_name)
+                continue
+
+            _direct_stack_move_forget_register_8616(reg_state, dst_name)
+            continue
+
+        if insn_id in {X86_INS_SHL, X86_INS_SAL} and len(operands) == 2:
+            dst, amount = operands
+            if getattr(dst, "type", None) != X86_OP_REG or getattr(amount, "type", None) != X86_OP_IMM:
+                continue
+            reg_name = _direct_stack_move_register_name_8616(insn, getattr(dst, "reg", None))
+            immediate = getattr(amount, "imm", None)
+            previous = reg_state.get(reg_name)
+            if (
+                previous is not None
+                and previous.kind is DirectStackRegisterValueKind8616.STACK_SLOT
+                and isinstance(immediate, int)
+                and immediate >= 0
+            ):
+                reg_state[reg_name] = DirectStackRegisterValue8616(
+                    DirectStackRegisterValueKind8616.STACK_SLOT_EXPR,
+                    stack_offset=previous.stack_offset,
+                    width=previous.width,
+                    source_op=DirectStackMoveExpressionOp8616.SHL,
+                    source_immediate=int(immediate),
+                )
+            else:
+                _direct_stack_move_forget_register_8616(reg_state, reg_name)
+            continue
+
+        if insn_id in {X86_INS_CBW, X86_INS_CWDE}:
+            al_value = reg_state.get("al")
+            if al_value is not None and al_value.kind is DirectStackRegisterValueKind8616.SEGMENTED_MEMORY:
+                promoted = DirectStackRegisterValue8616(
+                    DirectStackRegisterValueKind8616.SEGMENTED_MEMORY,
+                    width=2,
+                    segment_name=al_value.segment_name,
+                    displacement=al_value.displacement,
+                    index_stack_offset=al_value.index_stack_offset,
+                    index_shift=al_value.index_shift,
+                    access_width=al_value.access_width,
+                    sign_extend=True,
+                )
+                reg_state["ax"] = promoted
+                reg_state["eax"] = promoted
+            else:
+                reg_state.pop("ax", None)
+                reg_state.pop("eax", None)
+            continue
+
+        if operands and getattr(operands[0], "type", None) == X86_OP_REG:
+            reg_name = _direct_stack_move_register_name_8616(insn, getattr(operands[0], "reg", None))
+            _direct_stack_move_forget_register_8616(reg_state, reg_name)
+
+    if target_reg_name is None:
+        last = getattr(insns[index], "insn", insns[index])
+        target_reg_name = _direct_stack_move_register_name_8616(last, reg_id)
+    value = reg_state.get(target_reg_name)
+    if value is None or value.kind is not DirectStackRegisterValueKind8616.SEGMENTED_MEMORY:
+        return None
+    return value
 
 
 def _previous_stack_load_for_register_8616(insns: tuple[object, ...], index: int, reg_id: int) -> tuple[int, int] | None:
@@ -3248,6 +3831,49 @@ def _previous_signed_half_stack_load_for_register_8616(
     return source_offset, 2, DirectStackMoveExpressionOp8616.SIGNED_DIV2
 
 
+def _register_adjustment_before_8616(insn, reg_id: int) -> int | None:
+    insn_id = getattr(insn, "id", None)
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if insn_id == X86_INS_INC and len(operands) == 1 and _register_operand_is_8616(operands[0], reg_id):
+        return 1
+    if insn_id == X86_INS_DEC and len(operands) == 1 and _register_operand_is_8616(operands[0], reg_id):
+        return -1
+    if insn_id not in {X86_INS_ADD, X86_INS_SUB} or len(operands) != 2:
+        return None
+    if not _register_operand_is_8616(operands[0], reg_id):
+        return None
+    if getattr(operands[1], "type", None) != X86_OP_IMM:
+        return None
+    immediate = getattr(operands[1], "imm", None)
+    if not isinstance(immediate, int):
+        return None
+    return immediate if insn_id == X86_INS_ADD else -immediate
+
+
+def _previous_stack_load_with_adjust_for_register_8616(
+    insns: tuple[object, ...], index: int, reg_id: int, width: int
+) -> tuple[int, int, int] | None:
+    if index <= 0:
+        return None
+    direct = _previous_stack_load_for_register_8616(insns, index, reg_id)
+    if direct is not None:
+        source_offset, source_width = direct
+        if source_width == width:
+            return source_offset, 0, index - 1
+        return None
+    adjust_insn = getattr(insns[index - 1], "insn", insns[index - 1])
+    adjustment = _register_adjustment_before_8616(adjust_insn, reg_id)
+    if adjustment is None:
+        return None
+    adjusted = _previous_stack_load_for_register_8616(insns, index - 1, reg_id)
+    if adjusted is None:
+        return None
+    source_offset, source_width = adjusted
+    if source_width != width:
+        return None
+    return source_offset, adjustment, index - 2
+
+
 def _register_operand_is_8616(operand, reg_id: int) -> bool:
     return getattr(operand, "type", None) == X86_OP_REG and getattr(operand, "reg", None) == reg_id
 
@@ -3259,17 +3885,32 @@ def _direct_call_target_from_operand_8616(operand) -> int | None:
     return target if isinstance(target, int) else None
 
 
+def _project_main_object_min_addr_8616(project) -> int | None:
+    loader = getattr(project, "loader", None)
+    main_object = getattr(loader, "main_object", None)
+    min_addr = getattr(main_object, "min_addr", None)
+    return int(min_addr) if isinstance(min_addr, int) else None
+
+
 def _direct_stack_move_call_target_candidates_8616(project, target: int) -> tuple[tuple[object, int], ...]:
-    candidates: list[tuple[object, int]] = [(project, int(target))]
+    target = int(target)
+    candidates: list[tuple[object, int]] = [(project, target)]
     delta = getattr(project, "_inertia_original_linear_delta", None)
     original_project = getattr(project, "_inertia_original_project", None)
+    projects: list[object] = [project]
     if original_project is not None:
-        candidates.append((original_project, int(target)))
+        projects.append(original_project)
+        candidates.append((original_project, target))
         if isinstance(delta, int) and delta:
-            candidates.append((original_project, int(target) + delta))
-            rebased = int(target) - delta
+            candidates.append((original_project, target + delta))
+            rebased = target - delta
             if rebased >= 0:
                 candidates.append((project, rebased))
+    if 0 <= target <= 0xFFFF:
+        for candidate_project in projects:
+            image_base = _project_main_object_min_addr_8616(candidate_project)
+            if isinstance(image_base, int):
+                candidates.append((candidate_project, image_base + target))
     deduped: list[tuple[object, int]] = []
     seen: set[tuple[int, int]] = set()
     for candidate_project, candidate_target in candidates:
@@ -3281,7 +3922,66 @@ def _direct_stack_move_call_target_candidates_8616(project, target: int) -> tupl
     return tuple(deduped)
 
 
+def _normalize_direct_stack_function_name_8616(raw_name: str | None) -> str | None:
+    if not isinstance(raw_name, str):
+        return None
+    stripped = raw_name.strip()
+    if not stripped:
+        return None
+    normalized = normalize_callee_name_8616(stripped.lstrip("_"))
+    return normalized or stripped.lstrip("_")
+
+
+def _direct_stack_function_target_8616(project, target: int) -> DirectStackFunctionTarget8616 | None:
+    for candidate_project, candidate_target in _direct_stack_move_call_target_candidates_8616(project, target):
+        synthetic_globals = getattr(candidate_project, "_inertia_synthetic_globals", None)
+        if isinstance(synthetic_globals, dict):
+            synthetic = synthetic_globals.get(int(candidate_target))
+            if isinstance(synthetic, tuple) and synthetic:
+                name = _normalize_direct_stack_function_name_8616(synthetic[0] if isinstance(synthetic[0], str) else None)
+                if name:
+                    return DirectStackFunctionTarget8616(
+                        name=name,
+                        addr=int(candidate_target),
+                        evidence=DirectStackFunctionTargetEvidence8616.SYNTHETIC_GLOBAL,
+                    )
+
+        for labels in (
+            getattr(getattr(candidate_project, "kb", None), "labels", None),
+            getattr(getattr(candidate_project, "_inertia_lst_metadata", None), "code_labels", None),
+        ):
+            if labels is None:
+                continue
+            label = None
+            with contextlib.suppress(Exception):
+                label = labels.get(int(candidate_target))
+            name = _normalize_direct_stack_function_name_8616(label if isinstance(label, str) else None)
+            if name:
+                return DirectStackFunctionTarget8616(
+                    name=name,
+                    addr=int(candidate_target),
+                    evidence=DirectStackFunctionTargetEvidence8616.LABEL,
+                )
+
+        functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
+        callee = None
+        if functions is not None:
+            with contextlib.suppress(Exception):
+                callee = functions.function(addr=int(candidate_target), create=False)
+        name = _normalize_direct_stack_function_name_8616(getattr(callee, "name", None))
+        if name:
+            return DirectStackFunctionTarget8616(
+                name=name,
+                addr=int(candidate_target),
+                evidence=DirectStackFunctionTargetEvidence8616.FUNCTION,
+            )
+    return None
+
+
 def _callee_name_for_direct_stack_move_8616(project, target: int) -> tuple[str, object | None, int]:
+    resolved = _direct_stack_function_target_8616(project, target)
+    if resolved is not None:
+        return resolved.name, None, resolved.addr
     for candidate_project, candidate_target in _direct_stack_move_call_target_candidates_8616(project, target):
         functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
         callee = None
@@ -3304,6 +4004,44 @@ def _callee_name_for_direct_stack_move_8616(project, target: int) -> tuple[str, 
     return f"sub_{int(target):x}", None, int(target)
 
 
+_DIRECT_STACK_RELOAD_REGISTER_NAMES_8616 = {
+    X86_REG_AX: "ax",
+    X86_REG_BX: "bx",
+    X86_REG_CX: "cx",
+    X86_REG_DX: "dx",
+    X86_REG_SI: "si",
+    X86_REG_DI: "di",
+}
+
+_DIRECT_STACK_RELOAD_REGISTER_OFFSET_NAMES_8616 = {
+    0: "ax",
+    2: "cx",
+    4: "dx",
+    6: "bx",
+    12: "si",
+    14: "di",
+}
+
+
+def _capstone_register_name_8616(reg_id: int) -> str | None:
+    return _DIRECT_STACK_RELOAD_REGISTER_NAMES_8616.get(int(reg_id))
+
+
+def _cvar_register_name_8616(cvar) -> str | None:
+    cvar = _strip_casts_8616(cvar)
+    if not isinstance(cvar, structured_c.CVariable):
+        return None
+    variable = getattr(cvar, "variable", None)
+    if not isinstance(variable, SimRegisterVariable):
+        return None
+    for attr in ("reg", "reg_offset", "offset"):
+        value = getattr(variable, attr, None)
+        if isinstance(value, int) and value in _DIRECT_STACK_RELOAD_REGISTER_OFFSET_NAMES_8616:
+            return _DIRECT_STACK_RELOAD_REGISTER_OFFSET_NAMES_8616[value]
+    name = getattr(variable, "name", None)
+    return name if isinstance(name, str) and name else None
+
+
 def _is_stack_probe_helper_name_for_linear_lowering_8616(name: str | None) -> bool:
     if not isinstance(name, str):
         return False
@@ -3316,7 +4054,94 @@ def _callee_has_zero_args_8616(callee, callee_name: str) -> bool:
     args = getattr(prototype, "args", None)
     if isinstance(args, (list, tuple)):
         return len(args) == 0
-    return callee_name in {"clock"}
+    return callee_name.lstrip("_") in {"clock", "rand"}
+
+
+def _call_has_nearby_stack_arg_setup_8616(insns: tuple[object, ...], call_index: int) -> bool:
+    for scan_index in range(max(0, call_index - 8), call_index):
+        insn = getattr(insns[scan_index], "insn", insns[scan_index])
+        if getattr(insn, "id", None) == X86_INS_PUSH:
+            return True
+    return False
+
+
+def _direct_zero_arg_call_before_8616(project, insns: tuple[object, ...], index: int):
+    if index <= 0:
+        return None
+    call_index = index - 1
+    call_insn = getattr(insns[call_index], "insn", insns[call_index])
+    if getattr(call_insn, "id", None) not in {X86_INS_CALL, X86_INS_LCALL}:
+        return None
+    call_operands = tuple(getattr(call_insn, "operands", ()) or ())
+    if len(call_operands) != 1:
+        return None
+    call_target = _direct_call_target_from_operand_8616(call_operands[0])
+    if call_target is None:
+        return None
+    callee_name, callee, resolved_call_target = _callee_name_for_direct_stack_move_8616(project, call_target)
+    if not _callee_has_zero_args_8616(callee, callee_name) and _call_has_nearby_stack_arg_setup_8616(
+        insns,
+        call_index,
+    ):
+        return None
+    call_addr = getattr(call_insn, "address", None)
+    if not isinstance(call_addr, int):
+        return None
+    return callee_name, resolved_call_target, call_addr
+
+
+def _signed_idiv_remainder_stack_store_fact_at_8616(
+    project,
+    insns: tuple[object, ...],
+    index: int,
+) -> DirectStackMoveFact8616 | None:
+    if index <= 3:
+        return None
+    store = getattr(insns[index], "insn", insns[index])
+    store_operands = tuple(getattr(store, "operands", ()) or ())
+    if len(store_operands) != 2:
+        return None
+    dst_slot = _stack_mem_operand_offset_width_8616(store_operands[0])
+    if dst_slot is None or not _register_operand_is_8616(store_operands[1], X86_REG_DX):
+        return None
+    dst_offset, dst_width = dst_slot
+    if dst_width != 2:
+        return None
+
+    idiv_insn = getattr(insns[index - 1], "insn", insns[index - 1])
+    sign_extend = getattr(insns[index - 2], "insn", insns[index - 2])
+    if getattr(idiv_insn, "id", None) != X86_INS_IDIV or getattr(sign_extend, "id", None) not in {X86_INS_CWD, X86_INS_CDQ}:
+        return None
+    idiv_operands = tuple(getattr(idiv_insn, "operands", ()) or ())
+    if len(idiv_operands) != 1 or getattr(idiv_operands[0], "type", None) != X86_OP_REG:
+        return None
+    divisor_reg = getattr(idiv_operands[0], "reg", None)
+    if not isinstance(divisor_reg, int):
+        return None
+    divisor = _previous_stack_load_with_adjust_for_register_8616(insns, index - 2, divisor_reg, 2)
+    if divisor is None:
+        return None
+    divisor_offset, divisor_adjust, divisor_load_index = divisor
+    call = _direct_zero_arg_call_before_8616(project, insns, divisor_load_index)
+    if call is None:
+        return None
+    call_name, call_target, call_ins_addr = call
+    ins_addr = getattr(store, "address", None)
+    if not isinstance(ins_addr, int):
+        return None
+    return DirectStackMoveFact8616(
+        dst_offset,
+        2,
+        DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER,
+        ins_addr,
+        source_offset=divisor_offset,
+        source_op=DirectStackMoveExpressionOp8616.MOD,
+        source_immediate=divisor_adjust,
+        source_call_target=call_target,
+        source_call_name=call_name,
+        source_call_ins_addr=call_ins_addr,
+    )
+
 
 
 def _wide_call_return_stack_arith_fact_at_8616(project, insns: tuple[object, ...], index: int):
@@ -3409,11 +4234,18 @@ def _direct_stack_move_instruction_facts_8616(project, function) -> tuple[Direct
         wide_fact = _wide_call_return_stack_arith_fact_at_8616(project, merged_insns, index)
         if wide_fact is not None:
             facts.append(wide_fact)
+        idiv_remainder_fact = _signed_idiv_remainder_stack_store_fact_at_8616(project, merged_insns, index)
+        if idiv_remainder_fact is not None:
+            facts.append(idiv_remainder_fact)
     for block in blocks:
         insns = _capstone_insns_for_direct_global_update_8616(project, block)
         for index, wrapper in enumerate(insns):
             insn = getattr(wrapper, "insn", wrapper)
             if getattr(insn, "id", None) != X86_INS_MOV:
+                continue
+            idiv_remainder_fact = _signed_idiv_remainder_stack_store_fact_at_8616(project, insns, index)
+            if idiv_remainder_fact is not None:
+                facts.append(idiv_remainder_fact)
                 continue
             operands = tuple(getattr(insn, "operands", ()) or ())
             if len(operands) != 2:
@@ -3466,6 +4298,23 @@ def _direct_stack_move_instruction_facts_8616(project, function) -> tuple[Direct
             if expr_load is None:
                 expr_load = _previous_signed_half_stack_load_for_register_8616(insns, index, reg_id, width)
             if expr_load is None:
+                segmented_source = _direct_stack_move_segmented_source_for_register_8616(insns, index, reg_id)
+                if segmented_source is None:
+                    continue
+                facts.append(
+                    DirectStackMoveFact8616(
+                        dst_offset,
+                        width,
+                        DirectStackMoveSourceKind8616.SEGMENTED_MEMORY,
+                        ins_addr,
+                        source_segment_name=segmented_source.segment_name,
+                        source_displacement=segmented_source.displacement,
+                        source_index_offset=segmented_source.index_stack_offset,
+                        source_index_shift=segmented_source.index_shift,
+                        source_access_width=segmented_source.access_width,
+                        source_sign_extend=segmented_source.sign_extend,
+                    )
+                )
                 continue
             source_offset, immediate, source_op = expr_load
             facts.append(
@@ -3483,6 +4332,77 @@ def _direct_stack_move_instruction_facts_8616(project, function) -> tuple[Direct
     with contextlib.suppress(Exception):
         setattr(function, "_inertia_direct_stack_move_instruction_facts_8616", result)
     return result
+
+
+def _direct_stack_reload_instruction_facts_8616(
+    project,
+    function,
+    materialized_move_facts: tuple[DirectStackMoveFact8616, ...],
+) -> tuple[DirectStackReloadFact8616, ...]:
+    source_by_slot: dict[tuple[int, int], list[DirectStackMoveFact8616]] = {}
+    for move_fact in materialized_move_facts:
+        source_by_slot.setdefault((move_fact.dst_offset, move_fact.width), []).append(move_fact)
+    if not source_by_slot:
+        return ()
+
+    for facts in source_by_slot.values():
+        facts.sort(key=lambda fact: int(fact.ins_addr))
+
+    blocks = tuple(_direct_global_update_blocks_8616(project, function))
+    merged_insns = tuple(
+        sorted(
+            (
+                wrapper
+                for block in blocks
+                for wrapper in _capstone_insns_for_direct_global_update_8616(project, block)
+            ),
+            key=lambda wrapper: int(getattr(getattr(wrapper, "insn", wrapper), "address", 0) or 0),
+        )
+    )
+
+    reload_facts: list[DirectStackReloadFact8616] = []
+    for wrapper in merged_insns:
+        insn = getattr(wrapper, "insn", wrapper)
+        if getattr(insn, "id", None) != X86_INS_MOV:
+            continue
+        ins_addr = getattr(insn, "address", None)
+        if not isinstance(ins_addr, int):
+            continue
+        operands = tuple(getattr(insn, "operands", ()) or ())
+        if len(operands) != 2:
+            continue
+        dst, src = operands
+        if getattr(dst, "type", None) != X86_OP_REG:
+            continue
+        src_slot = _stack_mem_operand_offset_width_8616(src)
+        if src_slot is None:
+            continue
+        source_offset, width = src_slot
+        reg_id = getattr(dst, "reg", None)
+        if not isinstance(reg_id, int):
+            continue
+        reg_name = _capstone_register_name_8616(reg_id)
+        if reg_name is None:
+            continue
+        prior_sources = [
+            fact
+            for fact in source_by_slot.get((source_offset, width), ())
+            if int(fact.ins_addr) < int(ins_addr)
+        ]
+        if not prior_sources:
+            continue
+        source_fact = prior_sources[-1]
+        reload_facts.append(
+            DirectStackReloadFact8616(
+                source_offset,
+                width,
+                reg_id,
+                reg_name,
+                ins_addr,
+                source_fact.ins_addr,
+            )
+        )
+    return tuple(dict.fromkeys(reload_facts))
 
 
 def _has_direct_global_update_assignment_8616(root, addr: int) -> bool:
@@ -3574,9 +4494,53 @@ def _node_has_instruction_address_8616(node, project, ins_addr: int) -> bool:
     return isinstance(tagged_addr, int) and tagged_addr in _candidate_ins_addrs_8616(project, ins_addr)
 
 
+def _valid_c_identifier_8616(name: object) -> bool:
+    if not isinstance(name, str) or not name:
+        return False
+    first = name[0]
+    if not (first == "_" or first.isalpha()):
+        return False
+    return all(ch == "_" or ch.isalnum() for ch in name)
+
+
+def _ensure_stack_cvar_has_identifier_8616(codegen, cvar, offset: int) -> None:
+    variable = getattr(cvar, "variable", None)
+    if not isinstance(variable, SimStackVariable):
+        return
+    current_name = getattr(variable, "name", None)
+    if _valid_c_identifier_8616(current_name):
+        return
+    preferred_name = _preferred_stack_object_name_8616(offset, codegen=codegen)
+    if not _valid_c_identifier_8616(preferred_name):
+        return
+    variable.name = preferred_name
+    unified = getattr(cvar, "unified_variable", None)
+    if isinstance(unified, SimStackVariable):
+        unified.name = preferred_name
+    with contextlib.suppress(Exception):
+        cvar.name = preferred_name
+
+
+def _stack_cvar_ast_usage_count_8616(codegen, cvar) -> int:
+    target_var = getattr(cvar, "variable", None)
+    if not isinstance(target_var, SimStackVariable):
+        return 0
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if root is None:
+        return 0
+    count = 0
+    for node in _iter_structured_c_nodes_8616(root):
+        if not isinstance(node, structured_c.CVariable):
+            continue
+        if node is cvar or getattr(node, "variable", None) is target_var:
+            count += 1
+    return count
+
+
 def _resolve_direct_stack_update_cvar_8616(codegen, offset: int, width: int):
     variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
     if isinstance(variables_in_use, dict):
+        candidates = []
         for variable, cvar in tuple(variables_in_use.items()):
             if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
                 continue
@@ -3586,7 +4550,13 @@ def _resolve_direct_stack_update_cvar_8616(codegen, offset: int, width: int):
             if isinstance(size, int) and size > 0 and size < width:
                 continue
             if isinstance(cvar, structured_c.CVariable):
-                return cvar
+                _ensure_stack_cvar_has_identifier_8616(codegen, cvar, offset)
+                usage_count = _stack_cvar_ast_usage_count_8616(codegen, cvar)
+                exact_size = int(isinstance(size, int) and size == width)
+                candidates.append((usage_count, exact_size, cvar))
+        if candidates:
+            candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            return candidates[0][2]
 
     target_type = _type_for_access_width_8616(width)
     variable = SimStackVariable(
@@ -3605,23 +4575,209 @@ def _resolve_direct_stack_update_cvar_8616(codegen, offset: int, width: int):
     return cvar
 
 
-def _direct_stack_update_assignment_8616(codegen, cvar, width: int, delta: int, tags=None):
+def _direct_stack_update_source_expr_8616(codegen, fact: DirectStackUpdateFact8616):
+    target_type = _type_for_access_width_8616(fact.width)
+    if fact.source_kind is DirectStackUpdateSourceKind8616.IMMEDIATE:
+        value = fact.source_value if isinstance(fact.source_value, int) else abs(int(fact.delta))
+        return structured_c.CConstant(abs(int(value)), target_type, codegen=codegen)
+    if fact.source_kind is DirectStackUpdateSourceKind8616.STACK_SLOT:
+        if not isinstance(fact.source_offset, int):
+            return None
+        return _resolve_direct_stack_update_cvar_8616(codegen, fact.source_offset, fact.width)
+    return None
+
+
+def _direct_stack_update_assignment_8616(
+    codegen,
+    cvar,
+    width: int,
+    delta: int,
+    tags=None,
+    source_expr=None,
+    operation: DirectStackUpdateOp8616 = DirectStackUpdateOp8616.ARITHMETIC,
+):
     target_type = _type_for_access_width_8616(width)
+    if source_expr is None:
+        source_expr = structured_c.CConstant(abs(int(delta)), target_type, codegen=codegen)
+    op_name = "Or" if operation is DirectStackUpdateOp8616.OR else ("Add" if delta > 0 else "Sub")
     rhs = structured_c.CBinaryOp(
-        "Add" if delta > 0 else "Sub",
+        op_name,
         cvar,
-        structured_c.CConstant(1, target_type, codegen=codegen),
+        source_expr,
         codegen=codegen,
         tags=tags,
     )
     return structured_c.CAssignment(cvar, rhs, codegen=codegen, tags=tags)
 
 
-def _direct_stack_move_source_expr_8616(codegen, fact: DirectStackMoveFact8616):
+def _is_same_stack_update_assignment_8616(
+    stmt,
+    cvar,
+    delta: int,
+    source_expr,
+    operation: DirectStackUpdateOp8616 = DirectStackUpdateOp8616.ARITHMETIC,
+) -> bool:
+    if not isinstance(stmt, structured_c.CAssignment):
+        return False
+    if not _same_stack_cvar_8616(getattr(stmt, "lhs", None), cvar):
+        return False
+    rhs = _strip_casts_8616(getattr(stmt, "rhs", None))
+    if not isinstance(rhs, structured_c.CBinaryOp):
+        return False
+    op_name = "Or" if operation is DirectStackUpdateOp8616.OR else ("Add" if delta > 0 else "Sub")
+    if getattr(rhs, "op", None) != op_name:
+        return False
+    if not _same_stack_cvar_8616(getattr(rhs, "lhs", None), cvar):
+        return False
+    return _same_stack_move_rhs_8616(getattr(rhs, "rhs", None), source_expr)
+
+
+def _function_call_name_8616(expr) -> str | None:
+    expr = _strip_casts_8616(expr)
+    if not isinstance(expr, structured_c.CFunctionCall):
+        return None
+    for candidate in (getattr(expr, "callee_target", None), getattr(getattr(expr, "callee_func", None), "name", None)):
+        if isinstance(candidate, str) and candidate:
+            return candidate.lstrip("_")
+    return None
+
+
+def _call_result_cvar_at_instruction_8616(codegen, project, call_ins_addr: int | None, call_name: str | None):
+    if not isinstance(call_ins_addr, int):
+        return None
+    normalized_call_name = call_name.lstrip("_") if isinstance(call_name, str) else None
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if root is None:
+        return None
+    found = None
+    seen: set[int] = set()
+
+    def visit(node) -> None:
+        nonlocal found
+        if found is not None or node is None or id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, structured_c.CAssignment) and _node_has_instruction_address_8616(
+            node,
+            project,
+            call_ins_addr,
+        ):
+            callee_name = _function_call_name_8616(getattr(node, "rhs", None))
+            lhs = _strip_casts_8616(getattr(node, "lhs", None))
+            if (
+                isinstance(lhs, structured_c.CVariable)
+                and _cvar_register_name_8616(lhs) == "ax"
+                and (normalized_call_name is None or callee_name == normalized_call_name)
+            ):
+                found = lhs
+                return
+        for attr in (
+            "statements",
+            "lhs",
+            "rhs",
+            "operand",
+            "expr",
+            "stmts",
+            "init",
+            "initializer",
+            "iftrue",
+            "iffalse",
+            "iteration",
+            "iterator",
+            "body",
+            "else_node",
+        ):
+            if not hasattr(node, attr):
+                continue
+            with contextlib.suppress(Exception):
+                value = getattr(node, attr)
+            if isinstance(value, (list, tuple)):
+                for item in tuple(value):
+                    visit(item)
+                    if found is not None:
+                        return
+            elif value is not None:
+                visit(value)
+                if found is not None:
+                    return
+        condition_and_nodes = getattr(node, "condition_and_nodes", None)
+        if condition_and_nodes:
+            for condition, body in tuple(condition_and_nodes):
+                visit(condition)
+                if found is not None:
+                    return
+                visit(body)
+                if found is not None:
+                    return
+
+    visit(root)
+    return found
+
+
+def _function_pointer_stack_slot_type_8616(cvar) -> SimTypePointer | None:
+    if not isinstance(cvar, structured_c.CVariable):
+        return None
+    try:
+        variable_type = cvar.variable_type
+    except AttributeError:
+        return None
+    if not isinstance(variable_type, SimTypePointer):
+        return None
+    try:
+        pointee = variable_type.pts_to
+    except AttributeError:
+        return None
+    return variable_type if isinstance(pointee, SimTypeFunction) else None
+
+
+def _default_near_function_pointer_type_8616(codegen, width: int) -> SimTypePointer:
+    word_type = _type_for_access_width_8616(width)
+    prototype = SimTypeFunction([word_type], word_type, variadic=False)
+    project = getattr(codegen, "project", None)
+    arch = getattr(project, "arch", None)
+    if arch is not None and hasattr(prototype, "with_arch"):
+        prototype = prototype.with_arch(arch)
+    pointer_type = SimTypePointer(prototype)
+    return pointer_type.with_arch(arch) if arch is not None and hasattr(pointer_type, "with_arch") else pointer_type
+
+
+def _direct_stack_near_function_pointer_expr_8616(codegen, fact: DirectStackMoveFact8616, dst_cvar):
+    if fact.source_kind is not DirectStackMoveSourceKind8616.IMMEDIATE:
+        return None
+    if not isinstance(fact.source_value, int):
+        return None
+    project = getattr(codegen, "project", None)
+    if project is None:
+        return None
+    mask = (1 << (fact.width * 8)) - 1
+    target = fact.source_value & mask
+    if target == 0:
+        return None
+    resolved = _direct_stack_function_target_8616(project, target)
+    if resolved is None:
+        return None
+    pointer_type = _function_pointer_stack_slot_type_8616(dst_cvar)
+    if pointer_type is None:
+        pointer_type = _default_near_function_pointer_type_8616(codegen, fact.width)
+        if isinstance(dst_cvar, structured_c.CVariable):
+            dst_cvar.variable_type = pointer_type
+    variable = SimMemoryVariable(
+        resolved.addr,
+        fact.width,
+        name=resolved.name,
+        region=getattr(getattr(codegen, "cfunc", None), "addr", None),
+    )
+    return structured_c.CVariable(variable, variable_type=pointer_type, codegen=codegen)
+
+
+def _direct_stack_move_source_expr_8616(codegen, fact: DirectStackMoveFact8616, dst_cvar=None):
     target_type = _type_for_access_width_8616(fact.width)
     if fact.source_kind is DirectStackMoveSourceKind8616.IMMEDIATE:
         if not isinstance(fact.source_value, int):
             return None
+        function_pointer_expr = _direct_stack_near_function_pointer_expr_8616(codegen, fact, dst_cvar)
+        if function_pointer_expr is not None:
+            return function_pointer_expr
         mask = (1 << (fact.width * 8)) - 1
         return structured_c.CConstant(fact.source_value & mask, target_type, codegen=codegen)
     if fact.source_kind is DirectStackMoveSourceKind8616.STACK_SLOT:
@@ -3658,6 +4814,98 @@ def _direct_stack_move_source_expr_8616(codegen, fact: DirectStackMoveFact8616):
             structured_c.CConstant(fact.source_immediate, target_type, codegen=codegen),
             codegen=codegen,
         )
+    if fact.source_kind is DirectStackMoveSourceKind8616.SEGMENTED_MEMORY:
+        if (
+            not isinstance(fact.source_segment_name, str)
+            or not isinstance(fact.source_displacement, int)
+            or not isinstance(fact.source_index_offset, int)
+            or not isinstance(fact.source_index_shift, int)
+            or fact.source_access_width not in {1, 2}
+        ):
+            return None
+        project = getattr(codegen, "project", None)
+        arch = getattr(project, "arch", None)
+        reg_info = getattr(arch, "registers", {}).get(fact.source_segment_name.lower()) if arch is not None else None
+        if not isinstance(reg_info, tuple) or len(reg_info) < 2:
+            return None
+        segment_type = SimTypeShort(False)
+        with contextlib.suppress(Exception):
+            segment_type = segment_type.with_arch(arch)
+        segment_expr = structured_c.CVariable(
+            SimRegisterVariable(reg_info[0], reg_info[1], name=fact.source_segment_name.lower()),
+            variable_type=segment_type,
+            codegen=codegen,
+        )
+        index_expr = _resolve_direct_stack_update_cvar_8616(codegen, fact.source_index_offset, 2)
+        if index_expr is None:
+            return None
+        offset_type = _type_for_access_width_8616(2)
+        if fact.source_index_shift:
+            index_expr = structured_c.CBinaryOp(
+                "Shl",
+                index_expr,
+                structured_c.CConstant(fact.source_index_shift, offset_type, codegen=codegen),
+                codegen=codegen,
+            )
+        displacement = structured_c.CConstant(fact.source_displacement, offset_type, codegen=codegen)
+        offset_expr = structured_c.CBinaryOp("Add", displacement, index_expr, codegen=codegen)
+        macro_name = "SEG_U8" if int(fact.source_access_width) == 1 else "SEG_U16"
+        return structured_c.CFunctionCall(
+            macro_name,
+            None,
+            [segment_expr, offset_expr],
+            codegen=codegen,
+            tags={"inertia_x86_16_runtime_segment_helper": macro_name},
+        )
+    if fact.source_kind is DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER:
+        if (
+            not isinstance(fact.source_offset, int)
+            or fact.source_op is not DirectStackMoveExpressionOp8616.MOD
+            or not isinstance(fact.source_call_target, int)
+        ):
+            return None
+        project = getattr(codegen, "project", None)
+        call_name = fact.source_call_name
+        callee = None
+        if project is not None:
+            call_name, callee, _resolved_call_target = _callee_name_for_direct_stack_move_8616(
+                project,
+                fact.source_call_target,
+            )
+        if not isinstance(call_name, str) or not call_name:
+            call_name = f"sub_{int(fact.source_call_target):x}"
+        dividend = None
+        if project is not None:
+            dividend = _call_result_cvar_at_instruction_8616(
+                codegen,
+                project,
+                fact.source_call_ins_addr,
+                call_name,
+            )
+        if dividend is None:
+            dividend = structured_c.CFunctionCall(call_name, callee, [], codegen=codegen)
+        else:
+            stats = getattr(codegen, "_inertia_direct_stack_move_lowering_8616", None)
+            if isinstance(stats, dict):
+                stats["call_result_reused_count"] = int(stats.get("call_result_reused_count", 0) or 0) + 1
+        divisor = _resolve_direct_stack_update_cvar_8616(codegen, fact.source_offset, fact.width)
+        if divisor is None:
+            return None
+        divisor_expr = divisor
+        if isinstance(fact.source_immediate, int) and fact.source_immediate != 0:
+            divisor_expr = structured_c.CBinaryOp(
+                "Add" if fact.source_immediate > 0 else "Sub",
+                divisor,
+                structured_c.CConstant(abs(int(fact.source_immediate)), target_type, codegen=codegen),
+                codegen=codegen,
+            )
+        signed_type = SimTypeShort(True)
+        return structured_c.CBinaryOp(
+            fact.source_op.value,
+            structured_c.CTypeCast(target_type, signed_type, dividend, codegen=codegen),
+            structured_c.CTypeCast(target_type, signed_type, divisor_expr, codegen=codegen),
+            codegen=codegen,
+        )
     if fact.source_kind is DirectStackMoveSourceKind8616.WIDE_CALL_RETURN_STACK_ARITH:
         if (
             not isinstance(fact.source_offset, int)
@@ -3692,7 +4940,18 @@ def _direct_stack_move_assignment_8616(codegen, dst_cvar, source_expr, tags=None
     return structured_c.CAssignment(dst_cvar, source_expr, codegen=codegen, tags=tags)
 
 
-def _replace_tagged_assignment_8616(root, project, ins_addr: int, replacement_factory) -> bool:
+def _replace_tagged_assignment_8616(
+    root,
+    project,
+    ins_addr: int,
+    replacement_factory,
+    *,
+    allow_tagged_iterator_expression: bool = False,
+    replace_all_matches: bool = False,
+    remove_duplicate_tagged_assignments: bool = False,
+    already_materialized_predicate=None,
+    already_materialized_attr: str | None = None,
+) -> bool:
     changed = False
     materialized = False
     seen: set[int] = set()
@@ -3700,22 +4959,161 @@ def _replace_tagged_assignment_8616(root, project, ins_addr: int, replacement_fa
     def transform(node):
         nonlocal changed, materialized
         if isinstance(node, structured_c.CAssignment) and _node_has_instruction_address_8616(node, project, ins_addr):
-            if materialized:
+            if callable(already_materialized_predicate) and already_materialized_predicate(node):
+                if already_materialized_attr:
+                    setattr(root, already_materialized_attr, True)
+                return node
+            if materialized and not replace_all_matches:
+                return node
+            replacement = replacement_factory(getattr(node, "tags", None))
+            if _is_same_stack_move_assignment_8616(
+                node,
+                getattr(replacement, "lhs", None),
+                getattr(replacement, "rhs", None),
+            ):
+                setattr(root, "_inertia_stack_mov_assignment_already_present_8616", True)
                 return node
             materialized = True
             changed = True
-            return replacement_factory(getattr(node, "tags", None))
+            return replacement
+        return node
+
+    def transform_iterator(node):
+        nonlocal changed, materialized
+        if not allow_tagged_iterator_expression:
+            return node
+        if isinstance(node, structured_c.CAssignment):
+            return transform(node)
+        if node is not None and _node_has_instruction_address_8616(node, project, ins_addr):
+            if callable(already_materialized_predicate) and already_materialized_predicate(node):
+                if already_materialized_attr:
+                    setattr(root, already_materialized_attr, True)
+                return node
+            if materialized and not replace_all_matches:
+                return node
+            replacement = replacement_factory(getattr(node, "tags", None))
+            if _is_same_stack_move_assignment_8616(
+                node,
+                getattr(replacement, "lhs", None),
+                getattr(replacement, "rhs", None),
+            ):
+                setattr(root, "_inertia_stack_mov_assignment_already_present_8616", True)
+                return node
+            materialized = True
+            changed = True
+            return replacement
         return node
 
     def is_duplicate_tagged_assignment(node) -> bool:
         return (
-            materialized
+            remove_duplicate_tagged_assignments
+            and materialized
+            and not replace_all_matches
             and isinstance(node, structured_c.CAssignment)
             and _node_has_instruction_address_8616(node, project, ins_addr)
         )
 
     def replace_children(node) -> None:
         nonlocal changed
+        if node is None or not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
+            return
+        node_id = id(node)
+        if node_id in seen:
+            return
+        seen.add(node_id)
+        for attr in (
+            "statements",
+            "lhs",
+            "rhs",
+            "operand",
+            "expr",
+            "stmts",
+            "init",
+            "initializer",
+            "iftrue",
+            "iffalse",
+            "iteration",
+            "iterator",
+            "body",
+            "else_node",
+        ):
+            if not hasattr(node, attr):
+                continue
+            with contextlib.suppress(Exception):
+                value = getattr(node, attr)
+                if isinstance(value, list):
+                    new_items = []
+                    list_changed = False
+                    for item in tuple(value):
+                        if is_duplicate_tagged_assignment(item):
+                            changed = True
+                            list_changed = True
+                            continue
+                        replacement = transform(item)
+                        if replacement is not item:
+                            list_changed = True
+                        replace_children(replacement)
+                        new_items.append(replacement)
+                    if list_changed:
+                        value[:] = new_items
+                elif value is not None:
+                    if attr in {"iteration", "iterator"}:
+                        replacement = transform_iterator(value)
+                    else:
+                        replacement = transform(value)
+                    if replacement is not value:
+                        setattr(node, attr, replacement)
+                        value = replacement
+                    replace_children(value)
+
+        condition_and_nodes = getattr(node, "condition_and_nodes", None)
+        if condition_and_nodes:
+            new_pairs = []
+            pair_changed = False
+            for condition, body in tuple(condition_and_nodes):
+                new_condition = condition
+                new_body = transform(body)
+                if new_body is not body:
+                    pair_changed = True
+                replace_children(new_body)
+                new_pairs.append((new_condition, new_body))
+            if pair_changed:
+                with contextlib.suppress(Exception):
+                    setattr(node, "condition_and_nodes", new_pairs)
+
+    replacement_root = transform(root)
+    if replacement_root is not root:
+        return True
+    replace_children(root)
+    return changed
+
+
+def _replace_tagged_register_reload_assignment_8616(root, project, fact: DirectStackReloadFact8616, source_cvar) -> bool:
+    changed = False
+    materialized = False
+    seen: set[int] = set()
+
+    def transform(node):
+        nonlocal changed, materialized
+        if not isinstance(node, structured_c.CAssignment):
+            return node
+        if not _node_has_instruction_address_8616(node, project, fact.ins_addr):
+            return node
+        lhs = _strip_casts_8616(getattr(node, "lhs", None))
+        if _cvar_register_name_8616(lhs) != fact.dst_reg_name:
+            return node
+        if materialized:
+            return node
+        materialized = True
+        changed = True
+        return structured_c.CAssignment(
+            getattr(node, "lhs", None),
+            source_cvar,
+            codegen=getattr(source_cvar, "codegen", None),
+            tags=getattr(node, "tags", None),
+        )
+
+    def replace_children(node) -> None:
         if node is None or not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
             return
         node_id = id(node)
@@ -3745,20 +5143,11 @@ def _replace_tagged_assignment_8616(root, project, ins_addr: int, replacement_fa
             with contextlib.suppress(Exception):
                 value = getattr(node, attr)
                 if isinstance(value, list):
-                    new_items = []
-                    list_changed = False
-                    for item in tuple(value):
-                        if is_duplicate_tagged_assignment(item):
-                            changed = True
-                            list_changed = True
-                            continue
+                    for index, item in enumerate(tuple(value)):
                         replacement = transform(item)
                         if replacement is not item:
-                            list_changed = True
-                        replace_children(replacement)
-                        new_items.append(replacement)
-                    if list_changed:
-                        value[:] = new_items
+                            value[index] = replacement
+                        replace_children(value[index])
                 elif value is not None:
                     replacement = transform(value)
                     if replacement is not value:
@@ -3786,6 +5175,152 @@ def _replace_tagged_assignment_8616(root, project, ins_addr: int, replacement_fa
     if replacement_root is not root:
         return True
     replace_children(root)
+    return changed
+
+
+def _c_expr_stack_offset_8616(node) -> int | None:
+    if isinstance(node, structured_c.CVariable):
+        variable = getattr(node, "variable", None)
+        if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+            return _canonical_stack_offset_8616(getattr(variable, "offset", None))
+    return None
+
+
+def _expr_reads_stack_offset_8616(node, offset: int) -> bool:
+    seen: set[int] = set()
+
+    def walk(current) -> bool:
+        if current is None:
+            return False
+        if isinstance(current, (list, tuple)):
+            return any(walk(item) for item in current)
+        marker = id(current)
+        if marker in seen:
+            return False
+        seen.add(marker)
+        if _c_expr_stack_offset_8616(current) == offset:
+            return True
+        if not type(current).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
+            return False
+        for attr in (
+            "lhs",
+            "rhs",
+            "operand",
+            "expr",
+            "condition",
+            "cond",
+            "iftrue",
+            "iffalse",
+            "initializer",
+            "init",
+            "iterator",
+            "iteration",
+            "body",
+            "else_node",
+            "statements",
+            "condition_and_nodes",
+        ):
+            if hasattr(current, attr):
+                with contextlib.suppress(Exception):
+                    if walk(getattr(current, attr)):
+                        return True
+        return False
+
+    return walk(node)
+
+
+def _assignment_lhs_stack_offset_8616(node) -> int | None:
+    if not isinstance(node, structured_c.CAssignment):
+        return None
+    return _c_expr_stack_offset_8616(getattr(node, "lhs", None))
+
+
+def _replace_stack_update_loop_iterator_8616(root, cvar, width: int, delta: int, replacement_factory, source_expr=None) -> bool:
+    target_offset = _c_expr_stack_offset_8616(cvar)
+    if not isinstance(target_offset, int):
+        return False
+    changed = False
+    seen: set[int] = set()
+
+    def loop_initializer(loop):
+        for attr in ("initializer", "init"):
+            if hasattr(loop, attr):
+                with contextlib.suppress(Exception):
+                    value = getattr(loop, attr)
+                    if value is not None:
+                        return value
+        return None
+
+    def loop_iterator(loop):
+        for attr in ("iterator", "iteration"):
+            if hasattr(loop, attr):
+                with contextlib.suppress(Exception):
+                    value = getattr(loop, attr)
+                    if value is not None:
+                        return attr, value
+        return None, None
+
+    def is_placeholder_iterator(iterator) -> bool:
+        if iterator is None:
+            return False
+        if isinstance(iterator, structured_c.CAssignment):
+            return _assignment_lhs_stack_offset_8616(iterator) != target_offset
+        return True
+
+    def maybe_rewrite_loop(loop) -> None:
+        nonlocal changed
+        initializer = loop_initializer(loop)
+        if _assignment_lhs_stack_offset_8616(initializer) != target_offset:
+            return
+        condition = getattr(loop, "condition", None) or getattr(loop, "cond", None)
+        if condition is not None and not _expr_reads_stack_offset_8616(condition, target_offset):
+            return
+        iterator_attr, iterator = loop_iterator(loop)
+        if iterator_attr is None:
+            return
+        if source_expr is not None and _is_same_stack_update_assignment(iterator, cvar, delta, source_expr):
+            setattr(root, "_inertia_stack_update_assignment_already_present_8616", True)
+            return
+        if not is_placeholder_iterator(iterator):
+            return
+        replacement = replacement_factory(getattr(iterator, "tags", None))
+        setattr(loop, iterator_attr, replacement)
+        changed = True
+
+    def walk(node) -> None:
+        if node is None:
+            return
+        if isinstance(node, (list, tuple)):
+            for item in tuple(node):
+                walk(item)
+            return
+        marker = id(node)
+        if marker in seen:
+            return
+        seen.add(marker)
+        if isinstance(node, structured_c.CForLoop):
+            maybe_rewrite_loop(node)
+        if not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
+            return
+        for attr in (
+            "statements",
+            "body",
+            "else_node",
+            "iftrue",
+            "iffalse",
+            "initializer",
+            "init",
+        ):
+            if hasattr(node, attr):
+                with contextlib.suppress(Exception):
+                    walk(getattr(node, attr))
+        condition_and_nodes = getattr(node, "condition_and_nodes", None)
+        if condition_and_nodes:
+            for condition, body in tuple(condition_and_nodes):
+                walk(condition)
+                walk(body)
+
+    walk(root)
     return changed
 
 
@@ -3890,6 +5425,13 @@ def _replace_precontrol_stack_assignment_8616(
                     f"dst={_stack_cvar_identity_8616(dst_cvar)}"
                 )
                 continue
+            dst_offset = _c_expr_stack_offset_8616(dst_cvar)
+            if isinstance(dst_offset, int) and _expr_reads_stack_offset_8616(getattr(stmt, "rhs", None), dst_offset):
+                refused.append(f"rhs-reads-destination:path={item_path}:dst={_stack_cvar_identity_8616(dst_cvar)}")
+                continue
+            if _is_same_stack_move_assignment_8616(stmt, dst_cvar, getattr(replacement, "rhs", None)):
+                setattr(root, "_inertia_stack_mov_assignment_already_present_8616", True)
+                return False
             statements[index] = replacement
             if isinstance(consume_following_call_name, str) and index + 1 < len(statements):
                 next_stmt = statements[index + 1]
@@ -3954,6 +5496,12 @@ def _first_transparent_assignment_8616(stmt, seen: set[int] | None = None):
     seen.add(id(stmt))
     if isinstance(stmt, structured_c.CAssignment):
         return stmt
+    for attr in ("initializer", "init", "iterator", "iteration"):
+        if hasattr(stmt, attr):
+            with contextlib.suppress(Exception):
+                found = _first_transparent_assignment_8616(getattr(stmt, attr), seen)
+                if found is not None:
+                    return found
     if not isinstance(stmt, structured_c.CStatements):
         return None
     for child in tuple(getattr(stmt, "statements", ()) or ()):
@@ -3971,6 +5519,12 @@ def _last_transparent_assignment_8616(stmt, seen: set[int] | None = None):
     seen.add(id(stmt))
     if isinstance(stmt, structured_c.CAssignment):
         return stmt
+    for attr in ("iteration", "iterator", "init", "initializer"):
+        if hasattr(stmt, attr):
+            with contextlib.suppress(Exception):
+                found = _last_transparent_assignment_8616(getattr(stmt, attr), seen)
+                if found is not None:
+                    return found
     if not isinstance(stmt, structured_c.CStatements):
         return None
     for child in reversed(tuple(getattr(stmt, "statements", ()) or ())):
@@ -4353,7 +5907,21 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
             )
             return structured_c.CAssignment(_cvar, rhs, codegen=codegen, tags=tags)
 
-        materialized = _replace_tagged_assignment_8616(root, project, fact.ins_addr, replacement_factory)
+        setattr(root, "_inertia_global_update_assignment_already_present_8616", False)
+
+        materialized = _replace_tagged_assignment_8616(
+            root,
+            project,
+            fact.ins_addr,
+            replacement_factory,
+            replace_all_matches=True,
+            already_materialized_predicate=lambda node, _cvar=cvar, _delta=delta: _is_same_global_update_assignment_8616(
+                node,
+                _cvar,
+                _delta,
+            ),
+            already_materialized_attr="_inertia_global_update_assignment_already_present_8616",
+        )
         materialized_by = DirectGlobalUpdateMaterializationKind8616.REPLACED_TAGGED_ASSIGNMENT if materialized else None
         if materialized:
             stats["replaced_count"] = int(stats.get("replaced_count", 0) or 0) + 1
@@ -4459,7 +6027,13 @@ def materialize_direct_stack_incdec_instructions_8616(codegen, project=None, fun
 
     stats = getattr(codegen, "_inertia_direct_stack_update_lowering_8616", None)
     if not isinstance(stats, dict):
-        stats = {"raw_fact_count": 0, "classified_fact_count": 0, "materialized_count": 0, "failure_count": 0}
+        stats = {
+            "raw_fact_count": 0,
+            "classified_fact_count": 0,
+            "materialized_count": 0,
+            "failure_count": 0,
+            "refused_count": 0,
+        }
         setattr(codegen, "_inertia_direct_stack_update_lowering_8616", stats)
 
     facts = _direct_stack_update_instruction_facts_8616(project, function)
@@ -4472,14 +6046,72 @@ def materialize_direct_stack_incdec_instructions_8616(codegen, project=None, fun
         width = fact.width if fact.width in {1, 2} else 2
         stats["classified_fact_count"] = int(stats.get("classified_fact_count", 0) or 0) + 1
         cvar = _resolve_direct_stack_update_cvar_8616(codegen, fact.offset, width)
-        if cvar is None:
+        source_expr = _direct_stack_update_source_expr_8616(codegen, fact)
+        if cvar is None or source_expr is None:
             stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
             continue
 
-        def replacement_factory(tags, *, _cvar=cvar, _width=width, _delta=fact.delta):
-            return _direct_stack_update_assignment_8616(codegen, _cvar, _width, _delta, tags=tags)
+        def replacement_factory(
+            tags,
+            *,
+            _cvar=cvar,
+            _width=width,
+            _delta=fact.delta,
+            _source_expr=source_expr,
+            _operation=fact.operation,
+        ):
+            return _direct_stack_update_assignment_8616(
+                codegen,
+                _cvar,
+                _width,
+                _delta,
+                tags=tags,
+                source_expr=_source_expr,
+                operation=_operation,
+            )
 
-        if not _replace_tagged_assignment_8616(root, project, fact.ins_addr, replacement_factory):
+        setattr(root, "_inertia_stack_update_assignment_already_present_8616", False)
+
+        materialized = False
+        if fact.operation is DirectStackUpdateOp8616.ARITHMETIC:
+            materialized = _replace_stack_update_loop_iterator_8616(
+                root,
+                cvar,
+                width,
+                fact.delta,
+                replacement_factory,
+                source_expr=source_expr,
+            )
+        if not materialized and bool(getattr(root, "_inertia_stack_update_assignment_already_present_8616", False)):
+            continue
+        if not materialized:
+            materialized = _replace_tagged_assignment_8616(
+                root,
+                project,
+                fact.ins_addr,
+                replacement_factory,
+                allow_tagged_iterator_expression=True,
+                remove_duplicate_tagged_assignments=True,
+                already_materialized_predicate=lambda node, _cvar=cvar, _delta=fact.delta, _source_expr=source_expr, _operation=fact.operation: (
+                    _is_same_stack_update_assignment_8616(node, _cvar, _delta, _source_expr, operation=_operation)
+                ),
+                already_materialized_attr="_inertia_stack_update_assignment_already_present_8616",
+            )
+        if not materialized and bool(getattr(root, "_inertia_stack_update_assignment_already_present_8616", False)):
+            continue
+        if not materialized and fact.operation is DirectStackUpdateOp8616.ARITHMETIC:
+            inserted_assignment = replacement_factory({"ins_addr": fact.ins_addr})
+            materialized = _insert_before_nearest_following_tagged_statement_8616(
+                root,
+                project,
+                fact.ins_addr,
+                inserted_assignment,
+            )
+        elif not materialized:
+            stats["refused_count"] = int(stats.get("refused_count", 0) or 0) + 1
+        if not materialized:
+            if bool(getattr(root, "_inertia_stack_update_assignment_already_present_8616", False)):
+                continue
             stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
             continue
         stats["materialized_count"] = int(stats.get("materialized_count", 0) or 0) + 1
@@ -4495,6 +6127,10 @@ def materialize_direct_stack_incdec_instructions_8616(codegen, project=None, fun
                             ("offset", fact.offset),
                             ("width", width),
                             ("delta", fact.delta),
+                            ("source_kind", fact.source_kind),
+                            ("source_value", fact.source_value),
+                            ("source_offset", fact.source_offset),
+                            ("operation", fact.operation),
                             ("ins_addr", fact.ins_addr),
                             ("name", getattr(getattr(cvar, "variable", None), "name", None)),
                         ),
@@ -4534,6 +6170,11 @@ def materialize_direct_stack_mov_instructions_8616(
             "materialized_count": 0,
             "already_materialized_count": 0,
             "failure_count": 0,
+            "call_result_reused_count": 0,
+            "reload_raw_fact_count": 0,
+            "reload_classified_fact_count": 0,
+            "reload_materialized_count": 0,
+            "reload_failure_count": 0,
         }
         setattr(codegen, "_inertia_direct_stack_move_lowering_8616", stats)
 
@@ -4543,11 +6184,12 @@ def materialize_direct_stack_mov_instructions_8616(
         return False
 
     changed = False
+    materialized_facts: list[DirectStackMoveFact8616] = []
     for fact in facts:
         setattr(root, "_inertia_stack_mov_assignment_already_present_8616", False)
         stats["classified_fact_count"] = int(stats.get("classified_fact_count", 0) or 0) + 1
         dst_cvar = _resolve_direct_stack_update_cvar_8616(codegen, fact.dst_offset, fact.width)
-        source_expr = _direct_stack_move_source_expr_8616(codegen, fact)
+        source_expr = _direct_stack_move_source_expr_8616(codegen, fact, dst_cvar)
         if dst_cvar is None or source_expr is None:
             stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
             continue
@@ -4555,11 +6197,24 @@ def materialize_direct_stack_mov_instructions_8616(
         def replacement_factory(tags, *, _dst_cvar=dst_cvar, _source_expr=source_expr):
             return _direct_stack_move_assignment_8616(codegen, _dst_cvar, _source_expr, tags=tags)
 
-        materialized = _replace_tagged_assignment_8616(root, project, fact.ins_addr, replacement_factory)
+        materialized = _replace_tagged_assignment_8616(
+            root,
+            project,
+            fact.ins_addr,
+            replacement_factory,
+            replace_all_matches=True,
+        )
         if not materialized:
             fallback_assignment = _direct_stack_move_assignment_8616(codegen, dst_cvar, source_expr, tags=None)
             if fact.source_kind is DirectStackMoveSourceKind8616.IMMEDIATE:
                 materialized = _replace_precontrol_stack_assignment_8616(root, dst_cvar, fallback_assignment)
+                if not materialized:
+                    materialized = _insert_before_nearest_following_tagged_statement_8616(
+                        root,
+                        project,
+                        fact.ins_addr,
+                        fallback_assignment,
+                    )
             elif fact.source_kind is DirectStackMoveSourceKind8616.WIDE_CALL_RETURN_STACK_ARITH:
                 materialized = _replace_precontrol_stack_assignment_8616(
                     root,
@@ -4582,9 +6237,17 @@ def materialize_direct_stack_mov_instructions_8616(
                     fact.ins_addr,
                     fallback_assignment,
                 )
+            elif fact.source_kind is DirectStackMoveSourceKind8616.SEGMENTED_MEMORY:
+                materialized = _insert_before_nearest_following_tagged_statement_8616(
+                    root,
+                    project,
+                    fact.ins_addr,
+                    fallback_assignment,
+                )
         if not materialized:
             if bool(getattr(root, "_inertia_stack_mov_assignment_already_present_8616", False)):
                 stats["already_materialized_count"] = int(stats.get("already_materialized_count", 0) or 0) + 1
+                materialized_facts.append(fact)
                 continue
             stats["failure_count"] = int(stats.get("failure_count", 0) or 0) + 1
             if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
@@ -4599,6 +6262,7 @@ def materialize_direct_stack_mov_instructions_8616(
                 )
             continue
         stats["materialized_count"] = int(stats.get("materialized_count", 0) or 0) + 1
+        materialized_facts.append(fact)
         evidence = tuple(getattr(codegen, "_inertia_direct_stack_move_evidence_8616", ()) or ())
         setattr(
             codegen,
@@ -4617,6 +6281,13 @@ def materialize_direct_stack_mov_instructions_8616(
                             ("source_immediate", fact.source_immediate),
                             ("source_call_target", fact.source_call_target),
                             ("source_call_name", fact.source_call_name),
+                            ("source_call_ins_addr", fact.source_call_ins_addr),
+                            ("source_segment_name", fact.source_segment_name),
+                            ("source_displacement", fact.source_displacement),
+                            ("source_index_offset", fact.source_index_offset),
+                            ("source_index_shift", fact.source_index_shift),
+                            ("source_access_width", fact.source_access_width),
+                            ("source_sign_extend", fact.source_sign_extend),
                             ("ins_addr", fact.ins_addr),
                         ),
                     )
@@ -4625,16 +6296,56 @@ def materialize_direct_stack_mov_instructions_8616(
         )
         changed = True
 
+    reload_facts = _direct_stack_reload_instruction_facts_8616(project, function, tuple(materialized_facts))
+    stats["reload_raw_fact_count"] = int(stats.get("reload_raw_fact_count", 0) or 0) + len(reload_facts)
+    for reload_fact in reload_facts:
+        stats["reload_classified_fact_count"] = int(stats.get("reload_classified_fact_count", 0) or 0) + 1
+        source_cvar = _resolve_direct_stack_update_cvar_8616(codegen, reload_fact.source_offset, reload_fact.width)
+        if source_cvar is None:
+            stats["reload_failure_count"] = int(stats.get("reload_failure_count", 0) or 0) + 1
+            continue
+        if _replace_tagged_register_reload_assignment_8616(root, project, reload_fact, source_cvar):
+            stats["reload_materialized_count"] = int(stats.get("reload_materialized_count", 0) or 0) + 1
+            changed = True
+        else:
+            stats["reload_failure_count"] = int(stats.get("reload_failure_count", 0) or 0) + 1
+            if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+                log.warning(
+                    "[direct-stack-mov-reload] refused ins=%#x src_offset=%s width=%s dst_reg=%s source_store=%#x",
+                    reload_fact.ins_addr,
+                    reload_fact.source_offset,
+                    reload_fact.width,
+                    reload_fact.dst_reg_name,
+                    reload_fact.source_store_ins_addr,
+                )
+
     if changed and getattr(codegen.cfunc, "body", None) is root:
         codegen.cfunc.body = root
     if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+        fact_summary = tuple(
+            (
+                getattr(fact.source_kind, "name", str(fact.source_kind)),
+                fact.dst_offset,
+                fact.width,
+                fact.source_offset,
+                fact.source_immediate,
+                fact.ins_addr,
+            )
+            for fact in facts
+        )
         log.warning(
-            "[direct-stack-mov] function=%#x facts=%d materialized=%d failures=%d changed=%s",
+            "[direct-stack-mov] function=%#x facts=%d materialized=%d failures=%d "
+            "call_reused=%d reloads=%d reload_materialized=%d reload_failures=%d changed=%s fact_summary=%r",
             getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
             len(facts),
             int(stats.get("materialized_count", 0) or 0),
             int(stats.get("failure_count", 0) or 0),
+            int(stats.get("call_result_reused_count", 0) or 0),
+            int(stats.get("reload_raw_fact_count", 0) or 0),
+            int(stats.get("reload_materialized_count", 0) or 0),
+            int(stats.get("reload_failure_count", 0) or 0),
             changed,
+            fact_summary,
         )
     return changed
 
@@ -4652,6 +6363,206 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
     setattr(codegen, "_inertia_assignment_maps", None)
     setattr(codegen, "_inertia_vvar_carrier_deltas", None)
     setattr(codegen, "_inertia_stack_offset_cache", None)
+
+    def _candidate_functions_for_indexed_stack_facts_8616():
+        candidates = []
+        for candidate in (
+            getattr(codegen, "_inertia_current_function_8616", None),
+            getattr(codegen, "function", None),
+            getattr(codegen, "_func", None),
+            getattr(getattr(codegen, "cfunc", None), "function", None),
+        ):
+            if candidate is not None:
+                candidates.append(candidate)
+        cfunc_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+        funcs = getattr(getattr(project, "kb", None), "functions", None)
+        if isinstance(cfunc_addr, int) and funcs is not None:
+            for addr in (cfunc_addr, cfunc_addr + int(getattr(project, "_inertia_original_linear_delta", 0) or 0)):
+                with contextlib.suppress(Exception):
+                    candidate = funcs.function(addr=addr, create=False)
+                    if candidate is not None:
+                        candidates.append(candidate)
+        deduped = []
+        seen_ids: set[int] = set()
+        for candidate in candidates:
+            candidate_id = id(candidate)
+            if candidate_id in seen_ids:
+                continue
+            seen_ids.add(candidate_id)
+            deduped.append(candidate)
+        return tuple(deduped)
+
+    def _indexed_bp_stack_fact_sizes_8616() -> dict[int, frozenset[int]]:
+        cached = getattr(codegen, "_inertia_indexed_bp_stack_access_facts_8616", None)
+        if isinstance(cached, dict):
+            return cached
+
+        collected: dict[int, set[int]] = {}
+        for function in _candidate_functions_for_indexed_stack_facts_8616():
+            for block in tuple(getattr(function, "blocks", ()) or ()):
+                capstone = getattr(block, "capstone", None)
+                for insn in tuple(getattr(capstone, "insns", ()) or ()):
+                    for operand in tuple(getattr(insn, "operands", ()) or ()):
+                        if int(getattr(operand, "type", -1)) != X86_OP_MEM:
+                            continue
+                        mem = getattr(operand, "mem", None)
+                        if mem is None:
+                            continue
+                        if int(getattr(mem, "base", 0) or 0) != X86_REG_BP:
+                            continue
+                        index_reg = int(getattr(mem, "index", 0) or 0)
+                        if index_reg in {0, X86_REG_INVALID}:
+                            continue
+                        displacement = _canonical_stack_offset_8616(int(getattr(mem, "disp", 0) or 0))
+                        if not isinstance(displacement, int):
+                            continue
+                        size = int(getattr(operand, "size", 0) or 0)
+                        collected.setdefault(displacement, set()).add(size if size > 0 else 0)
+
+        facts = {disp: frozenset(sizes) for disp, sizes in sorted(collected.items())}
+        codegen._inertia_indexed_bp_stack_access_facts_8616 = facts
+        codegen._inertia_indexed_bp_stack_address_raw_fact_count_8616 = len(facts)
+        return facts
+
+    def _flatten_indexed_stack_address_terms_8616(node) -> tuple[tuple[int, object], ...] | None:
+        terms: list[tuple[int, object]] = []
+        pending: list[tuple[object, int, bool]] = [(node, 1, False)]
+        active: set[int] = set()
+        while pending:
+            current, sign, exiting = pending.pop()
+            current = _strip_casts_8616(current)
+            if current is None:
+                return None
+            if exiting:
+                active.discard(id(current))
+                continue
+            current_id = id(current)
+            if current_id in active:
+                return None
+            if len(active) > 1024:
+                return None
+            active.add(current_id)
+            pending.append((current, sign, True))
+            if isinstance(current, structured_c.CBinaryOp) and current.op == "Add":
+                pending.append((current.rhs, sign, False))
+                pending.append((current.lhs, sign, False))
+                continue
+            if isinstance(current, structured_c.CBinaryOp) and current.op == "Sub":
+                pending.append((current.rhs, -sign, False))
+                pending.append((current.lhs, sign, False))
+                continue
+            if isinstance(current, structured_c.CUnaryOp) and current.op == "Reference":
+                operand = _strip_casts_8616(getattr(current, "operand", None))
+                if isinstance(operand, structured_c.CIndexedVariable):
+                    pending.append((getattr(operand, "index", None), sign, False))
+                    continue
+            terms.append((sign, current))
+        return tuple(terms)
+
+    def _signed_16bit_term_value_8616(sign: int, value: int) -> int:
+        return _canonical_stack_offset_8616((int(sign) * int(value)) & 0xFFFF)
+
+    def _match_indexed_bp_stack_address_8616(node) -> RealModeIndexedStackAddress8616 | None:
+        node = _strip_casts_8616(node)
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            return None
+        fact_sizes = _indexed_bp_stack_fact_sizes_8616()
+        if not fact_sizes:
+            return None
+        terms = _flatten_indexed_stack_address_terms_8616(getattr(node, "operand", None))
+        if not terms:
+            return None
+        matched_index: int | None = None
+        matched_displacement: int | None = None
+        for index, (sign, term) in enumerate(terms):
+            value = _constant_value_8616(term)
+            if value is None:
+                continue
+            displacement = _signed_16bit_term_value_8616(sign, value)
+            if displacement in fact_sizes:
+                matched_index = index
+                matched_displacement = displacement
+                break
+        if matched_index is None or not isinstance(matched_displacement, int):
+            return None
+
+        residual_terms = tuple(term for index, term in enumerate(terms) if index != matched_index)
+        width = _dereference_access_width_bytes_8616(node)
+        if width is None:
+            constant_residual = 0
+            for sign, term in residual_terms:
+                value = _constant_value_8616(term)
+                if value is not None:
+                    constant_residual += int(sign) * int(value)
+            sizes = fact_sizes.get(matched_displacement, frozenset())
+            if constant_residual % 2:
+                width = 1
+            elif 1 in sizes:
+                width = 1
+            elif 2 in sizes:
+                width = 2
+        return RealModeIndexedStackAddress8616(
+            base_displacement=matched_displacement,
+            residual_terms=residual_terms,
+            width=width,
+        )
+
+    def _term_expr_with_sign_8616(sign: int, term):
+        value = _constant_value_8616(term)
+        if value is not None:
+            signed_value = int(sign) * int(value)
+            return structured_c.CConstant(
+                signed_value,
+                SimTypeShort(signed=signed_value < 0),
+                codegen=codegen,
+            )
+        if sign == 1:
+            return term
+        return structured_c.CBinaryOp(
+            "Sub",
+            structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+            term,
+            codegen=codegen,
+        )
+
+    def _residual_terms_expr_8616(terms: tuple[tuple[int, object], ...]):
+        expr = None
+        for sign, term in terms:
+            term_expr = _term_expr_with_sign_8616(sign, term)
+            if expr is None:
+                expr = term_expr
+            else:
+                expr = structured_c.CBinaryOp("Add", expr, term_expr, codegen=codegen)
+        return expr
+
+    def _materialize_indexed_bp_stack_address_8616(access: RealModeIndexedStackAddress8616):
+        width = access.width if isinstance(access.width, int) and access.width > 0 else 1
+        base_cvar = stack_cvar_for_stable_ss_linear_access_8616(
+            codegen,
+            RealModeLinearStackAccess8616(access.base_displacement, 1),
+        )
+        if base_cvar is None:
+            return None
+        byte_ptr_type = SimTypePointer(SimTypeChar(False)).with_arch(project.arch)
+        access_type = _type_for_access_width_8616(width)
+        access_ptr_type = SimTypePointer(access_type).with_arch(project.arch)
+        addr_expr = structured_c.CTypeCast(
+            None,
+            byte_ptr_type,
+            structured_c.CUnaryOp("Reference", base_cvar, codegen=codegen),
+            codegen=codegen,
+        )
+        residual = _residual_terms_expr_8616(access.residual_terms)
+        if residual is not None:
+            addr_expr = structured_c.CBinaryOp("Add", addr_expr, residual, codegen=codegen)
+        cast_addr = structured_c.CTypeCast(None, access_ptr_type, addr_expr, codegen=codegen)
+        deref = structured_c.CUnaryOp("Dereference", cast_addr, codegen=codegen)
+        with contextlib.suppress(Exception):
+            deref.type = access_type
+        codegen._inertia_indexed_bp_stack_address_materialized_count_8616 = int(
+            getattr(codegen, "_inertia_indexed_bp_stack_address_materialized_count_8616", 0) or 0
+        ) + 1
+        return deref
 
     changed = False
     candidate_count = 0
@@ -4673,6 +6584,13 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
             changed = True
             materialized_count += 1
             return cvar
+        indexed_access = _match_indexed_bp_stack_address_8616(node)
+        if indexed_access is not None:
+            materialized = _materialize_indexed_bp_stack_address_8616(indexed_access)
+            if materialized is not None:
+                changed = True
+                materialized_count += 1
+                return materialized
         refused_count += 1
         return node
 

@@ -560,6 +560,23 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
 
     def _dirty_identity_8616(node) -> tuple[str, object] | None:
         dirty = getattr(node, "dirty", None)
+        reg_offset = None
+        for attr in ("reg_offset", "reg", "variable_offset"):
+            value = None
+            with suppress(AttributeError, TypeError, ValueError):
+                value = getattr(dirty, attr, None)
+            if isinstance(value, int):
+                reg_offset = value
+                break
+        if isinstance(reg_offset, int):
+            bits = None
+            with suppress(AttributeError, TypeError, ValueError):
+                bits = getattr(dirty, "bits", None)
+            size = None
+            with suppress(AttributeError, TypeError, ValueError):
+                size = getattr(dirty, "size", None)
+            size_bits = bits if isinstance(bits, int) else size * 8 if isinstance(size, int) else None
+            return ("dirty-reg", (reg_offset, size_bits))
         if isinstance(dirty, str) and dirty:
             return ("dirty-name", dirty)
         varid = getattr(dirty, "varid", None)

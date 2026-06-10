@@ -20,6 +20,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFunctionCall,
     CStatements,
     CStructField,
+    CTypeCast,
     CUnaryOp,
     CVariable,
 )
@@ -62,6 +63,12 @@ def _dead_code_elimination_8616(codegen) -> bool:
         "dce_duplicate_assignment_candidates",
         "dce_duplicate_assignment_deleted",
         "dce_duplicate_assignment_refused",
+        "dce_pure_expression_candidates",
+        "dce_pure_expression_deleted",
+        "dce_pure_expression_refused",
+        "dce_dirty_value_candidates",
+        "dce_dirty_value_deleted",
+        "dce_dirty_value_refused",
     ):
         if not isinstance(getattr(codegen, counter, None), int):
             setattr(codegen, counter, 0)
@@ -78,6 +85,10 @@ def _dead_code_elimination_8616(codegen) -> bool:
         var = getattr(node, "variable", None)
         if var is None:
             return ("node", id(node))
+        if isinstance(var, SimStackVariable) and getattr(var, "base", None) == "bp":
+            offset = getattr(var, "offset", None)
+            if isinstance(offset, int):
+                return ("stack", int(offset))
         name = getattr(var, "name", None)
         if isinstance(name, str) and name:
             return ("name", name)
@@ -93,9 +104,23 @@ def _dead_code_elimination_8616(codegen) -> bool:
         if type(node).__name__ != "CDirtyExpression":
             return None
         dirty = _safe_attr(node, "dirty", None)
+        dirty_text = ""
+        with contextlib.suppress(Exception):
+            dirty_text = str(dirty)
+        if dirty_text and " object at " not in dirty_text and not dirty_text.startswith("namespace("):
+            return ("dirty_text", dirty_text)
+        dirty_name = _safe_attr(dirty, "name", None)
+        if isinstance(dirty_name, str) and dirty_name:
+            return ("dirty_name", dirty_name)
+        dirty_varid = _safe_attr(dirty, "varid", None)
+        if isinstance(dirty_varid, (int, str)):
+            return ("dirty_varid", dirty_varid)
         dirty_idx = _safe_attr(dirty, "idx", None)
         if isinstance(dirty_idx, (int, str)):
             return ("dirty", dirty_idx)
+        dirty_oident = _safe_attr(dirty, "oident", None)
+        if isinstance(dirty_oident, (int, str)):
+            return ("dirty_oident", dirty_oident)
         expr_idx = _safe_attr(node, "idx", None)
         if isinstance(expr_idx, (int, str)):
             return ("dirty_expr", expr_idx)
@@ -116,6 +141,13 @@ def _dead_code_elimination_8616(codegen) -> bool:
             if isinstance(value, int):
                 return True
         return False
+
+    def _dirty_is_storage_free_temp_8616(node: object) -> bool:
+        return (
+            type(node).__name__ == "CDirtyExpression"
+            and bool(getattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616", False))
+            and not _dirty_has_storage_provenance_8616(node)
+        )
 
     def _node_key(node: object) -> tuple[str, int | str] | None:
         if isinstance(node, CVariable):
@@ -165,9 +197,98 @@ def _dead_code_elimination_8616(codegen) -> bool:
         if rhs is None:
             return False
         for node in _iter_c_nodes_deep_8616(rhs):
-            if isinstance(node, CFunctionCall):
+            if isinstance(node, CFunctionCall) and not _is_pure_address_helper_call_8616(node):
                 return True
         return False
+
+    def _call_name_8616(call: CFunctionCall) -> str | None:
+        target = getattr(call, "callee_target", None)
+        if isinstance(target, str) and target:
+            return target
+        callee = getattr(call, "callee_func", None)
+        name = getattr(callee, "name", None)
+        return name if isinstance(name, str) and name else None
+
+    def _is_pure_address_helper_call_8616(call: CFunctionCall) -> bool:
+        return _call_name_8616(call) in {"MK_FP", "SEG_PTR"}
+
+    def _standalone_expression_is_definitely_dead_8616(stmt: object) -> bool:
+        if not isinstance(stmt, CUnaryOp) or getattr(stmt, "op", None) != "Dereference":
+            return False
+
+        saw_pure_address_helper = False
+        for node in _iter_with_root(stmt):
+            if isinstance(node, CAssignment):
+                return False
+            if isinstance(node, CFunctionCall):
+                if not _is_pure_address_helper_call_8616(node):
+                    return False
+                saw_pure_address_helper = True
+                continue
+            if isinstance(node, CUnaryOp):
+                op = getattr(node, "op", None)
+                if node is stmt and op == "Dereference":
+                    continue
+                if op in {"Reference", "AddressOf", "Neg", "Not", "BitNot"}:
+                    continue
+                return False
+            if isinstance(node, CBinaryOp) and getattr(node, "op", None) not in {
+                "Add",
+                "Sub",
+                "Mul",
+                "Shl",
+                "Shr",
+                "And",
+                "Or",
+                "Xor",
+            }:
+                return False
+        return saw_pure_address_helper
+
+    def _expr_is_discardable_dead_value_8616(expr: object) -> bool:
+        """True when evaluating expr has no observable effect if its value is unused."""
+        if expr is None:
+            return False
+        saw_discardable_artifact = False
+        for node in _iter_with_root(expr):
+            if isinstance(node, CAssignment):
+                return False
+            if isinstance(node, CFunctionCall):
+                if not _is_pure_address_helper_call_8616(node):
+                    return False
+                saw_discardable_artifact = True
+                continue
+            if isinstance(node, CStructField):
+                return False
+            if isinstance(node, CFakeVariable):
+                return False
+            if isinstance(node, CTypeCast):
+                continue
+            if isinstance(node, CUnaryOp):
+                if getattr(node, "op", None) in {
+                    "Dereference",
+                    "Reference",
+                    "AddressOf",
+                    "Neg",
+                    "Not",
+                    "BitNot",
+                }:
+                    if getattr(node, "op", None) == "Dereference":
+                        saw_discardable_artifact = True
+                    continue
+                return False
+            if isinstance(node, CBinaryOp) and getattr(node, "op", None) not in {
+                "Add",
+                "Sub",
+                "Mul",
+                "Shl",
+                "Shr",
+                "And",
+                "Or",
+                "Xor",
+            }:
+                return False
+        return saw_discardable_artifact
 
     def _is_plain_local_lvalue_8616(lhs: object) -> bool:
         if not isinstance(lhs, CVariable):
@@ -190,7 +311,12 @@ def _dead_code_elimination_8616(codegen) -> bool:
             if isinstance(node, CFakeVariable):
                 return False
             if type(node).__name__ == "CDirtyExpression":
-                return False
+                if not (
+                    _dirty_is_storage_free_temp_8616(node)
+                    or bool(getattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616", False))
+                ):
+                    return False
+                continue
             if isinstance(node, CUnaryOp) and getattr(node, "op", None) in {
                 "Dereference",
                 "Reference",
@@ -387,6 +513,16 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 return False
         return True
 
+    def _callsite_materialization_proven_complete_8616() -> bool:
+        if not hasattr(codegen, "_inertia_callsite_materialization_stats"):
+            return False
+        try:
+            from ...callsite_stack_metadata import _callsite_materialization_complete_8616
+
+            return bool(_callsite_materialization_complete_8616(codegen))
+        except Exception:
+            return False
+
     def _iter_statement_blocks(root):
         seen: set[int] = set()
         stack = [root]
@@ -506,10 +642,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             # provenance. They are not ordinary emitted C temporaries, and DCE
             # must not delete them without a stronger typed proof that later
             # materialization no longer needs the carrier.
-            if (
-                bool(getattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616", False))
-                and not _dirty_has_storage_provenance_8616(lhs)
-            ):
+            if _dirty_is_storage_free_temp_8616(lhs):
                 return dirty_key, ("dirty", str(dirty_key[1])), True
             return dirty_key, ("dirty", str(dirty_key[1])), False
         lhs_var = _lhs_variable_8616(lhs)
@@ -551,6 +684,23 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 name = cur if isinstance(cur, str) else getattr(cur, "name", None)
                 if isinstance(name, str) and name:
                     protected.add(("name", name))
+        for attr, offset_key in (
+            ("_inertia_direct_stack_move_evidence_8616", "dst_offset"),
+            ("_inertia_direct_stack_update_evidence_8616", "offset"),
+        ):
+            evidence = getattr(codegen, attr, ()) or ()
+            for item in evidence:
+                pairs = ()
+                if isinstance(item, dict):
+                    pairs = tuple(item.items())
+                elif isinstance(item, (tuple, list)):
+                    pairs = tuple(item)
+                for pair in pairs:
+                    if not isinstance(pair, (tuple, list)) or len(pair) != 2:
+                        continue
+                    key, value = pair
+                    if key == offset_key and isinstance(value, int):
+                        protected.add(("stack", int(value)))
         return protected
 
     protected = _protected_var_keys()
@@ -682,6 +832,28 @@ def _dead_code_elimination_8616(codegen) -> bool:
 
         for stmt in reversed(stmts):
             if not isinstance(stmt, CAssignment):
+                if isinstance(stmt, CUnaryOp) and getattr(stmt, "op", None) == "Dereference":
+                    setattr(
+                        codegen,
+                        "dce_pure_expression_candidates",
+                        int(getattr(codegen, "dce_pure_expression_candidates", 0)) + 1,
+                    )
+                    if _standalone_expression_is_definitely_dead_8616(stmt):
+                        setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
+                        setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
+                        setattr(
+                            codegen,
+                            "dce_pure_expression_deleted",
+                            int(getattr(codegen, "dce_pure_expression_deleted", 0)) + 1,
+                        )
+                        changed = True
+                        block_changed = True
+                        continue
+                    setattr(
+                        codegen,
+                        "dce_pure_expression_refused",
+                        int(getattr(codegen, "dce_pure_expression_refused", 0)) + 1,
+                    )
                 live.update(_collect_stmt_reads(stmt))
                 new_rev.append(stmt)
                 continue
@@ -703,7 +875,41 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 block_changed = True
                 continue
             outside_reads = 0 if key[0] in {"dirty", "dirty_expr"} else int(total_reads.get(key, 0)) - int(local_reads.get(key, 0))
+            if key[0].startswith("dirty"):
+                setattr(
+                    codegen,
+                    "dce_dirty_value_candidates",
+                    int(getattr(codegen, "dce_dirty_value_candidates", 0)) + 1,
+                )
+                if (
+                    key not in live
+                    and outside_reads <= 0
+                    and key not in protected
+                    and (name_key is None or name_key not in protected)
+                    and _expr_is_discardable_dead_value_8616(rhs)
+                ):
+                    setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
+                    setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
+                    setattr(
+                        codegen,
+                        "dce_dirty_value_deleted",
+                        int(getattr(codegen, "dce_dirty_value_deleted", 0)) + 1,
+                    )
+                    changed = True
+                    block_changed = True
+                    continue
+                setattr(
+                    codegen,
+                    "dce_dirty_value_refused",
+                    int(getattr(codegen, "dce_dirty_value_refused", 0)) + 1,
+                )
             if not is_temp_like:
+                if key in protected or (name_key is not None and name_key in protected):
+                    setattr(codegen, "dce_keep_protected", int(getattr(codegen, "dce_keep_protected", 0)) + 1)
+                    live.discard(key)
+                    live.update(_collect_stmt_reads(stmt))
+                    new_rev.append(stmt)
+                    continue
                 if (
                     _is_plain_local_lvalue_8616(lhs)
                     and _expr_is_pure_local_value_8616(rhs)
@@ -711,7 +917,10 @@ def _dead_code_elimination_8616(codegen) -> bool:
                     and outside_reads <= 0
                     and key not in protected
                     and (name_key is None or name_key not in protected)
-                    and _callsite_materialization_complete_or_no_calls_8616()
+                    and (
+                        _same_c_expression_8616(lhs, rhs)
+                        or _callsite_materialization_proven_complete_8616()
+                    )
                 ):
                     setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
                     setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
@@ -757,6 +966,8 @@ def _dead_code_elimination_8616(codegen) -> bool:
                         file=sys.stderr,
                         flush=True,
                     )
+            elif not _expr_is_pure_local_value_8616(rhs):
+                setattr(codegen, "dce_keep_unknown", int(getattr(codegen, "dce_keep_unknown", 0)) + 1)
             else:
                 removable = True
             if debug_optimization:
@@ -807,4 +1018,23 @@ def _dead_code_elimination_8616(codegen) -> bool:
             pass_changed = walk_statements(block, total_reads, block_reads) or pass_changed
         if not pass_changed:
             break
+    if debug_optimization:
+        print(
+            "[optimization] dce_counters "
+            f"dce_candidates={int(getattr(codegen, 'dce_candidates', 0) or 0)} "
+            f"dce_deleted={int(getattr(codegen, 'dce_deleted', 0) or 0)} "
+            f"dce_keep_live_use={int(getattr(codegen, 'dce_keep_live_use', 0) or 0)} "
+            f"dce_keep_side_effect={int(getattr(codegen, 'dce_keep_side_effect', 0) or 0)} "
+            f"dce_keep_protected={int(getattr(codegen, 'dce_keep_protected', 0) or 0)} "
+            f"dce_keep_observable={int(getattr(codegen, 'dce_keep_observable', 0) or 0)} "
+            f"dce_keep_unknown={int(getattr(codegen, 'dce_keep_unknown', 0) or 0)} "
+            f"dce_dirty_value_candidates={int(getattr(codegen, 'dce_dirty_value_candidates', 0) or 0)} "
+            f"dce_dirty_value_deleted={int(getattr(codegen, 'dce_dirty_value_deleted', 0) or 0)} "
+            f"dce_dirty_value_refused={int(getattr(codegen, 'dce_dirty_value_refused', 0) or 0)} "
+            f"dce_pure_expression_candidates={int(getattr(codegen, 'dce_pure_expression_candidates', 0) or 0)} "
+            f"dce_pure_expression_deleted={int(getattr(codegen, 'dce_pure_expression_deleted', 0) or 0)} "
+            f"dce_pure_expression_refused={int(getattr(codegen, 'dce_pure_expression_refused', 0) or 0)}",
+            file=sys.stderr,
+            flush=True,
+        )
     return changed

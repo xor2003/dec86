@@ -76,16 +76,26 @@ def _run_single_stack_lowering_round_8616(
     codegen,
     project,
     typed_fact_count: int,
+    lower_global_segment_accesses: bool,
+    lower_runtime_segment_accesses: bool,
 ) -> bool:
     def _impl():
         round_changed = False
         if codegen is not None and lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project):
             _record_lowering_change_8616(codegen)
             round_changed = True
-        if codegen is not None and lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
+        if (
+            lower_global_segment_accesses
+            and codegen is not None
+            and lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
+        ):
             _record_lowering_change_8616(codegen)
             round_changed = True
-        if codegen is not None and lower_stable_ds_es_linear_global_addresses_8616(codegen, project=project):
+        if (
+            lower_global_segment_accesses
+            and codegen is not None
+            and lower_stable_ds_es_linear_global_addresses_8616(codegen, project=project)
+        ):
             _record_lowering_change_8616(codegen)
             round_changed = True
             if lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
@@ -94,7 +104,7 @@ def _run_single_stack_lowering_round_8616(
                 ) + 1
                 _record_lowering_change_8616(codegen)
                 round_changed = True
-        if codegen is not None and apply_runtime_segment_lowering_8616(
+        if lower_runtime_segment_accesses and codegen is not None and apply_runtime_segment_lowering_8616(
             codegen,
             target=str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat"),
         ):
@@ -156,6 +166,8 @@ def run_stack_lowering_pass_8616(
     project=None,
     typed_stack_probe_return_facts: dict[int, TypedStackProbeReturnFact8616] | None = None,
     max_rounds: int = 2,
+    lower_global_segment_accesses: bool = True,
+    lower_runtime_segment_accesses: bool = True,
 ) -> bool:
     typed_fact_count = _initialize_stack_lowering_debug_state_8616(codegen, typed_stack_probe_return_facts)
     changed = False
@@ -167,6 +179,8 @@ def run_stack_lowering_pass_8616(
             codegen=codegen,
             project=project,
             typed_fact_count=typed_fact_count,
+            lower_global_segment_accesses=lower_global_segment_accesses,
+            lower_runtime_segment_accesses=lower_runtime_segment_accesses,
         )
         if not round_changed:
             break

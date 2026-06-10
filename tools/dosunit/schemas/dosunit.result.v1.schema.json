@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.result.v1",
+  "type": "object",
+  "required": ["schema", "vector_id", "status", "verdict"],
+  "properties": {
+    "schema": { "const": "dosunit.result.v1" },
+    "vector_id": { "type": "string" },
+    "module": { "type": ["string", "null"] },
+    "function": { "type": ["string", "null"] },
+    "status": {
+      "enum": ["passed", "failed", "refused", "timeout", "faulted", "unsupported", "backend_error"]
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["kind", "changed_fields"]
+    },
+    "oracle": { "type": ["object", "null"] },
+    "candidate": { "type": ["object", "null"] },
+    "diagnostics": { "type": "array" }
+  }
+}

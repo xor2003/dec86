@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.region_compare.v1",
+  "type": "object",
+  "required": ["schema", "summary", "results"],
+  "properties": {
+    "schema": { "const": "dosunit.region_compare.v1" },
+    "oracle": { "type": ["string", "null"] },
+    "candidate": { "type": ["string", "null"] },
+    "summary": {
+      "type": "object",
+      "required": ["total", "passed", "failed", "refused"]
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["status", "function", "region_ordinal", "mismatches"]
+      }
+    }
+  }
+}

@@ -11,6 +11,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CContinue,
     CDirtyExpression,
+    CExpressionStatement,
     CFunctionCall,
     CIfElse,
     CReturn,
@@ -94,6 +95,218 @@ def test_tail_validation_call_fingerprint_resolves_original_project_function_ali
     assert tail_validation_fingerprint_module._expr_fingerprint(call, project) == "call:addr:0x1005a()"
 
 
+def test_tail_validation_compare_canonicalizes_resolved_name_addr_helper_calls():
+    before = X86_16TailValidationSummary(
+        helper_calls=("addr:0x128e4",),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=("name:addr:0x128E4",),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert diff["delta"]["helper_calls"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_compare_preserves_duplicate_helper_call_loss():
+    before = X86_16TailValidationSummary(
+        helper_calls=("addr:0x128e4", "addr:0x128e4"),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=("name:addr:0x128E4",),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is True
+    assert diff["delta"]["helper_calls"] == {"added": (), "removed": ("addr:0x128e4",)}
+
+
+def test_tail_validation_compare_fails_missing_callsite_coverage_even_when_stable():
+    before = X86_16TailValidationSummary(
+        helper_calls=("missing-callsite:addr:0x128e4",),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=("missing-callsite:addr:0x128e4",),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is True
+    assert diff["delta"]["helper_calls"] == {
+        "added": (),
+        "removed": ("missing-callsite:addr:0x128e4",),
+    }
+
+
+def test_tail_validation_compare_compacts_identical_oversized_conditions():
+    long_condition = "CmpNE(" + ",".join(f"Add(reg:sp,const:{idx})" for idx in range(128)) + ")"
+    before = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(long_condition,),
+        control_flow_effects=(),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(long_condition,),
+        control_flow_effects=(),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert diff["delta"]["conditions"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_compare_compacts_changed_oversized_conditions():
+    long_before = "CmpNE(" + ",".join(f"Add(reg:sp,const:{idx})" for idx in range(128)) + ")"
+    long_after = "CmpNE(" + ",".join(f"Add(reg:sp,const:{idx + 1})" for idx in range(128)) + ")"
+    before = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(long_before,),
+        control_flow_effects=(),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(long_after,),
+        control_flow_effects=(),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+    formatted = format_x86_16_tail_validation_diff(diff)
+
+    assert diff["changed"] is True
+    assert diff["delta"]["conditions"]["added"][0].startswith("conditions:sha256:")
+    assert diff["delta"]["conditions"]["removed"][0].startswith("conditions:sha256:")
+    assert len(formatted) < 220
+
+
+def test_large_function_local_evidence_only_allows_primary_callsite_materialization():
+    codegen = SimpleNamespace(
+        _inertia_postprocess_function_complexity_8616={"blocks": 42, "bytes": 0x180},
+        _inertia_callsite_summaries={
+            1: SimpleNamespace(push_arg_sources=("ax", None)),
+        }
+    )
+    very_large_codegen = SimpleNamespace(
+        _inertia_postprocess_function_complexity_8616={"blocks": 76, "bytes": 0x1AE},
+        _inertia_callsite_summaries={
+            1: SimpleNamespace(push_arg_sources=("ax", None)),
+        },
+    )
+
+    assert (
+        postprocess_stage._postprocess_pass_has_local_evidence_8616(
+            "_materialize_callsite_stack_arguments_8616",
+            codegen,
+        )
+        is True
+    )
+    assert (
+        postprocess_stage._postprocess_pass_has_local_evidence_8616(
+            "_materialize_recovered_callsite_stack_arguments_8616",
+            codegen,
+        )
+        is False
+    )
+    assert (
+        postprocess_stage._postprocess_pass_has_local_evidence_8616(
+            "_materialize_callsite_stack_arguments_8616",
+            very_large_codegen,
+        )
+        is False
+    )
+    assert (
+        postprocess_stage._postprocess_pass_has_local_evidence_8616(
+            "_materialize_callsite_stack_arguments_final_8616",
+            codegen,
+        )
+        is False
+    )
+
+
+def test_tail_validation_normalizes_named_helper_call_with_project_label_to_addr():
+    project = _project()
+    project.kb = SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: None), labels={0x112BA: "_sprintf"})
+
+    assert tail_validation_module._normalize_helper_call_fingerprint_8616(project, "name:sprintf") == "addr:0x112ba"
+
+
+def test_tail_validation_normalizes_exact_slice_call_target_to_original_addr():
+    project = _project()
+    project.loader = SimpleNamespace(main_object=SimpleNamespace(linked_base=0x1000, max_addr=0x10A8))
+    project._inertia_original_linear_delta = 0xFE70
+    project._inertia_original_project = SimpleNamespace(
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000, max_addr=0x5000))
+    )
+
+    assert tail_validation_module._normalized_call_target_addr_8616(project, 0x14AE) == 0x1131E
+    assert tail_validation_module._normalized_call_target_addr_8616(project, 0x1131E) == 0x1131E
+
+
 def test_postprocess_validation_accepts_direct_helper_callsite_rename():
     class Functions:
         def function(self, *, addr=None, create=False, **_kwargs):
@@ -121,6 +334,84 @@ def test_postprocess_validation_accepts_direct_helper_callsite_rename():
     assert postprocess_stage._is_direct_callsite_helper_delta_only_8616(project, function, validation) is True
 
 
+def test_tail_validation_counts_helper_call_in_assignment_rhs():
+    project = _project()
+    codegen = _DummyCodegen()
+    call = CFunctionCall("::0x112ba::sprintf", None, [_const(1, codegen)], codegen=codegen)
+    _codegen(
+        [
+            CAssignment(
+                _reg(project, "ax", codegen, var_name="ret"),
+                call,
+                codegen=codegen,
+            )
+        ],
+        codegen,
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls == ("name:sprintf",)
+
+
+def test_tail_validation_collects_duplicate_helper_calls():
+    project = _project()
+    codegen = _DummyCodegen()
+    first = CFunctionCall("::0x112ba::sprintf", None, [_const(1, codegen)], codegen=codegen)
+    second = CFunctionCall("::0x112ba::sprintf", None, [_const(2, codegen)], codegen=codegen)
+    _codegen(
+        [
+            CAssignment(
+                _reg(project, "ax", codegen, var_name="ret1"),
+                first,
+                codegen=codegen,
+            ),
+            CAssignment(
+                _reg(project, "ax", codegen, var_name="ret2"),
+                second,
+                codegen=codegen,
+            ),
+        ],
+        codegen,
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls == ("name:sprintf", "name:sprintf")
+
+
+def test_tail_validation_collects_missing_original_callsite(monkeypatch):
+    project = _project()
+    codegen = _DummyCodegen()
+    _codegen([], codegen)
+    codegen.cfunc.get_call_sites = lambda: (0x4012,)
+    monkeypatch.setattr(
+        tail_validation_module,
+        "summarize_x86_16_callsite",
+        lambda _function, _callsite_addr: SimpleNamespace(target_addr=0x5000, stack_probe_helper=False),
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls == ("missing-callsite:addr:0x5000",)
+
+
+def test_tail_validation_missing_callsite_gate_ignores_stack_probe(monkeypatch):
+    project = _project()
+    codegen = _DummyCodegen()
+    _codegen([], codegen)
+    codegen.cfunc.get_call_sites = lambda: (0x4012,)
+    monkeypatch.setattr(
+        tail_validation_module,
+        "summarize_x86_16_callsite",
+        lambda _function, _callsite_addr: SimpleNamespace(target_addr=0x5000, stack_probe_helper=True),
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls == ()
+
+
 def _codegen(statements, codegen=None):
     codegen = codegen or _DummyCodegen()
     codegen.cfunc = SimpleNamespace(addr=0x4010, body=CStatements(statements, addr=0x4010, codegen=codegen))
@@ -142,6 +433,69 @@ def _stack(offset: int, codegen, *, name: str = "local"):
 
 def _global(addr: int, codegen, *, name: str = "g"):
     return CVariable(SimMemoryVariable(addr, 2, name=name), codegen=codegen)
+
+
+def test_tail_validation_summary_does_not_reuse_stale_expr_cache_after_condition_mutation():
+    project = _project()
+    codegen = _DummyCodegen()
+    lhs = _stack(-2, codegen)
+    rhs = _const(10, codegen)
+    cond = CBinaryOp("CmpLT", lhs, rhs, codegen=codegen)
+    stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    _codegen([stmt], codegen)
+
+    before = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+    cond.op = "CmpGT"
+    after = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert "CmpLT(stack_slot:SS:BP-0x2:size2,const:10)" in before.conditions
+    assert "CmpGT(stack_slot:SS:BP-0x2:size2,const:10)" in after.conditions
+    assert "CmpLT(stack_slot:SS:BP-0x2:size2,const:10)" not in after.conditions
+
+
+def test_tail_validation_boundary_does_not_reuse_stale_expr_cache_after_condition_mutation():
+    project = _project()
+    codegen = _DummyCodegen()
+    lhs = _stack(-2, codegen)
+    rhs = _const(10, codegen)
+    cond = CBinaryOp("CmpLT", lhs, rhs, codegen=codegen)
+    stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    _codegen([stmt], codegen)
+
+    before = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode="live_out")
+    cond.op = "CmpGT"
+    after = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode="live_out")
+
+    assert before != after
+
+
+def test_contextual_condition_fingerprint_matches_dirty_register_flags_by_register_identity():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    flags_assignment_lhs = CDirtyExpression(SimpleNamespace(varid=10, reg=18, bits=16), codegen=codegen)
+    flags_condition_var = CDirtyExpression(SimpleNamespace(varid=20, reg=18, bits=16), codegen=codegen)
+    predicate = CBinaryOp(
+        "CmpEQ",
+        _global(0x134, codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        flags_assignment_lhs,
+        CBinaryOp("Or", _const(0x1234, codegen), CBinaryOp("Shl", predicate, _const(6, codegen), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    condition = CBinaryOp(
+        "CmpNE",
+        CBinaryOp("And", flags_condition_var, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    root = CStatements([assignment, CIfElse([(condition, CStatements([], codegen=codegen))], None, codegen=codegen)], codegen=codegen)
+
+    mapping = build_x86_16_contextual_condition_fingerprints(root, project)
+
+    assert mapping[id(condition)] == "CmpEQ(global:0x134,const:0)"
 
 
 def _ds_deref(project, linear: int, codegen):
@@ -237,7 +591,10 @@ def test_tail_validation_void_return_call_matches_call_then_return():
         functy=SimTypeFunction([], SimTypeBottom(label="void")),
         body=CStatements(
             [
-                CFunctionCall("Sleep", None, [_const(1, split_codegen)], codegen=split_codegen),
+                CExpressionStatement(
+                    CFunctionCall("Sleep", None, [_const(1, split_codegen)], codegen=split_codegen),
+                    codegen=split_codegen,
+                ),
                 CReturn(None, codegen=split_codegen),
             ],
             addr=0x4010,
@@ -245,9 +602,11 @@ def test_tail_validation_void_return_call_matches_call_then_return():
         ),
     )
 
-    assert collect_x86_16_tail_validation_summary(project, return_call_codegen, mode="coarse") == (
-        collect_x86_16_tail_validation_summary(project, split_codegen, mode="coarse")
-    )
+    return_summary = collect_x86_16_tail_validation_summary(project, return_call_codegen, mode="coarse")
+    split_summary = collect_x86_16_tail_validation_summary(project, split_codegen, mode="coarse")
+
+    assert return_summary == split_summary
+    assert return_summary.helper_calls == ("name:Sleep",)
 
 
 def test_tail_validation_void_return_value_does_not_observe_ax_live_out():
@@ -524,6 +883,204 @@ def test_tail_validation_live_out_ignores_consumed_ss_outgoing_arg_store(monkeyp
     assert after.helper_calls == ("addr:0x14ae",)
     assert diff["changed"] is False
     assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_live_out_ignores_materialized_call_leftover_outgoing_arg_store(monkeypatch):
+    project = _project()
+    function = SimpleNamespace(get_call_sites=lambda: (0x4012,))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: function if addr == 0x4010 else None
+        )
+    )
+
+    before_codegen = _DummyCodegen()
+    _codegen(
+        [
+            CAssignment(
+                _ss_stack_deref(project, -2, -2, before_codegen), _const(97, before_codegen), codegen=before_codegen
+            ),
+            CAssignment(
+                _reg(project, "ax", before_codegen, var_name="frequency"),
+                CFunctionCall("::0x14ae::inp", None, [_const(97, before_codegen)], codegen=before_codegen),
+                codegen=before_codegen,
+            ),
+        ],
+        before_codegen,
+    )
+    before_codegen.cfunc.get_call_sites = lambda: (0x4012,)
+
+    after_codegen = _DummyCodegen()
+    _codegen(
+        [
+            CAssignment(
+                _reg(project, "ax", after_codegen, var_name="frequency"),
+                CFunctionCall("::0x14ae::inp", None, [_const(97, after_codegen)], codegen=after_codegen),
+                codegen=after_codegen,
+            ),
+        ],
+        after_codegen,
+    )
+    after_codegen.cfunc.get_call_sites = lambda: (0x4012,)
+
+    monkeypatch.setattr(
+        tail_validation_module,
+        "summarize_x86_16_callsite",
+        lambda _function, _callsite_addr: SimpleNamespace(
+            target_addr=0x14AE,
+            arg_count=1,
+            push_arg_sources=(("imm", 97),),
+        ),
+    )
+
+    before = collect_x86_16_tail_validation_summary(project, before_codegen, mode="live_out")
+    after = collect_x86_16_tail_validation_summary(project, after_codegen, mode="live_out")
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert before.helper_calls == ("addr:0x14ae",)
+    assert after.helper_calls == ("addr:0x14ae",)
+    assert diff["changed"] is False
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_canonicalizes_ds_linear_segmented_write_when_global_write_matches():
+    segmented = {
+        "deref:Add(Mul(reg:ds,const:16),const:2986)",
+        "deref:Add(Mul(reg:ss,const:16),const:2986)",
+    }
+    global_writes = {"global:0xbaa"}
+
+    canonical = tail_validation_module._canonicalize_segmented_write_aliases_8616(segmented, global_writes)
+
+    assert "deref:Add(Mul(reg:ds,const:16),const:2986)" not in canonical
+    assert "deref:Add(Mul(reg:ss,const:16),const:2986)" in canonical
+
+
+def test_tail_validation_compare_treats_linear_ds_byte_writes_as_global_precision_improvement():
+    before = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(
+            "deref:Add(Mul(reg:ds,const:16),const:2986)",
+            "deref:Add(Add(Mul(reg:ds,const:16),const:2986),const:1)",
+        ),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=("global:0xbaa",),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert diff["delta"]["global_writes"] == {"added": (), "removed": ()}
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_compare_flattens_equivalent_ss_stack_byte_write_locations():
+    before = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(
+            "deref:Add(Add(Mul(reg:ss,const:16),Add(Add(reg:sp,const:-2),const:-2)),const:1)",
+            "deref:Add(Add(Mul(reg:ss,const:16),Add(Add(reg:sp,const:-2),const:-6)),const:1)",
+        ),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(
+            "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-3)",
+            "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-7)",
+        ),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_pairs_named_call_with_matching_target_after_prior_call_is_folded(monkeypatch):
+    project = _project()
+    function = SimpleNamespace(get_call_sites=lambda: (0x4012, 0x4018))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: function if addr == 0x4010 else None
+        ),
+        labels={0x112BA: "_sprintf"},
+    )
+    codegen = _DummyCodegen()
+    _codegen(
+        [
+            CAssignment(
+                _reg(project, "ax", codegen, var_name="retval"),
+                CFunctionCall("sprintf", None, [], codegen=codegen),
+                codegen=codegen,
+            )
+        ],
+        codegen,
+    )
+
+    def _fake_summary(_function, callsite_addr):
+        return SimpleNamespace(target_addr={0x4012: 0x10D3, 0x4018: 0x112BA}[callsite_addr])
+
+    monkeypatch.setattr(tail_validation_module, "summarize_x86_16_callsite", _fake_summary)
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls == ("addr:0x112ba",)
+
+
+def test_tail_validation_live_out_ignores_virtual_offset_ss_stack_frame_store():
+    project = _project()
+    codegen = _DummyCodegen()
+    sp_carrier = CDirtyExpression(SimpleNamespace(varid=24, name="vvar_24"), codegen=codegen)
+    raw_stack_store = CAssignment(
+        CUnaryOp(
+            "Dereference",
+            CBinaryOp(
+                "Add",
+                CBinaryOp("Mul", _reg(project, "ss", codegen), _const(16, codegen), codegen=codegen),
+                CBinaryOp("Sub", sp_carrier, _const(2, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        _const(1, codegen),
+        codegen=codegen,
+    )
+    _codegen(
+        [
+            raw_stack_store,
+        ],
+        codegen,
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.segmented_writes == ()
 
 
 def test_tail_validation_prefers_kb_function_for_callsite_summary_over_codegen_stub(monkeypatch):
@@ -2320,6 +2877,7 @@ def test_postprocess_codegen_restores_last_clean_state_on_live_out_delta(monkeyp
     )
     monkeypatch.setattr(postprocess_stage, "collect_x86_16_tail_validation_summary", _summary)
     monkeypatch.setattr(postprocess_stage, "compare_x86_16_tail_validation_summaries", _compare)
+    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: True)
 
     changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
 
@@ -2373,6 +2931,7 @@ def test_postprocess_codegen_keeps_accepted_changes_when_live_out_stays_stable(m
     )
     monkeypatch.setattr(postprocess_stage, "collect_x86_16_tail_validation_summary", _summary)
     monkeypatch.setattr(postprocess_stage, "compare_x86_16_tail_validation_summaries", _compare)
+    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: True)
 
     changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
 
@@ -2485,6 +3044,400 @@ def test_postprocess_codegen_skips_heapsort_debug_regeneration_without_env(monke
 
     assert changed is True
     assert calls == ["regen"]
+
+
+def test_postprocess_codegen_does_not_regenerate_when_no_pass_changed(monkeypatch):
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_tail_validation_enabled=False,
+        _inertia_postprocess_per_pass_validation_enabled=False,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1234), project=project, text="int f(void) { return 0; }")
+    calls: list[str] = []
+    monkeypatch.setenv(
+        "INERTIA_SKIP_POSTPROCESS_PASSES",
+        ",".join(
+            (
+                "_materialize_stable_stack_semantics_bootstrap_8616",
+                "_normalize_fact_backed_stack_accesses_8616",
+                "_apply_typed_conditions_to_codegen_8616",
+                "_materialize_global_byte_index_sum_loop_8616",
+                "_materialize_nested_stack_counter_accumulator_loop_8616",
+                "_materialize_stack_arg_accumulator_loop_8616",
+                "_materialize_cfg_selector_return_branches_early_8616",
+                "_rewrite_decoded_jcc_conditions_8616",
+            )
+        ),
+    )
+
+    monkeypatch.setattr(postprocess_stage, "_decompiler_postprocess_passes_for_function", lambda _project, _codegen: ())
+    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regen") or True)
+
+    changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert calls == []
+
+
+def test_postprocess_codegen_refuses_large_function_semantic_pass_without_local_validation(monkeypatch):
+    class _Functions:
+        def function(self, _addr=None, **_kwargs):
+            return SimpleNamespace(block_addrs_set=tuple(range(40)), info={})
+
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        kb=SimpleNamespace(functions=_Functions()),
+        _inertia_tail_validation_enabled=True,
+        _inertia_postprocess_per_pass_validation_enabled=False,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1234), project=project, text="int f(void) { return 0; }")
+    calls: list[str] = []
+    monkeypatch.setenv(
+        "INERTIA_SKIP_POSTPROCESS_PASSES",
+        ",".join(
+            (
+                "_materialize_stable_stack_semantics_bootstrap_8616",
+                "_normalize_fact_backed_stack_accesses_8616",
+                "_apply_typed_conditions_to_codegen_8616",
+                "_materialize_global_byte_index_sum_loop_8616",
+                "_materialize_nested_stack_counter_accumulator_loop_8616",
+                "_materialize_stack_arg_accumulator_loop_8616",
+                "_materialize_cfg_selector_return_branches_early_8616",
+            )
+        ),
+    )
+
+    def _semantic_pass(_codegen):
+        calls.append("semantic")
+        return True
+
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_decompiler_postprocess_passes_for_function",
+        lambda _project, _codegen: (
+            postprocess_stage.DecompilerPostprocessPassSpec(
+                "_rewrite_decoded_jcc_conditions_8616",
+                _semantic_pass,
+                False,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        lambda *_args, **_kwargs: SimpleNamespace(state="stable"),
+    )
+
+    changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert calls == []
+    assert {
+        "pass": "_rewrite_decoded_jcc_conditions_8616",
+        "reason": postprocess_stage._PostprocessPassRefusalReason8616.LARGE_FUNCTION_LOCAL_VALIDATION_UNAVAILABLE.value,
+    } in codegen._inertia_postprocess_refused_passes_8616
+
+
+def test_postprocess_codegen_refuses_large_function_annotations_without_local_validation(monkeypatch):
+    function_record = SimpleNamespace(
+        block_addrs_set=tuple(range(40)),
+        info={"before": True},
+        prototype="old-prototype",
+    )
+
+    class _Functions:
+        def function(self, _addr=None, **_kwargs):
+            return function_record
+
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        kb=SimpleNamespace(functions=_Functions(), labels={0x7000: "old_label"}),
+        _inertia_tail_validation_enabled=True,
+        _inertia_postprocess_per_pass_validation_enabled=False,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1234, state="baseline"), project=project)
+    calls: list[str] = []
+
+    def _annotation_pass(_project, codegen_arg):
+        calls.append("annotation")
+        function_record.info["x86_16_annotations"] = {"stack_vars": {0: {"name": "local_0"}}}
+        function_record.prototype = "new-prototype"
+        _project.kb.labels[0x7000] = "new_label"
+        codegen_arg.cfunc.state = "bad"
+        return True
+
+    def _summary(_project, codegen_arg, *, mode="live_out"):
+        return SimpleNamespace(state=codegen_arg.cfunc.state, mode=mode)
+
+    def _compare(_before, after):
+        return {
+            "changed": after.state == "bad",
+            "summary_text": "condition changed" if after.state == "bad" else "state stable",
+        }
+
+    monkeypatch.setenv(
+        "INERTIA_SKIP_POSTPROCESS_PASSES",
+        ",".join(
+            (
+                "_materialize_stable_stack_semantics_bootstrap_8616",
+                "_normalize_fact_backed_stack_accesses_8616",
+                "_apply_typed_conditions_to_codegen_8616",
+                "_materialize_global_byte_index_sum_loop_8616",
+                "_materialize_nested_stack_counter_accumulator_loop_8616",
+                "_materialize_stack_arg_accumulator_loop_8616",
+                "_materialize_cfg_selector_return_branches_early_8616",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set()
+    )
+    monkeypatch.setattr(
+        postprocess_stage._globals,
+        "_coalesce_word_global_constant_stores_8616",
+        lambda _project, _codegen: set(),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_decompiler_postprocess_passes_for_function",
+        lambda _project, _codegen: (
+            postprocess_stage.DecompilerPostprocessPassSpec(
+                "_apply_annotations_8616",
+                _annotation_pass,
+                True,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        _summary,
+    )
+    monkeypatch.setattr(postprocess_stage, "collect_x86_16_tail_validation_summary", _summary)
+    monkeypatch.setattr(postprocess_stage, "compare_x86_16_tail_validation_summaries", _compare)
+    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: True)
+
+    changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert calls == []
+    assert codegen.cfunc.state == "baseline"
+    assert function_record.info == {"before": True}
+    assert function_record.prototype == "old-prototype"
+    assert project.kb.labels == {0x7000: "old_label"}
+    assert codegen._inertia_postprocess_validation_failed is False
+    assert {
+        "pass": "_apply_annotations_8616",
+        "reason": postprocess_stage._PostprocessPassRefusalReason8616.LARGE_FUNCTION_LOCAL_VALIDATION_UNAVAILABLE.value,
+    } in codegen._inertia_postprocess_refused_passes_8616
+
+
+def test_postprocess_codegen_validates_small_function_annotations(monkeypatch):
+    function_record = SimpleNamespace(
+        block_addrs_set=(0x1234,),
+        info={"before": True},
+        prototype="old-prototype",
+    )
+
+    class _Functions:
+        def function(self, _addr=None, **_kwargs):
+            return function_record
+
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        kb=SimpleNamespace(functions=_Functions(), labels={0x7000: "old_label"}),
+        _inertia_tail_validation_enabled=True,
+        _inertia_postprocess_per_pass_validation_enabled=False,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1234, state="baseline"), project=project)
+    calls: list[str] = []
+
+    def _annotation_pass(_project, codegen_arg):
+        calls.append("annotation")
+        function_record.info["x86_16_annotations"] = {"stack_vars": {0: {"name": "local_0"}}}
+        function_record.prototype = "new-prototype"
+        _project.kb.labels[0x7000] = "new_label"
+        codegen_arg.cfunc.state = "bad"
+        return True
+
+    def _summary(_project, codegen_arg, *, mode="live_out"):
+        return SimpleNamespace(state=codegen_arg.cfunc.state, mode=mode)
+
+    def _compare(_before, after):
+        return {
+            "changed": after.state == "bad",
+            "summary_text": "condition changed" if after.state == "bad" else "state stable",
+        }
+
+    monkeypatch.setenv(
+        "INERTIA_SKIP_POSTPROCESS_PASSES",
+        ",".join(
+            (
+                "_materialize_stable_stack_semantics_bootstrap_8616",
+                "_normalize_fact_backed_stack_accesses_8616",
+                "_apply_typed_conditions_to_codegen_8616",
+                "_materialize_global_byte_index_sum_loop_8616",
+                "_materialize_nested_stack_counter_accumulator_loop_8616",
+                "_materialize_stack_arg_accumulator_loop_8616",
+                "_materialize_cfg_selector_return_branches_early_8616",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set()
+    )
+    monkeypatch.setattr(
+        postprocess_stage._globals,
+        "_coalesce_word_global_constant_stores_8616",
+        lambda _project, _codegen: set(),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_decompiler_postprocess_passes_for_function",
+        lambda _project, _codegen: (
+            postprocess_stage.DecompilerPostprocessPassSpec(
+                "_apply_annotations_8616",
+                _annotation_pass,
+                True,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        _summary,
+    )
+    monkeypatch.setattr(postprocess_stage, "collect_x86_16_tail_validation_summary", _summary)
+    monkeypatch.setattr(postprocess_stage, "compare_x86_16_tail_validation_summaries", _compare)
+    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: True)
+
+    changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert calls == ["annotation"]
+    assert codegen.cfunc.state == "baseline"
+    assert function_record.info == {"before": True}
+    assert function_record.prototype == "old-prototype"
+    assert project.kb.labels == {0x7000: "old_label"}
+    assert codegen._inertia_postprocess_validation_failed is False
+    assert "_apply_annotations_8616" in codegen._inertia_postprocess_rejected_passes
+
+
+def test_postprocess_complexity_uses_current_function_cached_byte_count():
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    codegen = SimpleNamespace(
+        _inertia_current_function_8616=SimpleNamespace(
+            info={
+                "_inertia_function_complexity": {
+                    "blocks": 37,
+                    "bytes": 379,
+                    "source": "bounded_local_blocks",
+                }
+            }
+        )
+    )
+
+    complexity = postprocess_stage._postprocess_function_complexity_8616(project, codegen, 0x1000)
+
+    assert complexity.block_count == 37
+    assert complexity.byte_count == 379
+    assert complexity.source == "current_function:bounded_local_blocks"
+    assert complexity.is_expensive_for_local_validation is False
+
+
+def test_postprocess_refuses_structuring_tail_validation_baseline_without_summary_equivalence_key():
+    summary = object()
+    codegen = SimpleNamespace(
+        _inertia_structuring_tail_validation_artifacts_8616={
+            "mode": "live_out",
+            "after_fingerprint": ("fp",),
+            "after_summary": summary,
+        }
+    )
+
+    reused = postprocess_stage._structuring_tail_validation_baseline_summary_8616(
+        codegen,
+        mode="live_out",
+        before_fingerprint=("fp",),
+    )
+    refused = postprocess_stage._structuring_tail_validation_baseline_summary_8616(
+        codegen,
+        mode="live_out",
+        before_fingerprint=("different",),
+    )
+
+    assert reused is None
+    assert refused is None
+    assert codegen._inertia_tail_validation_structuring_baseline_reuse_refused_8616 == 2
+
+
+def test_postprocess_codegen_refuses_byte_heavy_function_semantic_pass_without_local_validation(monkeypatch):
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_tail_validation_enabled=True,
+        _inertia_postprocess_per_pass_validation_enabled=False,
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1234),
+        project=project,
+        text="int f(void) { return 0; }",
+        _inertia_current_function_8616=SimpleNamespace(
+            info={
+                "_inertia_function_complexity": {
+                    "blocks": 37,
+                    "bytes": 700,
+                    "source": "bounded_local_blocks",
+                }
+            }
+        ),
+    )
+    calls: list[str] = []
+    monkeypatch.setenv(
+        "INERTIA_SKIP_POSTPROCESS_PASSES",
+        ",".join(
+            (
+                "_materialize_stable_stack_semantics_bootstrap_8616",
+                "_normalize_fact_backed_stack_accesses_8616",
+                "_apply_typed_conditions_to_codegen_8616",
+                "_materialize_global_byte_index_sum_loop_8616",
+                "_materialize_nested_stack_counter_accumulator_loop_8616",
+                "_materialize_stack_arg_accumulator_loop_8616",
+                "_materialize_cfg_selector_return_branches_early_8616",
+            )
+        ),
+    )
+
+    def _semantic_pass(_codegen):
+        calls.append("semantic")
+        return True
+
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_decompiler_postprocess_passes_for_function",
+        lambda _project, _codegen: (
+            postprocess_stage.DecompilerPostprocessPassSpec(
+                "_rewrite_decoded_jcc_conditions_8616",
+                _semantic_pass,
+                False,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        lambda *_args, **_kwargs: SimpleNamespace(state="stable"),
+    )
+
+    changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert calls == []
+    assert codegen._inertia_postprocess_function_complexity_8616 == {
+        "blocks": 37,
+        "bytes": 700,
+        "source": "current_function:bounded_local_blocks",
+        "expensive": True,
+    }
 
 
 def test_tail_validation_compare_summaries_treats_negated_compare_and_inverted_compare_as_stable():

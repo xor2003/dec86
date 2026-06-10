@@ -472,6 +472,47 @@ def _split_fingerprint_args_8616(args_str: str) -> list[str]:
     return parts
 
 
+def _normalize_segmented_index_duplicate_displacement_8616(value: str) -> str:
+    call = _split_fingerprint_call_8616(value)
+    if call is None:
+        return value
+    op, args_str = call
+    args = [_normalize_segmented_index_duplicate_displacement_8616(arg) for arg in _split_fingerprint_args_8616(args_str)]
+    if op != "Add" or len(args) < 3 or args[0] not in {"Mul(reg:ds,const:16)", "Mul(reg:es,const:16)"}:
+        return f"{op}({','.join(args)})"
+
+    const_positions = {
+        arg: idx
+        for idx, arg in enumerate(args[1:], start=1)
+        if isinstance(arg, str) and arg.startswith("const:")
+    }
+    for idx, arg in enumerate(args[1:], start=1):
+        inner = _split_fingerprint_call_8616(arg)
+        if inner is None:
+            continue
+        inner_op, inner_args_str = inner
+        if inner_op != "Add":
+            continue
+        inner_args = _split_fingerprint_args_8616(inner_args_str)
+        inner_consts = [part for part in inner_args if part.startswith("const:")]
+        if len(inner_consts) != 1:
+            continue
+        duplicate_const = inner_consts[0]
+        duplicate_idx = const_positions.get(duplicate_const)
+        if duplicate_idx is None or duplicate_idx == idx:
+            continue
+        merged_args = [args[0]]
+        for pos, part in enumerate(args[1:], start=1):
+            if pos == duplicate_idx:
+                continue
+            if pos == idx:
+                merged_args.extend(inner_args)
+            else:
+                merged_args.append(part)
+        return f"Add({','.join(merged_args)})"
+    return f"{op}({','.join(args)})"
+
+
 def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
     def _impl():
         """Apply algebraic normalization to a condition fingerprint string.
@@ -498,9 +539,11 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
             if value.startswith(prefix):
                 return prefix + normalize_condition_fingerprint_algebraic_8616(value[len(prefix) :])
 
-        call = _split_fingerprint_call_8616(value)
+        normalized_value = _normalize_segmented_index_duplicate_displacement_8616(value)
+
+        call = _split_fingerprint_call_8616(normalized_value)
         if call is None:
-            return value
+            return normalized_value
 
         op, args_str = call
 
@@ -538,7 +581,7 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
                                         )
                                         b = int(sub_args[1].split(":")[-1], 0) if sub_args[1].startswith("const:") else 0
                                     except (ValueError, IndexError):
-                                        return value
+                                        return normalized_value
                                     c_sum = a + b
                                     if c_sum >= 0:
                                         c_str = f"const:{c_sum:#x}"
@@ -552,13 +595,16 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
         if normalized_args != args:
             return f"{op}({','.join(normalized_args)})"
 
-        return value
+        return normalized_value
 
     return _impl()
 
 
 def _normalize_arg_fingerprint_8616(arg: str) -> str:
     """Recursively normalize a fingerprint arg, handling nested calls."""
+    word_pair = _normalize_global_word_pair_arg_fingerprint_8616(arg)
+    if word_pair is not None:
+        return word_pair
     call = _split_fingerprint_call_8616(arg)
     if call is None:
         return arg
@@ -566,3 +612,89 @@ def _normalize_arg_fingerprint_8616(arg: str) -> str:
     args = _split_fingerprint_args_8616(args_str)
     normalized_args = [_normalize_arg_fingerprint_8616(a) for a in args]
     return f"{op}({','.join(normalized_args)})"
+
+
+def _normalize_global_word_pair_arg_fingerprint_8616(arg: str) -> str | None:
+    call = _split_fingerprint_call_8616(arg)
+    if call is None or call[0] != "Or":
+        return None
+    args = _split_fingerprint_args_8616(call[1])
+    if len(args) != 2:
+        return None
+    low = _global_offset_fingerprint_8616(args[0])
+    high = _shifted_ds_byte_offset_fingerprint_8616(args[1])
+    if not isinstance(low, int) or not isinstance(high, int):
+        low = _global_offset_fingerprint_8616(args[1])
+        high = _shifted_ds_byte_offset_fingerprint_8616(args[0])
+    if not isinstance(low, int) or not isinstance(high, int):
+        return None
+    if high != low + 1:
+        return None
+    return f"global:{low:#x}"
+
+
+def _global_offset_fingerprint_8616(value: str) -> int | None:
+    if not isinstance(value, str) or not value.startswith("global:"):
+        return None
+    try:
+        return int(value[len("global:") :], 0)
+    except ValueError:
+        return None
+
+
+def _shifted_ds_byte_offset_fingerprint_8616(value: str) -> int | None:
+    call = _split_fingerprint_call_8616(value)
+    if call is None:
+        return None
+    op, args_str = call
+    args = _split_fingerprint_args_8616(args_str)
+    if op == "Shl" and len(args) == 2 and args[1] == "const:8":
+        return _ds_byte_deref_offset_fingerprint_8616(args[0])
+    if op == "Mul" and len(args) == 2:
+        if args[0] == "const:256":
+            return _ds_byte_deref_offset_fingerprint_8616(args[1])
+        if args[1] == "const:256":
+            return _ds_byte_deref_offset_fingerprint_8616(args[0])
+    return None
+
+
+def _ds_byte_deref_offset_fingerprint_8616(value: str) -> int | None:
+    call = _split_fingerprint_call_8616(value)
+    if call is None or call[0] != "Dereference":
+        return None
+    parsed = _linear_ds_offset_fingerprint_8616(call[1])
+    if parsed is None:
+        return None
+    has_ds, offset = parsed
+    return offset if has_ds else None
+
+
+def _linear_ds_offset_fingerprint_8616(value: str) -> tuple[bool, int] | None:
+    if value.startswith("const:"):
+        try:
+            return False, int(value[len("const:") :], 0)
+        except ValueError:
+            return None
+    if value == "reg:ds":
+        return True, 0
+    call = _split_fingerprint_call_8616(value)
+    if call is None:
+        return None
+    op, args_str = call
+    args = _split_fingerprint_args_8616(args_str)
+    if op == "Mul" and len(args) == 2:
+        if (args[0], args[1]) in {("reg:ds", "const:16"), ("const:16", "reg:ds")}:
+            return True, 0
+    if op == "Shl" and len(args) == 2 and args[0] == "reg:ds" and args[1] == "const:4":
+        return True, 0
+    if op != "Add" or len(args) != 2:
+        return None
+    left = _linear_ds_offset_fingerprint_8616(args[0])
+    right = _linear_ds_offset_fingerprint_8616(args[1])
+    if left is None or right is None:
+        return None
+    left_has_ds, left_offset = left
+    right_has_ds, right_offset = right
+    if left_has_ds and right_has_ds:
+        return None
+    return left_has_ds or right_has_ds, left_offset + right_offset

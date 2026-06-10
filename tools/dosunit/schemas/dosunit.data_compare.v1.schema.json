@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.data_compare.v1",
+  "type": "object",
+  "required": ["schema", "status", "ranges", "normalizations", "summary"],
+  "properties": {
+    "schema": { "const": "dosunit.data_compare.v1" },
+    "status": { "enum": ["passed", "failed"] },
+    "oracle_exe": { "type": "string" },
+    "candidate_exe": { "type": "string" },
+    "oracle_load_base": { "type": "string" },
+    "candidate_load_base": { "type": "string" },
+    "ranges": { "type": "array" },
+    "normalizations": { "type": "array" },
+    "summary": {
+      "type": "object",
+      "required": ["ranges", "literal_mismatches", "normalization_failures", "normalized_fields"],
+      "properties": {
+        "ranges": { "type": "integer" },
+        "literal_mismatches": { "type": "integer" },
+        "normalization_failures": { "type": "integer" },
+        "normalized_fields": { "type": "integer" }
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dosunit.complexity.v1",
+  "title": "DOS Unit Function Complexity",
+  "type": "object",
+  "required": ["schema", "exe", "source", "module", "parameters", "risk_weights", "functions", "refusals", "counters"],
+  "properties": {
+    "schema": { "const": "dosunit.complexity.v1" },
+    "id": { "type": "string" },
+    "exe": { "type": "string" },
+    "source": { "const": "lifter_vex" },
+    "module": { "type": "string" },
+    "parameters": { "type": "object" },
+    "risk_weights": { "type": "object" },
+    "functions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["function", "entry", "end", "classification", "blockers", "metrics", "risk", "comparison_parts"],
+        "properties": {
+          "id": { "type": "string" },
+          "function": { "type": "object" },
+          "entry": { "type": "object" },
+          "end": { "type": "object" },
+          "classification": { "enum": ["simple_whole_function", "complex"] },
+          "blockers": { "type": "array" },
+          "metrics": { "type": "object" },
+          "risk": { "type": "object" },
+          "risk_points": { "type": "array" },
+          "comparison_parts": { "type": "array" },
+          "sample_instructions": { "type": "array" }
+        }
+      }
+    },
+    "refusals": { "type": "array" },
+    "counters": { "type": "object" }
+  }
+}

@@ -11,8 +11,11 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
     CAssignment,
     CBinaryOp,
+    CBreak,
     CConstant,
+    CDoWhileLoop,
     CFunctionCall,
+    CIfBreak,
     CTypeCast,
     CUnaryOp,
     CVariable,
@@ -88,6 +91,8 @@ class _DecodedCmpGuard8616:
 class _JccPolarityEvidence8616(Enum):
     UNKNOWN = "unknown"
     JCC_TARGET_BODY = "jcc_target_body"
+    BREAK_CONDITION = "break_condition"
+    LOOP_CONTINUATION = "loop_continuation"
 
 
 def _condition_tags_8616(node) -> tuple[int, int] | None:
@@ -1309,11 +1314,12 @@ def _resolve_cmp_operand_expr_8616(
                 base_reg_name = reg_name_fn(mem.base).lower()
                 if base_reg_name == "bp":
                     return _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operand, "size", 0) or 2))
+                base_expr = reg_state.get(base_reg_name)
                 return _memory_load_expr_8616(
                     project,
                     codegen,
                     ds_var,
-                    reg_state.get(base_reg_name),
+                    base_expr,
                     int(mem.disp),
                     int(getattr(operand, "size", 0) or 2),
                 )
@@ -1613,6 +1619,19 @@ def _apply_cmp_state_update_8616(project, codegen, insn, reg_state, stack_slots,
                 stack_slots[(int(mem.disp), size)] = reg_state[src_reg]
             return
 
+        if mnemonic in {"cbw", "cwde"}:
+            al_expr = reg_state.get("al")
+            if al_expr is None:
+                reg_state.pop("ax", None)
+                reg_state.pop("eax", None)
+                return
+            reg_state["ax"] = al_expr
+            reg_state["eax"] = al_expr
+            codegen._inertia_jcc_byte_extend_materialized_8616 = int(
+                getattr(codegen, "_inertia_jcc_byte_extend_materialized_8616", 0) or 0
+            ) + 1
+            return
+
         if mnemonic in {"shl", "sal"} and len(insn.operands) == 2 and insn.operands[0].type == 1 and insn.operands[1].type == 2:
             reg_name = insn.reg_name(insn.operands[0].reg).lower()
             reg_expr = reg_state.get(reg_name)
@@ -1821,7 +1840,10 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
         changed = False
         materialized_count = 0
         key_signature_plan: dict[tuple[int, int], tuple] = {}
+        key_decoded_plan: dict[tuple[int, int], _DecodedCmpGuard8616] = {}
         key_conflicts: set[tuple[int, int]] = set()
+        unknown_polarity_refused_keys: set[tuple[int, int]] = set()
+        raw_state_refused_keys: set[tuple[int, int]] = set()
 
         def _is_literal_condition_8616(expr) -> bool:
             node = expr
@@ -2000,12 +2022,90 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
 
             return _walk(expr)
 
+        def _expr_uses_unstable_positive_stack_arg_placeholder_8616(expr) -> bool:
+            seen: set[int] = set()
+
+            def _walk(node) -> bool:
+                if node is None:
+                    return False
+                marker = id(node)
+                if marker in seen:
+                    return False
+                seen.add(marker)
+                if isinstance(node, CVariable):
+                    variable = getattr(node, "variable", None)
+                    if isinstance(variable, SimStackVariable):
+                        offset = int(getattr(variable, "offset", 0) or 0)
+                        if offset >= 0:
+                            names = (
+                                getattr(node, "name", None),
+                                getattr(variable, "name", None),
+                                getattr(getattr(node, "unified_variable", None), "name", None),
+                            )
+                            if any(_is_unstable_stack_arg_name_8616(name) for name in names):
+                                return True
+                if isinstance(node, CBinaryOp):
+                    return _walk(getattr(node, "lhs", None)) or _walk(getattr(node, "rhs", None))
+                if isinstance(node, CUnaryOp):
+                    return _walk(getattr(node, "operand", None))
+                if isinstance(node, CTypeCast):
+                    return _walk(getattr(node, "expr", None))
+                for attr in ("expr", "condition", "cond"):
+                    child = getattr(node, attr, None)
+                    if child is not None and _walk(child):
+                        return True
+                return False
+
+            return _walk(expr)
+
         def _safe_fingerprint_8616(expr) -> tuple[str, str]:
             try:
                 value = _expr_fingerprint(expr, project)
             except Exception:  # pragma: no cover - platform-specific fingerprints
                 value = repr(expr)
             return (str(type(expr).__name__), repr(value))
+
+        def _validation_fingerprint_8616(expr) -> str:
+            try:
+                return str(_expr_fingerprint(expr, project))
+            except Exception:  # pragma: no cover - platform-specific fingerprints
+                return repr(expr)
+
+        def _record_jcc_validation_evidence_8616(before_expr, after_expr) -> None:
+            before_fp = _validation_fingerprint_8616(before_expr)
+            after_fp = _validation_fingerprint_8616(after_expr)
+            if not before_fp or not after_fp or before_fp == after_fp:
+                return
+            evidence = list(getattr(codegen, "_inertia_jcc_condition_validation_evidence_8616", ()) or ())
+            evidence.append(
+                {
+                    "removed": before_fp,
+                    "added": after_fp,
+                }
+            )
+            codegen._inertia_jcc_condition_validation_evidence_8616 = tuple(evidence)
+
+        def _record_jcc_decoded_condition_fingerprint_8616(expr) -> None:
+            fingerprint = _validation_fingerprint_8616(expr)
+            if not fingerprint:
+                return
+            existing = tuple(getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ()) or ())
+            if fingerprint not in existing:
+                codegen._inertia_jcc_decoded_condition_fingerprint_evidence_count_8616 = int(
+                    getattr(codegen, "_inertia_jcc_decoded_condition_fingerprint_evidence_count_8616", 0) or 0
+                ) + 1
+            codegen._inertia_jcc_decoded_condition_fingerprints_8616 = tuple(dict.fromkeys(existing + (fingerprint,)))
+
+        def _record_decoded_guard_fingerprint_8616(decoded) -> None:
+            expr = getattr(decoded, "expr", None)
+            if expr is None:
+                expr = CBinaryOp(
+                    decoded.op,
+                    decoded.lhs,
+                    decoded.rhs,
+                    codegen=codegen,
+                )
+            _record_jcc_decoded_condition_fingerprint_8616(expr)
 
         def _const_bool_value_8616(expr) -> int | None:
             node = expr
@@ -2034,19 +2134,60 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     return False
             return False
 
-        def _invert_decoded_guard_8616(decoded: _DecodedCmpGuard8616, tags):
-            def _decoded_guard_contains_real_call_8616() -> bool:
-                roots = (decoded.expr,) if getattr(decoded, "expr", None) is not None else (decoded.lhs, decoded.rhs)
-                for root in roots:
-                    for child in _iter_c_nodes_deep_8616(root):
-                        if not isinstance(child, CFunctionCall):
-                            continue
-                        callee = getattr(child, "callee_target", None)
-                        if isinstance(callee, str) and callee in {"SEG_PTR", "MK_FP", "SEG_U8", "SEG_U16", "SEG_U32"}:
-                            continue
-                        return True
+        def _condition_is_direct_inverting_cite_8616(expr) -> bool:
+            if not isinstance(expr, CITE):
                 return False
+            iftrue = _const_bool_value_8616(getattr(expr, "iftrue", None))
+            iffalse = _const_bool_value_8616(getattr(expr, "iffalse", None))
+            return (iftrue, iffalse) == (0, 1)
 
+        def _decoded_guard_contains_real_call_8616(decoded: _DecodedCmpGuard8616) -> bool:
+            roots = (decoded.expr,) if getattr(decoded, "expr", None) is not None else (decoded.lhs, decoded.rhs)
+            for root in roots:
+                for child in _iter_c_nodes_deep_8616(root):
+                    if not isinstance(child, CFunctionCall):
+                        continue
+                    callee = getattr(child, "callee_target", None)
+                    if isinstance(callee, str) and callee in {"SEG_PTR", "MK_FP", "SEG_U8", "SEG_U16", "SEG_U32"}:
+                        continue
+                    return True
+            return False
+
+        def _decoded_guard_uses_raw_state_register_8616(decoded: _DecodedCmpGuard8616) -> bool:
+            raw_register_names = {"flags", "eflags", "sp"}
+            raw_register_offsets = {
+                offset
+                for offset in (
+                    _reg_offset_8616(project, "flags"),
+                    _reg_offset_8616(project, "eflags"),
+                    _reg_offset_8616(project, "sp"),
+                )
+                if isinstance(offset, int)
+            }
+            roots = (decoded.expr,) if getattr(decoded, "expr", None) is not None else (decoded.lhs, decoded.rhs)
+            for root in roots:
+                for child in _iter_c_nodes_deep_8616(root):
+                    if not isinstance(child, CVariable):
+                        continue
+                    variable = getattr(child, "variable", None)
+                    names = {
+                        str(name).lower()
+                        for name in (
+                            getattr(child, "name", None),
+                            getattr(variable, "name", None),
+                            getattr(getattr(child, "unified_variable", None), "name", None),
+                        )
+                        if isinstance(name, str) and name
+                    }
+                    if names & raw_register_names:
+                        return True
+                    if isinstance(variable, SimRegisterVariable):
+                        reg = getattr(variable, "reg", None)
+                        if isinstance(reg, int) and reg in raw_register_offsets:
+                            return True
+            return False
+
+        def _invert_decoded_guard_8616(decoded: _DecodedCmpGuard8616, tags):
             if getattr(decoded, "expr", None) is not None:
                 return _DecodedCmpGuard8616(
                     lhs=None,
@@ -2055,7 +2196,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     expr=CUnaryOp("Not", decoded.expr, codegen=codegen, tags=tags),
                 )
             inverted_op = _INVERT_CMP_OP_8616.get(decoded.op)
-            if inverted_op is not None and not _decoded_guard_contains_real_call_8616():
+            if inverted_op is not None and not _decoded_guard_contains_real_call_8616(decoded):
                 return _DecodedCmpGuard8616(lhs=decoded.lhs, rhs=decoded.rhs, op=inverted_op, expr=None)
             return _DecodedCmpGuard8616(
                 lhs=None,
@@ -2122,6 +2263,19 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             if isinstance(target, int) and _root_contains_ins_addr_8616(body, target):
                 return _JccPolarityEvidence8616.JCC_TARGET_BODY
             return _JccPolarityEvidence8616.UNKNOWN
+
+        def _body_is_break_only_8616(body) -> bool:
+            if body is None:
+                return False
+            if isinstance(body, CBreak):
+                return True
+            statements = getattr(body, "statements", None)
+            if statements is None:
+                return False
+            if type(statements).__name__ == "CStatements":
+                statements = getattr(statements, "statements", None)
+            items = tuple(statements or ())
+            return len(items) == 1 and isinstance(items[0], CBreak)
 
         def _condition_exprs_from_stmt_8616(stmt):
             cond_pairs = getattr(stmt, "condition_and_nodes", None)
@@ -2392,12 +2546,14 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             previous = key_signature_plan.get(key)
             if previous is None:
                 key_signature_plan[key] = signature
+                key_decoded_plan[key] = decoded
                 if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
                     _log.warning("[jcc-rewrite] key plan set key=%r signature=%r", key, signature)
                 return
             if previous != signature and key not in key_conflicts:
                 key_conflicts.add(key)
                 key_signature_plan.pop(key, None)
+                key_decoded_plan.pop(key, None)
                 if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
                     _log.warning("[jcc-rewrite] key conflict key=%r signature_mismatch=%r prev=%r new=%r", key, key_signature_plan, previous, signature)
 
@@ -2430,11 +2586,14 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             # but still carry insn/block tags for a decodable cmp+jcc origin.
             tagged_key = _condition_tags_8616(cond)
             debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
-            if not (
+            has_carrier_evidence = (
                 _c_expr_uses_register_8616(cond, flags_offset)
                 or _is_literal_condition_8616(cond)
                 or _is_tagged_condition_carrier_8616(cond)
-                or tagged_key == (ins_addr, block_addr)
+                or _has_materialized_nonflag_cmp_8616(cond)
+            )
+            if not (
+                has_carrier_evidence
             ):
                 if debug_jcc:
                     _log.warning(
@@ -2443,19 +2602,6 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                         tagged_key,
                         type(cond).__name__,
                 )
-                return None
-
-            if _condition_materialized_by_jcc_8616(cond):
-                if debug_jcc:
-                    _log.warning("[jcc-rewrite] decode skip already-materialized key=%r", (ins_addr, block_addr))
-                return None
-
-            # Guardrail: once a condition is an explicit non-flag comparison,
-            # treat it as materialized. Re-decoding the same branch tag in a
-            # later pass can drop carrier polarity such as CITE(cond, 0, 1).
-            if _has_materialized_nonflag_cmp_8616(cond):
-                if debug_jcc:
-                    _log.warning("[jcc-rewrite] decode skip explicit-cmp key=%r", (ins_addr, block_addr))
                 return None
 
             decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
@@ -2493,8 +2639,33 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                         (ins_addr, block_addr),
                         lhs_fp,
                         rhs_fp,
-                    )
+                )
                 return None
+
+            # Guardrail: once a condition is an explicit non-flag comparison,
+            # treat it as materialized. Exception: a compare sourced from an
+            # unstable positive BP placeholder is weaker evidence than a decoded
+            # JCC guard whose operands are stable BP-local stack slots.
+            if _has_materialized_nonflag_cmp_8616(cond):
+                if not _expr_uses_unstable_positive_stack_arg_placeholder_8616(cond):
+                    if not _decoded_guard_uses_raw_state_register_8616(decoded):
+                        _record_decoded_guard_fingerprint_8616(decoded)
+                        codegen._inertia_jcc_rewrite_kept_explicit_cmp_with_decoded_evidence_8616 = int(
+                            getattr(
+                                codegen,
+                                "_inertia_jcc_rewrite_kept_explicit_cmp_with_decoded_evidence_8616",
+                                0,
+                            )
+                            or 0
+                        ) + 1
+                    if debug_jcc:
+                        _log.warning("[jcc-rewrite] decode skip explicit-cmp key=%r", (ins_addr, block_addr))
+                    return None
+                if debug_jcc:
+                    _log.warning(
+                        "[jcc-rewrite] replacing unstable explicit stack-arg cmp key=%r",
+                        (ins_addr, block_addr),
+                    )
 
             return decoded
 
@@ -2564,7 +2735,9 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 if debug_jcc:
                     _log.warning("[jcc-rewrite] key conflict detected key=%r skip", key)
                 return None
-            decoded = _decode_condition_from_tags_8616(cond, block_addr, ins_addr)
+            decoded = key_decoded_plan.get(key)
+            if decoded is None:
+                decoded = _decode_condition_from_tags_8616(cond, block_addr, ins_addr)
             if decoded is None:
                 return None
             planned_signature = key_signature_plan.get(key)
@@ -2577,6 +2750,18 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 if debug_jcc:
                     _log.warning("[jcc-rewrite] signature mismatch key=%r signature=%r planned=%r", key, signature, planned_signature)
                 return None
+            if _decoded_guard_uses_raw_state_register_8616(decoded):
+                should_count_refusal = True
+                if isinstance(key, tuple):
+                    should_count_refusal = key not in raw_state_refused_keys
+                    raw_state_refused_keys.add(key)
+                if should_count_refusal:
+                    codegen._inertia_jcc_rewrite_refused_raw_state_guard_8616 = int(
+                        getattr(codegen, "_inertia_jcc_rewrite_refused_raw_state_guard_8616", 0) or 0
+                    ) + 1
+                if debug_jcc:
+                    _log.warning("[jcc-rewrite] decode skip raw-state guard key=%r", key)
+                return None
             if bool(decoded.expr is not None):
                 if debug_jcc:
                     _log.warning("[jcc-rewrite] decoded candidate accepted (expr) key=%r", key)
@@ -2584,7 +2769,43 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 _log.warning("[jcc-rewrite] decoded candidate accepted key=%r", key)
             if polarity_evidence is None:
                 polarity_evidence = _jcc_polarity_evidence_8616(key, body)
-            return _build_rewrite_8616(cond, decoded, key, polarity_evidence=polarity_evidence)
+            if (
+                polarity_evidence is _JccPolarityEvidence8616.JCC_TARGET_BODY
+                and _condition_is_direct_inverting_cite_8616(cond)
+            ):
+                codegen._inertia_jcc_rewrite_refused_target_body_inverted_cite_8616 = int(
+                    getattr(codegen, "_inertia_jcc_rewrite_refused_target_body_inverted_cite_8616", 0) or 0
+                ) + 1
+                if debug_jcc:
+                    _log.warning("[jcc-rewrite] decode skip target-body-inverted-cite key=%r", key)
+                return None
+            if (
+                polarity_evidence is _JccPolarityEvidence8616.UNKNOWN
+                and _condition_inverts_decoded_guard_8616(cond)
+                and getattr(decoded, "expr", None) is None
+                and not _decoded_guard_contains_real_call_8616(decoded)
+            ):
+                should_count_refusal = True
+                if isinstance(key, tuple):
+                    should_count_refusal = key not in unknown_polarity_refused_keys
+                    unknown_polarity_refused_keys.add(key)
+                if should_count_refusal:
+                    codegen._inertia_jcc_rewrite_refused_unknown_polarity_8616 = int(
+                        getattr(codegen, "_inertia_jcc_rewrite_refused_unknown_polarity_8616", 0) or 0
+                    ) + 1
+                if debug_jcc:
+                    _log.warning("[jcc-rewrite] decode skip unknown-polarity-inversion key=%r", key)
+                return None
+            _record_decoded_guard_fingerprint_8616(decoded)
+            replacement = _build_rewrite_8616(cond, decoded, key, polarity_evidence=polarity_evidence)
+            _record_jcc_decoded_condition_fingerprint_8616(replacement)
+            if _condition_materialized_by_jcc_8616(cond) and _validation_fingerprint_8616(
+                cond
+            ) == _validation_fingerprint_8616(replacement):
+                if debug_jcc:
+                    _log.warning("[jcc-rewrite] decode skip already-materialized key=%r", key)
+                return None
+            return replacement
 
         for cond in _iter_guard_conditions_8616():
             key = _condition_tags_8616(cond)
@@ -2610,6 +2831,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 return None
             changed = True
             materialized_count += 1
+            _record_jcc_validation_evidence_8616(node, replacement)
             return replacement
 
         def _replace_tagged_condition(
@@ -2624,6 +2846,9 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 return replacement
             if not _structured_codegen_node_8616(node):
                 return node
+            key = _condition_tags_8616(node)
+            if isinstance(key, tuple) and key in unknown_polarity_refused_keys:
+                return node
             changed_in_place = _replace_c_children_8616(node, _replace_tagged_condition)
             if changed_in_place:
                 changed = True
@@ -2635,7 +2860,11 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 pair_changed = False
                 new_pairs = []
                 for cond, body in cond_pairs:
-                    polarity_evidence = _jcc_polarity_evidence_8616(_condition_tags_8616(cond), body)
+                    polarity_evidence = (
+                        _JccPolarityEvidence8616.BREAK_CONDITION
+                        if _body_is_break_only_8616(body)
+                        else _jcc_polarity_evidence_8616(_condition_tags_8616(cond), body)
+                    )
                     new_cond = _replace_tagged_condition(cond, body=body, polarity_evidence=polarity_evidence)
                     pair_changed = pair_changed or (new_cond is not cond)
                     new_pairs.append((new_cond, body))
@@ -2655,7 +2884,14 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             if hasattr(node, "condition"):
                 cond = getattr(node, "condition", None)
                 if cond is not None:
-                    new_cond = _replace_tagged_condition(cond)
+                    condition_polarity_evidence = (
+                        _JccPolarityEvidence8616.BREAK_CONDITION
+                        if isinstance(node, CIfBreak)
+                        else _JccPolarityEvidence8616.LOOP_CONTINUATION
+                        if isinstance(node, CDoWhileLoop)
+                        else _JccPolarityEvidence8616.UNKNOWN
+                    )
+                    new_cond = _replace_tagged_condition(cond, polarity_evidence=condition_polarity_evidence)
                     if new_cond is not cond:
                         node.condition = new_cond
                         changed = True

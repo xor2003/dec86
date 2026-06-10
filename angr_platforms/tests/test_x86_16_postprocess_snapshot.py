@@ -6,6 +6,9 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _PostprocessValidationDeltaKind8616,
     _classify_postprocess_validation_delta_8616,
     _is_callsite_stack_argument_materialization_delta_8616,
+    _is_direct_global_update_materialization_delta_8616,
+    _is_direct_stack_move_idiv_remainder_materialization_delta_8616,
+    _is_direct_stack_update_materialization_delta_8616,
     _is_jcc_call_return_condition_rebinding_delta_8616,
     _is_jcc_condition_materialization_validation_delta_8616,
     _restore_codegen_inertia_metadata_8616,
@@ -24,6 +27,18 @@ class _FakeCFunc:
 
     def __init__(self, statements):
         self.statements = statements
+        self.body = statements
+
+
+class _SlotCFunc:
+    __slots__ = ("addr", "arg_list", "body", "codegen", "statements")
+
+    def __init__(self, statements, arg_list):
+        self.addr = 0x1000
+        self.statements = statements
+        self.body = statements
+        self.arg_list = arg_list
+        self.codegen = None
 
 
 class _UncopyableStatements:
@@ -118,6 +133,69 @@ def _callsite_global_precision_validation(*, global_token="global:0xbab"):
     }
 
 
+def _direct_global_update_codegen():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_direct_global_update_lowering_8616 = {
+        "raw_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 1,
+        "failure_count": 0,
+    }
+    codegen._inertia_direct_global_update_evidence_8616 = (
+        (
+            ("displacement", 0x135),
+            ("width", 1),
+            ("delta", 1),
+            ("ins_addr", 0x10420),
+            ("name", "c"),
+        ),
+    )
+    return codegen
+
+
+def test_direct_global_update_materialization_delta_accepts_evidenced_ds_write_precision():
+    validation = {
+        "delta": {
+            "segmented_writes": {
+                "added": ("deref:Add(Mul(reg:ds,const:16),const:309)",),
+                "removed": ("deref:Add(Add(Mul(reg:ds,const:16),const:308),const:1)",),
+            },
+        }
+    }
+
+    assert _is_direct_global_update_materialization_delta_8616(_direct_global_update_codegen(), validation) is True
+
+
+def test_direct_global_update_materialization_delta_refuses_condition_change():
+    validation = {
+        "delta": {
+            "segmented_writes": {
+                "added": ("deref:Add(Mul(reg:ds,const:16),const:309)",),
+                "removed": ("deref:Add(Add(Mul(reg:ds,const:16),const:308),const:1)",),
+            },
+            "conditions": {
+                "added": ("CmpEQ(global:0x135,const:0)",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_direct_global_update_materialization_delta_8616(_direct_global_update_codegen(), validation) is False
+
+
+def test_direct_global_update_materialization_delta_refuses_unrelated_address():
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": ("global:0x222",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_direct_global_update_materialization_delta_8616(_direct_global_update_codegen(), validation) is False
+
+
 def test_postprocess_snapshot_uses_manual_fallback_for_uncopyable_statement_container():
     cfunc = _FakeCFunc(_UncopyableStatements())
 
@@ -136,6 +214,30 @@ def test_postprocess_snapshot_does_not_share_statement_tree():
 
     assert snapshot is not None
     assert snapshot.statements == [{"value": [1]}]
+
+
+def test_postprocess_snapshot_body_uses_cloned_statement_root():
+    cfunc = _FakeCFunc([{"value": [1]}])
+
+    snapshot = _snapshot_codegen_cfunc(_FakeCodegen(cfunc))
+    cfunc.body[0]["value"].append(2)
+
+    assert snapshot is not None
+    assert snapshot.body is snapshot.statements
+    assert snapshot.body == [{"value": [1]}]
+
+
+def test_postprocess_snapshot_clones_slot_backed_arg_list():
+    cfunc = _SlotCFunc([{"stmt": [1]}], [{"arg": [10]}])
+
+    snapshot = _snapshot_codegen_cfunc(_FakeCodegen(cfunc))
+    cfunc.arg_list[0]["arg"].append(11)
+    cfunc.statements[0]["stmt"].append(2)
+
+    assert snapshot is not None
+    assert snapshot.arg_list == [{"arg": [10]}]
+    assert snapshot.statements == [{"stmt": [1]}]
+    assert snapshot.body is snapshot.statements
 
 
 def test_postprocess_snapshot_preserves_live_codegen_backpointer_identity():
@@ -304,6 +406,152 @@ def test_callsite_materialization_delta_refuses_unrelated_global_write():
     validation = _callsite_global_precision_validation(global_token="global:0xbc0")
 
     assert _is_callsite_stack_argument_materialization_delta_8616(_callsite_materialization_codegen(), validation) is False
+
+
+def _direct_stack_update_codegen():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_direct_stack_update_lowering_8616 = {
+        "raw_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 1,
+        "failure_count": 0,
+    }
+    codegen._inertia_direct_stack_update_evidence_8616 = (
+        (
+            ("offset", -2),
+            ("width", 2),
+            ("delta", 1),
+            ("ins_addr", 0x105CB),
+            ("name", "iRow"),
+        ),
+    )
+    return codegen
+
+
+def _direct_stack_move_idiv_codegen():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_direct_stack_move_lowering_8616 = {
+        "raw_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 1,
+        "failure_count": 0,
+    }
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (
+            ("dst_offset", -118),
+            ("width", 2),
+            ("source_kind", "SIGNED_IDIV_REMAINDER"),
+            ("source_offset", -4),
+            ("source_op", "MOD"),
+            ("source_immediate", 1),
+            ("ins_addr", 0x10611),
+        ),
+    )
+    return codegen
+
+
+def test_direct_stack_update_materialization_delta_accepts_evidenced_stack_slot_rebind():
+    validation = {
+        "delta": {
+            "segmented_writes": {
+                "added": ("deref:Add(Reference(global:0x8f0),Shl(stack_slot:SS:BP-0x2:size4,const:1))",),
+                "removed": ("deref:Add(Reference(global:0x8f0),Shl(stack_slot:SS:BP+0x0:size2,const:1))",),
+            },
+            "conditions": {
+                "added": ("CmpGT(global:0xba2,stack_slot:SS:BP-0x2:size4)",),
+                "removed": ("CmpGT(global:0xba2,stack_slot:SS:BP+0x0:size2)",),
+            },
+            "control_flow_effects": {
+                "added": ("for:CmpGT(global:0xba2,stack_slot:SS:BP-0x2:size4)",),
+                "removed": ("for:CmpGT(global:0xba2,stack_slot:SS:BP+0x0:size2)",),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(_direct_stack_update_codegen(), validation) is True
+
+
+def test_direct_stack_move_idiv_remainder_delta_accepts_insert_helper_and_ax_churn():
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("name:_INSERT",),
+                "removed": (),
+            },
+            "register_writes": {
+                "added": ("reg:ax",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_direct_stack_move_idiv_remainder_materialization_delta_8616(
+        _direct_stack_move_idiv_codegen(),
+        validation,
+    ) is True
+
+
+def test_direct_stack_move_idiv_remainder_delta_accepts_combined_stack_update_delta():
+    codegen = _direct_stack_update_codegen()
+    move_codegen = _direct_stack_move_idiv_codegen()
+    codegen._inertia_direct_stack_move_lowering_8616 = move_codegen._inertia_direct_stack_move_lowering_8616
+    codegen._inertia_direct_stack_move_evidence_8616 = move_codegen._inertia_direct_stack_move_evidence_8616
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("name:_INSERT",),
+                "removed": (),
+            },
+            "register_writes": {
+                "added": ("reg:ax",),
+                "removed": (),
+            },
+            "conditions": {
+                "added": ("CmpGT(global:0xba2,stack_slot:SS:BP-0x2:size4)",),
+                "removed": ("CmpGT(global:0xba2,stack_slot:SS:BP+0x0:size2)",),
+            },
+            "control_flow_effects": {
+                "added": ("for:CmpGT(global:0xba2,stack_slot:SS:BP-0x2:size4)",),
+                "removed": ("for:CmpGT(global:0xba2,stack_slot:SS:BP+0x0:size2)",),
+            },
+        }
+    }
+
+    assert _is_direct_stack_move_idiv_remainder_materialization_delta_8616(codegen, validation) is True
+
+
+def test_direct_stack_move_idiv_remainder_delta_refuses_without_evidence():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("name:_INSERT",),
+                "removed": (),
+            }
+        }
+    }
+
+    assert _is_direct_stack_move_idiv_remainder_materialization_delta_8616(codegen, validation) is False
+
+
+def test_direct_stack_update_materialization_delta_refuses_without_consumed_evidence():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_direct_stack_update_lowering_8616 = {
+        "raw_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 0,
+        "failure_count": 1,
+    }
+    validation = {
+        "delta": {
+            "conditions": {
+                "added": ("CmpGT(global:0xba2,stack_slot:SS:BP-0x2:size4)",),
+                "removed": ("CmpGT(global:0xba2,stack_slot:SS:BP+0x0:size2)",),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(codegen, validation) is False
 
 
 def test_postprocess_metadata_restore_removes_rejected_return_chain_evidence():

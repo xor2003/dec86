@@ -542,12 +542,15 @@ def _canonicalize_stack_cvar_expr(
     resolve_stack_cvar_at_offset,
     materialize_stack_cvar_at_offset=None,
     active_expr_ids: set[int] | None = None,
+    analysis_context: dict[str, object] | None = None,
 ):
     def _impl():
-        nonlocal expr, active_expr_ids
+        nonlocal expr, active_expr_ids, analysis_context
         expr = unwrap_c_casts(expr)
         if active_expr_ids is None:
             active_expr_ids = set()
+        if analysis_context is None:
+            analysis_context = {}
         debug_stats = getattr(codegen, "_inertia_stack_lowering_debug", None)
         if not isinstance(debug_stats, dict):
             debug_stats = {}
@@ -559,6 +562,37 @@ def _canonicalize_stack_cvar_expr(
         debug_stats.setdefault("stable_ss_lowering_refusal_reasons", {})
         expr_id = id(expr)
         if expr_id in active_expr_ids:
+            dirty_expr_cls = getattr(structured_c, "CDirtyExpression", None)
+            dirty = getattr(expr, "dirty", None)
+            active_dirty_varids = analysis_context.get("active_dirty_varids")
+            try:
+                varid = getattr(dirty, "varid", None)
+            except (AttributeError, TypeError, ValueError):
+                varid = None
+            if (
+                dirty_expr_cls is not None
+                and isinstance(expr, dirty_expr_cls)
+                and isinstance(varid, int)
+                and isinstance(active_dirty_varids, set)
+                and varid in active_dirty_varids
+            ):
+                codegen._inertia_stack_lowering_dirty_cycle_refused_8616 = int(
+                    getattr(codegen, "_inertia_stack_lowering_dirty_cycle_refused_8616", 0) or 0
+                ) + 1
+            return expr
+        max_depth = getattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616", 64)
+        if not isinstance(max_depth, int) or max_depth <= 0:
+            max_depth = 64
+        if len(active_expr_ids) >= max_depth:
+            codegen._inertia_stack_lowering_canonicalize_depth_refused_8616 = int(
+                getattr(codegen, "_inertia_stack_lowering_canonicalize_depth_refused_8616", 0) or 0
+            ) + 1
+            debug_stats["lowering_refusals"] += 1
+            refusal_reasons = debug_stats.setdefault("stable_ss_lowering_refusal_reasons", {})
+            if isinstance(refusal_reasons, dict):
+                refusal_reasons["canonicalize_depth_limit"] = int(
+                    refusal_reasons.get("canonicalize_depth_limit", 0) or 0
+                ) + 1
             return expr
         active_expr_ids.add(expr_id)
 
@@ -817,9 +851,25 @@ def _canonicalize_stack_cvar_expr(
                 return True
             return _is_linear_temp_name_8616(name)
 
-        _UNRESOLVED_SINGLE_ASSIGNMENT = object()
-        dirty_expr_single_assignment_cache: dict[str, object | None] = {}
-        cvar_single_assignment_cache: dict[int, object | None] = {}
+        _UNRESOLVED_SINGLE_ASSIGNMENT = analysis_context.setdefault(
+            "unresolved_single_assignment_sentinel", object()
+        )
+        dirty_expr_single_assignment_cache = analysis_context.setdefault(
+            "dirty_expr_single_assignment_cache", {}
+        )
+        if not isinstance(dirty_expr_single_assignment_cache, dict):
+            dirty_expr_single_assignment_cache = {}
+            analysis_context["dirty_expr_single_assignment_cache"] = dirty_expr_single_assignment_cache
+        cvar_single_assignment_cache = analysis_context.setdefault("cvar_single_assignment_cache", {})
+        if not isinstance(cvar_single_assignment_cache, dict):
+            cvar_single_assignment_cache = {}
+            analysis_context["cvar_single_assignment_cache"] = cvar_single_assignment_cache
+
+        def _safe_dirty_attr_8616(obj, attr: str):
+            try:
+                return getattr(obj, attr, None)
+            except (AttributeError, TypeError, ValueError):
+                return None
 
         def _alias_keys_for_cvar(node, *, lookup: bool) -> tuple[object, ...]:
             if not isinstance(node, structured_c.CVariable):
@@ -920,24 +970,50 @@ def _canonicalize_stack_cvar_expr(
                 dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGNMENT
                 return None
 
-            matches = []
-            for stmt in _iter_statement_nodes(root):
-                if not isinstance(stmt, structured_c.CAssignment):
-                    continue
-                lhs = getattr(stmt, "lhs", None)
-                lhs_name = None
-                if isinstance(lhs, structured_c.CVariable):
-                    lhs_name = getattr(lhs, "name", None) or getattr(getattr(lhs, "variable", None), "name", None)
-                lhs_varid = getattr(getattr(lhs, "dirty", None), "varid", None)
-                lhs_normalized = _strip_typed_suffix_8616(lhs_name)
-                if lhs_normalized != normalized_name and lhs_varid != target_varid:
-                    continue
-                matches.append(getattr(stmt, "rhs", None))
-                if len(matches) > 1:
-                    dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGNMENT
-                    return None
-            resolved = matches[0] if len(matches) == 1 else None
+            dirty_expr_single_assignment_index = analysis_context.get("dirty_expr_single_assignment_index")
+            if not isinstance(dirty_expr_single_assignment_index, dict):
+                index: dict[str, object | None] = {}
+                scanned = 0
+                for stmt in _iter_statement_nodes(root):
+                    if not isinstance(stmt, structured_c.CAssignment):
+                        continue
+                    scanned += 1
+                    lhs = getattr(stmt, "lhs", None)
+                    lhs_keys: set[str] = set()
+                    if isinstance(lhs, structured_c.CVariable):
+                        lhs_name = getattr(lhs, "name", None) or getattr(getattr(lhs, "variable", None), "name", None)
+                        lhs_normalized = _strip_typed_suffix_8616(lhs_name)
+                        if isinstance(lhs_normalized, str) and lhs_normalized:
+                            lhs_keys.add(lhs_normalized)
+                    lhs_varid = _safe_dirty_attr_8616(getattr(lhs, "dirty", None), "varid")
+                    if isinstance(lhs_varid, int):
+                        lhs_keys.add(f"vvar_{lhs_varid}")
+                    if not lhs_keys:
+                        continue
+                    rhs = getattr(stmt, "rhs", None)
+                    for lhs_key in lhs_keys:
+                        if lhs_key in index:
+                            index[lhs_key] = _UNRESOLVED_SINGLE_ASSIGNMENT
+                        else:
+                            index[lhs_key] = rhs
+                dirty_expr_single_assignment_index = index
+                analysis_context["dirty_expr_single_assignment_index"] = dirty_expr_single_assignment_index
+                codegen._inertia_stack_lowering_virtual_assignment_index_scanned = int(
+                    getattr(codegen, "_inertia_stack_lowering_virtual_assignment_index_scanned", 0) or 0
+                ) + scanned
+                codegen._inertia_stack_lowering_virtual_assignment_index_keys = int(
+                    getattr(codegen, "_inertia_stack_lowering_virtual_assignment_index_keys", 0) or 0
+                ) + len(index)
+
+            resolved = dirty_expr_single_assignment_index.get(normalized_name)
+            if resolved is _UNRESOLVED_SINGLE_ASSIGNMENT:
+                dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGNMENT
+                return None
             dirty_expr_single_assignment_cache[normalized_name] = resolved if resolved is not None else _UNRESOLVED_SINGLE_ASSIGNMENT
+            if resolved is not None:
+                codegen._inertia_stack_lowering_virtual_assignment_index_hits = int(
+                    getattr(codegen, "_inertia_stack_lowering_virtual_assignment_index_hits", 0) or 0
+                ) + 1
             return resolved
 
         def _top_level_statements() -> list[object]:
@@ -990,10 +1066,10 @@ def _canonicalize_stack_cvar_expr(
             dirty = getattr(node, "dirty", None)
             if dirty is None:
                 return None
-            varid = getattr(dirty, "varid", None)
+            varid = _safe_dirty_attr_8616(dirty, "varid")
             if not isinstance(varid, int):
-                reg = getattr(dirty, "reg", None)
-                bits = getattr(dirty, "bits", None)
+                reg = _safe_dirty_attr_8616(dirty, "reg")
+                bits = _safe_dirty_attr_8616(dirty, "bits")
                 if _is_sp_virtual_register(SimpleNamespace(reg=reg, size=(bits // 8) if isinstance(bits, int) else None)):
                     return _synthetic_sp_anchor_cvar()
                 return None
@@ -1005,8 +1081,8 @@ def _canonicalize_stack_cvar_expr(
             resolved = _single_assignment_expr_for_virtual_name(f"vvar_{varid}")
             if resolved is not None:
                 return resolved
-            reg = getattr(dirty, "reg", None)
-            bits = getattr(dirty, "bits", None)
+            reg = _safe_dirty_attr_8616(dirty, "reg")
+            bits = _safe_dirty_attr_8616(dirty, "bits")
             if _is_sp_virtual_register(SimpleNamespace(reg=reg, size=(bits // 8) if isinstance(bits, int) else None)):
                 return _synthetic_sp_anchor_cvar()
             return None
@@ -1015,17 +1091,35 @@ def _canonicalize_stack_cvar_expr(
             dirty_expr_cls = getattr(structured_c, "CDirtyExpression", None)
             if dirty_expr_cls is None or not isinstance(node, dirty_expr_cls):
                 return node
+            dirty = getattr(node, "dirty", None)
+            varid = _safe_dirty_attr_8616(dirty, "varid")
+            active_dirty_varids = analysis_context.get("active_dirty_varids")
+            if not isinstance(active_dirty_varids, set):
+                active_dirty_varids = set()
+                analysis_context["active_dirty_varids"] = active_dirty_varids
+            if isinstance(varid, int) and varid in active_dirty_varids:
+                codegen._inertia_stack_lowering_dirty_cycle_refused_8616 = int(
+                    getattr(codegen, "_inertia_stack_lowering_dirty_cycle_refused_8616", 0) or 0
+                ) + 1
+                return node
             resolved = _resolve_dirty_virtual_expr(node)
             if resolved is None:
                 return node
-            return _canonicalize_stack_cvar_expr(
-                resolved,
-                codegen,
-                unwrap_c_casts=unwrap_c_casts,
-                resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
-                materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
-                active_expr_ids=active_expr_ids,
-            )
+            if isinstance(varid, int):
+                active_dirty_varids.add(varid)
+            try:
+                return _canonicalize_stack_cvar_expr(
+                    resolved,
+                    codegen,
+                    unwrap_c_casts=unwrap_c_casts,
+                    resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
+                    materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
+                    active_expr_ids=active_expr_ids,
+                    analysis_context=analysis_context,
+                )
+            finally:
+                if isinstance(varid, int):
+                    active_dirty_varids.discard(varid)
 
         dirtyized = _canonicalize_dirty_expression(expr)
         if dirtyized is not expr:
@@ -1427,6 +1521,7 @@ def _canonicalize_stack_cvar_expr(
                 resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
                 materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
                 active_expr_ids=active_expr_ids,
+                analysis_context=analysis_context,
             )
             index_expr = _canonicalize_stack_cvar_expr(
                 expr.index,
@@ -1435,6 +1530,7 @@ def _canonicalize_stack_cvar_expr(
                 resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
                 materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
                 active_expr_ids=active_expr_ids,
+                analysis_context=analysis_context,
             )
             arch = getattr(getattr(codegen, "project", None), "arch", None)
             byte_width = getattr(arch, "byte_width", None)
@@ -1545,6 +1641,7 @@ def _canonicalize_stack_cvar_expr(
                 resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
                 materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
                 active_expr_ids=active_expr_ids,
+                analysis_context=analysis_context,
             )
             deref_operand = unwrap_c_casts(operand)
             if expr.op == "Dereference":
@@ -1696,6 +1793,7 @@ def _canonicalize_stack_cvar_expr(
                 resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
                 materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
                 active_expr_ids=active_expr_ids,
+                analysis_context=analysis_context,
             )
             rhs = _canonicalize_stack_cvar_expr(
                 expr.rhs,
@@ -1704,6 +1802,7 @@ def _canonicalize_stack_cvar_expr(
                 resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
                 materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
                 active_expr_ids=active_expr_ids,
+                analysis_context=analysis_context,
             )
             if lhs is not expr.lhs or rhs is not expr.rhs:
                 active_expr_ids.discard(expr_id)
@@ -1720,6 +1819,7 @@ def _canonicalize_stack_cvar_expr(
                 resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
                 materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
                 active_expr_ids=active_expr_ids,
+                analysis_context=analysis_context,
             )
             if inner is not expr.expr:
                 active_expr_ids.discard(expr_id)
@@ -1737,6 +1837,7 @@ def _canonicalize_stack_cvars(codegen, *, replace_c_children, canonicalize_stack
         return False
 
     changed = False
+    analysis_context: dict[str, object] = {}
 
     def _safe_child_update_eligible_8616(current, attr: str) -> bool:
         if not isinstance(current, structured_c.CAssignment):
@@ -1756,7 +1857,7 @@ def _canonicalize_stack_cvars(codegen, *, replace_c_children, canonicalize_stack
 
     def transform(node):
         nonlocal changed
-        canonical = canonicalize_stack_cvar_expr(node, codegen)
+        canonical = canonicalize_stack_cvar_expr(node, codegen, analysis_context=analysis_context)
         if canonical is not node:
             changed = True
             return canonical

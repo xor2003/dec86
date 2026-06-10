@@ -80,29 +80,35 @@ def describe_x86_16_projection_cleanup_rules() -> tuple[tuple[str, str], ...]:
 
 
 def _virtual_expr_keys_8616(node) -> tuple[tuple[str, object], ...]:
+    def _dirty_attr_8616(obj, attr: str):
+        try:
+            return getattr(obj, attr, None)
+        except (AttributeError, TypeError, ValueError):
+            return None
+
     keys: list[tuple[str, object]] = []
     dirty = getattr(node, "dirty", None)
     if isinstance(node, CDirtyExpression) and dirty is not None:
         if isinstance(dirty, str) and dirty:
             keys.append(("dirty-name", dirty))
-        varid = getattr(dirty, "varid", None)
+        varid = _dirty_attr_8616(dirty, "varid")
         if isinstance(varid, int):
             keys.append(("dirty-varid", varid))
-        tmp_idx = getattr(dirty, "tmp_idx", None)
+        tmp_idx = _dirty_attr_8616(dirty, "tmp_idx")
         if isinstance(tmp_idx, int):
             keys.append(("dirty-tmp", tmp_idx))
-        name = getattr(dirty, "name", None)
+        name = _dirty_attr_8616(dirty, "name")
         if isinstance(name, str) and name:
             keys.append(("dirty-name", name))
         reg_offset = None
         for attr in ("reg_offset", "reg", "variable_offset"):
-            value = getattr(dirty, attr, None)
+            value = _dirty_attr_8616(dirty, attr)
             if isinstance(value, int):
                 reg_offset = value
                 break
-        bits = getattr(dirty, "bits", None)
+        bits = _dirty_attr_8616(dirty, "bits")
         if not isinstance(bits, int):
-            size = getattr(dirty, "size", None)
+            size = _dirty_attr_8616(dirty, "size")
             if isinstance(size, int):
                 bits = size * 8
         if isinstance(reg_offset, int):
@@ -258,8 +264,10 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
 
     changed = False
 
-    def _transform(node, *, assignment_lhs: bool = False):
-        nonlocal changed
+    protected_refused_count = 0
+
+    def _transform(node, *, assignment_lhs: bool = False, protected_address_context: bool = False):
+        nonlocal changed, protected_refused_count
         if node is None:
             return node
         if not assignment_lhs:
@@ -267,6 +275,16 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
             key = next((candidate_key for candidate_key in keys if candidate_key in replacements), None)
             replacement = replacements.get(key)
             if replacement is not None:
+                if protected_address_context:
+                    protected_refused_count += 1
+                    if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
+                        _log.warning(
+                            "[virtual-inline] protected-address-refuse key=%r expr=%s replacement=%s",
+                            key,
+                            _debug_c_repr_8616(node),
+                            _debug_c_repr_8616(replacement),
+                        )
+                    return node
                 if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
                     _log.warning(
                         "[virtual-inline] replace key=%r expr=%s replacement=%s",
@@ -282,9 +300,13 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
             child = getattr(node, attr, None)
             if not _structured_codegen_node_8616(child):
                 continue
+            child_protected_address_context = protected_address_context or (
+                attr == "operand" and isinstance(node, CUnaryOp) and node.op in {"Dereference", "Reference"}
+            )
             new_child = _transform(
                 child,
                 assignment_lhs=attr == "lhs" and isinstance(node, CAssignment),
+                protected_address_context=child_protected_address_context,
             )
             if new_child is not child:
                 setattr(node, attr, new_child)
@@ -296,7 +318,7 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
             seq_changed = False
             for item in seq:
                 if _structured_codegen_node_8616(item):
-                    new_item = _transform(item)
+                    new_item = _transform(item, protected_address_context=protected_address_context)
                     new_seq.append(new_item)
                     seq_changed |= new_item is not item
                 else:
@@ -308,8 +330,16 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
             new_pairs = []
             pair_changed = False
             for cond, body in pairs:
-                new_cond = _transform(cond) if _structured_codegen_node_8616(cond) else cond
-                new_body = _transform(body) if _structured_codegen_node_8616(body) else body
+                new_cond = (
+                    _transform(cond, protected_address_context=protected_address_context)
+                    if _structured_codegen_node_8616(cond)
+                    else cond
+                )
+                new_body = (
+                    _transform(body, protected_address_context=protected_address_context)
+                    if _structured_codegen_node_8616(body)
+                    else body
+                )
                 pair_changed |= new_cond is not cond or new_body is not body
                 new_pairs.append((new_cond, new_body))
             if pair_changed:
@@ -317,78 +347,125 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
         return node
 
     _transform(root)
+    if protected_refused_count:
+        codegen._inertia_virtual_inline_protected_address_refused = int(
+            getattr(codegen, "_inertia_virtual_inline_protected_address_refused", 0) or 0
+        ) + protected_refused_count
 
-    def _count_virtual_key_uses_8616(node, target_key: tuple[str, object], *, assignment_lhs: bool = False) -> int:
-        if node is None:
-            return 0
-        total = 0
-        if not assignment_lhs and target_key in _virtual_expr_keys_8616(node):
-            total += 1
+    def _collect_virtual_key_use_counts_8616(
+        node,
+        tracked_keys: set[tuple[str, object]],
+        *,
+        assignment_lhs: bool = False,
+        seen: set[int] | None = None,
+    ) -> dict[tuple[str, object], int]:
+        counts: dict[tuple[str, object], int] = {}
+        if node is None or not tracked_keys:
+            return counts
+        if not _structured_codegen_node_8616(node):
+            return counts
+        if seen is None:
+            seen = set()
+        node_id = id(node)
+        if node_id in seen:
+            return counts
+        seen.add(node_id)
+
+        if not assignment_lhs:
+            for key in _virtual_expr_keys_8616(node):
+                if key in tracked_keys:
+                    counts[key] = counts.get(key, 0) + 1
+
         for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
             child = getattr(node, attr, None)
-            if _structured_codegen_node_8616(child):
-                total += _count_virtual_key_uses_8616(
-                    child,
-                    target_key,
-                    assignment_lhs=attr == "lhs" and isinstance(node, CAssignment),
-                )
+            if not _structured_codegen_node_8616(child):
+                continue
+            child_counts = _collect_virtual_key_use_counts_8616(
+                child,
+                tracked_keys,
+                assignment_lhs=attr == "lhs" and isinstance(node, CAssignment),
+                seen=seen,
+            )
+            for key, count in child_counts.items():
+                counts[key] = counts.get(key, 0) + count
+
         for attr in ("statements", "operands", "args"):
             seq = getattr(node, attr, None)
             if not seq:
                 continue
             for item in seq:
-                if _structured_codegen_node_8616(item):
-                    total += _count_virtual_key_uses_8616(item, target_key)
-                elif isinstance(item, tuple):
-                    for subitem in item:
-                        if _structured_codegen_node_8616(subitem):
-                            total += _count_virtual_key_uses_8616(subitem, target_key)
+                nested_items = item if isinstance(item, tuple) else (item,)
+                for subitem in nested_items:
+                    if not _structured_codegen_node_8616(subitem):
+                        continue
+                    child_counts = _collect_virtual_key_use_counts_8616(
+                        subitem,
+                        tracked_keys,
+                        seen=seen,
+                    )
+                    for key, count in child_counts.items():
+                        counts[key] = counts.get(key, 0) + count
+
         pairs = getattr(node, "condition_and_nodes", None)
         if pairs:
             for cond, body in pairs:
-                if _structured_codegen_node_8616(cond):
-                    total += _count_virtual_key_uses_8616(cond, target_key)
-                if _structured_codegen_node_8616(body):
-                    total += _count_virtual_key_uses_8616(body, target_key)
-        return total
+                for subitem in (cond, body):
+                    if not _structured_codegen_node_8616(subitem):
+                        continue
+                    child_counts = _collect_virtual_key_use_counts_8616(subitem, tracked_keys, seen=seen)
+                    for key, count in child_counts.items():
+                        counts[key] = counts.get(key, 0) + count
+
+        return counts
 
     def _prune_consumed_virtual_definitions_8616(node) -> int:
         pruned = 0
-        statements = getattr(node, "statements", None)
-        if isinstance(statements, list):
-            kept = []
-            for statement in statements:
-                keys = _virtual_expr_keys_8616(getattr(statement, "lhs", None)) if isinstance(statement, CAssignment) else ()
-                if (
-                    keys
-                    and any(key in replacements for key in keys)
-                    and _pure_virtual_inline_rhs_8616(getattr(statement, "rhs", None))
-                    and all(_count_virtual_key_uses_8616(root, key) == 0 for key in keys)
-                ):
-                    pruned += 1
-                    continue
-                kept.append(statement)
-            if len(kept) != len(statements):
-                node.statements = kept
-        for child in _walk(node):
-            if child is node:
-                continue
-            child_statements = getattr(child, "statements", None)
-            if isinstance(child_statements, list):
+        replacement_keys = set(replacements)
+        use_counts = _collect_virtual_key_use_counts_8616(root, replacement_keys)
+        visited: set[int] = set()
+
+        def _visit(container) -> None:
+            nonlocal pruned
+            if not _structured_codegen_node_8616(container):
+                return
+            container_id = id(container)
+            if container_id in visited:
+                return
+            visited.add(container_id)
+            statements = getattr(container, "statements", None)
+            if isinstance(statements, list):
                 kept = []
-                for statement in child_statements:
-                    keys = _virtual_expr_keys_8616(getattr(statement, "lhs", None)) if isinstance(statement, CAssignment) else ()
+                for statement in statements:
+                    keys = (
+                        _virtual_expr_keys_8616(getattr(statement, "lhs", None))
+                        if isinstance(statement, CAssignment)
+                        else ()
+                    )
                     if (
                         keys
                         and any(key in replacements for key in keys)
                         and _pure_virtual_inline_rhs_8616(getattr(statement, "rhs", None))
-                        and all(_count_virtual_key_uses_8616(root, key) == 0 for key in keys)
+                        and all(use_counts.get(key, 0) == 0 for key in keys)
                     ):
                         pruned += 1
                         continue
                     kept.append(statement)
-                if len(kept) != len(child_statements):
-                    child.statements = kept
+                if len(kept) != len(statements):
+                    container.statements = kept
+                for statement in kept:
+                    _visit(statement)
+
+            for attr in ("body", "else_node"):
+                child = getattr(container, attr, None)
+                if _structured_codegen_node_8616(child):
+                    _visit(child)
+            pairs = getattr(container, "condition_and_nodes", None)
+            if pairs:
+                for _cond, body in pairs:
+                    if _structured_codegen_node_8616(body):
+                        _visit(body)
+
+        _visit(node)
         return pruned
 
     if changed:
@@ -791,6 +868,12 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         codegen=codegen,
                         tags=getattr(node, "tags", None) or getattr(operand, "tags", None),
                     )
+
+        if isinstance(node, CITE) and _same_c_expression_8616(node.iftrue, node.iffalse):
+            codegen._inertia_same_arm_cite_simplified_count_8616 = int(
+                getattr(codegen, "_inertia_same_arm_cite_simplified_count_8616", 0) or 0
+            ) + 1
+            return node.iftrue
 
         simplified = _simplify_zero_flag_comparison_8616(node)
         if simplified is not node:

@@ -8,7 +8,10 @@ from inertia_decompiler.cli_c_text_postprocess import (
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_generic_local_declarations_text,
     _materialize_missing_synthetic_global_declarations_text,
+    _normalize_integer_dereference_stores_text,
+    _normalize_boolean_conditions,
     _normalize_portable_flat_main_signature_text,
+    _dedupe_duplicate_local_declarations_text,
     _collapse_annotated_stack_aliases_text,
     _prune_non_lvalue_arithmetic_assignments,
     _prune_parameter_shadow_declarations_text,
@@ -17,8 +20,26 @@ from inertia_decompiler.cli_c_text_postprocess import (
     _prune_unused_staging_assignments,
     _prune_void_function_return_values_text,
     _rewrite_known_helper_signature_text,
+    _source_header_args_unmaterialized_8616,
     _source_function_prototype_decls_from_cod_source_lines,
 )
+
+
+def test_dedupe_duplicate_local_declarations_prefers_function_pointer_decl():
+    c_text = """\
+int select_and_apply(int which, int value)
+{
+    unsigned short local_2;
+    unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn
+
+    return apply_twice(local_2, value);
+}
+"""
+
+    rewritten = _dedupe_duplicate_local_declarations_text(c_text)
+
+    assert "unsigned short local_2;\n" not in rewritten
+    assert "unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn" in rewritten
 
 
 def test_text_cod_call_alignment_is_disabled_by_default(monkeypatch):
@@ -37,6 +58,34 @@ void f(void)
     assert rewritten == c_text
     assert "sub_10079();" in rewritten
     assert "aNchkstk();" not in rewritten
+
+
+def test_source_header_args_unmaterialized_refuses_void_header_when_generated_arg_is_live():
+    c_text = """\
+void InsertionSort(char arg, char arg_6)
+{
+    arg_6 = 1;
+    return;
+}
+"""
+
+    blocked = _source_header_args_unmaterialized_8616(
+        c_text,
+        func_name="InsertionSort",
+        source_decl="void InsertionSort(void)",
+        source_arg_text=None,
+    )
+
+    assert blocked is True
+
+    old_style_blocked = _source_header_args_unmaterialized_8616(
+        c_text,
+        func_name="InsertionSort",
+        source_decl="void InsertionSort()",
+        source_arg_text=None,
+    )
+
+    assert old_style_blocked is True
 
 
 def test_materialize_annotated_cod_declarations_text_ignores_comment_pointer_false_positive():
@@ -145,6 +194,36 @@ def test_prune_void_function_return_values_text_preserves_call_side_effect():
     assert "return DrawTime" not in rewritten
     assert "DrawTime(iRow1);" in rewritten
     assert "return;" not in rewritten
+
+
+def test_normalize_boolean_conditions_materializes_empty_label_statement():
+    c_text = """void f(void)
+{
+    if (x)
+    {
+LABEL_114d:
+    }
+}
+"""
+
+    rewritten = _normalize_boolean_conditions(c_text)
+
+    assert "LABEL_114d:;" in rewritten
+    assert "LABEL_114d:\n    }" not in rewritten
+
+
+def test_normalize_integer_dereference_stores_text_refuses_fake_segment_zero_store():
+    c_text = """\
+void f(void)
+{
+    *(vvar_1398 + 1) = vvar_1401;
+}
+"""
+
+    rewritten = _normalize_integer_dereference_stores_text(c_text)
+
+    assert rewritten == c_text
+    assert "SEG_U8(0," not in rewritten
 
 
 def test_prune_unused_staging_assignments_drops_self_only_and_decorated_staging_lines():
@@ -370,6 +449,26 @@ int main(void)
 
     assert "vvar_20 = &s_8;" not in rewritten
     assert "vvar_24 = vvar_20 - 2 + -2;" not in rewritten
+
+
+def test_prune_unused_staging_assignments_keeps_unused_call_result_side_effects():
+    c_text = """
+void QuickSort(int iLow, int iHigh)
+{
+    unsigned short vvar_97;
+    unsigned short vvar_arg;
+
+    vvar_arg = iLow;
+    vvar_97 = Swaps(SEG_PTR(ds, (vvar_arg << 1) + 2892), SEG_PTR(ds, (iHigh << 1) + 2892));
+    return;
+}
+"""
+
+    rewritten = _prune_unused_staging_assignments(c_text)
+
+    assert "vvar_arg = iLow;" in rewritten
+    assert "vvar_97 = Swaps" not in rewritten
+    assert "    Swaps(SEG_PTR(ds, (vvar_arg << 1) + 2892), SEG_PTR(ds, (iHigh << 1) + 2892));" in rewritten
 
 
 def test_prune_unused_staging_assignments_drops_unused_split_stack_suffix_names():

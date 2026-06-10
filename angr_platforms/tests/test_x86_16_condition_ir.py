@@ -19,6 +19,7 @@ from angr_platforms.X86_16.ir.condition_ir import (
     is_condition_truth_test_8616,
     is_signed_condition_8616,
     is_unsigned_condition_8616,
+    normalize_condition_fingerprint_algebraic_8616,
     normalize_condition_op_8616,
 )
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
@@ -79,6 +80,23 @@ class TestConditionOpNormalization:
     def test_ge_normalizes_to_sge(self):
         assert normalize_condition_op_8616("ge") == "sge"
 
+    def test_segmented_index_duplicate_displacement_normalizes(self):
+        raw = (
+            "CmpLE("
+            "Dereference(Add(Mul(reg:ds,const:16),"
+            "Add(Shl(stack_slot:SS:BP-0x6:size2,const:1),const:2892),"
+            "const:2892)),"
+            "stack_slot:SS:BP-0x4:size2)"
+        )
+
+        assert normalize_condition_fingerprint_algebraic_8616(raw) == (
+            "CmpLE("
+            "Dereference(Add(Mul(reg:ds,const:16),"
+            "Shl(stack_slot:SS:BP-0x6:size2,const:1),"
+            "const:2892)),"
+            "stack_slot:SS:BP-0x4:size2)"
+        )
+
     def test_lt_u_normalizes_to_ult(self):
         assert normalize_condition_op_8616("lt_u") == "ult"
 
@@ -95,6 +113,30 @@ class TestConditionOpNormalization:
         assert normalize_condition_op_8616("and") == "and"
         assert normalize_condition_op_8616("or") == "or"
         assert normalize_condition_op_8616("not") == "not"
+
+    def test_condition_fingerprint_normalizes_ds_byte_pair_to_global_word(self):
+        value = (
+            "CmpLT(stack_slot:SS:BP-0x2:size2,"
+            "Or(global:0x160,"
+            "Shl(Dereference(Add(Add(Mul(reg:ds,const:16),const:352),const:1)),const:8)))"
+        )
+
+        assert (
+            normalize_condition_fingerprint_algebraic_8616(value)
+            == "CmpLT(stack_slot:SS:BP-0x2:size2,global:0x160)"
+        )
+
+    def test_condition_fingerprint_normalizes_prefixed_ds_byte_pair_to_global_word(self):
+        value = (
+            "if:CmpLT(stack_slot:SS:BP-0x2:size2,"
+            "Or(global:0x160,"
+            "Shl(Dereference(Add(Add(Mul(reg:ds,const:16),const:352),const:1)),const:8)))"
+        )
+
+        assert (
+            normalize_condition_fingerprint_algebraic_8616(value)
+            == "if:CmpLT(stack_slot:SS:BP-0x2:size2,global:0x160)"
+        )
 
 
 class TestConditionClassification:

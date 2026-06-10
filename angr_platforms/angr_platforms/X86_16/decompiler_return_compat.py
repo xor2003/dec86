@@ -12,7 +12,7 @@ from angr.ailment.expression import BasePointerOffset
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CVariable, MakeTypecastsImplicit
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.calling_conventions import SimComboArg, SimRegArg
-from angr.sim_type import SimTypeBottom, SimTypeDouble, SimTypeFloat, SimTypeLong, SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeDouble, SimTypeFloat, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 __all__ = [
@@ -53,6 +53,10 @@ def _is_stack_base_return_register_8616(reg_arg: SimRegArg) -> bool:
 
 def _is_void_return_type_8616(return_type) -> bool:
     return type(return_type) is SimTypeBottom and getattr(return_type, "label", None) == "void"
+
+
+def _is_x86_16_near_pointer_return_8616(arch, return_type) -> bool:
+    return isinstance(return_type, SimTypePointer) and getattr(arch, "name", None) == "86_16"
 
 
 def _prototype_has_return_type_8616(prototype) -> bool:
@@ -341,7 +345,7 @@ def _find_terminal_register_source_8616(self, stmt, *, reg_offset: int, reg_size
     if not isinstance(return_ins_addr, int):
         return None
 
-    best: tuple[int, object] | None = None
+    candidates: list[tuple[int, int, object]] = []
     tied = False
     for graph_block in tuple(graph.nodes()):
         statements = tuple(getattr(graph_block, "statements", ()) or ())
@@ -356,14 +360,16 @@ def _find_terminal_register_source_8616(self, stmt, *, reg_offset: int, reg_size
                 continue
             src = _resolve_same_block_tmp_source_8616(src, statements, before_index=idx)
             src = _resolve_same_block_tmps_in_expr_8616(src, statements, before_index=idx)
-            if best is None or ins_addr > best[0]:
-                best = (ins_addr, src)
-                tied = False
-            elif ins_addr == best[0]:
+            candidates.append((ins_addr, id(graph_block), src))
+            if sum(1 for candidate in candidates if candidate[0] == ins_addr) > 1:
                 tied = True
-    if best is None or tied:
+    if not candidates or tied:
         return None
-    return _materialize_return_stack_load_8616(self, _copy_ail_expr_8616(best[1]))
+    block_ids = {candidate[1] for candidate in candidates}
+    if len(block_ids) != 1:
+        return None
+    best = max(candidates, key=lambda candidate: candidate[0])
+    return _materialize_return_stack_load_8616(self, _copy_ail_expr_8616(best[2]))
 
 
 def _find_reaching_register_source_8616(self, block, *, reg_offset: int, reg_size: int, max_depth: int = 8):
@@ -1264,7 +1270,11 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                         return None
                     raise
 
-            ret_val = calling_convention.return_val(getattr(prototype, "returnty", None))
+            returnty = getattr(prototype, "returnty", None)
+            if _is_x86_16_near_pointer_return_8616(getattr(self, "arch", None), returnty):
+                ret_val = SimRegArg("ax", 2)
+            else:
+                ret_val = calling_convention.return_val(returnty)
             if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                 print(
                     f"[dbg-return] ret_val={type(ret_val).__name__} value={getattr(ret_val, 'reg_name', None)} "

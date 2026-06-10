@@ -815,6 +815,7 @@ def test_known_helper_signatures_are_applied_before_decompilation():
 def test_source_decl_updates_return_type_while_preserving_recovered_arg_widths():
     project = _project_from_asm("ret")
     func = project.kb.functions.function(addr=0x1000, create=True)
+    func.name = "Demo"
     func.prototype = SimTypeFunction([SimTypeShort(False)], SimTypeShort(False), arg_names=("value",)).with_arch(
         project.arch
     )
@@ -834,7 +835,9 @@ def test_source_decl_updates_return_type_while_preserving_recovered_arg_widths()
 
     assert changed is True
     updated = project.kb.functions.function(addr=0x1000, create=False).prototype
+    updated_cc = project.kb.functions.function(addr=0x1000, create=False).calling_convention
     assert updated is not None
+    assert isinstance(updated_cc, SimCC8616MSCsmall)
     assert isinstance(updated.returnty, SimTypeBottom)
     assert len(updated.args) == 1
     assert isinstance(updated.args[0], SimTypeShort)

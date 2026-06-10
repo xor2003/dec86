@@ -38,6 +38,8 @@ from .decompiler_postprocess_flags import _split_ordering_if_chain_replacement_c
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 from .ir.condition_ir import (
     _INVERTED_COMPARISON_OPS_8616,
+    _split_fingerprint_args_8616,
+    _split_fingerprint_call_8616,
     invert_condition_fingerprint_string_8616,
     normalize_condition_fingerprint_algebraic_8616,
     normalize_condition_fingerprint_string_8616,
@@ -52,6 +54,7 @@ from .tail_validation_fingerprint import (
     _function_for_call_context_8616,
     _is_runtime_segment_helper_call_8616,
     _location_fingerprint,
+    _resolve_call_symbol_addr_8616,
     _wrap_not_fingerprint,
     build_x86_16_contextual_call_fingerprints,
 )
@@ -95,6 +98,9 @@ _TAIL_VALIDATION_OBSERVABLE_FIELDS = (
     "conditions",
     "control_flow_effects",
 )
+_MISSING_CALLSITE_FINGERPRINT_PREFIX_8616 = "missing-callsite:"
+_COMPACT_OBSERVABLE_FIELDS_8616 = {"conditions", "control_flow_effects"}
+_COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616 = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +177,31 @@ def _sorted_unique(values: set[str]) -> tuple[str, ...]:
     return tuple(sorted(values))
 
 
+def _compact_tail_validation_observable_8616(field_name: str, value: str) -> str:
+    """Bound validation diagnostics for huge exact fingerprints.
+
+    Large raw flag expressions can be thousands of characters long. Validation
+    only needs stable equality/inequality for those exact forms, so use a digest
+    token for oversized condition/control-flow fingerprints. This is
+    conservative: equal long expressions stay equal; changed long expressions
+    still differ; no semantic rewrite is inferred from the digest.
+    """
+    if (
+        field_name not in _COMPACT_OBSERVABLE_FIELDS_8616
+        or not isinstance(value, str)
+        or len(value) <= _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616
+    ):
+        return value
+    digest = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()[:16]
+    return f"{field_name}:sha256:{digest}:len:{len(value)}"
+
+
+def _compact_tail_validation_observables_8616(field_name: str, values: set[str]) -> set[str]:
+    if field_name not in _COMPACT_OBSERVABLE_FIELDS_8616:
+        return values
+    return {_compact_tail_validation_observable_8616(field_name, value) for value in values}
+
+
 def _json_fingerprint(payload: object) -> str:
     def _json_default(value: object) -> str:
         # Validation cache fingerprinting must never crash on rich AST objects.
@@ -179,6 +210,11 @@ def _json_fingerprint(payload: object) -> str:
 
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json_default)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _clear_tail_validation_expr_fingerprint_cache_8616(project) -> None:
+    with contextlib.suppress(Exception):
+        setattr(project, "_inertia_tail_validation_expr_fingerprint_cache_8616", {})
 
 
 def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -> set[str]:
@@ -190,14 +226,163 @@ def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -
 
     These are validation-only; they do not mutate IR or feed results back into recovery.
     """
+    if field_name == "helper_calls":
+        return {_canonicalize_helper_call_fingerprint_for_compare_8616(value) for value in values}
+    if field_name == "segmented_writes":
+        return {_canonicalize_segmented_write_fingerprint_for_compare_8616(value) for value in values}
     if field_name not in {"conditions", "control_flow_effects"}:
         return values
     normalized: set[str] = set()
     for value in values:
+        value = _compact_tail_validation_observable_8616(field_name, value)
+        if value.startswith(f"{field_name}:sha256:"):
+            normalized.add(value)
+            continue
         v1 = normalize_condition_fingerprint_string_8616(value)
         v2 = normalize_condition_fingerprint_algebraic_8616(v1)
         normalized.add(v2)
     return normalized
+
+
+def _canonicalize_helper_call_fingerprint_for_compare_8616(value: str) -> str:
+    if not isinstance(value, str):
+        return value
+    match = re.fullmatch(r"name:(addr:0x[0-9a-fA-F]+)", value)
+    if match is None:
+        return value
+    return match.group(1).lower()
+
+
+def _const_fingerprint_value_8616(value: str) -> int | None:
+    if not isinstance(value, str) or not value.startswith("const:"):
+        return None
+    try:
+        return int(value[len("const:") :], 0)
+    except ValueError:
+        return None
+
+
+def _canonicalize_additive_fingerprint_for_compare_8616(value: str) -> str:
+    def _canonicalize_expr(expr: str) -> str:
+        call = _split_fingerprint_call_8616(expr)
+        if call is None:
+            return expr
+        op, args_text = call
+        args = _split_fingerprint_args_8616(args_text)
+        if op in {"Add", "Sub"}:
+            terms: list[tuple[int, str]] = []
+
+            def _flatten(term: str, sign: int) -> None:
+                inner = _split_fingerprint_call_8616(term)
+                if inner is None:
+                    terms.append((sign, term))
+                    return
+                inner_op, inner_args_text = inner
+                inner_args = _split_fingerprint_args_8616(inner_args_text)
+                if inner_op == "Add":
+                    for inner_arg in inner_args:
+                        _flatten(inner_arg, sign)
+                    return
+                if inner_op == "Sub" and len(inner_args) == 2:
+                    _flatten(inner_args[0], sign)
+                    _flatten(inner_args[1], -sign)
+                    return
+                terms.append((sign, _canonicalize_expr(term)))
+
+            for idx, arg in enumerate(args):
+                _flatten(arg, -1 if op == "Sub" and idx > 0 else 1)
+
+            const_total = 0
+            parts: list[str] = []
+            for sign, term in terms:
+                const_value = _const_fingerprint_value_8616(term)
+                if isinstance(const_value, int):
+                    const_total += sign * const_value
+                    continue
+                parts.append(term if sign > 0 else f"Neg({term})")
+            if const_total or not parts:
+                parts.append(f"const:{const_total}")
+            return f"Add({','.join(parts)})"
+        return f"{op}({','.join(_canonicalize_expr(arg) for arg in args)})"
+
+    return _canonicalize_expr(value)
+
+
+def _canonicalize_segmented_write_fingerprint_for_compare_8616(value: str) -> str:
+    if not isinstance(value, str) or not value.startswith("deref:"):
+        return value
+    return "deref:" + _canonicalize_additive_fingerprint_for_compare_8616(value[len("deref:") :])
+
+
+def _canonicalize_summary_field_counter_8616(field_name: str, values: Sequence[str]) -> Counter[str]:
+    counter: Counter[str] = Counter()
+    for value in values:
+        if field_name == "helper_calls":
+            value = _canonicalize_helper_call_fingerprint_for_compare_8616(value)
+        elif field_name == "segmented_writes":
+            value = _canonicalize_segmented_write_fingerprint_for_compare_8616(value)
+        counter[str(value)] += 1
+    return counter
+
+
+def _counter_delta_items_8616(left: Counter[str], right: Counter[str]) -> tuple[str, ...]:
+    items: list[str] = []
+    for value in sorted(left):
+        count = int(left[value] or 0) - int(right.get(value, 0) or 0)
+        if count > 0:
+            items.extend([value] * count)
+    return tuple(items)
+
+
+def _missing_callsite_fingerprints_8616(values: Sequence[str]) -> tuple[str, ...]:
+    return tuple(
+        str(value)
+        for value in values
+        if isinstance(value, str) and value.startswith(_MISSING_CALLSITE_FINGERPRINT_PREFIX_8616)
+    )
+
+
+def _summary_is_stack_probe_helper_8616(summary) -> bool:
+    if isinstance(summary, Mapping):
+        return bool(summary.get("stack_probe_helper", False))
+    return bool(getattr(summary, "stack_probe_helper", False))
+
+
+def _callsite_expected_fingerprint_8616(function, project, callsite_addr: int) -> str | None:
+    summary = summarize_x86_16_callsite(function, callsite_addr)
+    if _summary_is_stack_probe_helper_8616(summary):
+        return None
+    target_addr = _call_summary_target_addr_8616(project, summary)
+    if isinstance(target_addr, int):
+        return f"addr:{target_addr:#x}"
+    return f"callsite:{callsite_addr:#x}"
+
+
+def _function_callsite_addrs_for_validation_8616(function) -> tuple[int, ...]:
+    callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
+    if callsite_addrs:
+        return callsite_addrs
+    return _collect_direct_capstone_callsite_addrs_8616(function)
+
+
+def _append_missing_contextual_callsite_fingerprints_8616(root, project, helper_calls: list[str]) -> None:
+    function = _function_for_call_context_8616(root, project)
+    if function is None:
+        return
+    expected: list[str] = []
+    for callsite_addr in _function_callsite_addrs_for_validation_8616(function):
+        fingerprint = _callsite_expected_fingerprint_8616(function, project, callsite_addr)
+        if fingerprint is not None:
+            expected.append(_normalize_helper_call_fingerprint_8616(project, fingerprint) or fingerprint)
+    if not expected:
+        return
+    observed = _canonicalize_summary_field_counter_8616("helper_calls", helper_calls)
+    for fingerprint in expected:
+        normalized = _canonicalize_helper_call_fingerprint_for_compare_8616(fingerprint)
+        if observed.get(normalized, 0) > 0:
+            observed[normalized] -= 1
+            continue
+        helper_calls.append(f"{_MISSING_CALLSITE_FINGERPRINT_PREFIX_8616}{fingerprint}")
 
 
 def _invert_condition_fingerprint_8616(
@@ -297,9 +482,31 @@ def _normalized_if_chain_condition_8616(pairs, idx: int, codegen):
     return _split_ordering_if_chain_replacement_condition_8616(prev_cond, curr_cond, codegen)
 
 
+def _project_image_bounds_8616(project) -> tuple[int, int] | None:
+    main_object = getattr(getattr(project, "loader", None), "main_object", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    if isinstance(linked_base, int) and isinstance(max_addr, int):
+        return linked_base, linked_base + max_addr + 1
+    return None
+
+
+def _addr_in_image_bounds_8616(addr: int, bounds: tuple[int, int] | None) -> bool:
+    return bounds is not None and bounds[0] <= addr < bounds[1]
+
+
 def _normalized_call_target_addr_8616(project, target_addr: int | None) -> int | None:
     if not isinstance(target_addr, int):
         return None
+    original_project = getattr(project, "_inertia_original_project", None)
+    original_delta = getattr(project, "_inertia_original_linear_delta", None)
+    if original_project is not None and isinstance(original_delta, int):
+        original_bounds = _project_image_bounds_8616(original_project)
+        if _addr_in_image_bounds_8616(target_addr, original_bounds):
+            return target_addr
+        original_target = target_addr + original_delta
+        if _addr_in_image_bounds_8616(original_target, original_bounds):
+            return original_target
     main_object = getattr(getattr(project, "loader", None), "main_object", None)
     linked_base = getattr(main_object, "linked_base", None)
     max_addr = getattr(main_object, "max_addr", None)
@@ -333,6 +540,12 @@ def _normalize_helper_call_fingerprint_8616(project, token: str | None) -> str |
                 return token
             normalized = _normalized_call_target_addr_8616(project, value)
             return f"name:addr:{normalized:#x}" if isinstance(normalized, int) else token
+        if token.startswith("name:"):
+            raw_name = token[5:]
+            resolved_addr = _resolve_call_symbol_addr_8616(project, raw_name)
+            if isinstance(resolved_addr, int):
+                normalized = _normalized_call_target_addr_8616(project, resolved_addr)
+                return f"addr:{normalized:#x}" if isinstance(normalized, int) else f"addr:{resolved_addr:#x}"
         return token
 
     return _impl()
@@ -422,7 +635,7 @@ def _node_callsite_addr_8616(node) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _candidate_target_addrs_from_call_8616(node) -> tuple[int, ...]:
+def _candidate_target_addrs_from_call_8616(project, node) -> tuple[int, ...]:
     addrs: list[int] = []
     callee_func = getattr(node, "callee_func", None)
     callee_addr = getattr(callee_func, "addr", None)
@@ -434,6 +647,9 @@ def _candidate_target_addrs_from_call_8616(node) -> tuple[int, ...]:
     ):
         if not isinstance(target, str):
             continue
+        resolved_addr = _resolve_call_symbol_addr_8616(project, target)
+        if isinstance(resolved_addr, int):
+            addrs.append(resolved_addr)
         match = re.search(r"0x([0-9a-fA-F]+)", target)
         if match is None:
             continue
@@ -456,7 +672,7 @@ def _call_node_matches_summary_8616(project, node, summary) -> bool:
         return False
     return target_addr in {
         _normalized_call_target_addr_8616(project, candidate_addr)
-        for candidate_addr in _candidate_target_addrs_from_call_8616(node)
+        for candidate_addr in _candidate_target_addrs_from_call_8616(project, node)
         if isinstance(candidate_addr, int)
     }
 
@@ -1110,6 +1326,12 @@ def _switch_case_fingerprint(case_value, project) -> str:
 def fingerprint_x86_16_tail_validation_boundary(project, codegen, *, mode: str = "live_out") -> str:
     if mode not in _TAIL_VALIDATION_MODES:
         raise ValueError(f"Unsupported x86-16 tail validation mode: {mode}")
+    # C codegen mutates AST nodes in place between validation boundaries. The
+    # expression fingerprint cache is keyed by object identity, so a boundary
+    # fingerprint must start from a clean cache just like summary collection.
+    _clear_tail_validation_expr_fingerprint_cache_8616(project)
+    with contextlib.suppress(Exception):
+        codegen._inertia_jcc_register_exprs_by_ins_addr_8616 = None
     root = _codegen_root(codegen)
     previous_active_codegen = getattr(project, "_inertia_tail_validation_active_codegen", None)
     project._inertia_tail_validation_active_codegen = codegen
@@ -1912,6 +2134,8 @@ def _looks_like_ss_segment_store_8616(lhs, project) -> bool:
 def _is_dynamic_dirty_ss_location_8616(location: str) -> bool:
     if not isinstance(location, str) or not location.startswith("deref:"):
         return False
+    if "reg:ss" in location and re.search(r"virtual:(?:vvar|tmp|ir)_\d+", location):
+        return True
     if "reg:ss" in location and ("CDirtyExpression" in location or "CFakeVariable" in location):
         return True
     dynamic_frame_atom = r"(?:CDirtyExpression|CFakeVariable|virtual:unknown|Reference\(CIndexedVariable\))"
@@ -1931,14 +2155,31 @@ def _is_dynamic_dirty_ss_location_8616(location: str) -> bool:
     )
 
 
+def _lhs_aliases_dynamic_stack_frame_8616(lhs, project) -> bool:
+    aliased_location = _location_fingerprint(lhs, project, resolve_copy_alias=True)
+    if aliased_location.startswith(("stack:", "stack_slot:", "unresolved_stack_carrier:")):
+        return True
+    return _is_dynamic_dirty_ss_location_8616(aliased_location)
+
+
 def _canonicalize_segmented_write_aliases_8616(segmented_writes: set[str], global_writes: set[str]) -> set[str]:
     if not segmented_writes or not global_writes:
         return segmented_writes
     filtered: set[str] = set()
     for location in segmented_writes:
-        match = re.fullmatch(r"deref:ds:0x([0-9a-fA-F]+)", location)
-        if match is not None:
-            global_location = f"global:{int(match.group(1), 16):#x}"
+        global_offset: int | None = None
+        direct_match = re.fullmatch(r"deref:ds:0x([0-9a-fA-F]+)", location)
+        if direct_match is not None:
+            global_offset = int(direct_match.group(1), 16)
+        else:
+            linear_match = re.fullmatch(
+                r"deref:Add\(Mul\(reg:ds,const:16\),const:(-?[0-9]+)\)",
+                location,
+            )
+            if linear_match is not None:
+                global_offset = int(linear_match.group(1), 10)
+        if isinstance(global_offset, int) and global_offset >= 0:
+            global_location = f"global:{global_offset:#x}"
             if global_location in global_writes:
                 continue
         filtered.add(location)
@@ -1963,6 +2204,14 @@ def _prunable_live_out_segment_write_ids_8616(
                 expected_arg_count = getattr(summary_obj, "arg_count", None)
                 if isinstance(summary_obj, Mapping):
                     expected_arg_count = summary_obj.get("arg_count", expected_arg_count)
+                push_arg_sources = getattr(summary_obj, "push_arg_sources", ())
+                if isinstance(summary_obj, Mapping):
+                    push_arg_sources = summary_obj.get("push_arg_sources", push_arg_sources)
+                push_arg_source_count = (
+                    len(push_arg_sources)
+                    if isinstance(push_arg_sources, (tuple, list)) and push_arg_sources
+                    else 0
+                )
                 explicit_arg_count = len(tuple(getattr(call, "args", ()) or ()))
                 carrier_backed_args = any(
                     _expr_mentions_temp_carrier_8616(arg) for arg in (getattr(call, "args", ()) or ())
@@ -1971,6 +2220,13 @@ def _prunable_live_out_segment_write_ids_8616(
                     expected_arg_count - explicit_arg_count if isinstance(expected_arg_count, int) else 0
                 )
                 wanted_prunable_count = max(missing_arg_count, 1 if carrier_backed_args else 0)
+                if (
+                    isinstance(expected_arg_count, int)
+                    and expected_arg_count > 0
+                    and explicit_arg_count >= expected_arg_count
+                    and push_arg_source_count > 0
+                ):
+                    wanted_prunable_count = max(wanted_prunable_count, push_arg_source_count)
                 if wanted_prunable_count > 0:
                     scan = idx - 1
                     collected = 0
@@ -2182,7 +2438,7 @@ def _process_tail_validation_node_8616(
     contextual_condition_fingerprints: Mapping[int, str],
     normalized_loop_conditions: Mapping[int, str],
     prunable_segment_write_ids: set[int],
-    helper_calls: set[str],
+    helper_calls: list[str],
     register_writes: set[str],
     stack_writes: set[str],
     global_writes: set[str],
@@ -2195,7 +2451,7 @@ def _process_tail_validation_node_8616(
         if isinstance(node, CFunctionCall):
             if _is_runtime_segment_helper_call_8616(node):
                 return
-            helper_calls.add(
+            helper_calls.append(
                 _call_effect_fingerprint_8616(
                     node,
                     project,
@@ -2207,15 +2463,6 @@ def _process_tail_validation_node_8616(
         if isinstance(node, CReturn):
             retval = getattr(node, "retval", None)
             if _active_codegen_has_void_return_evidence_8616(project):
-                if isinstance(retval, CFunctionCall) and not _is_runtime_segment_helper_call_8616(retval):
-                    helper_calls.add(
-                        _call_effect_fingerprint_8616(
-                            retval,
-                            project,
-                            contextual_call_summaries=contextual_call_summaries,
-                            contextual_call_fingerprints=contextual_call_fingerprints,
-                        )
-                    )
                 returns.add("none")
             else:
                 returns.add(_expr_fingerprint(retval, project))
@@ -2234,8 +2481,12 @@ def _process_tail_validation_node_8616(
             elif location.startswith("global:"):
                 global_writes.add(location)
             elif location.startswith("deref:"):
-                if mode != "live_out" or not _is_dynamic_dirty_ss_location_8616(location):
-                    segmented_writes.add(location)
+                if mode == "live_out" and (
+                    _is_dynamic_dirty_ss_location_8616(location)
+                    or _lhs_aliases_dynamic_stack_frame_8616(getattr(node, "lhs", None), project)
+                ):
+                    return
+                segmented_writes.add(location)
             return
         _process_control_flow_node_8616(
             node,
@@ -2306,6 +2557,12 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
     def _impl():
         if mode not in _TAIL_VALIDATION_MODES:
             raise ValueError(f"Unsupported x86-16 tail validation mode: {mode}")
+        # C codegen nodes are mutated in-place between validation stages. The
+        # expression fingerprint cache is keyed by object identity, so carrying
+        # it across summaries can make tail validation compare stale semantics.
+        _clear_tail_validation_expr_fingerprint_cache_8616(project)
+        with contextlib.suppress(Exception):
+            codegen._inertia_jcc_register_exprs_by_ins_addr_8616 = None
         cache = _tail_validation_summary_cache_store(codegen)
         descriptor = build_x86_16_validation_cache_descriptor(
             "tail_validation.summary",
@@ -2317,7 +2574,7 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
         entries = cache.get("entries", {})
 
         root = _codegen_root(codegen)
-        helper_calls: set[str] = set()
+        helper_calls: list[str] = []
         register_writes: set[str] = set()
         stack_writes: set[str] = set()
         global_writes: set[str] = set()
@@ -2373,18 +2630,21 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
                 control_flow_effects=control_flow_effects,
             )
             _maybe_add_coarse_conditions_8616(node, project, conditions, mode)
+        _append_missing_contextual_callsite_fingerprints_8616(root, project, helper_calls)
 
         def _build_summary() -> X86_16TailValidationSummary:
             canonical_segmented_writes = _canonicalize_segmented_write_aliases_8616(segmented_writes, global_writes)
             return X86_16TailValidationSummary(
-                helper_calls=_sorted_unique(helper_calls),
+                helper_calls=tuple(helper_calls),
                 register_writes=_sorted_unique(register_writes),
                 stack_writes=_sorted_unique(stack_writes),
                 global_writes=_sorted_unique(global_writes),
                 segmented_writes=_sorted_unique(canonical_segmented_writes),
                 returns=_sorted_unique(returns),
-                conditions=_sorted_unique(conditions),
-                control_flow_effects=_sorted_unique(control_flow_effects),
+                conditions=_sorted_unique(_compact_tail_validation_observables_8616("conditions", conditions)),
+                control_flow_effects=_sorted_unique(
+                    _compact_tail_validation_observables_8616("control_flow_effects", control_flow_effects)
+                ),
             )
 
         cached = resolve_x86_16_validation_cached_artifact(
@@ -2399,6 +2659,8 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
             sys.stderr.write(
                 "[tail-validation-summary-debug] "
                 f"cache_hit={bool(cached.get('cache_hit', False))} "
+                f"helpers={tuple(getattr(summary, 'helper_calls', ()) or ())!r} "
+                f"segmented={tuple(getattr(summary, 'segmented_writes', ()) or ())!r} "
                 f"conditions={tuple(getattr(summary, 'conditions', ()) or ())!r} "
                 f"returns={tuple(getattr(summary, 'returns', ()) or ())!r} "
                 f"control={tuple(getattr(summary, 'control_flow_effects', ()) or ())!r}\n"
@@ -2445,6 +2707,67 @@ def _tail_validation_return_precision_improvement_8616(
     return all(value.startswith(concrete_prefixes) for value in added)
 
 
+def _tail_validation_linear_ds_write_offset_8616(location: str) -> int | None:
+    if not isinstance(location, str):
+        return None
+    match = re.fullmatch(r"deref:Add\(Mul\(reg:ds,const:16\),const:(-?[0-9]+)\)", location)
+    if match is not None:
+        offset = int(match.group(1), 10)
+        return offset if offset >= 0 else None
+    match = re.fullmatch(r"deref:Add\(Add\(Mul\(reg:ds,const:16\),const:(-?[0-9]+)\),const:(-?[0-9]+)\)", location)
+    if match is None:
+        return None
+    offset = int(match.group(1), 10) + int(match.group(2), 10)
+    return offset if offset >= 0 else None
+
+
+def _tail_validation_global_write_offset_8616(location: str) -> int | None:
+    if not isinstance(location, str):
+        return None
+    match = re.fullmatch(r"global:0x([0-9a-fA-F]+)", location)
+    if match is None:
+        return None
+    return int(match.group(1), 16)
+
+
+def _suppress_global_linear_ds_write_precision_delta_8616(diff: dict[str, object]) -> None:
+    delta = diff.get("delta")
+    if not isinstance(delta, dict):
+        return
+    global_delta = delta.get("global_writes")
+    segmented_delta = delta.get("segmented_writes")
+    if not isinstance(global_delta, dict) or not isinstance(segmented_delta, dict):
+        return
+
+    def _suppress(global_key: str, segmented_key: str) -> bool:
+        global_values = set(global_delta.get(global_key, ()) or ())
+        segmented_values = set(segmented_delta.get(segmented_key, ()) or ())
+        if not global_values or not segmented_values:
+            return False
+        changed = False
+        for global_location in tuple(global_values):
+            base = _tail_validation_global_write_offset_8616(global_location)
+            if not isinstance(base, int):
+                continue
+            matching_segmented = {
+                location
+                for location in segmented_values
+                if _tail_validation_linear_ds_write_offset_8616(location) in {base, base + 1}
+            }
+            if not any(_tail_validation_linear_ds_write_offset_8616(location) == base for location in matching_segmented):
+                continue
+            global_values.remove(global_location)
+            segmented_values.difference_update(matching_segmented)
+            changed = True
+        if changed:
+            global_delta[global_key] = tuple(sorted(global_values))
+            segmented_delta[segmented_key] = tuple(sorted(segmented_values))
+        return changed
+
+    _suppress("added", "removed")
+    _suppress("removed", "added")
+
+
 def compare_x86_16_tail_validation_summaries(
     before: X86_16TailValidationSummary,
     after: X86_16TailValidationSummary,
@@ -2459,10 +2782,19 @@ def compare_x86_16_tail_validation_summaries(
         "precision_improvements": precision_improvements,
     }
     for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS:
-        before_values = _canonicalize_summary_field_values_8616(field_name, set(getattr(before, field_name)))
-        after_values = _canonicalize_summary_field_values_8616(field_name, set(getattr(after, field_name)))
-        added = tuple(sorted(after_values - before_values))
-        removed = tuple(sorted(before_values - after_values))
+        if field_name == "helper_calls":
+            before_counter = _canonicalize_summary_field_counter_8616(field_name, getattr(before, field_name))
+            after_counter = _canonicalize_summary_field_counter_8616(field_name, getattr(after, field_name))
+            added = _counter_delta_items_8616(after_counter, before_counter)
+            removed = _counter_delta_items_8616(before_counter, after_counter)
+            missing_callsite_fingerprints = _missing_callsite_fingerprints_8616(getattr(after, field_name))
+            if missing_callsite_fingerprints:
+                removed = tuple(dict.fromkeys(tuple(removed) + missing_callsite_fingerprints))
+        else:
+            before_values = _canonicalize_summary_field_values_8616(field_name, set(getattr(before, field_name)))
+            after_values = _canonicalize_summary_field_values_8616(field_name, set(getattr(after, field_name)))
+            added = tuple(sorted(after_values - before_values))
+            removed = tuple(sorted(before_values - after_values))
         if _tail_validation_return_precision_improvement_8616(field_name, added=added, removed=removed):
             precision_improvements[field_name] = {"added": added, "removed": removed}
             added = ()
@@ -2470,6 +2802,12 @@ def compare_x86_16_tail_validation_summaries(
         if added or removed:
             changed = True
         diff["delta"][field_name] = {"added": added, "removed": removed}
+    _suppress_global_linear_ds_write_precision_delta_8616(diff)
+    changed = any(
+        bool((field_delta.get("added", ()) or ()) or (field_delta.get("removed", ()) or ()))
+        for field_delta in diff["delta"].values()
+        if isinstance(field_delta, dict)
+    )
     diff["changed"] = changed
     diff["status"] = "changed" if changed else "stable"
     return diff

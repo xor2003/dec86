@@ -1009,12 +1009,12 @@ def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codege
         if func is None:
             return False
 
+        positive_bp_changed = _promote_positive_bp_stack_slots_to_args_8616(project, codegen)
         prototype = getattr(func, "prototype", None)
         if prototype is None:
-            return _promote_positive_bp_stack_slots_to_args_8616(project, codegen)
+            return positive_bp_changed
         if not list(getattr(prototype, "args", ()) or ()):
-            if _promote_positive_bp_stack_slots_to_args_8616(project, codegen):
-                return True
+            return positive_bp_changed
         current_proto = getattr(getattr(codegen, "cfunc", None), "functy", None) or prototype
         existing_args = list(getattr(codegen.cfunc, "arg_list", ()) or ())
         c_target = str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat").strip().lower()
@@ -1069,7 +1069,13 @@ def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codege
         ):
             return True
 
-        return _promote_from_legacy_arg_names_8616(project=project, codegen=codegen, func=func, prototype=prototype, arg_names=arg_names)
+        return positive_bp_changed or _promote_from_legacy_arg_names_8616(
+            project=project,
+            codegen=codegen,
+            func=func,
+            prototype=prototype,
+            arg_names=arg_names,
+        )
 
     return _impl()
 
@@ -1089,13 +1095,51 @@ def _promote_positive_bp_stack_slots_to_args_8616(project: SimpleNamespace, code
         if not isinstance(offset, int) or offset < 4:
             continue
         candidates.setdefault(offset, (variable, cvar))
+    for node in _iter_c_nodes_deep_8616(getattr(cfunc, "statements", None)):
+        if not isinstance(node, CVariable):
+            continue
+        variable = getattr(node, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            continue
+        offset = getattr(variable, "offset", None)
+        if not isinstance(offset, int) or offset < 4:
+            continue
+        candidates.setdefault(offset, (variable, node))
+    for cvar in getattr(cfunc, "arg_list", ()) or ():
+        if not isinstance(cvar, CVariable):
+            continue
+        variable = getattr(cvar, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            continue
+        offset = getattr(variable, "offset", None)
+        if not isinstance(offset, int) or offset < 4:
+            continue
+        candidates.setdefault(offset, (variable, cvar))
     if not candidates:
         return False
+    contained_high_byte_args: dict[int, int] = {}
+    for offset, (variable, _cvar) in candidates.items():
+        size = int(getattr(variable, "size", 0) or 0)
+        if size != 1 or offset <= 4 or offset % 2 == 0:
+            continue
+        base_offset = offset - 1
+        base = candidates.get(base_offset)
+        if base is None:
+            continue
+        base_size = int(getattr(base[0], "size", 0) or 0)
+        if base_size >= 2:
+            contained_high_byte_args[offset] = base_offset
+    if contained_high_byte_args:
+        codegen._inertia_stack_arg_high_byte_projection_candidates_8616 = int(
+            getattr(codegen, "_inertia_stack_arg_high_byte_projection_candidates_8616", 0) or 0
+        ) + len(contained_high_byte_args)
     desired_args = []
     arg_types = []
     arg_names = []
     changed = False
     for index, (offset, (variable, cvar)) in enumerate(sorted(candidates.items())):
+        if offset in contained_high_byte_args:
+            continue
         width = max(2, int(getattr(variable, "size", 0) or 2))
         name = getattr(variable, "name", None)
         if not isinstance(name, str) or not name or re.fullmatch(r"(?:s_[0-9a-fA-F]+|v\d+|vvar_\d+|local_\d+)", name):
@@ -1128,6 +1172,53 @@ def _promote_positive_bp_stack_slots_to_args_8616(project: SimpleNamespace, code
     if getattr(cfunc, "functy", None) is not prototype:
         _set_codegen_prototype_8616(codegen, prototype)
         changed = True
+    if contained_high_byte_args:
+        base_cvars = {base_offset: candidates[base_offset][1] for base_offset in set(contained_high_byte_args.values())}
+
+        def _high_byte_projection(node):
+            if not isinstance(node, CVariable):
+                return node
+            variable = getattr(node, "variable", None)
+            if not isinstance(variable, SimStackVariable):
+                return node
+            offset = getattr(variable, "offset", None)
+            base_offset = contained_high_byte_args.get(offset)
+            if base_offset is None:
+                return node
+            base_cvar = base_cvars.get(base_offset)
+            if base_cvar is None:
+                return node
+            return CBinaryOp(
+                "Shr",
+                base_cvar,
+                CConstant(8, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            )
+
+        def _should_rewrite_high_byte_child(_parent, attr: str) -> bool:
+            return attr not in {"lhs", "variable"}
+
+        if _replace_c_children_8616(
+            cfunc.statements,
+            _high_byte_projection,
+            should_process_child=_should_rewrite_high_byte_child,
+        ):
+            changed = True
+            codegen._inertia_stack_arg_high_byte_projection_materialized_8616 = int(
+                getattr(codegen, "_inertia_stack_arg_high_byte_projection_materialized_8616", 0) or 0
+            ) + len(contained_high_byte_args)
+
+        contained_offsets = set(contained_high_byte_args)
+        for variable in tuple(variables_in_use):
+            if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) in contained_offsets:
+                del variables_in_use[variable]
+                changed = True
+        unified = getattr(cfunc, "unified_local_vars", None)
+        if isinstance(unified, dict):
+            for variable in tuple(unified):
+                if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) in contained_offsets:
+                    del unified[variable]
+                    changed = True
     if changed:
         codegen._inertia_positive_bp_args_materialized_8616 = (
             int(getattr(codegen, "_inertia_positive_bp_args_materialized_8616", 0) or 0) + len(desired_args)

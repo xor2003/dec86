@@ -58,7 +58,10 @@ def _is_materialized_named_stack_cvar(node) -> bool:
 
 
 def _generic_stack_local_name(name: object) -> bool:
-    return isinstance(name, str) and re.fullmatch(r"(?:local_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name) is not None
+    return (
+        isinstance(name, str)
+        and re.fullmatch(r"(?:arg_\d+|local_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name) is not None
+    )
 
 
 def _stack_name_from_cvar(cvar) -> str | None:
@@ -89,6 +92,46 @@ def _set_stack_cvar_name(cvar, name: str) -> bool:
             cvar.name = name
             changed = True
     return changed
+
+
+def _canonical_stack_declaration_name(
+    variable,
+    *,
+    identity,
+    arg_variables: set[int],
+    arg_identities: set[object],
+) -> str | None:
+    if not isinstance(variable, SimStackVariable):
+        return None
+    offset = getattr(identity, "offset", getattr(variable, "offset", None))
+    if not isinstance(offset, int):
+        return None
+    if id(variable) in arg_variables or identity in arg_identities:
+        return f"arg_{offset:x}"
+    if offset >= 0:
+        return f"local_{offset:x}"
+    return f"local_{-offset:x}"
+
+
+def _normalize_generic_stack_cvar_name(
+    cvar,
+    *,
+    identity,
+    arg_variables: set[int],
+    arg_identities: set[object],
+) -> bool:
+    current = _stack_name_from_cvar(cvar)
+    if not _generic_stack_local_name(current):
+        return False
+    new_name = _canonical_stack_declaration_name(
+        getattr(cvar, "variable", None),
+        identity=identity,
+        arg_variables=arg_variables,
+        arg_identities=arg_identities,
+    )
+    if not isinstance(new_name, str) or not new_name or new_name == current:
+        return False
+    return _set_stack_cvar_name(cvar, new_name)
 
 
 def _sync_unified_stack_local_names_from_live_cvars(
@@ -248,6 +291,13 @@ def _materialize_unified_stack_locals(
         identity = stack_slot_identity_for_variable(variable)
         if id(variable) in arg_variables or identity in arg_identities:
             continue
+        if _normalize_generic_stack_cvar_name(
+            cvar,
+            identity=identity,
+            arg_variables=arg_variables,
+            arg_identities=arg_identities,
+        ):
+            changed = True
         if identity is None or identity in existing_identities:
             continue
         variable_type = getattr(cvar, "variable_type", None)
@@ -296,7 +346,14 @@ def _materialize_missing_stack_local_declarations(
         }
 
         stack_local_candidates = getattr(codegen, "_inertia_stack_local_declaration_candidates", None)
-        source_variables = stack_local_candidates.values() if isinstance(stack_local_candidates, dict) else getattr(cfunc, "variables_in_use", {}).items()
+        source_by_id: dict[int, tuple[object, object]] = {}
+        if isinstance(stack_local_candidates, dict):
+            for variable, cvar in stack_local_candidates.values():
+                source_by_id[id(variable)] = (variable, cvar)
+        variables_in_use_obj = getattr(cfunc, "variables_in_use", None)
+        if isinstance(variables_in_use_obj, dict):
+            for variable, cvar in variables_in_use_obj.items():
+                source_by_id.setdefault(id(variable), (variable, cvar))
 
         changed_ref = {"changed": False}
         placeholder_cache: dict[str, structured_c.CVariable] = {}
@@ -326,6 +383,12 @@ def _materialize_missing_stack_local_declarations(
                 for identity in (stack_slot_identity_for_variable(getattr(node, "variable", None)),)
                 if identity is not None
             )
+            for node in iter_c_nodes_deep(cfunc.statements):
+                if not isinstance(node, structured_c.CVariable):
+                    continue
+                variable = getattr(node, "variable", None)
+                if isinstance(variable, SimStackVariable):
+                    source_by_id.setdefault(id(variable), (variable, node))
             if _sync_unified_stack_local_names_from_live_cvars(
                 cfunc=cfunc,
                 unified_locals=unified_locals,
@@ -346,7 +409,7 @@ def _materialize_missing_stack_local_declarations(
             changed_ref["changed"] = True
 
         if _materialize_unified_stack_locals(
-            source_variables=source_variables,
+            source_variables=tuple(source_by_id.values()),
             unified_locals=unified_locals,
             arg_variables=arg_variables,
             arg_identities=arg_identities,

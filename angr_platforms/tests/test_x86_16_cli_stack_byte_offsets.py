@@ -696,6 +696,209 @@ def test_rewrite_ss_stack_byte_offsets_handles_shl_segment_scale_alias_chain():
     assert rewritten.operand.expr.operand is stack_base_cvar
 
 
+def test_rewrite_ss_stack_byte_offsets_resolves_full_linear_carrier_plus_byte_offset():
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        project=SimpleNamespace(loader=None),
+        variables_in_use={},
+        unified_local_vars={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    stack_base_var = SimStackVariable(-6, 1, base="bp", name="iUp", region=0x10010)
+    stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    temp_var = SimRegisterVariable(0, 2, name="vvar_1375")
+    temp_cvar = structured_c.CVariable(temp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ss_cvar = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    cfunc.variables_in_use[stack_base_var] = stack_base_cvar
+    cfunc.variables_in_use[temp_var] = temp_cvar
+
+    full_linear = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Shl",
+            ss_cvar,
+            structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        structured_c.CUnaryOp("Reference", stack_base_cvar, codegen=codegen),
+        codegen=codegen,
+    )
+    deref = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CBinaryOp(
+            "Add",
+            temp_cvar,
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    sink_var = SimRegisterVariable(2, 2, name="vvar_1378")
+    sink_cvar = structured_c.CVariable(sink_var, variable_type=SimTypeShort(False), codegen=codegen)
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(temp_cvar, full_linear, codegen=codegen),
+            structured_c.CAssignment(sink_cvar, deref, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    changed = rewrites._rewrite_ss_stack_byte_offsets(
+        project,
+        codegen,
+        unwrap_c_casts=lambda expr: expr.expr if isinstance(expr, structured_c.CTypeCast) else expr,
+        iter_c_nodes_deep=decompile_iter_c_nodes_deep,
+        replace_c_children=decompile_replace_c_children,
+        c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
+        classify_segmented_dereference=lambda _node, _project: None,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: (
+            addr_expr.rhs if isinstance(addr_expr, structured_c.CBinaryOp) else addr_expr
+        ),
+        resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+        promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
+        stack_type_for_size=lambda _size: SimTypeShort(False),
+        materialize_stack_cvar_at_offset=lambda *_args, **_kwargs: None,
+        stack_slot_identity_for_variable=_stack_identity,
+        stack_pointer_alias_state=_AliasState,
+    )
+
+    assert changed is True
+    rewritten = cfunc.statements.statements[1].rhs
+    assert isinstance(rewritten, structured_c.CUnaryOp)
+    assert isinstance(rewritten.operand, structured_c.CTypeCast)
+    assert getattr(rewritten.operand.type.pts_to, "size", None) == 8
+    assert rewritten.operand.expr.lhs.operand is stack_base_cvar
+    assert rewritten.operand.expr.rhs.value == 1
+    assert codegen._inertia_ss_stack_byte_linear_carrier_resolved_8616 >= 1
+
+
+def test_rewrite_ss_stack_byte_offsets_resolves_virtual_ss_linear_carrier_with_real_strip_refusal():
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        project=SimpleNamespace(loader=None),
+        variables_in_use={},
+        unified_local_vars={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    sp_offset, sp_size = project.arch.registers["sp"]
+    ss_offset, ss_size = project.arch.registers["ss"]
+
+    sp_cvar = structured_c.CVariable(
+        SimRegisterVariable(sp_offset, sp_size, name="vvar_50"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    ss_cvar = structured_c.CVariable(
+        SimRegisterVariable(ss_offset, ss_size, name="vvar_56"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    vvar_58 = structured_c.CVariable(SimRegisterVariable(0x40, 2, name="vvar_58"), variable_type=SimTypeShort(False), codegen=codegen)
+    vvar_1362 = structured_c.CVariable(SimRegisterVariable(0x42, 2, name="vvar_1362"), variable_type=SimTypeShort(False), codegen=codegen)
+    vvar_1363 = structured_c.CVariable(SimRegisterVariable(0x44, 2, name="vvar_1363"), variable_type=SimTypeShort(False), codegen=codegen)
+    vvar_1372 = structured_c.CVariable(SimRegisterVariable(0x46, 2, name="vvar_1372"), variable_type=SimTypeShort(False), codegen=codegen)
+    vvar_1373 = structured_c.CVariable(SimRegisterVariable(0x48, 2, name="vvar_1373"), variable_type=SimTypeShort(False), codegen=codegen)
+    vvar_1375 = structured_c.CVariable(SimRegisterVariable(0x4A, 2, name="vvar_1375"), variable_type=SimTypeShort(False), codegen=codegen)
+    sink_cvar = structured_c.CVariable(SimRegisterVariable(0x4C, 2, name="vvar_1378"), variable_type=SimTypeShort(False), codegen=codegen)
+
+    full_linear = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Shl",
+            vvar_1373,
+            structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        vvar_1363,
+        codegen=codegen,
+    )
+    deref = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CBinaryOp(
+            "Add",
+            vvar_1375,
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    cfunc.statements = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                vvar_58,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    sp_cvar,
+                    structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(vvar_1362, vvar_58, codegen=codegen),
+            structured_c.CAssignment(
+                vvar_1363,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    vvar_1362,
+                    structured_c.CConstant(6, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(vvar_1372, ss_cvar, codegen=codegen),
+            structured_c.CAssignment(vvar_1373, vvar_1372, codegen=codegen),
+            structured_c.CAssignment(vvar_1375, full_linear, codegen=codegen),
+            structured_c.CAssignment(sink_cvar, deref, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+
+    changed = rewrites._rewrite_ss_stack_byte_offsets(
+        project,
+        codegen,
+        unwrap_c_casts=lambda expr: expr.expr if isinstance(expr, structured_c.CTypeCast) else expr,
+        iter_c_nodes_deep=decompile_iter_c_nodes_deep,
+        replace_c_children=decompile_replace_c_children,
+        c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
+        flatten_c_add_terms=lambda node: (
+            [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node]
+        ),
+        classify_segmented_dereference=lambda _node, _project: None,
+        strip_segment_scale_from_addr_expr=lambda _addr_expr, _project: None,
+        resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+        promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
+        stack_type_for_size=lambda _size: SimTypeShort(False),
+        materialize_stack_cvar_at_offset=lambda *_args, **_kwargs: None,
+        stack_slot_identity_for_variable=_stack_identity,
+        stack_pointer_alias_state=_AliasState,
+    )
+
+    assert changed is True
+    rewritten = cfunc.statements.statements[-1].rhs
+    assert isinstance(rewritten, structured_c.CUnaryOp)
+    assert isinstance(rewritten.operand, structured_c.CTypeCast)
+    assert getattr(rewritten.operand.type.pts_to, "size", None) == 8
+    ref = rewritten.operand.expr
+    assert isinstance(ref, structured_c.CBinaryOp)
+    assert ref.lhs.operand.variable.base == "sp"
+    assert ref.rhs.value == -7
+    assert codegen._inertia_ss_stack_byte_segment_strip_materialized_8616 >= 1
+
+
 def test_rewrite_ss_stack_byte_offsets_rewrites_for_loop_iterator_store():
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(

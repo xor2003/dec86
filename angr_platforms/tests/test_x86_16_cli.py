@@ -14,6 +14,7 @@ import decompile
 import inertia_decompiler.cache as recovery_cache
 import inertia_decompiler.cli_core as cli_core
 import inertia_decompiler.cli_decompilation as cli_decompilation
+import inertia_decompiler.cli_linear_recurrence_state as cli_linear_recurrence_state
 import inertia_decompiler.decompile_file_summary as file_summary
 import inertia_decompiler.non_optimized_fallback as non_optimized_fallback
 import inertia_decompiler.sidecar_cache as sidecar_cache
@@ -147,6 +148,116 @@ def test_codegen_render_refresh_signal_is_structured_and_consumed():
     assert cli_decompilation._codegen_requires_render_refresh_8616(codegen) is False
 
 
+def test_postprocess_regenerated_text_is_reused_as_current_render():
+    codegen = SimpleNamespace(
+        text="int f(void) { return 0; }\n",
+        _inertia_regeneration_failed=False,
+        _inertia_regeneration_context="0x1000 f",
+    )
+
+    assert cli_decompilation._postprocess_regenerated_text_available_8616(codegen) is True
+
+    codegen._inertia_regeneration_failed = True
+    assert cli_decompilation._postprocess_regenerated_text_available_8616(codegen) is False
+
+    codegen._inertia_regeneration_failed = False
+    codegen._inertia_regeneration_context = ""
+    assert cli_decompilation._postprocess_regenerated_text_available_8616(codegen) is False
+
+
+def test_regenerate_text_skips_callsite_replay_after_selector_return_materialization(monkeypatch):
+    replay_calls = 0
+
+    def fake_replay(_project, _codegen):
+        nonlocal replay_calls
+        replay_calls += 1
+        raise AssertionError("callsite replay must not run under selector-return contract")
+
+    monkeypatch.setattr(
+        cli_decompilation,
+        "replay_callsite_stack_arguments_after_regeneration_8616",
+        fake_replay,
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(c_repr=lambda: "int f(void)\n{\n    if (which)\n        return a;\n    return b;\n}\n"),
+        text="int f(void)\n{\n    return old;\n}\n",
+        project=None,
+        _inertia_callsite_args_ast_materialized_8616=True,
+        _inertia_return_selector_materialized_8616=True,
+        _inertia_postprocess_changed=True,
+    )
+
+    text, regenerated = cli_decompilation._regenerate_codegen_text_safely(codegen, context="0x1000 f")
+
+    assert regenerated is True
+    assert "if (which)" in text
+    assert "return b;" in text
+    assert replay_calls == 0
+
+
+def test_evidence_recovered_c_does_not_override_valid_ast_text():
+    formatted = "int f(void)\n{\n    return 1;\n}\n"
+    evidence = "int f(void)\n{\n    return 2;\n}\n"
+
+    assert cli_decompilation._select_evidence_recovered_c_8616(formatted, evidence) == formatted
+
+
+def test_evidence_recovered_c_rescues_rejected_ast_text():
+    formatted = "int f(void)\n{\n    return stack_base;\n}\n"
+    evidence = "int f(void)\n{\n    return 2;\n}\n"
+
+    assert cli_decompilation._select_evidence_recovered_c_8616(formatted, evidence) == evidence
+
+
+def test_validated_nontrivial_x86_16_refuses_legacy_cli_rewrite():
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+
+    assert (
+        cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
+            project,
+            small_function=False,
+            tail_validation_passed=True,
+        )
+        is True
+    )
+    assert (
+        cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
+            project,
+            small_function=True,
+            tail_validation_passed=True,
+        )
+        is False
+    )
+    assert (
+        cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
+            project,
+            small_function=False,
+            tail_validation_passed=False,
+        )
+        is False
+    )
+
+
+def test_acceptance_failure_does_not_mutate_tail_validation_snapshot():
+    snapshot = {
+        "structuring": {"status": "stable", "changed": False},
+        "postprocess": {"status": "stable", "changed": False},
+    }
+
+    result = cli_core._validated_generated_c_acceptance_8616(
+        status="ok",
+        payload="void f(void)\n{\n    ...;\n}\n",
+        tail_validation_snapshot=snapshot,
+        tail_validation_enabled=True,
+        expected_validation_stages=["structuring", "postprocess"],
+        emit_failure_diagnostics=False,
+    )
+
+    assert result.status == "validation_failed"
+    assert snapshot["postprocess"]["status"] == "stable"
+    assert snapshot["postprocess"]["changed"] is False
+
+
 def test_source_call_arity_score_rejects_stale_sleep_arity():
     metadata = CODProcMetadata(
         stack_aliases={},
@@ -180,6 +291,78 @@ def test_source_call_arity_score_rejects_stale_sleep_arity():
     assert cli_decompilation._expected_call_arity_score_8616(materialized, metadata) == 2
     assert cli_decompilation._expected_call_arity_deficit_8616(stale, metadata) == 2
     assert cli_decompilation._expected_call_arity_deficit_8616(materialized, metadata) == 0
+
+
+def test_live_call_rehydration_refuses_without_rendered_snapshot(monkeypatch):
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("puts",),
+        call_sources=(("puts", "puts(\"x\")"),),
+        global_names=(),
+        source_lines=(),
+        source_line_set=frozenset(),
+    )
+
+    def fail_recovery(*_args, **_kwargs):
+        raise AssertionError("recovery must not run without rendered C evidence")
+
+    monkeypatch.setattr(cli_decompilation, "_recover_missing_direct_calls_from_evidence_8616", fail_recovery)
+
+    out = cli_decompilation._rehydrate_missing_evidenced_calls_on_live_codegen_8616(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        metadata,
+        "",
+    )
+
+    assert out == ""
+
+
+def test_call_order_gate_treats_nested_argument_call_as_before_outer_call():
+    emitted = """
+    /* COD annotations:
+     * calls = time, srand, getvideoconfig
+     */
+
+    void InitBars(void)
+    {
+        srand(time(0));
+        getvideoconfig();
+    }
+    """
+
+    assert cli_core._ordered_call_names_from_text_8616("srand(time(0));") == ["time", "srand"]
+    assert cli_core._call_order_gate_violations_8616(emitted) == []
+
+
+def test_linear_recurrence_binary_rebuild_refuses_unarched_type(monkeypatch):
+    codegen = SimpleNamespace(_inertia_stack_lowering_debug={})
+    state = cli_linear_recurrence_state.LinearRecurrenceState(
+        project=SimpleNamespace(),
+        codegen=codegen,
+        unwrap_c_casts=lambda expr: expr,
+        structured_codegen_node=lambda _expr: False,
+        iter_c_nodes_deep=lambda _root: (),
+        same_c_expression=lambda _lhs, _rhs: False,
+        c_constant_value=lambda _expr: None,
+        canonicalize_stack_cvar_expr=lambda expr, _codegen: expr,
+        seed_adjacent_byte_pair_aliases=lambda _project, _codegen: {},
+        describe_alias_storage=lambda _expr: None,
+        analyze_widening_expr=lambda *_args: None,
+        match_high_byte_projection_base=lambda *_args: None,
+        match_duplicate_word_base_expr=lambda *_args: None,
+        match_duplicate_word_increment_shift_expr=lambda *_args: None,
+        same_stack_slot_identity_var=lambda *_args: False,
+    )
+
+    def raise_unarched_type(*_args, **_kwargs):
+        raise ValueError("Can't tell my size without an arch!")
+
+    monkeypatch.setattr(cli_linear_recurrence_state.structured_c, "CBinaryOp", raise_unarched_type)
+
+    assert state.build_binary_op_or_none("Add", object(), object()) is None
+    assert state.recurrence_reasons == {"binary_rebuild_unarched_type": 1}
+    assert codegen._inertia_stack_lowering_debug["recurrence_reasons"] == {"binary_rebuild_unarched_type": 1}
 
 
 def test_sync_recovered_function_metadata_from_kb_copies_annotations_to_distinct_function_object():
@@ -526,6 +709,19 @@ def test_heavy_fallback_lane_policy_stays_closed_for_sweep_runs():
         max_functions=8,
         addr_requested=True,
     )
+
+
+def test_explicit_direct_addr_timeout_disables_hidden_validation_retries():
+    assert cli_core._direct_addr_validation_retry_count_8616(
+        timeout_was_explicit=True,
+        args_timeout=60,
+    ) == 0
+    assert cli_core._direct_addr_validation_retry_count_8616(
+        timeout_was_explicit=False,
+        args_timeout=60,
+    ) == 2
+    assert cli_core._direct_addr_robust_retry_enabled_8616(timeout_was_explicit=True) is False
+    assert cli_core._direct_addr_robust_retry_enabled_8616(timeout_was_explicit=False) is True
 
 
 def test_adaptive_per_byte_timeout_model_scales_from_successes():
@@ -894,6 +1090,15 @@ def test_preferred_decompiler_options_accepts_tiny_single_call_helpers():
         ("structurer_cls", "Phoenix")
     ]
     assert decompile._preferred_decompiler_options(3, 0x14, tiny_single_call_helper=False) is None
+
+
+def test_preferred_decompiler_options_disables_expensive_clinic_work_for_large_16bit_functions():
+    assert decompile._preferred_decompiler_options(76, 0x1AE, large_16bit_function=True) == [
+        ("rewrite_ites_to_diamonds", False),
+        ("semvar_naming", False),
+        ("remove_dead_memdefs", False),
+    ]
+    assert decompile._preferred_decompiler_options(76, 0x1AE) is None
 
 
 @pytest.mark.parametrize(
@@ -4973,6 +5178,39 @@ def test_register_direct_call_target_function_stubs_falls_back_to_capstone_direc
     assert set(created) == {(0x140D, True), (0x1140D, True)}
 
 
+def test_register_direct_call_target_function_stubs_preserves_duplicate_callee_callsites(monkeypatch):
+    created = []
+
+    class FakeFunctionManager:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            created.append((addr, create))
+            return SimpleNamespace(addr=addr)
+
+    function = SimpleNamespace(
+        _call_sites={},
+        get_call_return=lambda site: site + 3,
+    )
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0, max_addr=0x4000)),
+        kb=SimpleNamespace(functions=FakeFunctionManager()),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_collect_direct_calls_8616",
+        lambda *_args: [(0x1006, 0x140D, 0x1009), (0x1010, 0x140D, 0x1013)],
+    )
+
+    count = decompile._register_direct_call_target_function_stubs(project, function)
+
+    assert count == 1
+    assert created == [(0x140D, True)]
+    assert function._call_sites == {
+        0x1006: (0x140D, 0x1009),
+        0x1010: (0x140D, 0x1013),
+    }
+
+
 def test_collect_direct_calls_skips_stale_non_call_inventory_and_uses_capstone():
     blocks = {
         0x10010: SimpleNamespace(
@@ -4996,6 +5234,57 @@ def test_collect_direct_calls_skips_stale_non_call_inventory_and_uses_capstone()
     direct_calls = cli_decompilation._collect_direct_calls_8616(project, function)
 
     assert direct_calls == [(0x10016, 0x140D, 0x10019)]
+
+
+def test_collect_direct_calls_merges_capstone_calls_when_inventory_is_partial():
+    blocks = {
+        0x10010: SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=[
+                    SimpleNamespace(address=0x10010, mnemonic="call", op_str="0x140D", insn=SimpleNamespace(size=3)),
+                    SimpleNamespace(address=0x10020, mnemonic="call", op_str="0x151E", insn=SimpleNamespace(size=3)),
+                ]
+            )
+        )
+    }
+    function = SimpleNamespace(
+        block_addrs_set=set(blocks),
+        get_call_sites=lambda: [0x10010],
+        get_call_target=lambda _site: 0x140D,
+        get_call_return=lambda _site: 0x10013,
+    )
+    project = SimpleNamespace(factory=SimpleNamespace(block=lambda block_addr, opt_level=0: blocks[block_addr]))
+
+    direct_calls = cli_decompilation._collect_direct_calls_8616(project, function)
+
+    assert direct_calls == [(0x10010, 0x140D, 0x10013), (0x10020, 0x151E, 0x10023)]
+
+
+def test_collect_direct_calls_merges_linear_exact_region_calls(monkeypatch):
+    function = SimpleNamespace(
+        block_addrs_set=set(),
+        get_call_sites=lambda: [0x10010],
+        get_call_target=lambda _site: 0x140D,
+        get_call_return=lambda _site: 0x10013,
+    )
+    project = SimpleNamespace(
+        _inertia_original_linear_delta=0x10000,
+        factory=SimpleNamespace(block=lambda _block_addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=()))),
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_direct_call_stub_filter_regions",
+        lambda _project, _function: ([(0x10010, 0x10040)], (0x20010, 0x20040)),
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_iter_linear_region_direct_calls_8616",
+        lambda _project, _regions: iter(((0x10010, 0x140D, 0x10013), (0x10020, 0x151E, 0x10023))),
+    )
+
+    direct_calls = cli_decompilation._collect_direct_calls_8616(project, function)
+
+    assert direct_calls == [(0x10010, 0x140D, 0x10013), (0x10020, 0x151E, 0x10023)]
 
 
 def test_mark_stitched_return_sites_handles_jump_endpoint_without_undefined_target():
@@ -5304,6 +5593,53 @@ def test_register_direct_call_target_function_stubs_names_binary_signature_stack
     assert count == 1
     assert function._call_sites[0x10017] == (0x103BE, 0x1001A)
     assert created[0x103BE].name == "aNchkstk"
+
+
+def test_register_direct_call_target_function_stubs_names_raw_original_stack_probe_candidate():
+    helper_bytes = bytes.fromhex("59 8b dc 2b d8 72 0a 3b 1e b6 00 72 04 8b e3 ff e1")
+    created = {}
+
+    class FakeFunctionManager:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            if create:
+                return created.setdefault(addr, SimpleNamespace(addr=addr, name=f"sub_{addr:x}"))
+            if addr == 0x11222:
+                return SimpleNamespace(addr=addr, name="sub_11222")
+            return None
+
+    def _load(addr: int, size: int):
+        if addr != 0x11222:
+            raise KeyError(addr)
+        return helper_bytes[:size]
+
+    function = SimpleNamespace(
+        addr=0x1000,
+        _call_sites={},
+        get_call_sites=lambda: [0x1006],
+        get_call_target=lambda _site: 0x11222,
+        get_call_return=lambda _site: 0x1009,
+    )
+    original_project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=_load)),
+        kb=SimpleNamespace(functions=FakeFunctionManager(), labels={}),
+    )
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        entry=0x1000,
+        _inertia_original_project=original_project,
+        _inertia_original_linear_delta=0xFC18,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x1000, max_addr=0x20BB),
+        ),
+        kb=SimpleNamespace(functions=FakeFunctionManager(), labels={}),
+    )
+
+    count = decompile._register_direct_call_target_function_stubs(project, function)
+
+    assert count == 1
+    assert function._call_sites[0x1006] == (0x11222, 0x1009)
+    assert created[0x11222].name == "aNchkstk"
 
 
 def test_rank_exe_function_seeds_uses_persistent_cache(monkeypatch, tmp_path):

@@ -22,6 +22,8 @@ _spec.loader.exec_module(_decompile)
 from angr_platforms.X86_16 import decompiler_postprocess as postprocess  # noqa: E402
 from angr_platforms.X86_16.annotations import (  # noqa: E402
     ANNOTATION_KEY,
+    _source_decl_from_cod_source_lines,
+    _source_decl_from_cod_source_lines_cached_8616,
     _parse_c_prototype_8616,
     _normalize_arg_names as _normalize_annotation_arg_names,
 )
@@ -44,6 +46,23 @@ class _DummyFunction:
 
     def get_call_sites(self):
         return self._call_sites
+
+
+def test_source_decl_from_cod_source_lines_is_cached_by_function_name():
+    _source_decl_from_cod_source_lines_cached_8616.cache_clear()
+    source_lines = (
+        "int helper(int x);",
+        "void HeapSort(void)",
+        "{",
+        "}",
+    )
+
+    assert _source_decl_from_cod_source_lines(source_lines, "HeapSort") == "void HeapSort(void);"
+    first_info = _source_decl_from_cod_source_lines_cached_8616.cache_info()
+    assert first_info.misses == 1
+    assert _source_decl_from_cod_source_lines(source_lines, "HeapSort") == "void HeapSort(void);"
+    second_info = _source_decl_from_cod_source_lines_cached_8616.cache_info()
+    assert second_info.hits == first_info.hits + 1
 
 
 class _FakeInsn:
@@ -322,6 +341,45 @@ def test_attach_cod_variable_names_uses_normalized_bp_displacements():
     assert codegen.cfunc.variables_in_use[arg_lhs].unified_variable.name == "lhs"
     assert codegen.cfunc.variables_in_use[arg_rhs].unified_variable.name == "rhs"
     assert codegen.cfunc.variables_in_use[local_tmp].unified_variable.name == "tmp"
+
+
+def test_attach_cod_variable_names_prefers_exact_negative_bp_displacements():
+    switch_slot = SimStackVariable(-8, 2, base="bp", name="arg_6", region=0x1000)
+    limit_slot = SimStackVariable(-6, 2, base="bp", name="local_6", region=0x1000)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            variables_in_use={
+                switch_slot: SimpleNamespace(unified_variable=SimpleNamespace(name="arg_6")),
+                limit_slot: SimpleNamespace(unified_variable=SimpleNamespace(name="local_6")),
+            }
+        )
+    )
+    cod_metadata = SimpleNamespace(stack_aliases={-8: "iSwitch", -6: "iLimit"})
+
+    changed = _decompile._attach_cod_variable_names(codegen, cod_metadata)
+
+    assert changed is True
+    assert switch_slot.name == "iSwitch"
+    assert limit_slot.name == "iLimit"
+    assert codegen.cfunc.variables_in_use[switch_slot].unified_variable.name == "iSwitch"
+    assert codegen.cfunc.variables_in_use[limit_slot].unified_variable.name == "iLimit"
+
+
+def test_attach_cod_variable_names_visits_stack_nodes_missing_from_variables_in_use():
+    stack_var = SimStackVariable(-8, 2, base="bp", name="arg_6", region=0x1000)
+    codegen = SimpleNamespace(next_idx=lambda _kind: 0)
+    stack_node = structured_c.CVariable(stack_var, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=stack_node,
+        variables_in_use={},
+    )
+    cod_metadata = SimpleNamespace(stack_aliases={-8: "iSwitch"})
+
+    changed = _decompile._attach_cod_variable_names(codegen, cod_metadata)
+
+    assert changed is True
+    assert stack_var.name == "iSwitch"
+    assert codegen.cfunc.variables_in_use[stack_var] is stack_node
 
 
 def test_attach_project_cod_source_annotations_merges_stack_aliases():
