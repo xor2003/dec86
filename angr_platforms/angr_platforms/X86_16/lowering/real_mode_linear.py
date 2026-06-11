@@ -4433,7 +4433,13 @@ def _global_cvar_identity_8616(cvar) -> tuple[int, int | None] | None:
 def _same_global_cvar_8616(lhs, rhs) -> bool:
     lhs_id = _global_cvar_identity_8616(lhs)
     rhs_id = _global_cvar_identity_8616(rhs)
-    return lhs_id is not None and lhs_id == rhs_id
+    if lhs_id is None or rhs_id is None:
+        return False
+    lhs_addr, lhs_size = lhs_id
+    rhs_addr, rhs_size = rhs_id
+    if (lhs_addr & 0xFFFF) != (rhs_addr & 0xFFFF):
+        return False
+    return lhs_size is None or rhs_size is None or lhs_size == rhs_size
 
 
 def _is_same_global_update_assignment_8616(stmt, dst_cvar, delta: int) -> bool:

@@ -256,7 +256,7 @@ from inertia_decompiler.non_optimized_fallback import (
 )
 
 print = _timestamped_print
-__all__ = ['_normalize_anonymous_call_targets', '_prune_void_function_return_values_text', '_contains_void_function_definition_text', '_normalize_function_signature_arg_names', '_materialize_missing_generic_local_declarations_text', '_hoist_c89_local_declarations_text', '_materialize_annotated_cod_declarations_text', '_materialize_opaque_pointer_typedefs_text', '_source_args_from_cod_source_lines', '_repair_missing_cod_function_header_text', '_render_cod_source_function_text', '_restore_collapsed_cod_source_function_text', '_dedupe_duplicate_local_declarations_text', '_normalize_spurious_duplicate_local_suffixes', '_collapse_duplicate_type_keywords_text', '_dedupe_adjacent_prototype_lines', '_sanitize_mangled_autonames_text', '_prune_trailing_generic_return_text', '_collapse_annotated_stack_aliases_text', '_split_top_level_binary', '_simplify_negated_condition', '_simplify_condition_line', '_simplify_x86_16_conditions', '_split_simple_assignment_conditions', '_simplify_x86_16_wrapped_stack_offsets', '_simplify_x86_16_stack_byte_pointers', '_format_bp_disp', '_annotate_cod_proc_output', '_prune_unused_staging_assignments', '_rewrite_known_helper_signature_text', '_prune_unused_local_declarations_text', '_format_known_helper_calls', '_repair_missing_fallthrough_returns', '_normalize_boolean_conditions', '_normalize_mk_fp_segment_names', '_simplify_x86_16_stack_references']
+__all__ = ['_normalize_anonymous_call_targets', '_prune_void_function_return_values_text', '_prune_void_call_assignments_text', '_contains_void_function_definition_text', '_normalize_function_signature_arg_names', '_materialize_missing_generic_local_declarations_text', '_hoist_c89_local_declarations_text', '_materialize_annotated_cod_declarations_text', '_materialize_opaque_pointer_typedefs_text', '_source_args_from_cod_source_lines', '_repair_missing_cod_function_header_text', '_render_cod_source_function_text', '_restore_collapsed_cod_source_function_text', '_dedupe_duplicate_local_declarations_text', '_normalize_spurious_duplicate_local_suffixes', '_collapse_duplicate_type_keywords_text', '_dedupe_adjacent_prototype_lines', '_sanitize_mangled_autonames_text', '_prune_trailing_generic_return_text', '_collapse_annotated_stack_aliases_text', '_split_top_level_binary', '_simplify_negated_condition', '_simplify_condition_line', '_simplify_x86_16_conditions', '_split_simple_assignment_conditions', '_simplify_x86_16_wrapped_stack_offsets', '_simplify_x86_16_stack_byte_pointers', '_format_bp_disp', '_annotate_cod_proc_output', '_prune_unused_staging_assignments', '_rewrite_known_helper_signature_text', '_prune_unused_local_declarations_text', '_format_known_helper_calls', '_repair_missing_fallthrough_returns', '_normalize_boolean_conditions', '_normalize_mk_fp_segment_names', '_simplify_x86_16_stack_references']
 
 
 def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
@@ -543,6 +543,46 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
 
     return _impl()
 
+def _collect_void_function_names_from_c_text_8616(c_text: str) -> set[str]:
+    names: set[str] = set()
+    header_re = re.compile(
+        r"^\s*void\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:;|\{)?\s*$"
+    )
+    for line in c_text.splitlines():
+        match = header_re.match(line)
+        if match is not None:
+            names.add(match.group("name"))
+    return names
+
+
+def _prune_void_call_assignments_text(c_text: str) -> str:
+    def _impl():
+        void_names = _collect_void_function_names_from_c_text_8616(c_text)
+        if not void_names:
+            return c_text
+        assignment_re = re.compile(
+            r"^(?P<indent>\s*)(?P<lhs>[A-Za-z_]\w*)\s*=\s*(?P<callee>[A-Za-z_]\w*)\s*\((?P<args>[^;{}]*)\);\s*$"
+        )
+        lines = c_text.splitlines()
+        changed = False
+        out_lines: list[str] = []
+        for line in lines:
+            match = assignment_re.match(line)
+            if match is None or match.group("callee") not in void_names:
+                out_lines.append(line)
+                continue
+            out_lines.append(f"{match.group('indent')}{match.group('callee')}({match.group('args')});")
+            changed = True
+        if not changed:
+            return c_text
+        result = "\n".join(out_lines)
+        if c_text.endswith("\n"):
+            result += "\n"
+        return result
+
+    return _impl()
+
+
 def _contains_void_function_definition_text(c_text: str) -> bool:
     lines = c_text.splitlines()
     header_start_re = re.compile(r"^\s*void\s+[A-Za-z_]\w*\s*\(")
@@ -744,8 +784,16 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
             decl_part = line.split("//", 1)[0].strip()
             if not decl_part or decl_part.startswith(("/*", "*")):
                 return None
-            if "(" in decl_part or ")" in decl_part or "{" in decl_part or "}" in decl_part:
+            if "{" in decl_part or "}" in decl_part:
                 return None
+            if "(" in decl_part or ")" in decl_part:
+                funcptr_match = re.search(r"\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)", decl_part)
+                if funcptr_match is None or not decl_part.endswith(";"):
+                    return None
+                name = funcptr_match.group("name")
+                if not generic_name_re.fullmatch(name):
+                    return None
+                return name
             match = decl_name_re.search(decl_part)
             if match is None:
                 return None
@@ -948,6 +996,7 @@ def _materialize_annotated_cod_declarations_text(
     metadata: CODProcMetadata | None,
     *,
     preserve_source_header: bool = False,
+    source_return_types: Mapping[str, str] | None = None,
 ) -> str:
     def _impl():
         if metadata is None or function is None:
@@ -1067,6 +1116,7 @@ def _materialize_annotated_cod_declarations_text(
         prototype_declarations, declarations = _collect_cod_materialized_decls_8616(
             metadata=metadata,
             source_prototypes=source_prototypes,
+            source_return_types=source_return_types,
             func_name=func_name,
             body_text=body_text,
             declared_names=declared_names,
@@ -1080,7 +1130,7 @@ def _materialize_annotated_cod_declarations_text(
             body_end += len(prototype_declarations) + 1
 
         if not declarations:
-            if not header_changed:
+            if not header_changed and not prototype_declarations:
                 return c_text
             return _join_lines_like_input_8616(lines, c_text)
 
@@ -1332,10 +1382,33 @@ def _normalize_existing_decl_names_8616(
             )
 
 
+def _source_void_forward_decl_8616(name: str, source_return_types: Mapping[str, str] | None) -> str | None:
+    if not isinstance(name, str) or not name:
+        return None
+    if source_return_types is None:
+        return None
+    return_type = source_return_types.get(name)
+    if return_type is None:
+        return_type = source_return_types.get(name.lstrip("_"))
+    if return_type != "void":
+        return None
+    return f"void {name}();"
+
+
+def _return_only_helper_decl_8616(name: str, helper_decl: str) -> str:
+    head = helper_decl.split("(", 1)[0].strip()
+    if head.endswith(name):
+        return_type = head[: -len(name)].strip()
+        if return_type:
+            return f"{return_type} {name}();"
+    return f"int {name}();"
+
+
 def _collect_cod_materialized_decls_8616(
     *,
     metadata: CODProcMetadata,
     source_prototypes: dict[str, str],
+    source_return_types: Mapping[str, str] | None,
     func_name: str,
     body_text: str,
     declared_names: set[str],
@@ -1361,7 +1434,13 @@ def _collect_cod_materialized_decls_8616(
             if not re.search(rf"(?<![A-Za-z_]){re.escape(normalized_call_name)}\s*\(", body_text):
                 continue
             helper_decl = preferred_known_helper_signature_decl(call_name)
-            prototype_declarations.append(helper_decl.rstrip(";").strip() + ";" if helper_decl is not None else f"int {normalized_call_name}();")
+            source_decl = _source_void_forward_decl_8616(normalized_call_name, source_return_types)
+            if helper_decl is not None:
+                prototype_declarations.append(helper_decl.rstrip(";").strip() + ";")
+            elif source_decl is not None:
+                prototype_declarations.append(source_decl)
+            else:
+                prototype_declarations.append(f"int {normalized_call_name}();")
             seen_declared.add(normalized_call_name)
         for global_name in metadata.global_names:
             if not isinstance(global_name, str) or not global_name:
@@ -1628,7 +1707,12 @@ def _materialize_missing_segment_macro_locals_text(c_text: str) -> str:
     return _impl()
 
 
-def _prototype_for_direct_call(name: str, observed_arg_count: int | None) -> str:
+def _prototype_for_direct_call(
+    name: str,
+    observed_arg_count: int | None,
+    *,
+    source_return_types: Mapping[str, str] | None = None,
+) -> str:
     helper_decl = preferred_known_helper_signature_decl(name)
     if helper_decl is not None:
         match = re.search(r"\((?P<args>[^)]*)\)", helper_decl)
@@ -1641,8 +1725,11 @@ def _prototype_for_direct_call(name: str, observed_arg_count: int | None) -> str
                 helper_arg_count = len([part for part in arg_text.split(",") if part.strip()])
         if isinstance(helper_arg_count, int) and isinstance(observed_arg_count, int):
             if helper_arg_count != observed_arg_count:
-                return f"int {name}();"
+                return _return_only_helper_decl_8616(name, helper_decl)
         return helper_decl.rstrip(";").strip() + ";"
+    source_decl = _source_void_forward_decl_8616(name, source_return_types)
+    if source_decl is not None:
+        return source_decl
     return f"int {name}();"
 
 
@@ -1787,7 +1874,17 @@ def _collect_direct_calls_and_observed_arity(lines: list[str], c_text: str, decl
             "ispunct",
             "isxdigit",
         }
-        runtime_helpers = {"SEG_U8", "SEG_U16", "SEG_U32", "SEG_PTR", "SEG_LINEAR", "MK_FP"}
+        runtime_helpers = {
+            "SEG_U8",
+            "SEG_U16",
+            "SEG_U32",
+            "SEG_PTR",
+            "SEG_LINEAR",
+            "MK_FP",
+            "MEM_U8",
+            "MEM_U16",
+            "MEM_U32",
+        }
         parameter_names = _collect_function_parameter_names_8616(lines)
         calls: list[str] = []
         observed_args: dict[str, int] = {}
@@ -1831,7 +1928,11 @@ def _find_first_function_insert_index(lines: list[str]) -> int | None:
     return None
 
 
-def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
+def _materialize_missing_direct_call_prototypes_text(
+    c_text: str,
+    *,
+    source_return_types: Mapping[str, str] | None = None,
+) -> str:
     lines = c_text.splitlines()
     if not lines:
         return c_text
@@ -1842,7 +1943,10 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
     insert_at = _find_first_function_insert_index(lines)
     if insert_at is None:
         return c_text
-    prototypes = [_prototype_for_direct_call(name, observed_args.get(name)) for name in calls]
+    prototypes = [
+        _prototype_for_direct_call(name, observed_args.get(name), source_return_types=source_return_types)
+        for name in calls
+    ]
     if insert_at > 0 and lines[insert_at - 1].strip():
         prototypes.append("")
     lines[insert_at:insert_at] = prototypes
@@ -2207,6 +2311,22 @@ def _source_function_prototype_decls_from_cod_source_lines(source_lines: Sequenc
     if not source_lines:
         return {}
     prototypes: dict[str, str] = {}
+    non_decl_heads = frozenset(
+        {
+            "break",
+            "case",
+            "continue",
+            "default",
+            "do",
+            "else",
+            "for",
+            "goto",
+            "if",
+            "return",
+            "switch",
+            "while",
+        }
+    )
     prototype_re = re.compile(
         r"^\s*(?P<decl>(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^()]*)\))\s*;\s*(?://.*)?$"
     )
@@ -2214,6 +2334,9 @@ def _source_function_prototype_decls_from_cod_source_lines(source_lines: Sequenc
         line = str(raw_line).strip()
         match = prototype_re.match(line)
         if match is None:
+            continue
+        ret_head = match.group("ret").strip().split(None, 1)[0]
+        if ret_head in non_decl_heads:
             continue
         name = match.group("name")
         prototypes[name] = f"{match.group('decl').strip()};"
@@ -3242,6 +3365,12 @@ def _collapse_annotated_stack_aliases_text(c_text: str) -> str:
         decl_re = re.compile(
             r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*// \[bp(?P<sign>[+-])0x(?P<value>[0-9A-Fa-f]+)\]\s*(?P<alias>[A-Za-z_]\w*)\s*$"
         )
+        funcptr_decl_re = re.compile(
+            r"^(?P<indent>\s*)(?P<prefix>.+?\(\s*\*)"
+            r"(?P<name>[A-Za-z_]\w*)"
+            r"(?P<suffix>\s*\)\s*\([^;]*\))\s*;\s*"
+            r"// \[bp(?P<sign>[+-])0x(?P<value>[0-9A-Fa-f]+)\]\s*(?P<alias>[A-Za-z_]\w*)\s*$"
+        )
 
         def _split_args(args_text: str) -> list[str]:
             if not args_text.strip():
@@ -3305,51 +3434,76 @@ def _collapse_annotated_stack_aliases_text(c_text: str) -> str:
                 brace_depth += lines[body_end].count("{") - lines[body_end].count("}")
                 body_end += 1
 
-            annotated_decls: list[tuple[int, re.Match[str], int]] = []
+            annotated_decls: list[tuple[int, str, str, int, str, str]] = []
             decl_indexes_by_name: dict[str, int] = {}
             for scan_index in range(body_start, body_end):
                 match = decl_re.match(lines[scan_index])
-                if match is None:
+                if match is not None:
+                    disp = int(match.group("value"), 16)
+                    if match.group("sign") == "-":
+                        disp = -disp
+                    type_key = match.group("type").strip()
+                    replacement = (
+                        f"{match.group('indent')}{type_key} {{alias}}; "
+                        f"// [bp{match.group('sign')}0x{match.group('value')}] {match.group('alias')}"
+                    )
+                    annotated_decls.append(
+                        (scan_index, match.group("name"), match.group("alias"), disp, type_key, replacement)
+                    )
+                    decl_indexes_by_name.setdefault(match.group("name"), scan_index)
                     continue
-                disp = int(match.group("value"), 16)
-                if match.group("sign") == "-":
+                funcptr_match = funcptr_decl_re.match(lines[scan_index])
+                if funcptr_match is None:
+                    continue
+                disp = int(funcptr_match.group("value"), 16)
+                if funcptr_match.group("sign") == "-":
                     disp = -disp
-                annotated_decls.append((scan_index, match, disp))
-                decl_indexes_by_name.setdefault(match.group("name"), scan_index)
+                type_key = f"{funcptr_match.group('prefix').strip()}*{funcptr_match.group('suffix').strip()}"
+                replacement = (
+                    f"{funcptr_match.group('indent')}{funcptr_match.group('prefix')}"
+                    f"{{alias}}{funcptr_match.group('suffix')}; "
+                    f"// [bp{funcptr_match.group('sign')}0x{funcptr_match.group('value')}] {funcptr_match.group('alias')}"
+                )
+                annotated_decls.append(
+                    (
+                        scan_index,
+                        funcptr_match.group("name"),
+                        funcptr_match.group("alias"),
+                        disp,
+                        type_key,
+                        replacement,
+                    )
+                )
+                decl_indexes_by_name.setdefault(funcptr_match.group("name"), scan_index)
 
             renames: dict[str, str] = {}
             removed_indexes: set[int] = set()
-            grouped: dict[tuple[int, str], list[tuple[int, re.Match[str]]]] = {}
-            for scan_index, match, disp in annotated_decls:
-                local_name = match.group("name")
-                alias_name = match.group("alias")
+            grouped: dict[tuple[int, str], list[tuple[int, str, str, str]]] = {}
+            for scan_index, local_name, alias_name, disp, type_key, replacement in annotated_decls:
                 if local_name == alias_name:
                     continue
-                grouped.setdefault((disp, alias_name), []).append((scan_index, match))
+                grouped.setdefault((disp, alias_name), []).append((scan_index, local_name, type_key, replacement))
 
             for (_disp, alias_name), entries in grouped.items():
                 if alias_name in arg_names:
-                    for scan_index, match in entries:
-                        renames[match.group("name")] = alias_name
+                    for scan_index, local_name, _type_key, _replacement in entries:
+                        renames[local_name] = alias_name
                         removed_indexes.add(scan_index)
                     continue
 
-                entry_indexes = {scan_index for scan_index, _match in entries}
+                entry_indexes = {scan_index for scan_index, _local_name, _type_key, _replacement in entries}
                 alias_decl_index = decl_indexes_by_name.get(alias_name)
                 if alias_decl_index is not None and alias_decl_index not in entry_indexes:
                     continue
-                decl_types = {match.group("type").strip() for _scan_index, match in entries}
+                decl_types = {type_key for _scan_index, _local_name, type_key, _replacement in entries}
                 if len(decl_types) != 1:
                     continue
 
-                keep_index, keep_match = entries[0]
-                lines[keep_index] = (
-                    f"{keep_match.group('indent')}{keep_match.group('type').strip()} {alias_name}; "
-                    f"// [bp{keep_match.group('sign')}0x{keep_match.group('value')}] {alias_name}"
-                )
+                keep_index, _local_name, _type_key, replacement = entries[0]
+                lines[keep_index] = replacement.format(alias=alias_name)
                 changed = True
-                for scan_index, match in entries:
-                    renames[match.group("name")] = alias_name
+                for scan_index, local_name, _type_key, _replacement in entries:
+                    renames[local_name] = alias_name
                     if scan_index != keep_index:
                         removed_indexes.add(scan_index)
 

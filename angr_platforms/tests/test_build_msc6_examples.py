@@ -58,11 +58,14 @@ def test_child_trace_path_keeps_suffix_and_sanitizes_label():
 
 def test_decompile_env_derives_child_trace_file(monkeypatch, tmp_path):
     trace_path = tmp_path / "msc.trace.txt"
+    monkeypatch.setenv("PATH", "/tmp/test-path")
     monkeypatch.setenv("INERTIA_OTEL_SPAN_FILE", str(trace_path))
 
     env = _make_decompile_env(False, trace_label="CMP32.compare_unsigned")
 
+    assert env["PATH"] == "/tmp/test-path"
     assert env["INERTIA_ENABLE_TAIL_VALIDATION"] == "1"
+    assert env["INERTIA_DISABLE_TIMING"] == "1"
     assert env["INERTIA_OTEL_SPAN_FILE"] == str(tmp_path / "msc.trace.CMP32.compare_unsigned.txt")
 
 

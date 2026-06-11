@@ -183,6 +183,32 @@ def test_direct_global_update_materialization_delta_refuses_condition_change():
     assert _is_direct_global_update_materialization_delta_8616(_direct_global_update_codegen(), validation) is False
 
 
+def test_direct_global_update_materialization_delta_accepts_evidenced_return_precision():
+    validation = {
+        "delta": {
+            "returns": {
+                "added": ("Or(Dereference(Add(Mul(Reference(CIndexedVariable),const:16),const:309)),const:0)",),
+                "removed": ("Or(Dereference(Add(Mul(reg:ds,const:16),const:309)),const:0)",),
+            },
+        }
+    }
+
+    assert _is_direct_global_update_materialization_delta_8616(_direct_global_update_codegen(), validation) is True
+
+
+def test_direct_global_update_materialization_delta_refuses_unrelated_return_constant():
+    validation = {
+        "delta": {
+            "returns": {
+                "added": ("Or(Dereference(Add(Mul(reg:ds,const:16),const:57005)),const:0)",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_direct_global_update_materialization_delta_8616(_direct_global_update_codegen(), validation) is False
+
+
 def test_direct_global_update_materialization_delta_refuses_unrelated_address():
     validation = {
         "delta": {

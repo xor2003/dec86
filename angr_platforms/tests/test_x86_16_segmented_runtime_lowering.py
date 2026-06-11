@@ -16,7 +16,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from capstone.x86_const import (
     X86_INS_ADC,
     X86_INS_ADD,
@@ -279,6 +279,39 @@ def test_materialize_direct_global_inc_instruction_is_idempotent():
     assert codegen.cfunc.statements.statements[0] is first_stmt
     stats = codegen._inertia_direct_global_update_lowering_8616
     assert stats["materialized_count"] == 1
+    assert stats["already_materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_global_add_refuses_duplicate_rebased_global_assignment():
+    project, codegen = _project()
+    existing_var = SimMemoryVariable(0x10048, 2, name="seen", region=0x4010)
+    existing_cvar = CVariable(existing_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[existing_var] = existing_cvar
+    codegen.cfunc.unified_local_vars[existing_var] = {(existing_cvar, SimTypeShort(False))}
+    codegen.cfunc.statements.statements.append(
+        CAssignment(
+            existing_cvar,
+            CBinaryOp(
+                "Add",
+                existing_cvar,
+                CConstant(2, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        )
+    )
+    mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x0048)
+    dst = SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem)
+    src = SimpleNamespace(type=X86_OP_IMM, size=2, imm=2)
+    insn = SimpleNamespace(address=0x4018, id=X86_INS_ADD, operands=(dst, src))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn,))),))
+
+    changed = materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is False
+    assert len(codegen.cfunc.statements.statements) == 1
+    stats = codegen._inertia_direct_global_update_lowering_8616
     assert stats["already_materialized_count"] == 1
     assert stats["failure_count"] == 0
 
@@ -1891,6 +1924,7 @@ def test_render_c_runtime_header_portable_flat_exposes_seg_macros():
 
     assert "extern uint8_t inertia_memory[];" in header
     assert "#define SEG_U16(seg, off)" in header
+    assert "#define MEM_U16(ptr)" in header
     assert "#define MK_FP(seg, off)" in header
 
 
@@ -1900,6 +1934,7 @@ def test_render_c_runtime_header_msc_dos_uses_far_mk_fp():
     assert "#include <DOS.H>" in header
     assert "#define MK_FP(seg, off) ((uint8_t far *)" in header
     assert "SEG_U16" in header
+    assert "MEM_U16" in header
     assert "far *)MK_FP" in header
 
 

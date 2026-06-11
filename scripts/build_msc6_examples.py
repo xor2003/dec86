@@ -619,7 +619,9 @@ def _child_trace_path(base_path: str, label: str) -> str:
 
 
 def _make_decompile_env(force_rizin_8616: bool, *, trace_label: str | None = None) -> dict[str, str]:
-    env = {"INERTIA_DEBUG_TIMING": "1", "INERTIA_ENABLE_TAIL_VALIDATION": "1"}
+    env = os.environ.copy()
+    env["INERTIA_ENABLE_TAIL_VALIDATION"] = "1"
+    env.setdefault("INERTIA_DISABLE_TIMING", "1")
     if force_rizin_8616:
         env["INERTIA_AUTO_RIZIN_8616"] = "1"
     parent_trace_file = os.environ.get("INERTIA_OTEL_SPAN_FILE")

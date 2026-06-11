@@ -5685,7 +5685,7 @@ def _materialize_missing_terminal_ax_return_8616(project, codegen) -> bool:
             if _return_expr_has_insert_artifact_8616(getattr(node, "retval", None))
             or _return_depends_on_insert_artifact_8616(root, node)
         ]
-        if len(artifact_returns) != 1:
+        if len(artifact_returns) > 1:
             if os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"):
                 logging.getLogger(__name__).warning(
                     "[missing-ax-return] refused artifact_count=%d return_nodes=%d",
@@ -5693,7 +5693,42 @@ def _materialize_missing_terminal_ax_return_8616(project, codegen) -> bool:
                     len(return_nodes),
                 )
             return False
-        artifact_return = artifact_returns[0]
+        if artifact_returns:
+            artifact_return = artifact_returns[0]
+        else:
+            segmented_artifact_returns = [
+                node
+                for node in return_nodes
+                if _return_expr_has_segmented_linear_artifact_8616(getattr(node, "retval", None))
+            ]
+            if len(segmented_artifact_returns) == 1:
+                artifact_return = segmented_artifact_returns[0]
+            else:
+                generic_artifact_returns = [
+                    node
+                    for node in return_nodes
+                    if _return_expr_has_generic_register_artifact_8616(getattr(node, "retval", None))
+                ]
+                if len(generic_artifact_returns) != 1 or not _generic_return_replacement_is_side_effect_free_8616(
+                    root, generic_artifact_returns[0]
+                ):
+                    if os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"):
+                        logging.getLogger(__name__).warning(
+                            "[missing-ax-return] refused segmented_artifact_count=%d generic_artifact_count=%d return_nodes=%d",
+                            len(segmented_artifact_returns),
+                            len(generic_artifact_returns),
+                            len(return_nodes),
+                        )
+                    return False
+                artifact_return = generic_artifact_returns[0]
+            if artifact_return is None:
+                if os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"):
+                    logging.getLogger(__name__).warning(
+                        "[missing-ax-return] refused segmented_artifact_count=%d return_nodes=%d",
+                        len(segmented_artifact_returns),
+                        len(return_nodes),
+                    )
+                return False
         replace_artifact_return = True
     func_addr = getattr(cfunc, "addr", None)
     function = getattr(codegen, "_inertia_current_function_8616", None)
@@ -5795,6 +5830,121 @@ def _return_expr_has_insert_artifact_8616(expr) -> bool:
         text = str(callee or "")
         if text in {"_INSERT", "__INSERT"} or text.endswith("._INSERT"):
             return True
+    return False
+
+
+def _return_expr_has_segmented_linear_artifact_8616(expr) -> bool:
+    if expr is None:
+        return False
+
+    def _callee_name(node) -> str | None:
+        callee = getattr(node, "callee_target", None)
+        if callee is None:
+            callee = getattr(node, "callee", None)
+        name = getattr(callee, "name", None)
+        if isinstance(name, str):
+            return name
+        if isinstance(callee, str):
+            return callee
+        return None
+
+    def _const_value(node) -> int | None:
+        return int(getattr(node, "value", 0)) if isinstance(node, CConstant) and isinstance(getattr(node, "value", None), int) else None
+
+    def _has_segment_scale(node) -> bool:
+        for child in _iter_c_nodes_deep_8616(node):
+            if not isinstance(child, CBinaryOp):
+                continue
+            op = getattr(child, "op", None)
+            lhs_const = _const_value(getattr(child, "lhs", None))
+            rhs_const = _const_value(getattr(child, "rhs", None))
+            if op == "Mul" and (lhs_const == 16 or rhs_const == 16):
+                return True
+            if op == "Shl" and rhs_const == 4:
+                return True
+        return False
+
+    for node in _iter_c_nodes_deep_8616(expr):
+        if isinstance(node, CFunctionCall) and _callee_name(node) in {"SEG_U8", "SEG_U16", "SEG_U32"}:
+            return True
+        if isinstance(node, CUnaryOp) and getattr(node, "op", None) == "Dereference":
+            if _has_segment_scale(getattr(node, "operand", None)):
+                return True
+    return False
+
+
+def _return_expr_has_generic_register_artifact_8616(expr) -> bool:
+    if expr is None:
+        return False
+    artifact_name_re = re.compile(r"^(?:v\d+|vvar_\d+|ir_\d+(?:_\d+)?)$")
+    for node in _iter_c_nodes_deep_8616(expr):
+        if not isinstance(node, CVariable):
+            continue
+        variable = getattr(node, "variable", None)
+        name = getattr(variable, "name", None) or getattr(node, "name", None)
+        if isinstance(name, str) and artifact_name_re.fullmatch(name):
+            return True
+    return False
+
+
+def _generic_return_replacement_is_side_effect_free_8616(root, return_node: CReturn) -> bool:
+    statements = getattr(root, "statements", None)
+    if not isinstance(statements, (list, tuple)):
+        return False
+    debug = bool(os.environ.get("INERTIA_DEBUG_MISSING_AX_RETURN"))
+    log = logging.getLogger(__name__)
+
+    def _has_call_or_memory_effect(node) -> bool:
+        for child in _iter_c_nodes_deep_8616(node):
+            if isinstance(child, CFunctionCall):
+                return True
+            if isinstance(child, CUnaryOp) and getattr(child, "op", None) == "Dereference":
+                return True
+        return False
+
+    def _contains_return_node(node) -> bool:
+        if node is return_node:
+            return True
+        return any(child is return_node for child in _iter_c_nodes_deep_8616(node))
+
+    def _is_control_node(node) -> bool:
+        return type(node).__name__ in {
+            "CBreak",
+            "CContinue",
+            "CDoWhileLoop",
+            "CForLoop",
+            "CGoto",
+            "CIfElse",
+            "CSwitchCase",
+            "CWhileLoop",
+        }
+
+    for stmt in statements:
+        if stmt is return_node:
+            return True
+        if isinstance(stmt, CAssignment):
+            if _has_call_or_memory_effect(getattr(stmt, "lhs", None)):
+                if debug:
+                    log.warning("[missing-ax-return] generic artifact replacement refused lhs-effect stmt=%s", type(stmt).__name__)
+                return False
+            if _has_call_or_memory_effect(getattr(stmt, "rhs", None)):
+                if debug:
+                    log.warning("[missing-ax-return] generic artifact replacement refused rhs-effect stmt=%s", type(stmt).__name__)
+                return False
+            continue
+        if isinstance(stmt, CReturn):
+            return stmt is return_node
+        if _contains_return_node(stmt):
+            return not _is_control_node(stmt) and not _has_call_or_memory_effect(stmt)
+        if _is_control_node(stmt):
+            if debug:
+                log.warning("[missing-ax-return] generic artifact replacement refused control stmt=%s", type(stmt).__name__)
+            return False
+        if not _has_call_or_memory_effect(stmt):
+            continue
+        if debug:
+            log.warning("[missing-ax-return] generic artifact replacement refused stmt=%s", type(stmt).__name__)
+        return False
     return False
 
 
@@ -6374,6 +6524,11 @@ def _build_decompiler_postprocess_passes():
             "_materialize_pointer_arg_indirect_loads_final_8616",
             _materialize_pointer_arg_indirect_loads_postprocess_8616,
             True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_simplify_structured_expressions_after_final_call_materialization_8616",
+            _simplify._simplify_structured_expressions_8616,
+            False,
         ),
         DecompilerPostprocessPassSpec(
             "_normalize_call_target_names_final_8616",
@@ -9476,6 +9631,14 @@ def _global_addr_token_matches_direct_global_evidence_8616(token: object, addres
     return False
 
 
+def _return_token_matches_direct_global_evidence_8616(token: object, addresses: frozenset[int]) -> bool:
+    if not isinstance(token, str) or not addresses:
+        return False
+    if "Dereference(" not in token and not token.startswith("global:"):
+        return False
+    return _global_addr_token_matches_direct_global_evidence_8616(token, addresses)
+
+
 def _is_direct_global_update_materialization_delta_8616(codegen, validation: dict[str, object]) -> bool:
     if not isinstance(validation, dict):
         return False
@@ -9489,11 +9652,11 @@ def _is_direct_global_update_materialization_delta_8616(codegen, validation: dic
     if not isinstance(delta, dict):
         return False
     touched_fields = _validation_delta_touched_fields_8616(delta)
-    allowed_fields = {"global_writes", "segmented_writes", "register_writes"}
+    allowed_fields = {"global_writes", "segmented_writes", "register_writes", "returns"}
     if not touched_fields or touched_fields - allowed_fields:
         return False
 
-    checked_write_token = False
+    checked_evidence_token = False
     for field_name in ("global_writes", "segmented_writes"):
         field_delta = delta.get(field_name)
         if not isinstance(field_delta, dict):
@@ -9501,7 +9664,16 @@ def _is_direct_global_update_materialization_delta_8616(codegen, validation: dic
         for token in tuple(field_delta.get("added") or ()) + tuple(field_delta.get("removed") or ()):
             if not _global_addr_token_matches_direct_global_evidence_8616(token, addresses):
                 return False
-            checked_write_token = True
+            checked_evidence_token = True
+
+    return_delta = delta.get("returns")
+    if isinstance(return_delta, dict):
+        for token in tuple(return_delta.get("added") or ()) + tuple(return_delta.get("removed") or ()):
+            if not _return_token_matches_direct_global_evidence_8616(token, addresses):
+                return False
+            checked_evidence_token = True
+    elif "returns" in touched_fields:
+        return False
 
     register_delta = delta.get("register_writes")
     if isinstance(register_delta, dict):
@@ -9512,7 +9684,7 @@ def _is_direct_global_update_materialization_delta_8616(codegen, validation: dic
         if any(not isinstance(token, str) or not token.startswith("reg:") for token in removed_registers):
             return False
 
-    return checked_write_token
+    return checked_evidence_token
 
 
 def _direct_stack_update_evidence_offsets_8616(codegen) -> frozenset[int]:

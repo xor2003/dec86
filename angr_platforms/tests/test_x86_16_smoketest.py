@@ -391,6 +391,16 @@ def test_movsb_lifts_and_updates_indices():
     assert "PUT(di)" in vex_text
 
 
+def test_direct_absolute_memory_add_lifts_as_single_semantic_write():
+    project = _project_from_bytes(bytes.fromhex("8306480002"))  # add word ptr [0x48],2
+
+    block = project.factory.block(0x1000, num_inst=1, opt_level=0)
+    store_count = sum(1 for stmt in block.vex.statements if stmt.tag == "Ist_Store")
+
+    assert store_count == 1
+    assert "0x0048" in block.vex._pp_str()
+
+
 def test_wait_lifts_as_a_boring_noop():
     project = _project_from_bytes(bytes.fromhex("9b"))
 

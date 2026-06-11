@@ -15,7 +15,7 @@ import pytest
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.calling_conventions import SimRegArg
-from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from inertia_decompiler import cli_c_ast_rewrites as _cli_c_ast_rewrites
 from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
@@ -1650,6 +1650,145 @@ def test_decompiler_return_compat_infers_c_return_value_from_terminal_ax_stack_l
 
     assert retval is mask_cvar
     assert getattr(function, "_inertia_return_compat_c_ast_materialized_count", 0) == 1
+
+
+def test_missing_terminal_ax_return_replaces_segmented_artifact_with_direct_global_load():
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    seg = structured_c.CVariable(
+        SimRegisterVariable(20, 2, name="ds"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    segmented_addr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Mul",
+            seg,
+            structured_c.CConstant(16, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(0x48, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    bad_return = structured_c.CReturn(
+        structured_c.CUnaryOp("Dereference", segmented_addr, codegen=codegen),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([bad_return], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=root,
+        body=root,
+        variables_in_use={},
+        unified_local_vars={},
+        functy=SimTypeFunction([], SimTypeShort(False)).with_arch(arch),
+    )
+    mov_ax_direct = SimpleNamespace(
+        mnemonic="mov",
+        operands=(
+            SimpleNamespace(type=1, reg=1),
+            SimpleNamespace(type=3, size=2, mem=SimpleNamespace(base=0, index=0, disp=0x48)),
+        ),
+        reg_name=lambda reg: "ax" if reg == 1 else "",
+    )
+    ret = SimpleNamespace(mnemonic="ret", operands=(), reg_name=lambda _reg: "")
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(mov_ax_direct, ret)))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, prototype=codegen.cfunc.functy)
+    project = SimpleNamespace(
+        arch=arch,
+        factory=SimpleNamespace(block=lambda *_args, **_kwargs: block),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda *_args, **_kwargs: function)),
+    )
+    codegen.project = project
+
+    changed = _materialize_missing_terminal_ax_return_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [bad_return]
+    assert isinstance(bad_return.retval, structured_c.CVariable)
+    assert isinstance(bad_return.retval.variable, SimMemoryVariable)
+    assert bad_return.retval.variable.addr == 0x48
+
+
+def test_missing_terminal_ax_return_replaces_generic_byte_return_artifact_from_binary_evidence():
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    a_arg = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="a", region=0x1000),
+        variable_type=SimTypeChar(True),
+        codegen=codegen,
+    )
+    b_arg = structured_c.CVariable(
+        SimStackVariable(6, 2, base="bp", name="b", region=0x1000),
+        variable_type=SimTypeChar(True),
+        codegen=codegen,
+    )
+    temp = structured_c.CVariable(
+        SimRegisterVariable(0, 1, name="v5"),
+        variable_type=SimTypeChar(True),
+        codegen=codegen,
+    )
+    bad_return = structured_c.CReturn(
+        structured_c.CBinaryOp("Add", temp, a_arg, codegen=codegen),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(temp, b_arg, codegen=codegen),
+            bad_return,
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=root,
+        body=root,
+        arg_list=[a_arg, b_arg],
+        variables_in_use={},
+        unified_local_vars={},
+        functy=SimTypeFunction(
+            [SimTypeChar(True), SimTypeChar(True)],
+            SimTypeChar(True),
+            arg_names=["a", "b"],
+        ).with_arch(arch),
+    )
+    mov_al_b = SimpleNamespace(
+        mnemonic="mov",
+        operands=(
+            SimpleNamespace(type=1, reg=1),
+            SimpleNamespace(type=3, size=1, mem=SimpleNamespace(base=2, index=0, disp=6)),
+        ),
+        reg_name=lambda reg: {1: "al", 2: "bp"}.get(reg, ""),
+    )
+    add_al_a = SimpleNamespace(
+        mnemonic="add",
+        operands=(
+            SimpleNamespace(type=1, reg=1),
+            SimpleNamespace(type=3, size=1, mem=SimpleNamespace(base=2, index=0, disp=4)),
+        ),
+        reg_name=lambda reg: {1: "al", 2: "bp"}.get(reg, ""),
+    )
+    ret = SimpleNamespace(mnemonic="ret", operands=(), reg_name=lambda _reg: "")
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(mov_al_b, add_al_a, ret)))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, prototype=codegen.cfunc.functy)
+    project = SimpleNamespace(
+        arch=arch,
+        factory=SimpleNamespace(block=lambda *_args, **_kwargs: block),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda *_args, **_kwargs: function)),
+    )
+    codegen.project = project
+
+    changed = _materialize_missing_terminal_ax_return_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [bad_return]
+    assert isinstance(bad_return.retval, structured_c.CBinaryOp)
+    assert bad_return.retval.op == "Add"
+    assert bad_return.retval.lhs.variable.name == "b"
+    assert bad_return.retval.rhs.variable.name == "a"
 
 
 def test_decompiler_return_compat_uses_latest_ail_insn_when_c_return_has_no_ail_return():

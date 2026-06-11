@@ -10,6 +10,7 @@ from pyvex.lifting.util.vex_helper import Type
 from inertia_decompiler.runtime_support import AnalysisTimeout
 
 from .arch_86_16 import Arch86_16
+from .compiler_helpers import is_x86_16_registered_stack_probe_target_8616
 from .emulator import Emulator
 from .instr16 import Instr16
 from .instr32 import Instr32
@@ -254,6 +255,7 @@ class Instruction_ANY(Instruction):
 
     def _match_simple_binary_semantics_8616(self, ops):
         dst, src = ops
+        mnemonic = self.cs.mnemonic
         dst_reg = self._reg16_name(dst)
         src_reg = self._reg16_name(src)
         src_imm = self._imm16_value(src)
@@ -285,6 +287,11 @@ class Instruction_ANY(Instruction):
         )
         if cmp_sem is not None:
             return cmp_sem
+        if mnemonic in {"add", "sub", "xor", "and", "or"}:
+            if dst_abs_mem is not None and src_imm is not None:
+                return (f"{mnemonic}_abs_imm16", dst_abs_mem, src_imm)
+            if dst_abs_mem is not None and src_reg:
+                return (f"{mnemonic}_abs_reg16", dst_abs_mem, src_reg)
         return None
 
     def _match_mov_lea_binary_semantics_8616(self, dst_reg, src_imm, src_reg, src_mem, dst_mem):
@@ -425,6 +432,8 @@ class Instruction_ANY(Instruction):
             _, abs_target = self.simple_semantics
             target = self._const16(abs_target)
             if kind == "jmp":
+                if (abs_target & 0xFFFF) == ((self.addr + self.cs.size) & 0xFFFF):
+                    return True
                 self.jump(None, target, JumpKind.Boring)
                 return True
             cond = self._direct_jcc_condition(kind)
@@ -610,6 +619,10 @@ class Instruction_ANY(Instruction):
         self._record_mem_access("ds", offset, 0)
         return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_16)
 
+    def _store_abs16(self, offset, value):
+        self._record_mem_access("ds", offset, 1)
+        self.store(value, self._real_mode_linear("ds", self._const16(offset)))
+
     def _load_abs8(self, offset):
         self._record_mem_access("ds", offset, 0)
         return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_8)
@@ -677,6 +690,37 @@ class Instruction_ANY(Instruction):
         self._set_flag_bit(7, res_sign != self.constant(0, Type.int_8))
         overflow = (lhs_sign != rhs_sign) & (res_sign != lhs_sign)
         self._set_flag_bit(11, overflow)
+
+    def _update_result_flags16(self, result):
+        low8 = result.cast_to(Type.int_8)
+        parity = low8 ^ (low8 >> self.constant(4, Type.int_8))
+        parity = parity ^ (parity >> self.constant(2, Type.int_8))
+        parity = parity ^ (parity >> self.constant(1, Type.int_8))
+        self._set_flag_bit(2, (~parity & self.constant(1, Type.int_8)) != self.constant(0, Type.int_8))
+        self._set_flag_bit(6, result == self._const16(0))
+        self._set_flag_bit(7, result[15] != self._const16(0))
+
+    def _update_binop_flags16(self, op_name, lhs, rhs, result):
+        if op_name == "add":
+            self._set_flag_bit(0, result < lhs)
+            self._set_flag_bit(4, (((lhs ^ rhs) ^ result) & self._const16(0x0010)) != self._const16(0))
+            lhs_sign = lhs[15]
+            rhs_sign = rhs[15]
+            res_sign = result[15]
+            self._set_flag_bit(11, (lhs_sign == rhs_sign) & (res_sign != lhs_sign))
+        elif op_name == "sub":
+            self._set_flag_bit(0, lhs < rhs)
+            self._set_flag_bit(4, (((lhs ^ rhs) ^ result) & self._const16(0x0010)) != self._const16(0))
+            lhs_sign = lhs[15]
+            rhs_sign = rhs[15]
+            res_sign = result[15]
+            self._set_flag_bit(11, (lhs_sign != rhs_sign) & (res_sign != lhs_sign))
+        elif op_name in {"xor", "and", "or"}:
+            self._set_flag_bit(0, self.constant(False, Type.int_1))
+            self._set_flag_bit(11, self.constant(False, Type.int_1))
+        else:
+            raise NotImplementedError(op_name)
+        self._update_result_flags16(result)
 
     def _flag_is_set(self, bit):
         return (self._get_reg16("flags") & self._const16(1 << bit)) != self._const16(0)
@@ -749,6 +793,35 @@ class Instruction_ANY(Instruction):
         else:
             raise NotImplementedError(op_name)
         self.put(result, dst_reg)
+
+    def _binop_abs_imm(self, op_name, offset, imm):
+        dst = self._load_abs16(offset)
+        src = self._const16(imm)
+        result = self._binop_result16(op_name, dst, src)
+        self._store_abs16(offset, result)
+        if self._next_instruction_is_simple_jcc():
+            self._update_binop_flags16(op_name, dst, src, result)
+
+    def _binop_abs_reg(self, op_name, offset, src_reg):
+        dst = self._load_abs16(offset)
+        src = self._get_reg16(src_reg)
+        result = self._binop_result16(op_name, dst, src)
+        self._store_abs16(offset, result)
+        if self._next_instruction_is_simple_jcc():
+            self._update_binop_flags16(op_name, dst, src, result)
+
+    def _binop_result16(self, op_name, dst, src):
+        if op_name == "add":
+            return dst + src
+        if op_name == "sub":
+            return dst - src
+        if op_name == "xor":
+            return dst ^ src
+        if op_name == "and":
+            return dst & src
+        if op_name == "or":
+            return dst | src
+        raise NotImplementedError(op_name)
 
     def _cmp_operands_from_semantics(self, semantics):
         def _impl():
@@ -978,6 +1051,12 @@ class Instruction_ANY(Instruction):
             if kind == "call":
                 _, target = self.simple_semantics
                 ret_addr = self._const16(self.addr + self.cs.size)
+                if is_x86_16_registered_stack_probe_target_8616(self.arch, target):
+                    next_sp = self._get_reg16("sp") - self._get_reg16("ax")
+                    self.put(ret_addr, "cx")
+                    self.put(next_sp, "bx")
+                    self.put(next_sp, "sp")
+                    return
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
                 self._stack_store16(sp, ret_addr)
@@ -1056,6 +1135,14 @@ class Instruction_ANY(Instruction):
             if kind.endswith("_reg_imm16"):
                 op_name, dst_reg, imm = self.simple_semantics
                 self._binop_reg_imm(op_name[:-10], dst_reg, imm)
+                return
+            if kind.endswith("_abs_imm16"):
+                op_name, offset, imm = self.simple_semantics
+                self._binop_abs_imm(op_name[:-10], offset, imm)
+                return
+            if kind.endswith("_abs_reg16"):
+                op_name, offset, src_reg = self.simple_semantics
+                self._binop_abs_reg(op_name[:-10], offset, src_reg)
                 return
             if kind == "ret":
                 sp = self._get_reg16("sp")

@@ -7,6 +7,7 @@ from inertia_decompiler.cli_c_text_postprocess import (
     _align_function_header_with_cod_source_decl_text,
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_generic_local_declarations_text,
+    _materialize_missing_direct_call_prototypes_text,
     _materialize_missing_synthetic_global_declarations_text,
     _normalize_integer_dereference_stores_text,
     _normalize_boolean_conditions,
@@ -18,6 +19,7 @@ from inertia_decompiler.cli_c_text_postprocess import (
     _prune_weaker_conflicting_prototypes_text,
     _prune_unused_local_declarations_text,
     _prune_unused_staging_assignments,
+    _prune_void_call_assignments_text,
     _prune_void_function_return_values_text,
     _rewrite_known_helper_signature_text,
     _source_header_args_unmaterialized_8616,
@@ -40,6 +42,40 @@ int select_and_apply(int which, int value)
 
     assert "unsigned short local_2;\n" not in rewritten
     assert "unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn" in rewritten
+
+
+def test_missing_generic_local_declarations_recognizes_function_pointer_decl():
+    c_text = """\
+int select_and_apply(int value)
+{
+    unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn
+
+    return local_2(value);
+}
+"""
+
+    rewritten = _materialize_missing_generic_local_declarations_text(c_text)
+
+    assert "unsigned short local_2;\n" not in rewritten
+    assert "unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn" in rewritten
+
+
+def test_collapse_annotated_stack_aliases_renames_function_pointer_decl():
+    c_text = """\
+int select_and_apply(int value)
+{
+    unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn
+
+    return local_2(value);
+}
+"""
+
+    rewritten = _collapse_annotated_stack_aliases_text(c_text)
+
+    assert "unsigned short (*fn)(unsigned short);" in rewritten
+    assert "// [bp-0x2] fn" in rewritten
+    assert "return fn(value);" in rewritten
+    assert "local_2" not in rewritten
 
 
 def test_text_cod_call_alignment_is_disabled_by_default(monkeypatch):
@@ -122,6 +158,45 @@ int SwapBars(int iRow1, int iRow2)
     assert "SwapBars(int iRow1, int iRow2)" in rewritten or "SwapBars( int iRow1, int iRow2 )" in rewritten
 
 
+def test_materialize_annotated_cod_declarations_uses_source_void_return_for_callee():
+    c_text = """void Caller(void) {
+    Swaps(1, 2);
+}
+"""
+    metadata = SimpleNamespace(
+        source_lines=("void Caller(void)", "{", "Swaps(1, 2);", "}"),
+        call_names=("Swaps",),
+        global_names=(),
+    )
+    function = SimpleNamespace(name="Caller")
+
+    rewritten = _materialize_annotated_cod_declarations_text(
+        c_text,
+        function,
+        metadata,
+        source_return_types={"Swaps": "void"},
+    )
+
+    assert "void Swaps();" in rewritten
+    assert "int Swaps();" not in rewritten
+
+
+def test_materialize_missing_direct_call_prototypes_uses_source_void_return():
+    c_text = """void Caller(void)
+{
+    Swaps(1, 2);
+}
+"""
+
+    rewritten = _materialize_missing_direct_call_prototypes_text(
+        c_text,
+        source_return_types={"Swaps": "void"},
+    )
+
+    assert "void Swaps();" in rewritten
+    assert "int Swaps();" not in rewritten
+
+
 def test_helper_call_format_keeps_codegen_header_for_custom_source_pointer_type():
     c_text = """void Swaps(unsigned short *bar1, unsigned short *bar2)
 {
@@ -194,6 +269,33 @@ def test_prune_void_function_return_values_text_preserves_call_side_effect():
     assert "return DrawTime" not in rewritten
     assert "DrawTime(iRow1);" in rewritten
     assert "return;" not in rewritten
+
+
+def test_prune_void_call_assignments_preserves_call_side_effect():
+    c_text = """void DrawTime();
+void f(void)
+{
+    ax_3 = DrawTime(2189);
+}
+"""
+
+    rewritten = _prune_void_call_assignments_text(c_text)
+
+    assert "ax_3 = DrawTime" not in rewritten
+    assert "DrawTime(2189);" in rewritten
+
+
+def test_known_helper_arity_mismatch_preserves_return_type():
+    c_text = """void f(void)
+{
+    ax_2 = aNldiv(3761);
+}
+"""
+
+    rewritten = _materialize_missing_direct_call_prototypes_text(c_text)
+
+    assert "long aNldiv();" in rewritten
+    assert "int aNldiv();" not in rewritten
 
 
 def test_normalize_boolean_conditions_materializes_empty_label_statement():
@@ -432,6 +534,18 @@ def test_source_function_prototype_decls_from_cod_source_lines_keeps_comment_suf
     assert prototypes["InitBars"] == "void InitBars( void  );"
 
 
+def test_source_function_prototype_decls_from_cod_source_lines_refuses_return_call_statement():
+    prototypes = _source_function_prototype_decls_from_cod_source_lines(
+        (
+            "int helper(int value);",
+            "return apply_twice(fn, value);",
+            "if (which) inc_one(value);",
+        )
+    )
+
+    assert prototypes == {"helper": "int helper(int value);"}
+
+
 def test_prune_unused_staging_assignments_drops_transitively_dead_assignment_chains():
     c_text = """
 int main(void)
@@ -520,6 +634,23 @@ void $_nfree(void)
     rewritten = _materialize_missing_generic_local_declarations_text(c_text)
 
     assert "unsigned short vvar_2;" in rewritten
+
+
+def test_materialize_missing_generic_local_declarations_text_does_not_declare_runtime_mem_helpers():
+    c_text = """
+void ReInitBars(void)
+{
+    char mem_08F0;
+    unsigned short v15;
+
+    v15 = MEM_U16(&mem_08F0);
+}
+"""
+
+    rewritten = _materialize_missing_generic_local_declarations_text(c_text)
+
+    assert "int MEM_U16();" not in rewritten
+    assert "MEM_U16(&mem_08F0)" in rewritten
 
 
 def test_materialize_missing_generic_local_declarations_text_handles_generated_locals():
