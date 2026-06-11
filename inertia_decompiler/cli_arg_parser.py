@@ -47,8 +47,13 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--alternate-source-c",
-        action="store_true",
-        help="When a same-stem .c/.C source sidecar exists, print it before each decompiled C block.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "When a same-stem .c/.C source sidecar exists, print it before each "
+            "decompiled C block. Enabled by default; use --no-alternate-source-c "
+            "to suppress it."
+        ),
     )
     parser.add_argument(
         "--c-target",

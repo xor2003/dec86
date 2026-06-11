@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import inertia_decompiler.cli as cli
+from inertia_decompiler.cli_arg_parser import _build_cli_argument_parser
 from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
 
 
@@ -99,3 +100,13 @@ def test_emit_optional_source_sidecar_c_block_skips_source_when_disabled(tmp_pat
     assert "/* -- source c -- */" not in out
     assert out.count("/* -- c -- */") == 1
     assert "int decompiled(void) { return 0; }" in out
+
+
+def test_cli_prints_source_sidecar_by_default() -> None:
+    parser = _build_cli_argument_parser()
+
+    args = parser.parse_args(["sample.exe"])
+    disabled_args = parser.parse_args(["--no-alternate-source-c", "sample.exe"])
+
+    assert args.alternate_source_c is True
+    assert disabled_args.alternate_source_c is False
