@@ -11,6 +11,7 @@ from pathlib import Path
 
 import angr
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.compiler_helpers import hook_x86_16_known_compiler_helpers_8616
 
 from inertia_decompiler.telemetry import trace_function
 
@@ -34,6 +35,11 @@ def _describe_exception(ex: Exception) -> str:
     if rep and rep != f"{ex_type}()":
         return f"{ex_type}: {rep}"
     return ex_type
+
+
+def _finalize_x86_16_project(project: angr.Project) -> angr.Project:
+    hook_x86_16_known_compiler_helpers_8616(project)
+    return project
 
 
 def _probe_ida_base_linear(binary: Path, fallback_linear: int) -> int:
@@ -207,7 +213,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
 
         _debug_print(f"[dbg] build_project: path={path} suffix={suffix} force_blob={force_blob}")
         if force_blob or _is_blob_only_input(path):
-            return angr.Project(
+            return _finalize_x86_16_project(angr.Project(
                 path,
                 auto_load_libs=False,
                 main_opts={
@@ -216,10 +222,10 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                     "base_addr": base_addr,
                     "entry_point": entry_point,
                 },
-            )
+            ))
 
         if suffix == ".com":
-            return angr.Project(
+            return _finalize_x86_16_project(angr.Project(
                 path,
                 auto_load_libs=False,
                 main_opts={
@@ -229,7 +235,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                     "entry_point": entry_point,
                 },
                 simos="DOS",
-            )
+            ))
 
         packed_exe = _detect_packed_mz_executable(path)
         if packed_exe and suffix == ".exe":
@@ -249,7 +255,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
             _debug_print(
                 f"[dbg] unpacked {packed_exe}: entry={hex(unpacked.entry_point)} size={len(unpacked.code)}"
             )
-            return project
+            return _finalize_x86_16_project(project)
 
         if suffix == ".exe":
             explicit_base = _probe_ida_base_linear(path, base_addr << 4 if base_addr < 0x10000 else base_addr)
@@ -266,7 +272,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                 )
                 _debug_print(f"[dbg] {exe_backend} load base={hex(explicit_base)}")
                 _debug_print(f"[dbg] project built: arch={proj.arch.name} entry={hex(proj.entry)}")
-                return proj
+                return _finalize_x86_16_project(proj)
             except Exception as ex:
                 _debug_print(f"[dbg] explicit {exe_backend} load failed at {hex(explicit_base)}: {_describe_exception(ex)}")
 
@@ -287,7 +293,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
             else:
                 raise
         _debug_print(f"[dbg] project built: arch={proj.arch.name} entry={hex(proj.entry)}")
-        return proj
+        return _finalize_x86_16_project(proj)
 
     return _impl()
 
@@ -313,7 +319,7 @@ def _build_project_cached(
 def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) -> angr.Project:
     arch = Arch86_16()
     arch.bits = max(arch.bits, 32)
-    return angr.Project(
+    return _finalize_x86_16_project(angr.Project(
         io.BytesIO(code),
         auto_load_libs=False,
         main_opts={
@@ -323,4 +329,4 @@ def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) 
             "entry_point": entry_point,
         },
         simos="DOS",
-    )
+    ))

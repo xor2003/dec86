@@ -8,7 +8,6 @@ AGENTS rule: SS:BP-2 → local_*, SS:BP+4 → arg_*, no stack[x].
 from types import SimpleNamespace
 
 from angr.sim_type import SimTypeShort
-
 from angr_platforms.X86_16.alias.alias_model_impl import (
     AliasFailure,
     AliasStorageFacts,
@@ -51,7 +50,6 @@ class TestStackObjectNaming:
     def test_unknown_positive_stack_slot_uses_local_name_in_codegen_context(self):
         from angr.analyses.decompiler.structured_codegen import c as structured_c
         from angr.sim_variable import SimStackVariable
-
         from angr_platforms.X86_16.lowering.stack_lowering_impl import _materialize_stack_cvar_at_offset
 
         class _FakeCodegen:

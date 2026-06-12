@@ -10,6 +10,19 @@ from concurrent.futures.thread import _threads_queues
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeShort
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.cod_extract import CODProcMetadata, extract_cod_listing_metadata
+from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
+from angr_platforms.X86_16.fast_tracer import trace_16bit_seed_candidates
+from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
+from angr_platforms.X86_16.load_dos_mz import DOSMZ
+from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
+from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoSymbolClass, parse_tdinfo_exe
+
 import decompile
 import inertia_decompiler.cache as recovery_cache
 import inertia_decompiler.cli_core as cli_core
@@ -18,13 +31,7 @@ import inertia_decompiler.cli_linear_recurrence_state as cli_linear_recurrence_s
 import inertia_decompiler.decompile_file_summary as file_summary
 import inertia_decompiler.non_optimized_fallback as non_optimized_fallback
 import inertia_decompiler.sidecar_cache as sidecar_cache
-import pytest
-from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from inertia_decompiler import sidecar_metadata, sidecar_parsers
-from inertia_decompiler.rizin_discovery import RizinDiscoveryResult, RizinDiscoveryStatus
-from inertia_decompiler.rizin_evidence import RizinEvidence, RizinEvidenceStatus, RizinFunctionFact
 from inertia_decompiler.direct_addr_failure_family import (
     FailureFamilyState,
     advance_failure_family_state,
@@ -32,6 +39,8 @@ from inertia_decompiler.direct_addr_failure_family import (
     failure_family_repeat_reason,
     remember_failure_family_candidate,
 )
+from inertia_decompiler.rizin_discovery import RizinDiscoveryResult, RizinDiscoveryStatus
+from inertia_decompiler.rizin_evidence import RizinEvidence, RizinEvidenceStatus, RizinFunctionFact
 from inertia_decompiler.slice_recovery import SliceRecoveryAttemptOutcome
 from inertia_decompiler.work_items import FunctionWorkItem
 from inertia_decompiler.x86_16_exact_slice import mark_function_original_addr
@@ -55,15 +64,6 @@ from omf_pat import (
     parse_pat_file,
 )
 from signature_catalog import build_signature_catalog, match_signature_catalog
-
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.cod_extract import CODProcMetadata, extract_cod_listing_metadata
-from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
-from angr_platforms.X86_16.fast_tracer import trace_16bit_seed_candidates
-from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
-from angr_platforms.X86_16.load_dos_mz import DOSMZ
-from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
-from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoSymbolClass, parse_tdinfo_exe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -291,6 +291,65 @@ def test_source_call_arity_score_rejects_stale_sleep_arity():
     assert cli_decompilation._expected_call_arity_score_8616(materialized, metadata) == 2
     assert cli_decompilation._expected_call_arity_deficit_8616(stale, metadata) == 2
     assert cli_decompilation._expected_call_arity_deficit_8616(materialized, metadata) == 0
+
+
+def test_call_semantics_retry_skips_arity_only_when_calls_present():
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("Sleep",),
+        call_sources=(
+            ("Sleep", "Sleep( clPause - 75L )"),
+            ("Sleep", "Sleep( clPause )"),
+        ),
+        global_names=(),
+        source_lines=(),
+        source_line_set=frozenset(),
+    )
+    stale_arity = """
+    void DrawTime(void)
+    {
+        Sleep(SEG_U16(ds, 306), SEG_U16(ds, 308));
+        Sleep();
+    }
+    """
+
+    retry_needed, missing_calls, arity_deficit = cli_decompilation._call_semantics_retry_evidence_8616(
+        stale_arity,
+        metadata,
+    )
+
+    assert retry_needed is False
+    assert missing_calls == ()
+    assert arity_deficit == 2
+
+
+def test_call_semantics_retry_requires_missing_expected_call():
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("DrawFrame", "outtext"),
+        call_sources=(
+            ("DrawFrame", "DrawFrame( TOP, LEFTCOLUMN - 3, WIDTH + 3, HEIGHT )"),
+            ("outtext", "_outtextxy( ach, 0, i )"),
+        ),
+        global_names=(),
+        source_lines=(),
+        source_line_set=frozenset(),
+    )
+    missing_call = """
+    void InitMenu(void)
+    {
+        DrawFrame(1, 2, 3, 4);
+    }
+    """
+
+    retry_needed, missing_calls, arity_deficit = cli_decompilation._call_semantics_retry_evidence_8616(
+        missing_call,
+        metadata,
+    )
+
+    assert retry_needed is True
+    assert missing_calls == ("outtext",)
+    assert arity_deficit == 1
 
 
 def test_live_call_rehydration_refuses_without_rendered_snapshot(monkeypatch):

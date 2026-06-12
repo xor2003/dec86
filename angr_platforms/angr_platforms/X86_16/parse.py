@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from pyvex.lifting.util import ParseError
 from pyvex.lifting.util.vex_helper import Type
+
 from angr_platforms.X86_16.emulator import Emulator
 from angr_platforms.X86_16.instruction import InstrData
 

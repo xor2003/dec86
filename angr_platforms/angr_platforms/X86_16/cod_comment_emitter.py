@@ -66,7 +66,8 @@ def format_cod_comment_block_from_proc_metadata(
     source_lines: tuple[str, ...] = (),
 ) -> str:
     """Same as :func:`format_cod_comment_block`, provided as an alias for direct use
-    with ``CODProcMetadata`` fields."""
+    with ``CODProcMetadata`` fields.
+    """
     return format_cod_comment_block(
         func_name=func_name,
         proc_kind=proc_kind,

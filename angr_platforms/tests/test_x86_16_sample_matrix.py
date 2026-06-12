@@ -7,7 +7,6 @@ from pathlib import Path
 
 import angr
 import pytest
-
 from angr_platforms.X86_16.analysis_helpers import (
     collect_direct_far_call_targets,
     collect_dos_int21_calls,

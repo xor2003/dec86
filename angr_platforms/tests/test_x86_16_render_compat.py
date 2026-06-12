@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CFunction, CFunctionCall, CStatements
 from angr.sim_variable import SimStackVariable
-
 from angr_platforms.X86_16.render_compat import (
     install_structured_codegen_sort_compat_8616,
     repair_cfunctioncall_render_targets_8616,

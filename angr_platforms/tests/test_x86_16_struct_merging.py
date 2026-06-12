@@ -8,7 +8,6 @@ and multi-function struct layout merging.
 from types import SimpleNamespace
 
 import pytest
-
 from angr_platforms.X86_16.ir.core import IRAddress, IRBlock, IRFunctionArtifact, IRInstr, IRValue, MemSpace
 from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.type_structure_merging import (

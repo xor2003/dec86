@@ -5,12 +5,12 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CStatements, CVariable
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
 from inertia_decompiler.cli_c_ast_rewrites import (
     _get_or_seed_inertia_alias_state,
     _simplify_basic_algebraic_identities,
 )
-
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 
 class _DummyCodegen:

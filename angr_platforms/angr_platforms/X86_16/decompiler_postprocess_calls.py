@@ -39,8 +39,7 @@ from .decompiler_postprocess_utils import (
     _replace_c_children_8616,
     _same_c_expression_8616,
 )
-from .lowering.real_mode_linear import _stack_offset_from_expr_8616
-from .lowering.real_mode_linear import match_stable_ds_es_linear_global_access_8616
+from .lowering.real_mode_linear import _stack_offset_from_expr_8616, match_stable_ds_es_linear_global_access_8616
 from .lowering.stack_lowering_from_facts import (
     _materialize_stack_cvar_at_offset as _materialize_stack_cvar_at_offset_from_facts_8616,
 )
@@ -69,7 +68,9 @@ __all__ = [
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 _NAMESPACED_TARGET_RE = re.compile(r"^::0x(?P<addr>[0-9a-fA-F]+)::")
 log = logging.getLogger(__name__)
-_RUNTIME_SEGMENT_HELPERS_8616 = frozenset({"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR"})
+_RUNTIME_SEGMENT_HELPERS_8616 = frozenset(
+    {"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR", "MEM_U8", "MEM_U16", "MEM_U32"}
+)
 _CALL_TOKEN_RE_8616 = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
@@ -602,17 +603,20 @@ def _recover_expected_calls_8616(project, cfunc, function, func_addr: int):
         expected_names: list[str] = []
         expected_summary_by_name: dict[str, list[object]] = {}
         callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
+        callsite_summaries: list[object] = []
         for callsite_addr in callsite_addrs:
             target = getattr(function, "get_call_target", lambda _addr: None)(callsite_addr)
             if not isinstance(target, int):
                 continue
+            summary = summarize_x86_16_callsite(function, callsite_addr)
+            if summary is not None:
+                callsite_summaries.append(summary)
             callee = _lookup_callee_function_8616(project, target)
             callee_name = getattr(callee, "name", None)
             if not isinstance(callee_name, str) or not callee_name or callee_name in _RUNTIME_SEGMENT_HELPERS_8616:
                 continue
             normalized_name = normalize_callee_name_8616(callee_name) or callee_name
             expected_names.append(normalized_name)
-            summary = summarize_x86_16_callsite(function, callsite_addr)
             if summary is not None:
                 expected_summary_by_name.setdefault(normalized_name, []).append(summary)
         source_call_names: list[str] = []
@@ -620,9 +624,21 @@ def _recover_expected_calls_8616(project, cfunc, function, func_addr: int):
             source_call_names = list(_cod_source_call_names_8616(project, func_addr))
             if not source_call_names:
                 source_call_names = list(_cod_source_call_names_for_symbol_8616(project, getattr(cfunc, "name", None)))
-            for source_name in source_call_names:
-                if isinstance(source_name, str) and source_name:
-                    expected_names.append(source_name)
+            if source_call_names:
+                expected_names = [source_name for source_name in source_call_names if isinstance(source_name, str) and source_name]
+                if len(callsite_summaries) == len(expected_names):
+                    expected_summary_by_name = {}
+                    for source_name, summary in zip(expected_names, callsite_summaries):
+                        expected_summary_by_name.setdefault(source_name, []).append(summary)
+        if os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"):
+            log.warning(
+                "[call-recover] expected addr=%#x cfunc_name=%r delta=%r expected=%r source=%r",
+                func_addr,
+                getattr(cfunc, "name", None),
+                getattr(project, "_inertia_original_linear_delta", None),
+                expected_names,
+                source_call_names,
+            )
         return expected_names, expected_summary_by_name, source_call_names
 
     return _impl()
@@ -1293,7 +1309,6 @@ def _reg_expr_setup_matches_push_source_8616(project, ins_addr: int | None, sour
 
 def _bp_offsets_from_push_source_8616(source) -> frozenset[int]:
     """Return BP stack offsets read by a structured callsite push source."""
-
     offsets: set[int] = set()
 
     def collect(current) -> None:
@@ -1323,7 +1338,6 @@ def _bp_offsets_from_push_source_8616(source) -> frozenset[int]:
 
 def _expr_push_sources_for_bp_offset_8616(push_sources: tuple, offset: int) -> tuple[tuple, ...]:
     """Select expression push sources proven to read a BP stack offset."""
-
     if not isinstance(push_sources, tuple):
         return ()
     matches: list[tuple] = []
@@ -1454,8 +1468,7 @@ def _expected_arg_count_for_call_8616(
     known_arg_count: int | None,
     prototype_arg_count: int | None,
 ) -> int | None:
-    """
-    Resolve expected call arity with summary evidence preferred over declarative hints.
+    """Resolve expected call arity with summary evidence preferred over declarative hints.
 
     Summary data is authoritative when present and non-zero. A summary value of 0 is
     treated as explicit zero only when no stronger known/prototype arity is available.
@@ -1730,23 +1743,34 @@ def _cod_metadata_for_function_8616(project: SimpleNamespace, func_addr: int) ->
     def _impl():
         original_project = getattr(project, "_inertia_original_project", None)
         original_delta = getattr(project, "_inertia_original_linear_delta", None)
-        project_variants = [project]
-        if original_project is not None:
-            project_variants.append(original_project)
 
-        addr_candidates = [func_addr]
+        project_addr_candidates = []
         if isinstance(original_delta, int):
-            addr_candidates.append(func_addr + original_delta)
+            project_addr_candidates.append(func_addr + original_delta)
             rebased = func_addr - original_delta
             if rebased >= 0:
-                addr_candidates.append(rebased)
+                project_addr_candidates.append(rebased)
+        project_addr_candidates.append(func_addr)
 
-        normalized_addr_candidates: list[int] = []
-        for candidate in addr_candidates:
-            if candidate not in normalized_addr_candidates:
-                normalized_addr_candidates.append(candidate)
+        normalized_project_addr_candidates: list[int] = []
+        for candidate in project_addr_candidates:
+            if candidate not in normalized_project_addr_candidates:
+                normalized_project_addr_candidates.append(candidate)
 
-        for candidate_project in project_variants:
+        project_variants: list[tuple[object, tuple[int, ...]]] = [
+            (project, tuple(normalized_project_addr_candidates))
+        ]
+        if original_project is not None:
+            original_addr_candidates = [func_addr]
+            if isinstance(original_delta, int):
+                original_addr_candidates = [func_addr + original_delta]
+            normalized_original_addr_candidates: list[int] = []
+            for candidate in original_addr_candidates:
+                if candidate >= 0 and candidate not in normalized_original_addr_candidates:
+                    normalized_original_addr_candidates.append(candidate)
+            project_variants.append((original_project, tuple(normalized_original_addr_candidates)))
+
+        for candidate_project, candidate_addrs in project_variants:
             lst_metadata = getattr(candidate_project, "_inertia_lst_metadata", None)
             cod_path = getattr(lst_metadata, "cod_path", None)
             if not cod_path:
@@ -1757,7 +1781,7 @@ def _cod_metadata_for_function_8616(project: SimpleNamespace, func_addr: int) ->
                 cache = {}
                 setattr(candidate_project, "_inertia_sidecar_cod_metadata_cache", cache)
 
-            for candidate_addr in normalized_addr_candidates:
+            for candidate_addr in candidate_addrs:
                 function = getattr(getattr(candidate_project, "kb", None), "functions", None)
                 function = getattr(function, "function", lambda **_: None)(addr=candidate_addr, create=False)
                 function_name = getattr(function, "name", None)
@@ -11273,7 +11297,6 @@ def replay_callsite_stack_arguments_after_regeneration_8616(project, codegen) ->
     emitted tree aligned with the validated semantic tree without using rendered
     C text as input.
     """
-
     if getattr(codegen, "_inertia_callsite_arg_regen_replay_active_8616", False):
         return False
     project = project or getattr(codegen, "project", None)

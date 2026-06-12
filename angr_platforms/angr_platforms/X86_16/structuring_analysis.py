@@ -1,5 +1,4 @@
-"""
-Region-based control-flow structuring algorithm.
+"""Region-based control-flow structuring algorithm.
 
 This module implements the core control-flow analysis that converts a region graph
 into structured control-flow patterns (sequence, if-then-else, loops, etc).
@@ -59,8 +58,7 @@ class StructuringStats:
 
 
 class StructureAnalysis:
-    """
-    Main control-flow structuring algorithm.
+    """Main control-flow structuring algorithm.
 
     This class takes a region graph and iteratively refines it into structured
     control-flow patterns through pattern matching and selective refinement.
@@ -75,8 +73,7 @@ class StructureAnalysis:
         event_listener: Optional[Callable[[str], None]] = None,
         max_iterations: int = MAX_ITERATIONS,
     ):
-        """
-        Initialize the structuring analyzer.
+        """Initialize the structuring analyzer.
 
         Args:
             graph: The region graph to structure
@@ -92,8 +89,7 @@ class StructureAnalysis:
         self.unresolved_switches: list[Region] = []
 
     def structure(self) -> RegionGraph:
-        """
-        Perform control-flow structuring on the region graph.
+        """Perform control-flow structuring on the region graph.
 
         Returns:
             The refined region graph
@@ -102,8 +98,7 @@ class StructureAnalysis:
 
     def _execute(self) -> RegionGraph:
         def _impl():
-            """
-            Core structuring algorithm.
+            """Core structuring algorithm.
 
             Iteratively:
             1. Recompute dominators
@@ -177,8 +172,7 @@ class StructureAnalysis:
         return _impl()
 
     def _reduce_acyclic(self, region: Region) -> bool:
-        """
-        Try to match and reduce acyclic patterns.
+        """Try to match and reduce acyclic patterns.
 
         Acyclic patterns include:
         - Sequence (merge two linear regions)
@@ -218,8 +212,7 @@ class StructureAnalysis:
         return False
 
     def _reduce_cyclic(self, region: Region) -> bool:
-        """
-        Try to match and reduce cyclic patterns.
+        """Try to match and reduce cyclic patterns.
 
         Cyclic patterns are loops with special structure.
 
@@ -240,8 +233,7 @@ class StructureAnalysis:
         return False
 
     def _try_natural_loop(self, region: Region) -> bool:
-        """
-        Try to match and reduce a natural loop pattern.
+        """Try to match and reduce a natural loop pattern.
 
         Args:
             region: Candidate loop header region
@@ -275,8 +267,7 @@ class StructureAnalysis:
             return False
 
     def _try_sequence(self, region: Region) -> bool:
-        """
-        Try to merge region into a sequence with its predecessor or successor.
+        """Try to merge region into a sequence with its predecessor or successor.
 
         A sequence is two regions where one flows directly to the other.
 
@@ -297,8 +288,7 @@ class StructureAnalysis:
         return False
 
     def _try_if_switch_cascade(self, region: Region) -> bool:
-        """
-        Try to detect and reduce an if-cascade pattern as a switch statement.
+        """Try to detect and reduce an if-cascade pattern as a switch statement.
 
         An if-cascade is a sequence of if-else regions comparing the same
         expression against different constants. When 3+ branches are detected,
@@ -332,8 +322,7 @@ class StructureAnalysis:
         return True  # Count as processed since we marked it
 
     def _try_if_then(self, region: Region) -> bool:
-        """
-        Try to form an if-then pattern.
+        """Try to form an if-then pattern.
 
         If-then is: a condition region with exactly two successors where one
         is a straightforward branch and the other is a fall-through that only
@@ -376,8 +365,7 @@ class StructureAnalysis:
 
     def _try_if_then_else(self, region: Region) -> bool:
         def _impl():
-            """
-            Try to form an if-then-else pattern.
+            """Try to form an if-then-else pattern.
 
             If-then-else is: a condition region with exactly two branches that
             can be merged together as a complete if-then-else structure.
@@ -435,8 +423,7 @@ class StructureAnalysis:
         return _impl()
 
     def _is_cyclic(self, region: Region) -> bool:
-        """
-        Check if a region is part of a cycle (back edge exists).
+        """Check if a region is part of a cycle (back edge exists).
 
         A region is cyclic if any of its predecessors is dominated by it.
 
@@ -492,8 +479,7 @@ class StructureAnalysis:
         )
 
     def _process_unresolved_regions(self) -> None:
-        """
-        Apply refinement strategies for unstructured regions.
+        """Apply refinement strategies for unstructured regions.
 
         When the main algorithm makes no progress, we apply last-resort
         refinement strategies to ensure forward progress:
@@ -527,8 +513,7 @@ class StructureAnalysis:
             region.region_type = RegionType.IncSwitch
 
     def _refine_to_gotos(self) -> None:
-        """
-        Last-resort refinement: convert unstructured regions to explicit gotos.
+        """Last-resort refinement: convert unstructured regions to explicit gotos.
 
         When no structuring pattern matches, we create explicit goto metadata
         to preserve the control flow while admitting we can't structure it.
@@ -555,8 +540,7 @@ class StructureAnalysis:
 
 
 class RegionBasedStructuringPass:
-    """
-    A decompiler pass that applies region-based structuring to codegen.
+    """A decompiler pass that applies region-based structuring to codegen.
 
     This is the interface between the decompiler pass framework and the
     structuring algorithm.
@@ -568,8 +552,7 @@ class RegionBasedStructuringPass:
 
     def __call__(self, codegen) -> bool:
         def _impl():
-            """
-            Apply region-based structuring to codegen.
+            """Apply region-based structuring to codegen.
 
             Args:
                 codegen: The codegen object to structure
@@ -632,8 +615,7 @@ class RegionBasedStructuringPass:
 
 
 def apply_region_based_structuring(codegen) -> bool:
-    """
-    Apply region-based structuring pass to codegen.
+    """Apply region-based structuring pass to codegen.
 
     This is the entry point for the decompiler framework.
 

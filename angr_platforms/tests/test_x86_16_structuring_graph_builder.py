@@ -1,5 +1,4 @@
 import networkx as nx
-
 from angr_platforms.X86_16.structuring_graph_builder import (
     build_region_graph,
     resolve_clinic_from_codegen,

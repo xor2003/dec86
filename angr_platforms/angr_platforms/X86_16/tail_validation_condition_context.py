@@ -156,7 +156,6 @@ def _direct_cmp_immediate_jcc_fingerprint(cond, project, codegen, block_addr: in
     the validation context should prefer the instruction operand over any stale
     decoded-condition cache.
     """
-
     _ = cond
     debug = os.environ.get("INERTIA_DEBUG_TV_CONDITION_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}
 

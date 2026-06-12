@@ -9,8 +9,8 @@ from pathlib import Path
 
 from angr import ailment
 from angr.ailment.expression import BasePointerOffset
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CVariable, MakeTypecastsImplicit
 from angr.analyses.decompiler.return_maker import ReturnMaker
+from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CVariable, MakeTypecastsImplicit
 from angr.calling_conventions import SimComboArg, SimRegArg
 from angr.sim_type import SimTypeBottom, SimTypeDouble, SimTypeFloat, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
@@ -411,14 +411,12 @@ def _find_reaching_register_source_8616(self, block, *, reg_offset: int, reg_siz
 
 
 def _infer_x86_16_ax_return_expr_8616(self, stmt, block):
-    """
-    Infer a 16-bit scalar return only from concrete AX producer evidence.
+    """Infer a 16-bit scalar return only from concrete AX producer evidence.
 
     This is deliberately narrower than prototype-driven ReturnMaker recovery: if
     no terminal/reaching AX assignment is found, the caller must keep upstream's
     original return handling.
     """
-
     arch = getattr(self, "arch", None)
     registers = getattr(arch, "registers", {}) if arch is not None else {}
     ax_reg = registers.get("ax") if isinstance(registers, dict) else None
@@ -743,15 +741,13 @@ def _x87_opcode_reads_memory_operand_8616(opcode: int, reg: int) -> bool:
 
 
 def x86_16_msvc_x87_scalar_stack_args(project, function) -> dict[int, object]:
-    """
-    Return BP-relative stack arguments that are proven scalar FP operands.
+    """Return BP-relative stack arguments that are proven scalar FP operands.
 
     Microsoft C's no-FPU runtime encodes x87 ESC instructions as INT 34h/35h/
     38h/39h followed by the original ModR/M operand.  A BP-relative memory
     operand read by those decoded x87 operations is scalar data, not a near
     pointer, so later prototype promotion must not reinterpret it as a pointer.
     """
-
     scan_project, _start, data = _function_bytes_for_return_scan_8616(project, function)
     if not data:
         return {}

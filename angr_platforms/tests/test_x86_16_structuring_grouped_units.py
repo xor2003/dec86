@@ -1,6 +1,5 @@
 import networkx as nx
 import pytest
-
 from angr_platforms.X86_16.structuring_grouped_units import (
     apply_x86_16_cross_entry_grouped_units,
     build_x86_16_cross_entry_grouped_units,

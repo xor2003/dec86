@@ -6,7 +6,6 @@ and integration with structuring analysis.
 """
 
 import pytest
-
 from angr_platforms.X86_16.structuring_diagnostics import (
     DiagnosticsCollector,
     StructuringDiagnostic,

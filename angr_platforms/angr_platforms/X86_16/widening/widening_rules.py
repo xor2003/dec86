@@ -16,8 +16,7 @@ def run_typed_widening_pass_8616(
     copy_propagation_fn=None,
     promote_stack_slots_from_instruction_widths=None,
 ) -> bool:
-    """
-    Execute widening-owned passes in deterministic order.
+    """Execute widening-owned passes in deterministic order.
 
     Order:
     1. Stack-slot width promotion from instruction evidence

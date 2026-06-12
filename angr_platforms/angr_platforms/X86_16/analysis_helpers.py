@@ -540,14 +540,12 @@ def patch_interrupt_service_call_sites(
     *,
     vectors: set[int] | None = None,
 ) -> bool:
-    """
-    Rewrite Function._call_sites for recoverable DOS and BIOS interrupt services.
+    """Rewrite Function._call_sites for recoverable DOS and BIOS interrupt services.
 
     The decompiler needs these synthetic hooks so direct interrupt callsites can
     be rendered with the service-specific helper names recovered from the
     interrupt vector and register state.
     """
-
     project = function.project
     if project is None:
         return False
@@ -669,12 +667,10 @@ def describe_x86_16_known_helper_signatures() -> dict[str, object]:
 
 def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[int, int]:
     def _impl():
-        """
-        Infer a bounded `.COM` code region by scanning until a likely terminator.
+        """Infer a bounded `.COM` code region by scanning until a likely terminator.
 
         This keeps tiny DOS stubs from decompiling their trailing strings as code.
         """
-
         data = path.read_bytes()
         end_limit = min(len(data), window)
         current = 0
@@ -1358,13 +1354,11 @@ def _resolve_direct_call_target_from_insn(project, insn) -> int | None:
 
 
 def resolve_direct_call_target_from_block(project, block_addr: int) -> int | None:
-    """
-    Recover a direct call target from a block-end call or a callsite inside a block.
+    """Recover a direct call target from a block-end call or a callsite inside a block.
 
     This is intentionally narrow and only handles the direct near/far forms
     that show up in our DOS samples. Indirect calls still return ``None``.
     """
-
     insn = _direct_call_insn_from_block(project, block_addr)
     if insn is None:
         return None
@@ -1429,13 +1423,11 @@ def sanitize_direct_call_sites_8616(function) -> DirectCallsiteSanitizationEvide
 
 def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | None:
     def _impl():
-        """
-        Recover a direct jump target from the last instruction in a block.
+        """Recover a direct jump target from the last instruction in a block.
 
         This is used for tail-jump thunks that should seed neighbor recovery even
         when no explicit call edge exists.
         """
-
         block = project.factory.block(block_addr, opt_level=0)
         insns = getattr(block.capstone, "insns", ())
         if not insns:
@@ -1468,8 +1460,7 @@ def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | Non
 
 def patch_direct_call_sites(function) -> bool:
     def _impl():
-        """
-        Recover direct near/far callsites from block ends when CFG left `_call_sites` empty.
+        """Recover direct near/far callsites from block ends when CFG left `_call_sites` empty.
 
         Rebased exact-region recovery for small 16-bit functions sometimes keeps the
         block boundaries but loses the function callsite inventory. Downstream
@@ -1477,7 +1468,6 @@ def patch_direct_call_sites(function) -> bool:
         so patch the direct block-end calls back into `_call_sites` before later
         passes give up on call reasoning.
         """
-
         project = getattr(function, "project", None)
         if project is None or getattr(getattr(project, "arch", None), "name", None) != "86_16":
             return False
@@ -1525,8 +1515,7 @@ def patch_direct_call_sites(function) -> bool:
 
 def resolve_stored_near_call_target_from_function(function, callsite_addr: int) -> int | None:
     def _impl():
-        """
-        Recover a near call target from a startup-built absolute pointer slot.
+        """Recover a near call target from a startup-built absolute pointer slot.
 
         This is intentionally narrow. It only handles patterns like:
 
@@ -1536,7 +1525,6 @@ def resolve_stored_near_call_target_from_function(function, callsite_addr: int) 
 
         which appear in MSC startup code for real-mode DOS.
         """
-
         project = function.project
         if project is None:
             return None
@@ -1587,13 +1575,11 @@ def resolve_stored_near_call_target_from_function(function, callsite_addr: int) 
 
 def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> int | None:
     def _impl():
-        """
-        Recover a near jump target from a startup-built absolute pointer slot.
+        """Recover a near jump target from a startup-built absolute pointer slot.
 
         This mirrors ``resolve_stored_near_call_target_from_function`` for tail-jump
         thunks that end in ``jmp word ptr [slot]``.
         """
-
         project = function.project
         if project is None:
             return None
@@ -1643,8 +1629,7 @@ def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> i
 
 
 def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
-    """
-    Recover direct or startup-recoverable call targets directly from lifted blocks.
+    """Recover direct or startup-recoverable call targets directly from lifted blocks.
 
     angr's stock call-target recovery does not currently understand the x86-16
     `CS:IP` far-call pattern very well, so medium-model DOS startup code often
@@ -1652,7 +1637,6 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
     is fully understood. This helper keeps the workaround small, explicit, and
     reusable for CLI tooling and tests.
     """
-
     if function.project is None or function.project.arch.name != "86_16":
         return []
 
@@ -1682,14 +1666,12 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
 
 def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
     def _impl():
-        """
-        Recover direct x86-16 call neighbors from a function's traced call sites.
+        """Recover direct x86-16 call neighbors from a function's traced call sites.
 
         We prefer targets already recorded by CFG when they stay inside the loaded
         image, then fall back to block-level decoding for direct near/far calls and
         the narrow startup pointer-slot recovery used by MSC-style startup code.
         """
-
         project = getattr(function, "project", None)
         if project is None or project.arch.name != "86_16":
             return []
@@ -1780,8 +1762,7 @@ def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
 
 
 def patch_far_call_sites(function, far_targets: list[FarCallTarget]) -> bool:
-    """
-    Rewrite Function._call_sites for immediate far calls recovered from blocks.
+    """Rewrite Function._call_sites for immediate far calls recovered from blocks.
 
     CFGFast currently leaves some x86-16 far callsites pointing at a bogus short
     target (for example `0x14`) even when the block disassembly clearly shows an
@@ -1789,7 +1770,6 @@ def patch_far_call_sites(function, far_targets: list[FarCallTarget]) -> bool:
     from `_call_sites`, so patching those entries gives downstream analyses a
     much better callee address without needing to modify site-packages angr.
     """
-
     changed = False
 
     for target in far_targets:
@@ -1803,13 +1783,11 @@ def patch_far_call_sites(function, far_targets: list[FarCallTarget]) -> bool:
 
 
 def patch_dos_int21_call_sites(function, binary_path: Path | str | None = None) -> bool:
-    """
-    Rewrite Function._call_sites for recoverable int 21h services.
+    """Rewrite Function._call_sites for recoverable int 21h services.
 
     This gives the decompiler service-specific pseudo-callees instead of a
     single undifferentiated `dos_int21` hook at every site.
     """
-
     return patch_interrupt_service_call_sites(function, binary_path, vectors={0x21})
 
 
@@ -1866,14 +1844,12 @@ def seed_calling_conventions(cfg) -> None:
 
 
 def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_window: int = 0x80):
-    """
-    Re-run CFG with direct far callees seeded as extra function starts.
+    """Re-run CFG with direct far callees seeded as extra function starts.
 
     This keeps bounded DOS startup recovery focused on the functions actually
     reached by immediate far calls, instead of forcing a broad CFG window that
     quickly runs into unrelated unsupported instructions.
     """
-
     far_targets = collect_direct_far_call_targets(function)
     if not far_targets:
         return None
@@ -2004,14 +1980,12 @@ def extend_cfg_for_neighbor_calls(
     max_targets: int = 8,
 ):
     def _impl():
-        """
-        Re-run bounded CFG with nearby traced callees seeded as extra starts.
+        """Re-run bounded CFG with nearby traced callees seeded as extra starts.
 
         This keeps 16-bit function recovery local: once we recover one function we
         immediately reuse its traced call neighbors instead of widening into a
         broader scan of unrelated code bytes.
         """
-
         neighbor_targets = collect_neighbor_call_targets(function)
         if not neighbor_targets:
             return None

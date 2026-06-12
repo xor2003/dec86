@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import decompile
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeInt, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.postprocess.optimization.dce import _dead_code_elimination_8616
+
+import decompile
 
 
 class _FakeCodegen:

@@ -5,9 +5,8 @@ from types import SimpleNamespace
 import archinfo
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CUnaryOp
 from angr.sim_type import SimTypeInt
-
-from angr_platforms.X86_16.decompiler_postprocess_utils import _c_constant_value_8616
 from angr_platforms.X86_16.decompiler_postprocess_stage import _repair_missing_cnode_codegen_metadata_8616
+from angr_platforms.X86_16.decompiler_postprocess_utils import _c_constant_value_8616
 from angr_platforms.X86_16.postprocess.optimization.const_prop import _constant_propagation_8616
 
 

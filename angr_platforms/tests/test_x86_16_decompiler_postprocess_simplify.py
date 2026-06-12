@@ -4,19 +4,20 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
-    CITE,
     CConstant,
     CDirtyExpression,
+    CFunctionCall,
     CReturn,
     CStatements,
+    CTypeCast,
     CUnaryOp,
     CVariable,
 )
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_simplify import (
     _eliminate_single_use_temporaries_8616,
@@ -81,6 +82,131 @@ def test_simplify_structured_expressions_folds_joinable_memory_byte_pair_to_word
     assert isinstance(result.variable, SimMemoryVariable)
     assert result.variable.addr == 0x2000
     assert result.variable.size == 2
+
+
+def test_simplify_structured_expressions_folds_nested_literal_arithmetic_to_one_constant():
+    codegen = _codegen([])
+    expr = CBinaryOp(
+        "Or",
+        _const(13532, codegen),
+        CBinaryOp("Shl", _const(18, codegen), _const(16, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CConstant)
+    assert result.value == 1193180
+
+
+def test_simplify_structured_expressions_folds_casted_literal_arithmetic_inside_call_arg():
+    codegen = _codegen([])
+    long_type = SimTypeLong(False)
+    expr = CFunctionCall(
+        "aNldiv",
+        None,
+        [
+            CBinaryOp(
+                "Or",
+                CTypeCast(None, long_type, _const(13532, codegen), codegen=codegen),
+                CBinaryOp(
+                    "Shl",
+                    CTypeCast(None, long_type, _const(18, codegen), codegen=codegen),
+                    _const(16, codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            _global(0x2000, codegen, size=2),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CFunctionCall)
+    assert isinstance(result.args[0], CConstant)
+    assert result.args[0].value == 1193180
+
+
+def test_simplify_structured_expressions_folds_adjacent_seg_u8_pair_to_seg_u16():
+    project = _project()
+    codegen = _codegen([])
+    ds = _reg(project, "ds", codegen)
+    index = _reg(project, "bx", codegen, var_name="idx")
+    scale = CBinaryOp("Mul", index, _const(2, codegen), codegen=codegen)
+    low_offset = CBinaryOp("Add", _const(2288, codegen), scale, codegen=codegen)
+    high_offset = CBinaryOp("Add", _const(2289, codegen), scale, codegen=codegen)
+    low = CFunctionCall(
+        "SEG_U8",
+        None,
+        [ds, low_offset],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U8"},
+    )
+    high = CFunctionCall(
+        "SEG_U8",
+        None,
+        [ds, high_offset],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U8"},
+    )
+    expr = CBinaryOp(
+        "Or",
+        low,
+        CBinaryOp("Mul", high, _const(0x100, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CFunctionCall)
+    assert result.callee_target == "SEG_U16"
+    assert result.args == [ds, low_offset]
+
+
+def test_simplify_structured_expressions_folds_adjacent_indexed_global_byte_derefs_to_word_deref():
+    codegen = _codegen([])
+    index = _reg(_project(), "bx", codegen, var_name="idx")
+
+    def byte_deref(addr: int):
+        base_addr = CUnaryOp("Reference", _global(addr, codegen, size=1), codegen=codegen)
+        addr_expr = CBinaryOp(
+            "Add",
+            base_addr,
+            CBinaryOp("Mul", index, _const(2, codegen), codegen=codegen),
+            codegen=codegen,
+        )
+        return CUnaryOp("Dereference", addr_expr, codegen=codegen)
+
+    expr = CBinaryOp(
+        "Or",
+        byte_deref(0x3000),
+        CBinaryOp("Mul", byte_deref(0x3001), _const(0x100, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CFunctionCall)
+    assert result.callee_target == "MEM_U16"
+    assert len(result.args) == 1
 
 
 def test_simplify_structured_expressions_refuses_mixed_byte_pair_sources():

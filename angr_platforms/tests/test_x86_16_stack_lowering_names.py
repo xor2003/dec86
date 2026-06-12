@@ -3,9 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.sim_type import SimTypeFunction, SimTypeShort
-
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     RealModeLinearStackAccess8616,
     stack_cvar_for_stable_ss_linear_access_8616,

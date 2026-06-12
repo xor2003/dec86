@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
 from angr_platforms.X86_16.ir.core import AddressStatus, IRAddress, IRCondition, MemSpace, SegmentOrigin
 from angr_platforms.X86_16.ir.vex_import import (
     apply_x86_16_vex_ir_artifact,

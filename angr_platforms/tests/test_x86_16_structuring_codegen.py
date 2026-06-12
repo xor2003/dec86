@@ -5,7 +5,6 @@ Demonstrates Loop→while/for, IncSwitch→switch rendering.
 """
 
 import pytest
-
 from angr_platforms.X86_16.structuring_analysis import StructureAnalysis
 from angr_platforms.X86_16.structuring_codegen import StructuringCodegenPass
 from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType

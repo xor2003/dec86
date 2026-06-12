@@ -62,6 +62,8 @@ include = [
 
 [tool.ruff.lint]
 select = [
+    "ANN",
+    "D",
     "E",
     "F",
     "I",
@@ -70,8 +72,11 @@ ignore = [
     "E501",
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.ruff.lint.per-file-ignores]
-"angr_platforms/tests/*.py" = ["E402"]
+"angr_platforms/tests/*.py" = ["ANN", "D", "E402"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import angr
 from angr import options as o
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 

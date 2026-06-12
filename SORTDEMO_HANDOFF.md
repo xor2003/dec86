@@ -2,7 +2,72 @@
 
 Purpose: reduce cold-start cost for the active `SORTDEMO.EXE` lane.
 
-Last updated: 2026-05-17 (late session)
+Last updated: 2026-06-12 (current SORTDEMO plan)
+
+## 2026-06-12 restart note
+
+The older per-function status below is stale. The latest visible
+`./decompile.py SORTDEMO.EXE | tee SORTDEMO.dec` emitted 20 non-library
+functions, but several functions still contain semantic leakage:
+
+- `ReInitBars`: stack/local recurrence and byte-carrier leakage; wrong-looking
+  `clock`/temporary materialization; raw segmented memory expressions.
+- `QuickSort`: many `vvar_*` carriers and standalone `MK_FP(...)`
+  expressions; pointer/index lowering is not materialized.
+- `PercolateDown`: loop-carried update is missing/incorrect; emitted empty
+  body shape indicates lowering/structuring handoff lost state.
+- `BubbleSort`: likely loop-carried switch/update loss.
+- `InitBars`: bad signature/prototype shape and global array/segmented memory
+  lowering leakage.
+- `RunMenu` and `InitMenu`: raw flag/JCC expressions and segmented global
+  accesses still leak.
+
+Do not mark any function accepted from this file alone. Acceptance still means:
+
+1. generated C exists,
+2. tail validation passes honestly,
+3. recompilation passes,
+4. source/call semantics are preserved when source evidence exists,
+5. output is closer to original source than the previous baseline.
+
+## Source runtime oracle
+
+`SORTDEMO.C` has a source selftest mode. Use it as the behavior oracle while
+fixing decompiler output:
+
+```bash
+make sortdemo-selftest PYTHON=./.venv/bin/python
+```
+
+This builds `SORTDEMO.C` with MS C 5.1 using
+`SORTDEMO_FUNCTION_SELFTEST`, writes artifacts under
+`examples/build_msc6/sortdemo_selftest/`, runs the result with kvikdos, and
+requires DOS exit code `255`.
+
+## Current fix plan
+
+Work function-by-function, smallest first, but fix each defect at the owning
+layer:
+
+1. **Gate first**: keep `make sortdemo-selftest` passing. For decompiled
+   output, require validated/emitted/recompiled source identity where possible.
+2. **Signatures and calls**: fix bad prototypes and argument classes in
+   type/call lowering, not CLI text postprocess. Scorecards must preserve
+   required calls such as `Swaps(POINTER, POINTER)` and `DrawBar(VALUE)`.
+3. **Loop-carried state**: fix missing updates like `PercolateDown` and
+   `BubbleSort` in lowering/structuring handoff, with focused tiny MS C
+   examples when a smaller reproducer is possible.
+4. **Segmented globals and arrays**: materialize `abarWork`, `abarPerm`, and
+   menu/string globals through typed segmented lowering, not flattened
+   `(seg << 4) + off` arithmetic and not standalone carrier expressions.
+5. **Widening/materialization**: prove and consume byte/word carrier facts.
+   If widening facts are classified but not materialized, fail with a precise
+   blocker rather than cleaning it up later.
+6. **JCC/flags**: raw flag expressions in `RunMenu`/`InitMenu` belong in
+   condition recovery. Emit explicit `if (x < y)` style conditions only when
+   the condition proof exists.
+7. **DCE**: unknown means keep. DCE must never be used to make gcc pass by
+   deleting live setup for calls, loops, or stack/segment provenance.
 
 ## Acceptance truth
 

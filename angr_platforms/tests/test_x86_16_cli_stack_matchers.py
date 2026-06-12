@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-import decompile
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
+import decompile
 
 
 @dataclass(frozen=True)

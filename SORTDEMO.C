@@ -10,6 +10,10 @@
  * DOS:
  *    cl /Lr sortdemo.c graphics.lib
  *
+ * Source selftest harness:
+ *    cl /Od /DSORTDEMO_FUNCTION_SELFTEST sortdemo.c
+ * The selftest build exits with DOS errorlevel 255 when all checks pass.
+ *
  * OS/2:
  *    cl /Lp /DOS2 sortdemo.c grtextp.lib
  */

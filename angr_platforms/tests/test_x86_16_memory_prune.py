@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import decompile
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar
 from angr.sim_variable import SimMemoryVariable, SimStackVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
+import decompile
 
 
 def test_memory_prune_keeps_observable_global_and_drops_dead_global() -> None:

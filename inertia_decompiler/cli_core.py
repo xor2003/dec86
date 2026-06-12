@@ -179,6 +179,7 @@ from .cli_c_ast_rewrites import (
 
 from .cli_c_text_postprocess import (
     _normalize_anonymous_call_targets,
+    _prune_void_call_assignments_text,
     _prune_void_function_return_values_text,
     _contains_void_function_definition_text,
     _normalize_function_signature_arg_names,
@@ -642,6 +643,55 @@ def _clinic_policy_needs_callsite_count_8616(
     return block_count >= 10 and byte_count >= 160
 
 
+@contextlib.contextmanager
+def _temporary_clinic_policy_8616(project_obj, policy: DirectClinicPolicy8616):
+    if policy is DirectClinicPolicy8616.STANDARD:
+        yield
+        return
+    prev_disable_narrowing = getattr(project_obj, "_inertia_disable_ail_narrowing", False)
+    prev_disable_complex_expr_scan = getattr(project_obj, "_inertia_disable_complex_expr_scan", False)
+    prev_fast_block_peephole = getattr(project_obj, "_inertia_fast_block_peephole", False)
+    prev_skip_pre_ssa = getattr(project_obj, "_inertia_skip_clinic_pre_ssa", False)
+    prev_skip_post_ssa = getattr(project_obj, "_inertia_skip_clinic_post_ssa", False)
+    prev_skip_simplify = getattr(project_obj, "_inertia_skip_clinic_simplify_block", False)
+    prev_skip_recover_full = getattr(project_obj, "_inertia_skip_clinic_recover_variables_full", False)
+    prev_skip_recover_assert = getattr(project_obj, "_inertia_skip_clinic_recover_variables_assert", False)
+    prev_seed_empty = getattr(project_obj, "_inertia_recover_variables_seed_empty", False)
+    prev_peephole_cap = getattr(project_obj, "_inertia_clinic_peephole_cap", None)
+    try:
+        if policy is DirectClinicPolicy8616.AGGRESSIVE_GUARD:
+            setattr(project_obj, "_inertia_disable_ail_narrowing", True)
+            setattr(project_obj, "_inertia_disable_complex_expr_scan", True)
+            setattr(project_obj, "_inertia_fast_block_peephole", True)
+            setattr(project_obj, "_inertia_skip_clinic_pre_ssa", True)
+            setattr(project_obj, "_inertia_skip_clinic_post_ssa", True)
+            setattr(project_obj, "_inertia_skip_clinic_simplify_block", True)
+            setattr(project_obj, "_inertia_skip_clinic_recover_variables_full", True)
+            setattr(project_obj, "_inertia_skip_clinic_recover_variables_assert", True)
+            setattr(project_obj, "_inertia_recover_variables_seed_empty", True)
+            setattr(project_obj, "_inertia_clinic_peephole_cap", 24)
+        elif policy is DirectClinicPolicy8616.FAST_PEEPHOLE:
+            setattr(project_obj, "_inertia_disable_complex_expr_scan", True)
+            setattr(project_obj, "_inertia_fast_block_peephole", True)
+            setattr(project_obj, "_inertia_clinic_peephole_cap", 48)
+        yield
+    finally:
+        setattr(project_obj, "_inertia_disable_ail_narrowing", prev_disable_narrowing)
+        setattr(project_obj, "_inertia_disable_complex_expr_scan", prev_disable_complex_expr_scan)
+        setattr(project_obj, "_inertia_fast_block_peephole", prev_fast_block_peephole)
+        setattr(project_obj, "_inertia_skip_clinic_pre_ssa", prev_skip_pre_ssa)
+        setattr(project_obj, "_inertia_skip_clinic_post_ssa", prev_skip_post_ssa)
+        setattr(project_obj, "_inertia_skip_clinic_simplify_block", prev_skip_simplify)
+        setattr(project_obj, "_inertia_skip_clinic_recover_variables_full", prev_skip_recover_full)
+        setattr(project_obj, "_inertia_skip_clinic_recover_variables_assert", prev_skip_recover_assert)
+        setattr(project_obj, "_inertia_recover_variables_seed_empty", prev_seed_empty)
+        if prev_peephole_cap is None:
+            with contextlib.suppress(Exception):
+                delattr(project_obj, "_inertia_clinic_peephole_cap")
+        else:
+            setattr(project_obj, "_inertia_clinic_peephole_cap", prev_peephole_cap)
+
+
 def _env_truthy_8616(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY_ENV_VALUES_8616
 
@@ -857,14 +907,17 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
     return min(max(1, timeout), 60)
 
 
+_DEFAULT_FUNCTION_TIMEOUT_CAP = 120
+
+
 def _parse_env_timeout_cap() -> int | None:
     cap = os.environ.get("INERTIA_MAX_FUNCTION_TIMEOUT")
     if not cap:
-        return 60
+        return _DEFAULT_FUNCTION_TIMEOUT_CAP
     try:
         cap_value = int(cap)
     except ValueError:
-        return 60
+        return _DEFAULT_FUNCTION_TIMEOUT_CAP
     if cap_value <= 0:
         return None
     return max(1, cap_value)
@@ -1552,21 +1605,34 @@ def _run_function_work_item(
 
         def _run_local(project_obj, cfg_obj, function_obj) -> tuple[str, str, str | None, str, dict[str, object] | None, float, int, int]:
             with _capture_thread_output() as (stdout_buf, stderr_buf):
-                status, payload, partial_payload, block_count, byte_count, elapsed = _decompile_function_with_stats(
-                    project_obj,
-                    cfg_obj,
-                    function_obj,
-                    effective_timeout,
-                    api_style,
-                    binary_path,
-                    cod_metadata=cod_metadata,
-                    synthetic_globals=synthetic_globals,
-                    lst_metadata=lst_metadata,
-                    enable_structured_simplify=enable_structured_simplify,
-                    enable_postprocess=enable_postprocess,
-                    allow_isolated_retry=allow_isolated_retry,
-                    failure_family_state=failure_family_state,
-                )
+                local_block_count, local_byte_count = _function_complexity(function_obj)
+                local_arch_name = getattr(getattr(project_obj, "arch", None), "name", "")
+                local_clinic_policy = DirectClinicPolicy8616.STANDARD
+                if local_arch_name == "86_16" and (local_block_count >= 32 or local_byte_count >= 280):
+                    local_clinic_policy = _direct_clinic_policy_8616(
+                        arch_name=local_arch_name,
+                        direct_addr_mode=True,
+                        block_count=local_block_count,
+                        byte_count=local_byte_count,
+                        call_site_count=0,
+                    )
+                with _temporary_clinic_policy_8616(project_obj, local_clinic_policy):
+                    status, payload, partial_payload, block_count, byte_count, elapsed = _decompile_function_with_stats(
+                        project_obj,
+                        cfg_obj,
+                        function_obj,
+                        effective_timeout,
+                        api_style,
+                        binary_path,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        lst_metadata=lst_metadata,
+                        enable_structured_simplify=enable_structured_simplify,
+                        enable_postprocess=enable_postprocess,
+                        allow_isolated_retry=allow_isolated_retry,
+                        failure_family_state=failure_family_state,
+                    )
+                    annotate_current_span(clinic_policy=local_clinic_policy.value)
             debug_output_local = stdout_buf.getvalue()
             err_output = stderr_buf.getvalue()
             if err_output:
@@ -1637,6 +1703,23 @@ def _run_function_work_item(
                         ),
                     )
                     annotate_current_span(status=status, blocks=block_count, bytes=byte_count)
+            except TimeoutError as ex:
+                logging.getLogger(__name__).warning("fork-isolated decompilation timed out: %s", ex)
+                return _finalize_work_result(
+                    status="timeout",
+                    payload=f"Timed out after {effective_timeout}s during fork-isolated decompilation.",
+                    partial_payload=None,
+                    debug_output="",
+                    tail_validation_snapshot=None,
+                    elapsed=float(effective_timeout),
+                    block_count=block_estimate,
+                    byte_count=_byte_estimate,
+                    decompile_project=decompile_project,
+                    failure_family_state=failure_family_state,
+                    cache_key=None,
+                    tail_validation_enabled=tail_validation_enabled,
+                    expected_validation_stages=expected_validation_stages,
+                )
             except Exception as ex:
                 logging.getLogger(__name__).warning("fork-isolated decompilation failed: %s", ex)
                 fork_isolated_eligible = False
@@ -1812,6 +1895,7 @@ def _normalize_accepted_payload_8616(payload: str) -> str:
         synthetic_globals=None,
     )
     accepted_payload = _materialize_missing_direct_call_prototypes_text(accepted_payload)
+    accepted_payload = _prune_void_call_assignments_text(accepted_payload)
     accepted_payload = _materialize_opaque_pointer_typedefs_text(accepted_payload)
     accepted_payload = _normalize_function_signature_arg_names(accepted_payload)
     return _hoist_c89_local_declarations_text(accepted_payload)
@@ -6504,9 +6588,10 @@ def main(argv: list[str] | None = None) -> int:
         forced_serial_function_decomp = (
             os.environ.get(_FORCE_SERIAL_FUNCTION_DECOMP_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
         )
-        enable_serial_fork_per_function = (
-            os.environ.get("INERTIA_ENABLE_SERIAL_FORK_PER_FUNCTION", "").strip().lower() in {"1", "true", "yes", "on"}
-        )
+        serial_fork_env = os.environ.get("INERTIA_ENABLE_SERIAL_FORK_PER_FUNCTION")
+        enable_serial_fork_per_function = True
+        if serial_fork_env is not None and serial_fork_env.strip():
+            enable_serial_fork_per_function = serial_fork_env.strip().lower() in {"1", "true", "yes", "on"}
         use_serial_fork_per_function = (
             enable_serial_fork_per_function
             and not forced_serial_function_decomp
@@ -6550,6 +6635,20 @@ def main(argv: list[str] | None = None) -> int:
 
         if force_isolated_function_projects:
             print("/* parallel x86-16 decompilation: using one fresh analysis project per shown function for stability. */")
+
+        def _force_isolated_project_for_work_item(work_item: FunctionWorkItem) -> bool:
+            if not force_isolated_function_projects:
+                return False
+            try:
+                function_project = work_item.function.project
+            except AttributeError:
+                return True
+            if function_project is None:
+                return True
+            # Exact-region recovery for 16-bit sidecar functions already builds a
+            # fresh sliced project. Re-isolating those functions discards the
+            # proven region and can re-enter a slower broad recovery lane.
+            return function_project is project
 
         allow_heavy_fallbacks = allows_heavy_fallbacks_for_run(
             interactive_stdout=interactive_stdout,
@@ -6595,16 +6694,19 @@ def main(argv: list[str] | None = None) -> int:
                 explicit_timeout=timeout_was_explicit,
                 margin=1.5,
             )
-            allow_isolated_retry_in_function_tasks = not (
-                args.addr is None
-                and args.binary.suffix.lower() == ".exe"
-                and args.max_functions > 0
-                and args.max_functions <= 2
-                and lst_metadata is not None
-                and not visible_code_labels
-                and include_library_functions
-                and project.arch.name == "86_16"
-            )
+            if use_serial_fork_per_function:
+                allow_isolated_retry_in_function_tasks = False
+            else:
+                allow_isolated_retry_in_function_tasks = not (
+                    args.addr is None
+                    and args.binary.suffix.lower() == ".exe"
+                    and args.max_functions > 0
+                    and args.max_functions <= 2
+                    and lst_metadata is not None
+                    and not visible_code_labels
+                    and include_library_functions
+                    and project.arch.name == "86_16"
+                )
             for item in function_tasks:
                 if _sweep_budget_exhausted():
                     remaining = sum(1 for pending_item in function_tasks if pending_item.index not in result_map)
@@ -6872,6 +6974,13 @@ def main(argv: list[str] | None = None) -> int:
                             block_count=_block_count,
                             byte_count=byte_count,
                         )
+                        if getattr(getattr(active_item.function.project, "arch", None), "name", "") == "86_16":
+                            if _block_count >= 72 or byte_count >= 520:
+                                decompile_timeout = max(int(decompile_timeout), int(args.timeout) + 120)
+                            elif _block_count >= 56 or byte_count >= 420:
+                                decompile_timeout = max(int(decompile_timeout), int(args.timeout) + 90)
+                            elif _block_count >= 36 or byte_count >= 300:
+                                decompile_timeout = max(int(decompile_timeout), int(args.timeout) + 60)
                         if args.addr is None:
                             decompile_timeout = max(int(decompile_timeout), 16)
                         if args.addr is None and timeout_was_explicit:
@@ -6893,11 +7002,7 @@ def main(argv: list[str] | None = None) -> int:
                             # Hard timeout must track the computed function timeout;
                             # otherwise larger adaptive/effective budgets are
                             # truncated by the outer worker watchdog.
-                            hard_timeout = _enforce_function_timeout_cap(
-                                max(2, int(decompile_timeout) + 8),
-                                context="sweep hard timeout",
-                                explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
-                            )
+                            hard_timeout = max(2, int(decompile_timeout) + 8)
                             print(
                                 f"[dbg] isolated function worker: start {active_item.function.addr:#x} "
                                 f"{active_item.function.name} requested_timeout={decompile_timeout}s hard_timeout={hard_timeout}s"
@@ -6915,15 +7020,11 @@ def main(argv: list[str] | None = None) -> int:
                                             synthetic_globals=synthetic_globals,
                                             lst_metadata=lst_metadata,
                                             enable_structured_simplify=True,
-                                            force_isolated_project=force_isolated_function_projects,
+                                            force_isolated_project=False,
                                             allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                         )
                                     ),
-                                    timeout=_enforce_function_timeout_cap(
-                                        max(1, hard_timeout + 2),
-                                        context="sweep function fork timeout",
-                                        explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
-                                    ),
+                                    timeout=max(1, hard_timeout + 2),
                                 )
                                 result = replace(result, function=active_item.function, function_cfg=active_item.function_cfg)
                             except TimeoutError as ex:
@@ -6966,7 +7067,7 @@ def main(argv: list[str] | None = None) -> int:
                                         synthetic_globals=synthetic_globals,
                                         lst_metadata=lst_metadata,
                                         enable_structured_simplify=True,
-                                        force_isolated_project=force_isolated_function_projects,
+                                        force_isolated_project=_force_isolated_project_for_work_item(active_item),
                                         allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                     ),
                                     timeout=_enforce_function_timeout_cap(
@@ -7014,7 +7115,7 @@ def main(argv: list[str] | None = None) -> int:
                                         synthetic_globals=synthetic_globals,
                                         lst_metadata=lst_metadata,
                                         enable_structured_simplify=True,
-                                        force_isolated_project=force_isolated_function_projects,
+                                        force_isolated_project=_force_isolated_project_for_work_item(active_item),
                                         allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                     ),
                                     timeout=_enforce_function_timeout_cap(
@@ -7073,6 +7174,7 @@ def main(argv: list[str] | None = None) -> int:
                         result is not None
                         and result.status == "timeout"
                         and args.addr is None
+                        and not use_serial_fork_per_function
                     ):
                         base_timeout = max(1, int(getattr(args, "timeout", 120) or 120))
                         # Ensure sweep retry actually expands the lane budget.
@@ -7096,7 +7198,7 @@ def main(argv: list[str] | None = None) -> int:
                                     synthetic_globals=synthetic_globals,
                                     lst_metadata=lst_metadata,
                                     enable_structured_simplify=True,
-                                    force_isolated_project=force_isolated_function_projects,
+                                    force_isolated_project=_force_isolated_project_for_work_item(active_item),
                                     allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                 ),
                                 timeout=_enforce_function_timeout_cap(

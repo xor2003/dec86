@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import archinfo
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong
-
 from angr_platforms.X86_16.calling_convention_compat import (
     _set_function_prototype_8616,
     apply_x86_16_wide_stack_prototype_evidence,

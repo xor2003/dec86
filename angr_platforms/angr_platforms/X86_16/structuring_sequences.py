@@ -1,5 +1,4 @@
-"""
-Sequence-merge eligibility helpers for region structuring.
+"""Sequence-merge eligibility helpers for region structuring.
 
 This keeps loop-preservation policy outside the main structuring driver.
 """
@@ -11,7 +10,6 @@ from .structuring_region import DominatorInfo, Region, RegionGraph, RegionType
 
 def _can_reach_region(graph: RegionGraph, src: Region, dst: Region) -> bool:
     """Return True when `src` can reach `dst` through successor edges."""
-
     worklist = [src]
     seen: set[Region] = set()
 
@@ -36,7 +34,6 @@ def merge_would_hide_cycle(
     other: Region,
 ) -> bool:
     """Return True when merging `other` into `region` would erase a loop edge."""
-
     if dominators is None:
         return False
     return dominators.dominates(region, other) and _can_reach_region(graph, other, region)
@@ -49,14 +46,12 @@ def sequence_merge_is_safe(
     succ: Region,
 ) -> bool:
     def _impl():
-        """
-        Return True when `region -> succ` is safe to collapse as a sequence.
+        """Return True when `region -> succ` is safe to collapse as a sequence.
 
         The key guard is loop preservation: do not consume a successor that feeds a
         back-edge to the region, because that hides a natural loop before cyclic
         analysis can see it.
         """
-
         if succ.region_type in (RegionType.Loop, RegionType.IncSwitch):
             return False
         if region.region_type == RegionType.Condition:

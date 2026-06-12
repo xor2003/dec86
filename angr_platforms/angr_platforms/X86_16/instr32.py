@@ -2,6 +2,8 @@ import struct
 
 from pyvex.lifting.util import Type
 
+from angr_platforms.X86_16.instruction import InstrData
+
 from .addressing_helpers import advance_eip32, load_far_pointer
 from .alu_helpers import (
     binary_operation,
@@ -43,7 +45,6 @@ from .string_helpers import (
     string_load,
     string_source_segment,
 )
-from angr_platforms.X86_16.instruction import InstrData
 
 
 class Instr32(InstrBase):

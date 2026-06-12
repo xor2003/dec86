@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import angr_platforms.X86_16 as x8616
 from angr.analyses.calling_convention import calling_convention as _cc_analysis
 from angr.analyses.calling_convention import fact_collector as _cc_fact_collector
 from angr.analyses.calling_convention import utils as _cc_utils
 from angr.analyses.decompiler.decompiler import Decompiler
-
-import angr_platforms.X86_16 as x8616
 from angr_platforms.X86_16 import (
     bootstrap,
     decompiler_postprocess_stage,

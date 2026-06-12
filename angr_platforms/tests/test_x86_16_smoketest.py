@@ -15,12 +15,12 @@ from angr.sim_type import (
     SimTypeShort,
 )
 from angr.sim_variable import SimStackVariable
-from decompile import _resolve_stack_cvar_at_offset
-
 from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations, decompile_function
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.simos_86_16 import SimCC8616MSCsmall  # noqa: F401
+
+from decompile import _resolve_stack_cvar_at_offset
 
 
 def _project_from_bytes(code: bytes):

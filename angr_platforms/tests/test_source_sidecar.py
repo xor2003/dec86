@@ -4,7 +4,7 @@ from pathlib import Path
 
 import inertia_decompiler.cli as cli
 from inertia_decompiler.cli_arg_parser import _build_cli_argument_parser
-from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
+from inertia_decompiler.source_sidecar import collect_local_source_sidecar_return_types, render_local_source_sidecar_function
 
 
 def test_render_local_source_sidecar_function_extracts_knr_body(tmp_path: Path) -> None:
@@ -58,6 +58,30 @@ def test_render_local_source_sidecar_function_extracts_knr_with_arg_decls(tmp_pa
     assert "draw_box(attr)" in rendered
     assert "int attr;" in rendered
     assert not rendered.startswith("\n")
+
+
+def test_collect_local_source_sidecar_return_types_extracts_void_definitions(tmp_path: Path) -> None:
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    source = tmp_path / "sample.c"
+    source.write_text(
+        "typedef struct BAR BAR;\n"
+        "\n"
+        "void Swaps( BAR *bar1, BAR *bar2 )\n"
+        "{\n"
+        "    return;\n"
+        "}\n"
+        "\n"
+        "int value(void)\n"
+        "{\n"
+        "    return 1;\n"
+        "}\n"
+    )
+
+    return_types = collect_local_source_sidecar_return_types(binary)
+
+    assert return_types["Swaps"] == "void"
+    assert return_types["value"] == "int"
 
 
 def test_emit_optional_source_sidecar_c_block_alternates_source_before_c(tmp_path: Path, monkeypatch, capsys) -> None:

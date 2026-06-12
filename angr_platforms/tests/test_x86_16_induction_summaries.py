@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from inertia_decompiler.cli_access_profiles import (
-    AccessTraitEvidenceProfile,
-    AccessTraitStrideEvidence,
-    infer_induction_summary,
-)
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_structuring_stage import (
     DECOMPILER_STRUCTURING_PASSES,
     _induction_summary_artifact_8616,
+)
+
+from inertia_decompiler.cli_access_profiles import (
+    AccessTraitEvidenceProfile,
+    AccessTraitStrideEvidence,
+    infer_induction_summary,
 )
 
 

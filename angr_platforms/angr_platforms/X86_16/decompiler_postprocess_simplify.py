@@ -9,12 +9,13 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CDirtyExpression,
+    CFunctionCall,
     CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
 )
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from .decompiler_postprocess_flags import _bool_cite_values_8616
@@ -192,7 +193,6 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     in the function. It does not inspect rendered C text and refuses any RHS
     with memory/call/address side effects.
     """
-
     cfunc = getattr(codegen, "cfunc", None)
     root = getattr(cfunc, "statements", None)
     if root is None:
@@ -540,6 +540,238 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return int(expr.value)
         return None
 
+    def _unwrap_c_casts_8616(expr):
+        while isinstance(expr, CTypeCast):
+            expr = getattr(expr, "expr", None)
+        return expr
+
+    def _constant_result_type_8616(node, value: int):
+        if value < 0 or value > 0xFFFF:
+            return SimTypeLong(value < 0)
+        return getattr(node, "type", None) or SimTypeShort(False)
+
+    def _fold_pure_constant_binary_8616(op: str, lhs: int, rhs: int) -> int | None:
+        if op == "Add":
+            return lhs + rhs
+        if op == "Sub":
+            return lhs - rhs
+        if op == "Mul":
+            return lhs * rhs
+        if op == "Div":
+            return None if rhs == 0 else lhs // rhs
+        if op == "Mod":
+            return None if rhs == 0 else lhs % rhs
+        if op == "And":
+            return lhs & rhs
+        if op == "Or":
+            return lhs | rhs
+        if op == "Xor":
+            return lhs ^ rhs
+        if op == "Shl":
+            return None if rhs < 0 or rhs > 63 else lhs << rhs
+        if op in {"Shr", "Sar"}:
+            return None if rhs < 0 or rhs > 63 else lhs >> rhs
+        return None
+
+    def _pure_constant_expr_value_8616(expr) -> int | None:
+        expr = _unwrap_c_casts_8616(expr)
+        if isinstance(expr, CConstant) and isinstance(expr.value, int):
+            return int(expr.value)
+        if isinstance(expr, CUnaryOp):
+            operand = _pure_constant_expr_value_8616(getattr(expr, "operand", None))
+            if operand is None:
+                return None
+            if expr.op == "Neg":
+                return -operand
+            if expr.op == "Not":
+                return int(not operand)
+            if expr.op == "BitNot":
+                return ~operand
+            return None
+        if isinstance(expr, CBinaryOp):
+            lhs = _pure_constant_expr_value_8616(getattr(expr, "lhs", None))
+            rhs = _pure_constant_expr_value_8616(getattr(expr, "rhs", None))
+            if lhs is None or rhs is None:
+                return None
+            return _fold_pure_constant_binary_8616(str(getattr(expr, "op", "")), lhs, rhs)
+        return None
+
+    def _runtime_segment_helper_name_8616(node) -> str | None:
+        node = _unwrap_c_casts_8616(node)
+        if not isinstance(node, CFunctionCall):
+            return None
+        for raw in (
+            getattr(node, "callee_target", None),
+            getattr(getattr(node, "callee_func", None), "name", None),
+        ):
+            if isinstance(raw, str) and raw:
+                normalized = raw.strip().upper()
+                if normalized in {"SEG_U8", "SEG_U16", "SEG_U32"}:
+                    return normalized
+        return None
+
+    def _runtime_segment_helper_args_8616(node) -> tuple[object, object] | None:
+        node = _unwrap_c_casts_8616(node)
+        if not isinstance(node, CFunctionCall):
+            return None
+        args = getattr(node, "args", None)
+        if not isinstance(args, (list, tuple)) or len(args) != 2:
+            return None
+        return args[0], args[1]
+
+    def _flatten_offset_terms_8616(expr, sign: int = 1) -> tuple[int, tuple[tuple[int, object], ...]]:
+        expr = _unwrap_c_casts_8616(expr)
+        const_value = _pure_constant_expr_value_8616(expr)
+        if const_value is not None:
+            return sign * const_value, ()
+        if isinstance(expr, CBinaryOp) and expr.op == "Add":
+            lhs_const, lhs_terms = _flatten_offset_terms_8616(expr.lhs, sign)
+            rhs_const, rhs_terms = _flatten_offset_terms_8616(expr.rhs, sign)
+            return lhs_const + rhs_const, lhs_terms + rhs_terms
+        if isinstance(expr, CBinaryOp) and expr.op == "Sub":
+            lhs_const, lhs_terms = _flatten_offset_terms_8616(expr.lhs, sign)
+            rhs_const, rhs_terms = _flatten_offset_terms_8616(expr.rhs, -sign)
+            return lhs_const + rhs_const, lhs_terms + rhs_terms
+        return 0, ((sign, expr),)
+
+    def _same_signed_term_multiset_8616(lhs_terms, rhs_terms) -> bool:
+        unmatched = list(rhs_terms)
+        for lhs_sign, lhs_expr in lhs_terms:
+            found_index = None
+            for idx, (rhs_sign, rhs_expr) in enumerate(unmatched):
+                if lhs_sign == rhs_sign and _same_c_expression_8616(lhs_expr, rhs_expr):
+                    found_index = idx
+                    break
+            if found_index is None:
+                return False
+            del unmatched[found_index]
+        return not unmatched
+
+    def _offset_exprs_are_adjacent_8616(low_offset, high_offset) -> bool:
+        low_const, low_terms = _flatten_offset_terms_8616(low_offset)
+        high_const, high_terms = _flatten_offset_terms_8616(high_offset)
+        return high_const == low_const + 1 and _same_signed_term_multiset_8616(low_terms, high_terms)
+
+    def _seg_u8_call_info_8616(expr) -> tuple[object, object] | None:
+        if _runtime_segment_helper_name_8616(expr) != "SEG_U8":
+            return None
+        return _runtime_segment_helper_args_8616(expr)
+
+    def _shifted_seg_u8_high_byte_8616(expr) -> tuple[object, object] | None:
+        expr = _unwrap_c_casts_8616(expr)
+        if not isinstance(expr, CBinaryOp):
+            return None
+        if expr.op == "Shl":
+            for maybe_call, maybe_shift in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+                if _pure_constant_expr_value_8616(maybe_shift) == 8:
+                    return _seg_u8_call_info_8616(maybe_call)
+        if expr.op == "Mul":
+            for maybe_call, maybe_scale in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+                if _pure_constant_expr_value_8616(maybe_scale) == 0x100:
+                    return _seg_u8_call_info_8616(maybe_call)
+        return None
+
+    def _fold_runtime_seg_u8_pair_8616(expr):
+        if not isinstance(expr, CBinaryOp) or expr.op not in {"Or", "Add"}:
+            return None
+        for maybe_low, maybe_high in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+            low_info = _seg_u8_call_info_8616(maybe_low)
+            high_info = _shifted_seg_u8_high_byte_8616(maybe_high)
+            if low_info is None or high_info is None:
+                continue
+            low_seg, low_offset = low_info
+            high_seg, high_offset = high_info
+            if not _same_c_expression_8616(low_seg, high_seg):
+                continue
+            if not _offset_exprs_are_adjacent_8616(low_offset, high_offset):
+                continue
+            return CFunctionCall(
+                "SEG_U16",
+                None,
+                [low_seg, low_offset],
+                codegen=codegen,
+                tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
+            )
+        return None
+
+    def _global_byte_reference_addr_8616(expr) -> int | None:
+        expr = _unwrap_c_casts_8616(expr)
+        if not isinstance(expr, CUnaryOp) or expr.op != "Reference":
+            return None
+        target = _unwrap_c_casts_8616(getattr(expr, "operand", None))
+        if not isinstance(target, CVariable):
+            return None
+        variable = getattr(target, "variable", None)
+        if not isinstance(variable, SimMemoryVariable):
+            return None
+        if getattr(variable, "size", None) != 1:
+            return None
+        addr = getattr(variable, "addr", None)
+        return addr if isinstance(addr, int) else None
+
+    def _global_byte_address_terms_8616(expr):
+        const_value, terms = _flatten_offset_terms_8616(expr)
+        normalized_terms: list[tuple[int, object]] = []
+        saw_global_byte_ref = False
+        for sign, term in terms:
+            ref_addr = _global_byte_reference_addr_8616(term)
+            if ref_addr is not None:
+                const_value += sign * ref_addr
+                saw_global_byte_ref = True
+                continue
+            normalized_terms.append((sign, term))
+        return const_value, tuple(normalized_terms), saw_global_byte_ref
+
+    def _byte_deref_address_info_8616(expr):
+        expr = _unwrap_c_casts_8616(expr)
+        if not isinstance(expr, CUnaryOp) or expr.op != "Dereference":
+            return None
+        addr_expr = getattr(expr, "operand", None)
+        const_value, terms, saw_global_byte_ref = _global_byte_address_terms_8616(addr_expr)
+        if not saw_global_byte_ref:
+            return None
+        return addr_expr, const_value, terms
+
+    def _shifted_byte_deref_high_info_8616(expr):
+        expr = _unwrap_c_casts_8616(expr)
+        if not isinstance(expr, CBinaryOp):
+            return None
+        if expr.op == "Shl":
+            for maybe_deref, maybe_shift in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+                if _pure_constant_expr_value_8616(maybe_shift) == 8:
+                    return _byte_deref_address_info_8616(maybe_deref)
+        if expr.op == "Mul":
+            for maybe_deref, maybe_scale in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+                if _pure_constant_expr_value_8616(maybe_scale) == 0x100:
+                    return _byte_deref_address_info_8616(maybe_deref)
+        return None
+
+    def _make_word_deref_from_addr_expr_8616(addr_expr):
+        return CFunctionCall(
+            "MEM_U16",
+            None,
+            [addr_expr],
+            codegen=codegen,
+            tags={"inertia_x86_16_runtime_pointer_helper": "MEM_U16"},
+        )
+
+    def _fold_global_byte_deref_pair_8616(expr):
+        if not isinstance(expr, CBinaryOp) or expr.op not in {"Or", "Add"}:
+            return None
+        for maybe_low, maybe_high in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+            low_info = _byte_deref_address_info_8616(maybe_low)
+            high_info = _shifted_byte_deref_high_info_8616(maybe_high)
+            if low_info is None or high_info is None:
+                continue
+            low_addr_expr, low_const, low_terms = low_info
+            _high_addr_expr, high_const, high_terms = high_info
+            if high_const != low_const + 1:
+                continue
+            if not _same_signed_term_multiset_8616(low_terms, high_terms):
+                continue
+            return _make_word_deref_from_addr_expr_8616(low_addr_expr)
+        return None
+
     def _is_power_of_two_minus_one_8616(value: int) -> bool:
         """Check if value is of form 2^n - 1 (all bits set up to position n-1)."""
         if value <= 0:
@@ -800,6 +1032,33 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         return CUnaryOp("Not", source_expr, codegen=codegen)
 
     def transform(node):
+        if isinstance(node, CBinaryOp) and node.op in {"Or", "Add"}:
+            folded_seg_word = _fold_runtime_seg_u8_pair_8616(node)
+            if folded_seg_word is not None:
+                codegen._inertia_runtime_seg_u8_pair_folded_count_8616 = int(
+                    getattr(codegen, "_inertia_runtime_seg_u8_pair_folded_count_8616", 0) or 0
+                ) + 1
+                return folded_seg_word
+            folded_global_word = _fold_global_byte_deref_pair_8616(node)
+            if folded_global_word is not None:
+                codegen._inertia_global_byte_pair_folded_count_8616 = int(
+                    getattr(codegen, "_inertia_global_byte_pair_folded_count_8616", 0) or 0
+                ) + 1
+                return folded_global_word
+
+        if isinstance(node, (CBinaryOp, CUnaryOp)):
+            folded_constant = _pure_constant_expr_value_8616(node)
+            if folded_constant is not None:
+                codegen._inertia_pure_constant_folded_count_8616 = int(
+                    getattr(codegen, "_inertia_pure_constant_folded_count_8616", 0) or 0
+                ) + 1
+                return CConstant(
+                    folded_constant,
+                    _constant_result_type_8616(node, folded_constant),
+                    codegen=codegen,
+                    tags=getattr(node, "tags", None),
+                )
+
         if isinstance(node, CBinaryOp) and node.op == "Concat":
             lhs_val = _c_constant_value_8616(node.lhs)
             rhs_val = _c_constant_value_8616(node.rhs)

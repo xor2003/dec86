@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
-    _PostprocessValidationDeltaKind8616,
     _classify_postprocess_validation_delta_8616,
     _is_callsite_stack_argument_materialization_delta_8616,
     _is_direct_global_update_materialization_delta_8616,
@@ -11,9 +10,10 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _is_direct_stack_update_materialization_delta_8616,
     _is_jcc_call_return_condition_rebinding_delta_8616,
     _is_jcc_condition_materialization_validation_delta_8616,
+    _PostprocessValidationDeltaKind8616,
     _restore_codegen_inertia_metadata_8616,
-    _snapshot_codegen_inertia_metadata_8616,
     _snapshot_codegen_cfunc,
+    _snapshot_codegen_inertia_metadata_8616,
 )
 
 

@@ -72,8 +72,7 @@ class NESegmentMapping:
 
 
 class DOSNE(Blob):
-    """
-    Minimal segmented NE loader for smoke testing.
+    """Minimal segmented NE loader for smoke testing.
 
     NE uses selector indexes in its entry/stack fields rather than DOS real-mode
     paragraphs. For x86-16 recovery we synthesize paragraph-aligned selectors in a

@@ -4,32 +4,33 @@ from types import SimpleNamespace
 
 import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
     CBreak,
     CConstant,
     CDoWhileLoop,
     CFunctionCall,
-    CITE,
     CIfBreak,
     CIfElse,
+    CReturn,
     CStatements,
     CUnaryOp,
     CVariable,
     CWhileLoop,
 )
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_jcc import (
     _COND_TO_CMP_OP_8616,
     _JCC_COMPARE_OPS_8616,
-    _DecodedCmpGuard8616,
     _bp_operand_stack_expr_8616,
+    _build_arch_safe_binary_op_8616,
     _decode_inc_dec_jcc_guard_8616,
     _decode_test_jcc_guard_8616,
+    _DecodedCmpGuard8616,
     _ensure_c_expr_type_has_arch_8616,
     _rewrite_decoded_jcc_conditions_8616,
     _translate_cmp_jcc_guard_8616,
@@ -41,8 +42,6 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
 from angr_platforms.X86_16.decompiler_structuring_stage import (
     _try_accept_structuring_validation_delta_from_evidence_8616,
 )
-
-
 from angr_platforms.X86_16.ir.condition_ir import JCC_TO_COND_8616
 from angr_platforms.X86_16.tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
 from angr_platforms.X86_16.tail_validation_fingerprint import _expr_fingerprint
@@ -128,6 +127,23 @@ def _expr_contains_register(project, expr, name: str) -> bool:
 
 def _stack(offset: int, codegen, name: str):
     return CVariable(SimStackVariable(offset, 2, base="bp", name=name, region=0x4010), codegen=codegen)
+
+
+def test_build_arch_safe_binary_op_normalizes_archless_pointer_operand():
+    project = _project()
+    codegen = _codegen([])
+    pointer_type = SimTypePointer(SimTypeShort(False))
+    lhs = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="ptr", region=0x4010),
+        variable_type=pointer_type,
+        codegen=codegen,
+    )
+    rhs = _const(0, codegen)
+
+    expr = _build_arch_safe_binary_op_8616(project, codegen, "CmpNE", lhs, rhs)
+
+    assert expr.op == "CmpNE"
+    assert lhs.variable_type.size == project.arch.bits
 
 
 def test_rewrite_decoded_jcc_conditions_refuses_self_compare(monkeypatch):
@@ -1256,6 +1272,45 @@ def test_rewrite_decoded_jcc_conditions_inverts_break_only_condition_pair(monkey
         tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
     )
     if_stmt = CIfElse([(carrier, CStatements([CBreak(codegen=codegen)], codegen=codegen))], codegen=codegen)
+    if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=_reg(project, "ax", codegen),
+            rhs=_reg(project, "bx", codegen),
+            op="CmpGT",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    rewritten = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(rewritten, CBinaryOp)
+    assert rewritten.op == "CmpLE"
+    assert getattr(codegen, "_inertia_jcc_rewrite_refused_unknown_polarity_8616", 0) == 0
+
+
+def test_rewrite_decoded_jcc_conditions_inverts_return_only_condition_pair(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    carrier = CITE(
+        CBinaryOp(
+            "CmpEQ",
+            CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+            _const(0, codegen),
+            codegen=codegen,
+        ),
+        _const(0, codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(carrier, CStatements([CReturn(None, codegen=codegen)], codegen=codegen))], codegen=codegen)
     if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
     codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
     codegen.cfunc.body = codegen.cfunc.statements

@@ -15,6 +15,13 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.tail_validation import (
+    collect_x86_16_tail_validation_summary,
+    compare_x86_16_tail_validation_summaries,
+)
+from angr_platforms.X86_16.type_array_matching import _rewrite_induction_loops_8616
+
 from inertia_decompiler.cli_access_profiles import (
     AccessTraitEvidenceProfile,
     AccessTraitInductionVar,
@@ -22,13 +29,6 @@ from inertia_decompiler.cli_access_profiles import (
     InductionSummary,
     infer_induction_variable,
 )
-
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.tail_validation import (
-    collect_x86_16_tail_validation_summary,
-    compare_x86_16_tail_validation_summaries,
-)
-from angr_platforms.X86_16.type_array_matching import _rewrite_induction_loops_8616
 
 
 class _DummyCodegen:

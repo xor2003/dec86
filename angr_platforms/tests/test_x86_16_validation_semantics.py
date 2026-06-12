@@ -1,5 +1,4 @@
 import pytest
-
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.validation_semantics import assert_known_call_semantics_8616
 

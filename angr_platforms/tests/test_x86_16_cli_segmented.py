@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
-from inertia_decompiler import cli_segmented
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
+from inertia_decompiler import cli_segmented
 
 
 def _const(value: int, codegen):

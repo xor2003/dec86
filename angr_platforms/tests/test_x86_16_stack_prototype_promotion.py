@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
-
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY, _source_function_pointer_local_types_8616
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 

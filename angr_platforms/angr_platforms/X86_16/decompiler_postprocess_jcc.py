@@ -16,6 +16,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CDoWhileLoop,
     CFunctionCall,
     CIfBreak,
+    CReturn,
     CTypeCast,
     CUnaryOp,
     CVariable,
@@ -200,19 +201,82 @@ def _type_with_project_arch_8616(project, sim_type):
 def _ensure_c_expr_type_has_arch_8616(project, expr):
     if expr is None:
         return None
-    if isinstance(expr, CVariable):
-        variable_type = getattr(expr, "variable_type", None)
-        fixed_type = _type_with_project_arch_8616(project, variable_type)
-        if fixed_type is not None and fixed_type is not variable_type:
+    seen: set[int] = set()
+
+    def _fix(node):
+        if node is None:
+            return None
+        marker = id(node)
+        if marker in seen:
+            return node
+        seen.add(marker)
+        if isinstance(node, CVariable):
+            variable_type = getattr(node, "variable_type", None)
+            fixed_type = _type_with_project_arch_8616(project, variable_type)
+            if fixed_type is not None and fixed_type is not variable_type:
+                with contextlib.suppress(Exception):
+                    node.variable_type = fixed_type
+        elif isinstance(node, CConstant):
+            const_type = getattr(node, "_type", None)
+            fixed_type = _type_with_project_arch_8616(project, const_type)
+            if fixed_type is not None and fixed_type is not const_type:
+                with contextlib.suppress(Exception):
+                    node._type = fixed_type
+        elif isinstance(node, CBinaryOp):
             with contextlib.suppress(Exception):
-                expr.variable_type = fixed_type
-    elif isinstance(expr, CConstant):
-        const_type = getattr(expr, "_type", None)
-        fixed_type = _type_with_project_arch_8616(project, const_type)
-        if fixed_type is not None and fixed_type is not const_type:
+                node.lhs = _fix(getattr(node, "lhs", None))
             with contextlib.suppress(Exception):
-                expr._type = fixed_type
-    return expr
+                node.rhs = _fix(getattr(node, "rhs", None))
+            common_type = getattr(node, "common_type", None)
+            fixed_type = _type_with_project_arch_8616(project, common_type)
+            if fixed_type is not None and fixed_type is not common_type:
+                with contextlib.suppress(Exception):
+                    node.common_type = fixed_type
+        elif isinstance(node, CUnaryOp):
+            with contextlib.suppress(Exception):
+                node.operand = _fix(getattr(node, "operand", None))
+        elif isinstance(node, CTypeCast):
+            with contextlib.suppress(Exception):
+                node.expr = _fix(getattr(node, "expr", None))
+            src_type = getattr(node, "src_type", None)
+            fixed_src_type = _type_with_project_arch_8616(project, src_type)
+            if fixed_src_type is not None and fixed_src_type is not src_type:
+                with contextlib.suppress(Exception):
+                    node.src_type = fixed_src_type
+            dst_type = getattr(node, "dst_type", None)
+            fixed_dst_type = _type_with_project_arch_8616(project, dst_type)
+            if fixed_dst_type is not None and fixed_dst_type is not dst_type:
+                with contextlib.suppress(Exception):
+                    node.dst_type = fixed_dst_type
+        elif isinstance(node, CITE):
+            with contextlib.suppress(Exception):
+                node.cond = _fix(getattr(node, "cond", None))
+            with contextlib.suppress(Exception):
+                node.condition = _fix(getattr(node, "condition", None))
+            with contextlib.suppress(Exception):
+                node.iftrue = _fix(getattr(node, "iftrue", None))
+            with contextlib.suppress(Exception):
+                node.iffalse = _fix(getattr(node, "iffalse", None))
+        return node
+
+    return _fix(expr)
+
+
+def _build_arch_safe_binary_op_8616(project, codegen, op: str, lhs, rhs, **kwargs):
+    fixed_lhs = _ensure_c_expr_type_has_arch_8616(project, lhs)
+    fixed_rhs = _ensure_c_expr_type_has_arch_8616(project, rhs)
+    return CBinaryOp(op, fixed_lhs, fixed_rhs, codegen=codegen, **kwargs)
+
+
+def _try_build_arch_safe_binary_op_8616(project, codegen, op: str, lhs, rhs, **kwargs):
+    try:
+        return _build_arch_safe_binary_op_8616(project, codegen, op, lhs, rhs, **kwargs)
+    except ValueError as ex:
+        if "without an arch" not in str(ex):
+            raise
+        return None
+    except Exception:
+        raise
 
 
 def _register_exprs_by_ins_addr_8616(codegen, project) -> dict[tuple[int, str, int], object]:
@@ -1199,7 +1263,7 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
                 cmp_insn.reg_name,
                 cmp2_insn.reg_name,
                 int(cmp_insn.address),
-            )
+        )
 
         if jcc1 in {"jl", "jnge", "jb", "jnae", "jc"} and jcc2 in {"jge", "jnl", "jae", "jnb", "jnc"}:
             if lhs_wide is not None and rhs_wide is not None:
@@ -2099,12 +2163,18 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
         def _record_decoded_guard_fingerprint_8616(decoded) -> None:
             expr = getattr(decoded, "expr", None)
             if expr is None:
-                expr = CBinaryOp(
+                expr = _try_build_arch_safe_binary_op_8616(
+                    project,
+                    codegen,
                     decoded.op,
                     decoded.lhs,
                     decoded.rhs,
-                    codegen=codegen,
                 )
+                if expr is None:
+                    codegen._inertia_jcc_rewrite_refused_archless_type_fingerprint_8616 = int(
+                        getattr(codegen, "_inertia_jcc_rewrite_refused_archless_type_fingerprint_8616", 0) or 0
+                    ) + 1
+                    return
             _record_jcc_decoded_condition_fingerprint_8616(expr)
 
         def _const_bool_value_8616(expr) -> int | None:
@@ -2148,7 +2218,16 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     if not isinstance(child, CFunctionCall):
                         continue
                     callee = getattr(child, "callee_target", None)
-                    if isinstance(callee, str) and callee in {"SEG_PTR", "MK_FP", "SEG_U8", "SEG_U16", "SEG_U32"}:
+                    if isinstance(callee, str) and callee in {
+                        "SEG_PTR",
+                        "MK_FP",
+                        "SEG_U8",
+                        "SEG_U16",
+                        "SEG_U32",
+                        "MEM_U8",
+                        "MEM_U16",
+                        "MEM_U32",
+                    }:
                         continue
                     return True
             return False
@@ -2267,7 +2346,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
         def _body_is_break_only_8616(body) -> bool:
             if body is None:
                 return False
-            if isinstance(body, CBreak):
+            if isinstance(body, (CBreak, CReturn)):
                 return True
             statements = getattr(body, "statements", None)
             if statements is None:
@@ -2275,7 +2354,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             if type(statements).__name__ == "CStatements":
                 statements = getattr(statements, "statements", None)
             items = tuple(statements or ())
-            return len(items) == 1 and isinstance(items[0], CBreak)
+            return len(items) == 1 and isinstance(items[0], (CBreak, CReturn))
 
         def _condition_exprs_from_stmt_8616(stmt):
             cond_pairs = getattr(stmt, "condition_and_nodes", None)
@@ -2343,7 +2422,16 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 if not isinstance(child, CFunctionCall):
                     continue
                 callee = getattr(child, "callee_target", None)
-                if isinstance(callee, str) and callee in {"SEG_PTR", "MK_FP", "SEG_U8", "SEG_U16", "SEG_U32"}:
+                if isinstance(callee, str) and callee in {
+                    "SEG_PTR",
+                    "MK_FP",
+                    "SEG_U8",
+                    "SEG_U16",
+                    "SEG_U32",
+                    "MEM_U8",
+                    "MEM_U16",
+                    "MEM_U32",
+                }:
                     continue
                 return True
             return False
@@ -2701,13 +2789,19 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     if not isinstance(getattr(decoded.expr, "tags", None), dict):
                         decoded.expr.tags = tags
                 return decoded.expr
-            return CBinaryOp(
+            replacement = _try_build_arch_safe_binary_op_8616(
+                project,
+                codegen,
                 decoded.op,
                 decoded.lhs,
                 decoded.rhs,
-                codegen=codegen,
                 tags=tags,
             )
+            if replacement is None:
+                codegen._inertia_jcc_rewrite_refused_archless_type_replacement_8616 = int(
+                    getattr(codegen, "_inertia_jcc_rewrite_refused_archless_type_replacement_8616", 0) or 0
+                ) + 1
+            return replacement
 
         def _decoded_condition_replacement(
             cond,
@@ -2798,6 +2892,8 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 return None
             _record_decoded_guard_fingerprint_8616(decoded)
             replacement = _build_rewrite_8616(cond, decoded, key, polarity_evidence=polarity_evidence)
+            if replacement is None:
+                return None
             _record_jcc_decoded_condition_fingerprint_8616(replacement)
             if _condition_materialized_by_jcc_8616(cond) and _validation_fingerprint_8616(
                 cond

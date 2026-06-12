@@ -6,7 +6,6 @@ import archinfo
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeFunction, SimTypeLong
 from angr.sim_variable import SimStackVariable
-
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.decompiler_postprocess import _apply_annotations_8616
 

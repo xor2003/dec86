@@ -1,5 +1,8 @@
 from typing import Any, Dict
 
+from angr_platforms.X86_16.emulator import Emulator
+from angr_platforms.X86_16.instruction import InstrData
+
 from .emulator import Emulator
 from .instruction import InstrData, X86Instruction
 from .regs import sgreg_t
@@ -12,8 +15,6 @@ from .stack_helpers import (
     push_far_return_frame32,
     push_privilege_stack32,
 )
-from angr_platforms.X86_16.emulator import Emulator
-from angr_platforms.X86_16.instruction import InstrData
 
 
 class EmuInstr(X86Instruction):

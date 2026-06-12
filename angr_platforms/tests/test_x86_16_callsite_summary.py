@@ -2,17 +2,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
-
 from angr_platforms.X86_16.analysis_helpers import CallTargetSeed, resolve_direct_call_target_from_block
 from angr_platforms.X86_16.callsite_summary import (
     CallsitePushExprOp8616,
     CallsiteReturnShape8616,
     CallsiteSummary8616,
-    summarize_x86_16_callsite,
     _return_shape_after_call,
+    summarize_x86_16_callsite,
 )
-
+from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 
 MSC_ANCHKSTK_BYTES = bytes.fromhex("59 8b dc 2b d8 72 0a 3b 1e b6 00 72 04 8b e3 ff e1")
 

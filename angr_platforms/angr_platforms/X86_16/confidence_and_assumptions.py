@@ -1,5 +1,4 @@
-"""
-Confidence levels and assumption tracking for decompiler recovery.
+"""Confidence levels and assumption tracking for decompiler recovery.
 
 Extends recovery_confidence.py with explicit confidence/assumption reporting
 infrastructure for structuring and type inference stages.
@@ -266,8 +265,7 @@ class ScanConfidenceSummary:
 
 
 def build_function_with_confidence_markers(cfunc, confidence_report: FunctionConfidenceReport, *, codegen=None) -> bool:
-    """
-    Attach confidence markers to decompiled function.
+    """Attach confidence markers to decompiled function.
 
     Args:
         cfunc: Decompiled function (CFunction)
@@ -304,8 +302,7 @@ def build_function_with_confidence_markers(cfunc, confidence_report: FunctionCon
 
 def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
     def _impl():
-        """
-        Decompiler pass: Attach confidence markers to all recovered functions.
+        """Decompiler pass: Attach confidence markers to all recovered functions.
 
         This pass:
         1. Collects confidence markers from type inference stages

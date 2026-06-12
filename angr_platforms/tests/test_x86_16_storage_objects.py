@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+from angr_platforms.X86_16.type_storage_object_bridge import load_storage_object_bridge
+
 from inertia_decompiler.cli_access_object_hints import (
     AccessTraitObjectHint,
     _build_stable_access_object_hints,
@@ -11,8 +13,6 @@ from inertia_decompiler.cli_storage_objects import (
     build_storage_object_records_from_hints,
     storage_object_record_for_key,
 )
-
-from angr_platforms.X86_16.type_storage_object_bridge import load_storage_object_bridge
 
 
 def test_storage_object_records_preserve_member_offsets_deterministically():

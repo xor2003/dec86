@@ -1,5 +1,4 @@
 import networkx as nx
-
 from angr_platforms.X86_16.decompiler_structuring_stage import DECOMPILER_STRUCTURING_PASSES
 from angr_platforms.X86_16.structuring_cross_entry import (
     apply_x86_16_cross_entry_grouping,

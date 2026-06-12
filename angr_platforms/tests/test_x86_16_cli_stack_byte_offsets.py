@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-from inertia_decompiler import cli_stack_byte_offsets as rewrites
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
+from inertia_decompiler import cli_stack_byte_offsets as rewrites
 
 
 @dataclass(frozen=True)

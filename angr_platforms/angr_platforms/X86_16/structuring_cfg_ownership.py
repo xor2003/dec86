@@ -1,5 +1,4 @@
-"""
-Ownership/refusal layer over CFG snapshots.
+"""Ownership/refusal layer over CFG snapshots.
 
 This module turns raw region connectivity into a typed ownership surface with
 explicit refusal reasons for shared or disconnected regions.
@@ -36,7 +35,6 @@ class CFGOwnershipArtifact:
 
     def summary_line(self) -> str:
         """Compact deterministic summary for diagnostics."""
-
         return (
             f"cfg_ownership regions={len(self.records)} shared={len(self.shared_region_ids)} "
             f"entry_fragments={len(self.entry_fragment_region_ids)}"
@@ -44,7 +42,6 @@ class CFGOwnershipArtifact:
 
     def to_dict(self) -> dict[str, object]:
         """Stable serialization for reports and artifacts."""
-
         return {
             "snapshot": self.snapshot.to_dict(),
             "shared_region_ids": [hex(region_id) for region_id in self.shared_region_ids],
@@ -65,7 +62,6 @@ class CFGOwnershipArtifact:
 def build_cfg_ownership_artifact(codegen: Any) -> CFGOwnershipArtifact | None:
     def _impl():
         """Build the ownership/refusal surface for structuring CFGs."""
-
         snapshot = build_cfg_snapshot(codegen)
         if snapshot is None:
             return None

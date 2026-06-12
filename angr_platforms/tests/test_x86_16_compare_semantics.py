@@ -3,9 +3,8 @@ from __future__ import annotations
 import angr
 import pyvex
 from angr import options as o
-from archinfo import ArchX86
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from archinfo import ArchX86
 
 
 def _run_one_instruction(arch, code: bytes, ax: int = 0x125A, di: int = 0x200):

@@ -1,5 +1,4 @@
-"""
-Structuring diagnostics and failure classification.
+"""Structuring diagnostics and failure classification.
 
 Tracks structuring failures with detailed root-cause classification
 and provides recovery hints for debugging.
@@ -201,8 +200,7 @@ class StructuringDiagnosticsReport:
 
 
 def build_failure_reason_from_stats(stats: object) -> Optional[StructuringFailureReason]:
-    """
-    Classify failure reason from structuring statistics.
+    """Classify failure reason from structuring statistics.
 
     Args:
         stats: StructuringStats object from analysis
@@ -228,8 +226,7 @@ def build_failure_reason_from_stats(stats: object) -> Optional[StructuringFailur
 
 
 def suggest_recovery_hints(stats: object, region_ids: tuple[int, ...] = ()) -> list[str]:
-    """
-    Suggest recovery hints based on structuring statistics.
+    """Suggest recovery hints based on structuring statistics.
 
     Args:
         stats: StructuringStats object
@@ -271,8 +268,7 @@ def suggest_recovery_hints(stats: object, region_ids: tuple[int, ...] = ()) -> l
 
 def apply_x86_16_structuring_diagnostics(codegen) -> bool:
     def _impl():
-        """
-        Decompiler pass: Attach structuring diagnostics to functions.
+        """Decompiler pass: Attach structuring diagnostics to functions.
 
         This pass:
         1. Collects diagnostics from structuring analysis

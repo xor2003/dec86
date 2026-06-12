@@ -467,8 +467,7 @@ def join_cod_entries_with_synthetic_globals(
 
 
 def infer_cod_logic_start(entries: list[dict[str, object]]) -> int | None:
-    """
-    For small MSC-style procedures extracted from .COD, skip a leading
+    """For small MSC-style procedures extracted from .COD, skip a leading
     ``__chkstk`` call when it appears in the entry prologue so the decompiler
     can focus on the actual function body.
     """
@@ -493,8 +492,7 @@ def infer_cod_logic_start(entries: list[dict[str, object]]) -> int | None:
 
 def extract_simple_cod_logic_entries(entries: list[dict[str, object]]) -> list[dict[str, object]] | None:
     def _impl():
-        """
-        Normalize simple MSC-style framed procedures for decompilation.
+        """Normalize simple MSC-style framed procedures for decompilation.
 
         For straight-line helpers like ``_mset_pos`` the standard ``push bp`` /
         ``mov bp, sp`` prologue and matching ``pop bp`` epilogue can confuse stack
@@ -502,7 +500,6 @@ def extract_simple_cod_logic_entries(entries: list[dict[str, object]]) -> list[d
         decompiled C. When the procedure is linear and has a conventional frame,
         strip only that scaffolding and keep the real body bytes.
         """
-
         if len(entries) < 4:
             return None
 
@@ -549,15 +546,13 @@ def extract_simple_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | 
 
 def extract_small_two_arg_cod_logic_entries(entries: list[dict[str, object]]) -> list[dict[str, object]] | None:
     def _impl():
-        """
-        Normalize tiny ``bp``-framed two-argument helpers.
+        """Normalize tiny ``bp``-framed two-argument helpers.
 
         This keeps the body bytes for small helpers that only reference
         ``[bp+4]`` / ``[bp+6]`` and do not allocate locals, which avoids bogus
         saved-frame stores in the recovered C while still keeping the real
         argument-relative accesses visible.
         """
-
         if len(entries) < 4:
             return None
 

@@ -6,7 +6,6 @@ and integration with decompiler output.
 """
 
 import pytest
-
 from angr_platforms.X86_16.confidence_and_assumptions import (
     ConfidenceLevel,
     ConfidenceMarker,

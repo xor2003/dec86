@@ -481,7 +481,6 @@ def _prune_runtime_segment_address_self_assignments_8616(codegen) -> bool:
 
 def lower_runtime_ss_segment_helper_to_stack_8616(node, *, codegen, project):
     """Convert proven SS SEG_U* helper accesses back to stack variables."""
-
     node = _strip_casts_8616(node)
     if not isinstance(node, structured_c.CFunctionCall):
         return None

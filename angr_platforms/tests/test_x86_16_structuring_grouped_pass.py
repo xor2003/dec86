@@ -1,5 +1,4 @@
 import networkx as nx
-
 from angr_platforms.X86_16.ir.core import IRBlock, IRCondition, IRFunctionArtifact, IRInstr, IRValue, MemSpace
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
 from angr_platforms.X86_16.structuring_grouped_pass import (

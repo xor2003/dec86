@@ -1,5 +1,4 @@
-"""
-Region-based control-flow graph representation for structuring.
+"""Region-based control-flow graph representation for structuring.
 
 This module provides a region graph abstraction that wraps angr's control-flow graph.
 Regions represent groups of statements that are being progressively coalesced into
@@ -43,8 +42,7 @@ class RegionType(enum.Enum):
 
 @dataclass(frozen=False)
 class Region:
-    """
-    A region represents a set of statements with unified control-flow semantics.
+    """A region represents a set of statements with unified control-flow semantics.
 
     Initially, one region exists for each basic block. Through iterative refinement,
     regions are merged into larger structures representing if-then-else, loops, etc.
@@ -144,8 +142,7 @@ class Region:
             predecessor.successors.discard(self)
 
     def redirect_edges_to(self, target: Region) -> None:
-        """
-        Redirect all successors and predecessors to point to target instead.
+        """Redirect all successors and predecessors to point to target instead.
         Used when merging or replacing regions.
         """
         # Redirect predecessors
@@ -165,8 +162,7 @@ class Region:
 
 @dataclass(frozen=False)
 class RegionGraph:
-    """
-    A directed graph of regions representing the control-flow structure.
+    """A directed graph of regions representing the control-flow structure.
 
     This graph is built from angr's CFG and progressively refined by merging
     regions into larger structured patterns.
@@ -221,8 +217,7 @@ class RegionGraph:
 
     def merge_regions(self, src: Region, dst: Region, transfer_edges: str = "both") -> None:
         def _impl():
-            """
-            Merge src into dst, combining their statements and updating edges.
+            """Merge src into dst, combining their statements and updating edges.
 
             Args:
                 src: Source region to merge (will be removed)
@@ -277,8 +272,7 @@ class RegionGraph:
         return _impl()
 
     def iter_postorder(self) -> list[Region]:
-        """
-        Return regions in post-order (children before parents).
+        """Return regions in post-order (children before parents).
 
         Used by structuring algorithm to ensure children are processed
         before their parents.
@@ -314,8 +308,7 @@ class RegionGraph:
 
 @dataclass(frozen=True)
 class DominatorInfo:
-    """
-    Cached dominator and post-dominator relationships.
+    """Cached dominator and post-dominator relationships.
 
     Attributes:
         dominators: Set of regions that dominate each region
@@ -342,8 +335,7 @@ class DominatorInfo:
         return node in self.strictly_dominates_map.get(dom, set())
 
     def is_back_edge(self, src: Region, dst: Region) -> bool:
-        """
-        True if src -> dst is a back edge.
+        """True if src -> dst is a back edge.
 
         A back edge is one where the target dominates the source.
         """
@@ -362,8 +354,7 @@ class RegionGraphBuilder:
     """Builds a region graph from an angr CFG."""
 
     def __init__(self, cfunc, logger: logging.Logger | None = None):
-        """
-        Initialize the builder.
+        """Initialize the builder.
 
         Args:
             cfunc: angr CFunctionNode (codegen.cfunc)
@@ -374,8 +365,7 @@ class RegionGraphBuilder:
         self.regions_by_addr: dict[int, Region] = {}
 
     def build(self) -> tuple[RegionGraph, Region | None]:
-        """
-        Build a region graph from the CFG.
+        """Build a region graph from the CFG.
 
         Returns:
             Tuple of (region_graph, entry_region)
@@ -417,8 +407,7 @@ class RegionGraphBuilder:
         return graph, graph.entry
 
     def _extract_blocks(self) -> list[int]:
-        """
-        Extract basic block addresses from the CFG.
+        """Extract basic block addresses from the CFG.
 
         Returns:
             List of block addresses
@@ -436,8 +425,7 @@ class RegionGraphBuilder:
         return blocks
 
     def _extract_edges(self, blocks: list[int]) -> list[tuple[int, int]]:
-        """
-        Extract control-flow edges from the CFG.
+        """Extract control-flow edges from the CFG.
 
         Args:
             blocks: List of block addresses
@@ -462,8 +450,7 @@ class RegionGraphBuilder:
 
 def compute_dominators(graph: RegionGraph) -> DominatorInfo:
     def _impl():
-        """
-        Compute dominator relationships for all regions.
+        """Compute dominator relationships for all regions.
 
         Implements the iterative fixpoint algorithm:
         - dom(entry) = {entry}

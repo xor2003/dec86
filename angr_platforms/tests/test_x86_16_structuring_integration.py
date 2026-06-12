@@ -7,7 +7,6 @@ This test validates cyclic pattern matching on real COD samples.
 from types import SimpleNamespace
 
 import pytest
-
 from angr_platforms.X86_16.structuring_analysis import StructureAnalysis
 from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType
 from angr_platforms.X86_16.type_storage_object_bridge import load_storage_object_bridge

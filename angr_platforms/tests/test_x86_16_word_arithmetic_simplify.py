@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_simplify import _simplify_structured_expressions_8616
 

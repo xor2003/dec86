@@ -1,5 +1,4 @@
-"""
-Structure field merging for Inertia decompiler Phase 2.3.
+"""Structure field merging for Inertia decompiler Phase 2.3.
 
 Merges field access patterns from multiple functions to synthesize
 common struct layouts. Detects overlapping field accesses and
@@ -160,8 +159,7 @@ class FieldAccessCollector:
 
 
 class StructureFieldMerger:
-    """
-    Merges field access patterns into struct type definitions.
+    """Merges field access patterns into struct type definitions.
 
     Algorithm:
     1. Group patterns by base pointer
@@ -177,8 +175,7 @@ class StructureFieldMerger:
         self.base_ptr_to_struct: dict[str, int] = {}  # base_ptr -> struct_id
 
     def merge_structs(self, patterns: list[FieldAccessPattern]) -> dict[str, StructType]:
-        """
-        Merge patterns into struct definitions.
+        """Merge patterns into struct definitions.
 
         Args:
             patterns: List of FieldAccessPattern from all functions
@@ -283,8 +280,7 @@ class StructRecoveryInfo:
 
 def apply_x86_16_structure_field_merging(codegen) -> bool:
     def _impl():
-        """
-        Apply structure field merging pass to codegen.
+        """Apply structure field merging pass to codegen.
 
         This is the entry point for Phase 2.3 decompiler framework integration.
 

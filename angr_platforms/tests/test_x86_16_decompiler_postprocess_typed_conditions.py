@@ -12,7 +12,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR

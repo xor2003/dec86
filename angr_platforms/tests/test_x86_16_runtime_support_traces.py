@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from angr.ailment.expression import BasePointerOffset
+
 from inertia_decompiler.runtime_support import (
     install_angr_basepointeroffset_codegen_guard,
     install_angr_peephole_expr_bitwidth_guard,

@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CFunctionCall, CStatements, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CFunctionCall,
+    CStatements,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.analysis_helpers import (
     collect_neighbor_call_targets,
     resolve_direct_call_target_from_block,
@@ -22,8 +28,8 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _mov_reg_imm_setup_matches_push_source_8616,
     _normalize_call_target_names_8616,
     _ordered_callsite_pairs_8616,
-    _reg_expr_setup_matches_push_source_8616,
     _refresh_callsite_summary_node_ids_8616,
+    _reg_expr_setup_matches_push_source_8616,
     _sidecar_label_for_target_8616,
     _target_addr_is_recovered_function_entry_8616,
 )

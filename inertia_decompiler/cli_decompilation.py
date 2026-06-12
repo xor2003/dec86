@@ -54,6 +54,7 @@ from angr_platforms.X86_16.cod_extract import CODProcMetadata, extract_cod_proc_
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
 from angr_platforms.X86_16.compiler_helpers import (
     CompilerHelperEvidenceKind8616,
+    hook_x86_16_compiler_helper_at_8616,
     identify_x86_16_compiler_helper_at_8616,
     is_x86_16_stack_probe_name_8616,
 )
@@ -72,6 +73,7 @@ from angr_platforms.X86_16.decompiler_postprocess_flags import (
     _rewrite_flag_condition_pairs_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_jcc import _rewrite_decoded_jcc_conditions_8616
+from angr_platforms.X86_16.decompiler_postprocess_simplify import _simplify_structured_expressions_8616
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _dead_code_elimination_after_flag_prune_8616,
     _materialize_missing_terminal_ax_return_8616,
@@ -83,6 +85,7 @@ from angr_platforms.X86_16.lowering.fact_transfer import transfer_semantic_alias
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     lower_stable_ss_linear_stack_dereferences_8616,
     materialize_direct_global_incdec_instructions_8616,
+    materialize_direct_stack_mov_instructions_8616,
 )
 from angr_platforms.X86_16.lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
@@ -222,7 +225,7 @@ from inertia_decompiler.decompile_file_summary import emit_file_decompilation_su
 
 from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
 
-from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
+from inertia_decompiler.source_sidecar import collect_local_source_sidecar_return_types, render_local_source_sidecar_function
 
 from inertia_decompiler.x86_16_exact_slice import (
     function_original_addr,
@@ -373,6 +376,7 @@ from .cli_c_text_postprocess import (
     _prune_trailing_generic_return_text,
     _prune_non_lvalue_arithmetic_assignments,
     _prune_unused_local_declarations_text,
+    _prune_void_call_assignments_text,
     _prune_void_function_return_values_text,
     _prune_weaker_conflicting_prototypes_text,
     _render_cod_source_function_text,
@@ -1785,6 +1789,7 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
                         getattr(codegen, "project", None),
                         codegen,
                     )
+                    _simplify_structured_expressions_8616(codegen)
                 direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-call-arg-materialization")
                 if direct_text is not None:
                     return direct_text, True
@@ -1803,6 +1808,8 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
                         replay_callsite_stack_arguments_after_regeneration_8616(getattr(codegen, "project", None), codegen)
                     )
             if replay_changed:
+                with contextlib.suppress(Exception):
+                    _simplify_structured_expressions_8616(codegen)
                 direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-post-replay")
                 if direct_text is not None:
                     return direct_text, True
@@ -2306,6 +2313,16 @@ def _missing_expected_calls_from_cod_metadata_8616(rendered_text: str, cod_metad
         return missing
 
     return _impl()
+
+
+def _call_semantics_retry_evidence_8616(
+    rendered_text: str,
+    cod_metadata: CODProcMetadata | None,
+) -> tuple[bool, tuple[str, ...], int]:
+    missing_calls = tuple(_missing_expected_calls_from_cod_metadata_8616(rendered_text, cod_metadata))
+    arity_deficit = _expected_call_arity_deficit_8616(rendered_text, cod_metadata)
+    retry_needed = bool(missing_calls) or _under_recovered_call_heavy_codegen_8616(rendered_text, cod_metadata)
+    return retry_needed, missing_calls, arity_deficit
 
 
 def _rehydrate_missing_evidenced_calls_on_live_codegen_8616(
@@ -3277,6 +3294,9 @@ def _decompile_function(
             "Concat",
             "Div",
             "MK_FP",
+            "MEM_U16",
+            "MEM_U32",
+            "MEM_U8",
             "Mul",
             "Or",
             "Reference",
@@ -3556,6 +3576,7 @@ def _decompile_function(
             _run_stack_lowering_pass,
             lambda: _run_typed_widening_pass(project, dec.codegen),
             lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
+            lambda: materialize_direct_stack_mov_instructions_8616(dec.codegen, project=project, function=function),
             lambda: materialize_direct_global_incdec_instructions_8616(dec.codegen, project=project, function=function),
             lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
             lambda: _prune_dead_local_assignments(dec.codegen),
@@ -4034,10 +4055,9 @@ def _decompile_function(
                 _expected_call_arity_score_8616(rendered_text, effective_cod_metadata),
                 _expected_call_arity_deficit_8616(rendered_text, effective_cod_metadata),
             )
-        retry_for_call_semantics = _under_recovered_call_heavy_codegen_8616(
-            rendered_text,
-            effective_cod_metadata,
-        ) or _expected_call_arity_deficit_8616(rendered_text, effective_cod_metadata) > 0
+        retry_for_call_semantics, missing_calls_for_retry, arity_deficit_for_retry = (
+            _call_semantics_retry_evidence_8616(rendered_text, effective_cod_metadata)
+        )
         if retry_for_call_semantics:
             # Evidence-first fallback for call-heavy functions:
             # keep the candidate with the strongest expected-call preservation score.
@@ -4052,9 +4072,13 @@ def _decompile_function(
                     "[call-semantics-retry] primary function=%#x score=%r deficit=%d",
                     function_original_addr(function),
                     best_score,
-                    _expected_call_arity_deficit_8616(rendered_text, effective_cod_metadata),
+                    arity_deficit_for_retry,
                 )
-            for _ in range(2):
+            for _ in range(1):
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining < max(8, min(30, max(1, timeout) // 4)):
+                        break
                 retried = _retry_in_isolated_project()
                 if retried is None:
                     break
@@ -4085,6 +4109,13 @@ def _decompile_function(
                     rendered_text = best_payload
                 elif best_status != "ok":
                     return best_status, best_payload
+        elif arity_deficit_for_retry and os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+            logging.getLogger(__name__).warning(
+                "[call-semantics-retry] skipped arity-only retry function=%#x missing_calls=%r deficit=%d",
+                function_original_addr(function),
+                missing_calls_for_retry,
+                arity_deficit_for_retry,
+            )
         rendered_text = _prepend_recovered_callsite_prototypes_8616(rendered_text, dec.codegen)
         _debug_dump_calls_8616("post-recovered-callsite-prototypes", rendered_text, debug_call_addr)
         if api_style in ("msc", "compiler"):
@@ -4159,6 +4190,7 @@ def _decompile_function(
             function,
             effective_cod_metadata,
             preserve_source_header=bool(getattr(dec.codegen, "_inertia_codegen_signature_authoritative_8616", None)),
+            source_return_types=collect_local_source_sidecar_return_types(binary_path),
         )
         _debug_dump_calls_8616("post-materialize-annotated-cod-decls", formatted, debug_call_addr)
         formatted = _align_unknown_call_names_from_cod_evidence_text(formatted)
@@ -4250,7 +4282,11 @@ def _decompile_function(
             synthetic_globals=synthetic_globals,
         )
         formatted = _dedupe_conflicting_extern_variable_declarations_text(formatted)
-        formatted = _materialize_missing_direct_call_prototypes_text(formatted)
+        formatted = _materialize_missing_direct_call_prototypes_text(
+            formatted,
+            source_return_types=collect_local_source_sidecar_return_types(binary_path),
+        )
+        formatted = _prune_void_call_assignments_text(formatted)
         formatted = _prune_weaker_conflicting_prototypes_text(formatted)
         _debug_dump_calls_8616("post-final-dedup", formatted, debug_call_addr)
         if effective_cod_metadata is not None:
@@ -4911,6 +4947,7 @@ def _create_or_update_direct_call_stub_8616(
 ) -> bool:
     def _impl():
         try:
+            hook_x86_16_compiler_helper_at_8616(project, candidate)
             stub = project.kb.functions.function(addr=candidate, create=True)
             if isinstance(callsite_addr, int) and (preferred_candidate is None or candidate == preferred_candidate):
                 with contextlib.suppress(Exception):

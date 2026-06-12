@@ -1,5 +1,3 @@
-from pyvex.lifting.util.vex_helper import Type
-
 from angr_platforms.X86_16.alu_helpers import (
     binary_operation,
     binary_operation_with_carry,
@@ -14,6 +12,7 @@ from angr_platforms.X86_16.alu_helpers import (
     shift_right_operation,
 )
 from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
+from pyvex.lifting.util.vex_helper import Type
 
 
 class _AluEmu:

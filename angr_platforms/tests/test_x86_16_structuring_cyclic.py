@@ -5,7 +5,6 @@ Tests natural loop detection, multi-exit loop classification, and confidence sco
 """
 
 import pytest
-
 from angr_platforms.X86_16.structuring_analysis import (
     RegionType,
     StructureAnalysis,

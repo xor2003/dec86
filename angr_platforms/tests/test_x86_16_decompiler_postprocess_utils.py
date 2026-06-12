@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CUnaryOp, CVariable
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_loads import (
     _global_load_addr_8616,

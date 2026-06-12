@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CConstant, CReturn, CStatements
 from angr.sim_type import SimTypeShort
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.string_instruction_artifact import StringInstructionArtifact, StringInstructionRecord
 from angr_platforms.X86_16.string_instruction_lowering import apply_x86_16_string_instruction_lowering

@@ -3,11 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CStatements
-from angr.sim_type import SimTypeFunction, SimTypeShort, SimTypeLong
-
+from angr.sim_type import SimTypeFunction, SimTypeLong, SimTypeShort
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
-from angr_platforms.X86_16.callsite_summary import CallsiteReturnShape8616
+from angr_platforms.X86_16.callsite_summary import CallsiteReturnShape8616, CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_calls import _materialize_callsite_prototypes_8616
 
 

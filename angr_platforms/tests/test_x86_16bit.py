@@ -4,11 +4,10 @@ import re
 import angr
 import claripy
 import keystone as ks
-from archinfo import ArchX86
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa
 from angr_platforms.X86_16.simos_86_16 import SimCC8616MSC  # noqa
+from archinfo import ArchX86
 
 logging.getLogger("angr.storage.memory_mixins.default_filler_mixin").setLevel("ERROR")
 logging.getLogger("pyvex.expr").setLevel("DEBUG")

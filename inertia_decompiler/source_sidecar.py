@@ -33,6 +33,16 @@ def _candidate_source_paths(binary_path: Path | None) -> tuple[Path, ...]:
     return tuple(candidates)
 
 
+_FUNCTION_HEADER_KEYWORDS = frozenset(
+    {
+        "for",
+        "if",
+        "switch",
+        "while",
+    }
+)
+
+
 def _looks_like_function_header(line: str, function_name: str) -> bool:
     stripped = line.strip()
     if not stripped or stripped.startswith(_COMMENT_PREFIXES):
@@ -96,6 +106,59 @@ def _extract_function_from_lines(lines: tuple[str, ...], function_name: str) -> 
         return "\n".join(selected).rstrip() + "\n"
 
     return _impl()
+
+
+def _source_function_header_match(line: str) -> re.Match[str] | None:
+    stripped = _strip_c_comments_and_strings(line).strip()
+    if not stripped or stripped.startswith("#") or ";" in stripped or "{" in stripped or "}" in stripped:
+        return None
+    match = re.match(
+        r"^(?:(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+)?(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^;{}()]*)\)\s*$",
+        stripped,
+    )
+    if match is None:
+        return None
+    if match.group("name") in _FUNCTION_HEADER_KEYWORDS:
+        return None
+    return match
+
+
+def _source_header_has_body(lines: tuple[str, ...], header_index: int) -> bool:
+    for probe in range(header_index + 1, min(header_index + 12, len(lines))):
+        stripped = _strip_c_comments_and_strings(lines[probe]).strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "{" in stripped:
+            return True
+        if ";" in stripped:
+            return False
+    return False
+
+
+@lru_cache(maxsize=16)
+def _collect_source_return_types_for_path(path: Path) -> dict[str, str]:
+    lines = _read_lines(path)
+    result: dict[str, str] = {}
+    for index, line in enumerate(lines):
+        match = _source_function_header_match(line)
+        if match is None or not _source_header_has_body(lines, index):
+            continue
+        name = match.group("name")
+        return_type = " ".join((match.group("ret") or "int").split())
+        if not name or name in result:
+            continue
+        result[name] = return_type
+    return result
+
+
+def collect_local_source_sidecar_return_types(binary_path: Path | None) -> dict[str, str]:
+    if binary_path is None:
+        return {}
+    merged: dict[str, str] = {}
+    for path in _candidate_source_paths(binary_path):
+        for name, return_type in _collect_source_return_types_for_path(path).items():
+            merged.setdefault(name, return_type)
+    return merged
 
 
 def render_local_source_sidecar_function(binary_path: Path | None, function_name: str | None) -> str | None:

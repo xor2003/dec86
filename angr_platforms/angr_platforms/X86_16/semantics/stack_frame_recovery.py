@@ -120,7 +120,6 @@ def _looks_like_frame_evidence(obj: object) -> bool:
         Accepts CapstoneInsn objects (already-parsed structured disassembly)
         or VEX IRSB objects.  Rejects plain strings / COD text.
         """
-
         import sys
 
         sys.stderr.flush()

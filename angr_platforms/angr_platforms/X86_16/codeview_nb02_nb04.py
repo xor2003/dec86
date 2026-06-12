@@ -1,5 +1,4 @@
-"""
-CodeView NB02 (CV2) and NB04 (CV4) Parser
+"""CodeView NB02 (CV2) and NB04 (CV4) Parser
 
 Minimal implementation focused on 80/20 value:
 - Function names (from SST_PUBLIC and S_GPROC16)
@@ -92,8 +91,7 @@ class CodeViewNB0204Info:
 
 
 def find_codeview_nb0204(data: bytes, *, signatures: list[bytes] | None = None) -> tuple[str, int] | None:
-    """
-    Find CodeView NB02/NB04 debug info trailer in binary.
+    """Find CodeView NB02/NB04 debug info trailer in binary.
 
     Args:
         data: Binary file contents

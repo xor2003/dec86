@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from contextlib import suppress
 from functools import lru_cache
-import re
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -299,8 +299,7 @@ def _match_real_mode_linear_expr_8616(node, project, codegen=None) -> tuple[str 
 
 
 def _match_real_mode_segmented_store_shape_8616(node, project) -> tuple[str | None, tuple[tuple[int, object], ...]]:
-    """
-    Match a real-mode dereference shaped as one segment base plus explicit offset terms.
+    """Match a real-mode dereference shaped as one segment base plus explicit offset terms.
 
     This stays stricter than "lhs contains ss somewhere": the node must be a real
     memory dereference and its address must decompose into exactly one positive

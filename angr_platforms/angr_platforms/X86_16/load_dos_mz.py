@@ -58,8 +58,7 @@ class MZSegmentSpan:
 
 
 class DOSMZ(Blob):
-    """
-    Minimal DOS MZ loader for 16-bit real-mode executables.
+    """Minimal DOS MZ loader for 16-bit real-mode executables.
 
     The loaded image is mapped starting at linear address 0 so segment-relative
     references inside the executable line up with the relocated program image.

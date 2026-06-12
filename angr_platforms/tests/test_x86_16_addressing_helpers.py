@@ -1,5 +1,3 @@
-from pyvex.lifting.util.vex_helper import Type
-
 from angr_platforms.X86_16.addressing_helpers import (
     ResolvedMemoryOperand,
     WidthProfile,
@@ -30,6 +28,7 @@ from angr_platforms.X86_16.addressing_helpers import (
     store_resolved_operand,
 )
 from angr_platforms.X86_16.regs import reg16_t, reg32_t, sgreg_t
+from pyvex.lifting.util.vex_helper import Type
 
 
 class _FakeEmu:

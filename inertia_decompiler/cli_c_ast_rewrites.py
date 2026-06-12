@@ -1735,7 +1735,15 @@ def _collect_protected_deref_expr_ids(root) -> set[int]:
                 callee_target = getattr(walk_node, "callee_target", None)
                 callee_func = getattr(walk_node, "callee_func", None)
                 callee_name = callee_target if isinstance(callee_target, str) else getattr(callee_func, "name", None)
-                if isinstance(callee_name, str) and callee_name in {"SEG_PTR", "SEG_U8", "SEG_U16", "SEG_U32"}:
+                if isinstance(callee_name, str) and callee_name in {
+                    "SEG_PTR",
+                    "SEG_U8",
+                    "SEG_U16",
+                    "SEG_U32",
+                    "MEM_U8",
+                    "MEM_U16",
+                    "MEM_U32",
+                }:
                     args = tuple(getattr(walk_node, "args", ()) or ())
                     if len(args) >= 2:
                         _protect_addr_expr_nodes(args[1])

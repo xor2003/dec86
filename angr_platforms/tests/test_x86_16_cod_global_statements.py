@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import decompile
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimMemoryVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
+import decompile
 
 
 class _FakeCodegen:

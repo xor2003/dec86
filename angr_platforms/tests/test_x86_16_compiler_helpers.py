@@ -4,11 +4,14 @@ from types import SimpleNamespace
 
 from angr_platforms.X86_16.compiler_helpers import (
     CompilerHelperEvidenceKind8616,
+    X86_16MscStackProbeSimProcedure8616,
+    hook_x86_16_compiler_helper_at_8616,
+    hook_x86_16_known_compiler_helpers_8616,
     identify_x86_16_compiler_helper_at_8616,
+    is_x86_16_registered_stack_probe_target_8616,
     is_x86_16_stack_probe_name_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_stage import _target_is_stack_probe_helper_8616
-
 
 MSC_ANCHKSTK_BYTES = bytes.fromhex("59 8b dc 2b d8 72 0a 3b 1e b6 00 72 04 8b e3 ff e1")
 
@@ -49,3 +52,32 @@ def test_selector_effect_gate_uses_binary_stack_probe_evidence_without_sidecar_n
     project = _project_with_memory(MSC_ANCHKSTK_BYTES)
 
     assert _target_is_stack_probe_helper_8616(project, 0x1000, "sub_1000") is True
+
+
+def test_hook_msc_anchkstk_installs_stack_probe_simprocedure():
+    hooks: dict[int, object] = {}
+    project = _project_with_memory(MSC_ANCHKSTK_BYTES)
+    project.is_hooked = lambda addr: addr in hooks
+    project.hook = lambda addr, proc: hooks.setdefault(addr, proc)
+
+    evidence = hook_x86_16_compiler_helper_at_8616(project, 0x1000)
+
+    assert evidence is not None
+    assert evidence.kind is CompilerHelperEvidenceKind8616.STACK_PROBE
+    assert isinstance(hooks[0x1000], X86_16MscStackProbeSimProcedure8616)
+
+
+def test_scan_hooks_known_stack_probe_helpers_from_main_object():
+    hooks: dict[int, object] = {}
+    project = _project_with_memory(b"\x90\x90" + MSC_ANCHKSTK_BYTES, base=0x10000)
+    project.loader.main_object = SimpleNamespace(min_addr=0x10000, max_addr=0x10000 + len(MSC_ANCHKSTK_BYTES) + 1)
+    project.is_hooked = lambda addr: addr in hooks
+    project.hook = lambda addr, proc: hooks.setdefault(addr, proc)
+
+    evidence = hook_x86_16_known_compiler_helpers_8616(project)
+
+    assert len(evidence) == 1
+    assert evidence[0].addr == 0x10002
+    assert isinstance(hooks[0x10002], X86_16MscStackProbeSimProcedure8616)
+    assert is_x86_16_registered_stack_probe_target_8616(project.arch, 0x10002) is True
+    assert is_x86_16_registered_stack_probe_target_8616(project.arch, 0x0002) is True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,13 @@ from tools.dosunit.mapping import make_mapping_document
 from tools.dosunit.model import DosUnitError, load_json, write_json
 from tools.dosunit.region_effects import compare_region_effect_documents, summarize_region_effects
 from tools.dosunit.runner import compare_vectors, record_oracle, summarize_results
-from tools.dosunit.straightline_ssa import DEFAULT_OUTPUT_REGS, compare_ssa_documents, lower_straightline_ssa_document
+from tools.dosunit.straightline_ssa import (
+    ABI_OUTPUT_REGS,
+    DEFAULT_ABI,
+    compare_ssa_abi_documents,
+    compare_ssa_documents,
+    lower_straightline_ssa_document,
+)
 from tools.dosunit.vectors import select_vectors
 
 
@@ -93,13 +100,17 @@ def cmd_complexity(args: argparse.Namespace) -> int:
 
 def cmd_ssa(args: argparse.Namespace) -> int:
     catalog = load_json(Path(args.functions))
-    output_regs = tuple(args.output_reg or DEFAULT_OUTPUT_REGS)
+    output_regs = tuple(args.output_reg or ABI_OUTPUT_REGS[args.abi])
     document = lower_straightline_ssa_document(
         exe_path=Path(args.exe),
         functions_catalog=catalog,
         output_regs=output_regs,
+        source_ir=args.ir,
+        max_blocks_per_function=args.max_blocks_per_function,
         max_insns_per_function=args.max_insns_per_function,
+        max_assignments_per_function=args.max_ssa_assignments,
         scan_limit=args.scan_limit,
+        cache_dir=None if args.no_cache else Path(args.cache_dir),
     )
     write_json(Path(args.out), document)
     return 0
@@ -113,8 +124,32 @@ def cmd_compare_ssa(args: argparse.Namespace) -> int:
         oracle=oracle,
         candidate=candidate,
         mapping_document=mapping,
-        include_unmapped=bool(args.include_unmapped),
+        include_unmapped=not bool(args.skip_unmapped),
         timeout_ms=args.solver_timeout_ms,
+        max_solver_assignments=args.max_solver_assignments,
+        max_solver_inputs=args.max_solver_inputs,
+        max_solver_memory_stores=args.max_solver_memory_stores,
+        skip_binary_equal=not bool(args.no_skip_binary_equal),
+    )
+    write_json(Path(args.out), document)
+    summary = document.get("summary", {})
+    return 0 if summary.get("failed") == 0 and summary.get("refused") == 0 else 1
+
+
+def cmd_compare_ssa_abi(args: argparse.Namespace) -> int:
+    oracle = load_json(Path(args.oracle_ssa))
+    candidate = load_json(Path(args.candidate_ssa))
+    abi_manifest = load_json(Path(args.abi_manifest))
+    mapping = load_json(Path(args.mapping)) if args.mapping else None
+    document = compare_ssa_abi_documents(
+        oracle=oracle,
+        candidate=candidate,
+        abi_manifest=abi_manifest,
+        mapping_document=mapping,
+        timeout_ms=args.solver_timeout_ms,
+        max_solver_assignments=args.max_solver_assignments,
+        max_solver_inputs=args.max_solver_inputs,
+        max_solver_memory_stores=args.max_solver_memory_stores,
     )
     write_json(Path(args.out), document)
     summary = document.get("summary", {})
@@ -208,7 +243,12 @@ def cmd_report_failures(args: argparse.Namespace) -> int:
     document = load_json(Path(args.results))
     if not isinstance(document, dict):
         raise DosUnitError("--results must be a JSON object")
-    report = render_failure_report(document, limit=args.limit, mismatch_limit=args.mismatch_limit)
+    report = render_failure_report(
+        document,
+        limit=args.limit,
+        mismatch_limit=args.mismatch_limit,
+        show_unresolved_call_targets=bool(args.show_unresolved_call_targets),
+    )
     if args.out:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -284,12 +324,18 @@ def build_parser() -> argparse.ArgumentParser:
     complexity.add_argument("--out", required=True)
     complexity.set_defaults(func=cmd_complexity)
 
-    ssa = subparsers.add_parser("ssa", help="Lower bounded straight-line VEX slices into compact SSA")
+    ssa = subparsers.add_parser("ssa", help="Lower bounded straight-line VEX/AIL slices into compact SSA")
     ssa.add_argument("--exe", required=True)
     ssa.add_argument("--functions", required=True)
+    ssa.add_argument("--ir", default="vex", choices=["vex", "ail"], help="Source IR to lower into compact SSA")
+    ssa.add_argument("--abi", default=DEFAULT_ABI, choices=sorted(ABI_OUTPUT_REGS), help="Default output-register preset used when --output-reg is omitted")
     ssa.add_argument("--output-reg", action="append")
+    ssa.add_argument("--max-blocks-per-function", type=int, default=8, help="Maximum direct in-function basic blocks to lower for a function")
     ssa.add_argument("--max-insns-per-function", type=int, default=24)
+    ssa.add_argument("--max-ssa-assignments", type=int, default=512, help="Refuse a function when compact SSA assignments exceed this limit; 0 disables the gate")
     ssa.add_argument("--scan-limit", type=lambda value: int(value, 0), default=0x100)
+    ssa.add_argument("--cache-dir", default=os.environ.get("DOSUNIT_CACHE_DIR", ".cache/dosunit"))
+    ssa.add_argument("--no-cache", action="store_true")
     ssa.add_argument("--out", required=True)
     ssa.set_defaults(func=cmd_ssa)
 
@@ -297,10 +343,26 @@ def build_parser() -> argparse.ArgumentParser:
     compare_ssa.add_argument("--oracle-ssa", required=True)
     compare_ssa.add_argument("--candidate-ssa", required=True)
     compare_ssa.add_argument("--mapping")
-    compare_ssa.add_argument("--include-unmapped", action="store_true")
-    compare_ssa.add_argument("--solver-timeout-ms", type=int, default=1000)
+    compare_ssa.add_argument("--skip-unmapped", action="store_true", help="Do not emit refusals for mapped-oracle functions that have no candidate SSA")
+    compare_ssa.add_argument("--solver-timeout-ms", type=int, default=60000)
+    compare_ssa.add_argument("--max-solver-assignments", type=int, default=128, help="Refuse a function before Z3 when either side has more SSA assignments; 0 disables the gate")
+    compare_ssa.add_argument("--max-solver-inputs", type=int, default=16, help="Refuse a function before Z3 when either side has more SSA inputs; 0 disables the gate")
+    compare_ssa.add_argument("--max-solver-memory-stores", type=int, default=15, help="Refuse a memory-output function before Z3 when either side has more store operations; 0 disables the gate")
+    compare_ssa.add_argument("--no-skip-binary-equal", action="store_true", help="Run normal SSA/Z3 comparison even when function or block machine bytes are identical")
     compare_ssa.add_argument("--out", required=True)
     compare_ssa.set_defaults(func=cmd_compare_ssa)
+
+    compare_ssa_abi = subparsers.add_parser("compare-ssa-abi", help="Compare function-level ABI observables with composed SSA and Z3")
+    compare_ssa_abi.add_argument("--oracle-ssa", required=True)
+    compare_ssa_abi.add_argument("--candidate-ssa", required=True)
+    compare_ssa_abi.add_argument("--abi-manifest", required=True)
+    compare_ssa_abi.add_argument("--mapping")
+    compare_ssa_abi.add_argument("--solver-timeout-ms", type=int, default=60000)
+    compare_ssa_abi.add_argument("--max-solver-assignments", type=int, default=512)
+    compare_ssa_abi.add_argument("--max-solver-inputs", type=int, default=32)
+    compare_ssa_abi.add_argument("--max-solver-memory-stores", type=int, default=32)
+    compare_ssa_abi.add_argument("--out", required=True)
+    compare_ssa_abi.set_defaults(func=cmd_compare_ssa_abi)
 
     compare_regions = subparsers.add_parser("compare-regions", help="Compare region operand/effect artifacts")
     compare_regions.add_argument("--oracle-regions", required=True)
@@ -361,8 +423,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = subparsers.add_parser("report-failures", help="Render a visible failure report from result JSON")
     report.add_argument("--results", required=True)
-    report.add_argument("--limit", type=int, default=50)
+    report.add_argument("--limit", type=int, default=0, help="Maximum rows per section; 0 means all rows")
     report.add_argument("--mismatch-limit", type=int, default=8)
+    report.add_argument("--show-unresolved-call-targets", action="store_true", help="Include SSA failures caused by unresolved direct call targets")
     report.add_argument("--out")
     report.set_defaults(func=cmd_report_failures)
 

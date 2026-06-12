@@ -1,5 +1,4 @@
-"""
-Abnormal loop-entry and loop-exit normalization for region structuring.
+"""Abnormal loop-entry and loop-exit normalization for region structuring.
 
 This keeps dedicated abnormal-loop policy out of the main structuring driver.
 The goal is not to guess prettier C late. The goal is to make loop-shape
@@ -167,8 +166,7 @@ def apply_abnormal_loop_normalization(
 
 
 class AbnormalLoopStructureAnalysis(StructureAnalysis):
-    """
-    Structuring analysis with explicit abnormal loop normalization.
+    """Structuring analysis with explicit abnormal loop normalization.
 
     This normalizes multi-entry / multi-exit loop shapes as typed metadata
     instead of leaving them as anonymous low-confidence leftovers.

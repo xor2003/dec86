@@ -31,7 +31,6 @@ from .callee_name_normalization import normalize_callee_name_8616
 from .callsite_summary import summarize_x86_16_callsite as _summarize_x86_16_callsite_fallback
 from .decompiler_postprocess_calls import _cod_metadata_for_function_8616
 from .decompiler_postprocess_utils import (
-    _iter_c_nodes_deep_8616,
     _match_bp_stack_dereference_8616,
     _match_segmented_dereference_8616,
     _same_c_expression_8616,
@@ -2017,21 +2016,35 @@ def _build_cod_call_name_fingerprints_8616(root, project, call_nodes) -> dict[in
 
 
 def _lookup_function_for_call_context_8616(project, func_addr: int):
-    addr_candidates = [func_addr]
+    addr_candidates = []
     original_delta = getattr(project, "_inertia_original_linear_delta", None)
     if isinstance(original_delta, int):
         addr_candidates.append(func_addr + original_delta)
         rebased = func_addr - original_delta
         if rebased >= 0:
             addr_candidates.append(rebased)
+    addr_candidates.append(func_addr)
     deduped_addrs: list[int] = []
     for addr in addr_candidates:
         if addr not in deduped_addrs:
             deduped_addrs.append(addr)
-    for candidate_project in (project, getattr(project, "_inertia_original_project", None)):
+
+    project_variants: list[tuple[object, tuple[int, ...]]] = [(project, tuple(deduped_addrs))]
+    original_project = getattr(project, "_inertia_original_project", None)
+    if original_project is not None:
+        original_addrs = [func_addr]
+        if isinstance(original_delta, int):
+            original_addrs = [func_addr + original_delta]
+        deduped_original_addrs: list[int] = []
+        for addr in original_addrs:
+            if addr >= 0 and addr not in deduped_original_addrs:
+                deduped_original_addrs.append(addr)
+        project_variants.append((original_project, tuple(deduped_original_addrs)))
+
+    for candidate_project, candidate_addrs in project_variants:
         functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
         lookup = getattr(functions, "function", lambda **_: None)
-        for candidate_addr in deduped_addrs:
+        for candidate_addr in candidate_addrs:
             function = lookup(addr=candidate_addr, create=False)
             if function is not None:
                 return function
@@ -2238,8 +2251,11 @@ def _runtime_segment_helper_name_8616(node: CFunctionCall) -> str | None:
     return None
 
 
-def _runtime_segment_helper_args_8616(node: CFunctionCall) -> tuple[object, object] | None:
+def _runtime_segment_helper_args_8616(node: CFunctionCall) -> tuple[object, ...] | None:
     args = tuple(getattr(node, "args", ()) or ())
+    name = _runtime_segment_helper_name_8616(node)
+    if name in {"MEM_U8", "MEM_U16", "MEM_U32"}:
+        return args if len(args) == 1 else None
     if len(args) != 2:
         return None
     return args[0], args[1]
@@ -2247,7 +2263,7 @@ def _runtime_segment_helper_args_8616(node: CFunctionCall) -> tuple[object, obje
 
 def _is_runtime_segment_helper_call_8616(node: CFunctionCall) -> bool:
     name = _runtime_segment_helper_name_8616(node)
-    return name in {"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR"}
+    return name in {"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR", "MEM_U8", "MEM_U16", "MEM_U32"}
 
 
 def _runtime_segment_linear_fingerprint_8616(seg_expr, off_expr, project) -> str:
@@ -2263,6 +2279,8 @@ def _runtime_segment_helper_fingerprint_8616(node: CFunctionCall, project) -> st
     args = _runtime_segment_helper_args_8616(node)
     if name is None or args is None:
         return None
+    if name in {"MEM_U8", "MEM_U16", "MEM_U32"} and len(args) == 1:
+        return f"Dereference({_expr_fingerprint(args[0], project)})"
     seg_expr, off_expr = args
     linear = _runtime_segment_linear_fingerprint_8616(seg_expr, off_expr, project)
     if name in {"MK_FP", "SEG_PTR"}:
@@ -2275,6 +2293,8 @@ def _runtime_segment_helper_fingerprint_8616(node: CFunctionCall, project) -> st
 def _runtime_segment_helper_location_8616(node: CFunctionCall, project) -> str | None:
     name = _runtime_segment_helper_name_8616(node)
     args = _runtime_segment_helper_args_8616(node)
+    if name in {"MEM_U8", "MEM_U16", "MEM_U32"} and args is not None and len(args) == 1:
+        return f"deref:{_expr_fingerprint(args[0], project)}"
     if name not in {"SEG_U8", "SEG_U16", "SEG_U32"} or args is None:
         return None
     seg_expr, off_expr = args

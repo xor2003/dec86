@@ -46,8 +46,8 @@ from .annotations import (
     ANNOTATION_KEY,
     _annotation_dict,
     _c_decl_requires_opaque_typedefs_8616,
-    _parse_c_prototype_8616,
     _normalize_bp_disp,
+    _parse_c_prototype_8616,
     _source_decl_from_cod_source_lines,
     _source_function_pointer_local_types_8616,
     _typed_cod_spec_dict_8616,
@@ -691,7 +691,6 @@ def _repair_unresolved_function_exit_gotos_8616(project, codegen) -> bool:
         This is a conservative pass: only jump targets proven to be out-of-procedure
         become ``return``. Any ambiguous in-procedure target remains unchanged.
         """
-
         cfunc = getattr(codegen, "cfunc", None)
         if cfunc is None:
             return False

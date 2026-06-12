@@ -352,18 +352,22 @@ Basic F-15-style flow:
 ./dosunit.py ssa \
   --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
   --functions /tmp/egame.original.functions.json \
-  --output-reg ax \
-  --output-reg bx \
-  --output-reg sp \
+  --cache-dir .cache/dosunit \
   --out /tmp/egame.original.ssa.json
 
 ./dosunit.py ssa \
   --exe /home/xor/tmp/f15se2-re/build/egame.exe \
   --functions /tmp/egame.rebuilt.functions.json \
-  --output-reg ax \
-  --output-reg bx \
-  --output-reg sp \
+  --cache-dir .cache/dosunit \
   --out /tmp/egame.rebuilt.ssa.json
+
+# Optional: lower through angr AIL after the cached VEX lift.
+./dosunit.py ssa \
+  --ir ail \
+  --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
+  --functions /tmp/egame.original.functions.json \
+  --cache-dir .cache/dosunit \
+  --out /tmp/egame.original.ail.ssa.json
 
 ./dosunit.py compare-ssa \
   --oracle-ssa /tmp/egame.original.ssa.json \
@@ -438,7 +442,7 @@ edge-vector generation, compact `cmp`/`test` condition solving,
 `or reg, reg` zero-test idioms, simple byte-register predicates such as
 `cmp al, imm`, lifter-backed function complexity scoring, conservative
 `simple_whole_function` comparison-part selection, bounded straight-line
-VEX-to-compact-SSA lowering, Z3 SSA equivalence/counterexample comparison,
+VEX/AIL-to-compact-SSA lowering, Z3 SSA equivalence/counterexample comparison,
 lifter-backed region operand/effect summaries, static region argument/effect
 comparison, lazy condition lowering, and explicit candidate mapping.
 Generation output reports `counters.edge_sources`,
@@ -455,13 +459,47 @@ indirect control, symbolic memory, partial registers, variable shifts, mul/div,
 string instructions, loops, and backward branches. Only functions with no
 branch/call/interrupt/loop hazards and a low risk score are emitted as
 `whole_function` comparison parts. `ssa` reuses the existing x86-16 VEX lifter
-for instruction semantics, slices from requested output registers, and drops
-unused flag and return-IP-load noise. The current compact SSA model is
-deliberately conservative: explicit memory operands, unmodeled partial-register
-accesses, memory stores, and control flow are refused rather than guessed. VEX
-normalizations such as `mov al,imm` becoming `(AX & 0xff00) | imm` are kept.
-`compare-ssa` can use the normal function mapping document and asks Z3 for a
-concrete input model where original and candidate outputs differ.
+for instruction semantics. By default it follows direct in-function successors
+and lowers up to `--max-blocks-per-function 8` bounded basic blocks into compact
+SSA parts; `--ir ail` converts each cached VEX block through angr AIL and lowers
+that AIL block into the same compact SSA form. The default output ABI is
+`--abi msc16-near`, which observes `AX`, `DX`, and `SP`; use repeated
+`--output-reg` for an explicit set or `--abi raw-all` to observe
+`AX/BX/CX/DX/SI/DI/BP/SP`. Unused flag and return-IP-load noise is dropped.
+VEX/AIL memory loads/stores are modeled with a symbolic byte-array memory input,
+and conditional exits are represented as an `ip` expression when `ip` is
+requested. Unsupported statements/helpers, guarded memory effects, unknown call
+value effects, and functions above the instruction bound are refused rather than
+guessed. `--max-ssa-assignments` is a second gate for refusing solver slices
+that become too large after lowering. Normalizations such as `mov al,imm`
+becoming `(AX & 0xff00) | imm` are kept. `ssa` caches lifted VEX blocks on disk as
+`.cache/dosunit/vex/<exe-sha256>.pickle`, with per-address entries inside that
+single file. `compare-ssa` can use the normal function mapping document and asks
+Z3 for a concrete input model where original and candidate outputs differ.
+If mapped function bytes are identical, `compare-ssa` marks the SSA part passed
+without invoking Z3; if bytes differ but compact SSA inputs/assignments/outputs
+are identical, it also passes as `ssa_equal`. Use `--no-skip-binary-equal` when
+you explicitly want to force solver comparison for byte-identical code.
+Before solving, `compare-ssa` checks direct call targets and normalizes mapped,
+aliased, byte-identical, or compact-SSA-identical callee entries so shifted code
+addresses do not appear as semantic mismatches. It also normalizes paired
+layout constants proven by matching instruction operands, including absolute
+memory operands, signed displacements, IVT segment stores, and repeated same-delta
+address constants in one bounded block.
+Before Z3, `compare-ssa` applies `--max-solver-assignments`,
+`--max-solver-inputs`, and `--max-solver-memory-stores` gates so hard functions
+appear as structured `slice_too_large` refusals instead of blocking the full
+report. The default memory-store solver gate is 15 modeled stores.
+`compare-ssa-abi` is the function-level static ABI gate: it composes bounded
+acyclic SSA parts for each mapped function and asks Z3 only about declared ABI
+observables from an ABI manifest. The manifest records calling convention,
+register inputs, stack arguments, return registers, preserved registers,
+clobbers, and data effects. By default the solver observes return registers,
+preserved registers, and `SP`; a function can set `ssa_observe_regs` to a
+narrower static proof set when preserved-register checking needs concrete stack
+or callee summaries. Declared memory effects are compared bytewise at the named
+segmented offsets, while temporary stack writes and whole-memory equality are
+ignored.
 Edge coverage metadata belongs to the original binary only; rebuilt comparison
 still replays concrete vectors at mapped function entries and does not require
 rebuilt CFG/block alignment. Full VEX/AIL path exploration, per-call libdosbox

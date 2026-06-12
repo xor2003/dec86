@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,9 +21,11 @@ _spec.loader.exec_module(_decompile)
 from angr_platforms.X86_16 import decompiler_postprocess as postprocess  # noqa: E402
 from angr_platforms.X86_16.annotations import (  # noqa: E402
     ANNOTATION_KEY,
+    _parse_c_prototype_8616,
     _source_decl_from_cod_source_lines,
     _source_decl_from_cod_source_lines_cached_8616,
-    _parse_c_prototype_8616,
+)
+from angr_platforms.X86_16.annotations import (
     _normalize_arg_names as _normalize_annotation_arg_names,
 )
 from angr_platforms.X86_16.decompiler_postprocess import (  # noqa: E402

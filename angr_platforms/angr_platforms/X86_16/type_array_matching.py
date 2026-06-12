@@ -1,5 +1,4 @@
-"""
-Array expression matching for Inertia decompiler Phase 2.2.
+"""Array expression matching for Inertia decompiler Phase 2.2.
 
 Detects array access patterns (base + index * stride + offset)
 and loop induction variables with stride to enable array subscript
@@ -184,8 +183,7 @@ class ArrayRecoveryInfo:
 
 
 class InductionVariableCollector:
-    """
-    Collect loop induction variables with stride patterns.
+    """Collect loop induction variables with stride patterns.
 
     Identifies variables that are:
     - Incremented/decremented by constant stride each iteration
@@ -198,8 +196,7 @@ class InductionVariableCollector:
         self.stride_patterns: dict[str, int] = {}
 
     def collect(self, expressions: list[str]) -> dict[str, InductionVariable]:
-        """
-        Collect induction variables from expression list.
+        """Collect induction variables from expression list.
 
         Args:
             expressions: List of expression strings
@@ -235,8 +232,7 @@ class InductionVariableCollector:
 
 
 class ArrayExpressionMatcher:
-    """
-    Detect and match array access patterns.
+    """Detect and match array access patterns.
 
     Recognizes:
     - Simple indexed access: base[index]
@@ -252,8 +248,7 @@ class ArrayExpressionMatcher:
     def match_patterns(
         self, expressions: list[str], induction_vars: dict[str, InductionVariable]
     ) -> list[ArrayAccessPattern]:
-        """
-        Match array access patterns in expressions.
+        """Match array access patterns in expressions.
 
         Args:
             expressions: List of expression strings
@@ -300,8 +295,7 @@ class ArrayExpressionMatcher:
         return None
 
     def synthesize_arrays(self, patterns: list[ArrayAccessPattern]) -> dict[str, ArrayRecoveryInfo]:
-        """
-        Synthesize array recovery info from matched patterns.
+        """Synthesize array recovery info from matched patterns.
 
         Groups patterns by base expression to recover array structure.
 
@@ -647,8 +641,7 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
 
 def apply_x86_16_array_expression_matching(codegen) -> bool:
     def _impl():
-        """
-        Apply array expression matching pass to codegen.
+        """Apply array expression matching pass to codegen.
 
         This is the entry point for Phase 2.2 decompiler framework integration.
 

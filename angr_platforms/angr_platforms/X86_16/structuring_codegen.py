@@ -1,5 +1,4 @@
-"""
-Structuring-based code generation for control flow.
+"""Structuring-based code generation for control flow.
 
 This module demonstrates how structured regions (Loop, IncSwitch) are converted
 to C control flow constructs. Integration with full decompiler codegen happens
@@ -46,8 +45,7 @@ class SwitchCodegenInfo:
 
 
 class StructuringCodegenPass:
-    """
-    Convertstructured regions to C code.
+    """Convertstructured regions to C code.
 
     This pass walks Loop and IncSwitch regions and emits appropriate C constructs.
     For Phase 1.3, this is a demonstration pass. Full integration with codegen
@@ -63,8 +61,7 @@ class StructuringCodegenPass:
         }
 
     def render_loop(self, region: Region) -> str:
-        """
-        Render a loop region as C code.
+        """Render a loop region as C code.
 
         Args:
             region: Loop region to render
@@ -102,8 +99,7 @@ class StructuringCodegenPass:
         return code
 
     def render_switch(self, region: Region) -> str:
-        """
-        Render a switch region as C code.
+        """Render a switch region as C code.
 
         Args:
             region: IncSwitch region to render
@@ -138,8 +134,7 @@ class StructuringCodegenPass:
 
     def _extract_loop_info(self, region: Region) -> LoopCodegenInfo:
         def _impl():
-            """
-            Extract loop information from a Loop region.
+            """Extract loop information from a Loop region.
 
             Args:
                 region: Loop region
@@ -186,8 +181,7 @@ class StructuringCodegenPass:
         return _impl()
 
     def _extract_switch_info(self, region: Region) -> SwitchCodegenInfo:
-        """
-        Extract switch information from an IncSwitch region.
+        """Extract switch information from an IncSwitch region.
 
         Args:
             region: IncSwitch region
@@ -208,8 +202,7 @@ class StructuringCodegenPass:
         )
 
     def apply(self, graph: RegionGraph) -> str:
-        """
-        Apply codegen to a structured region graph.
+        """Apply codegen to a structured region graph.
 
         Args:
             graph: The structured region graph
@@ -233,8 +226,7 @@ class StructuringCodegenPass:
 
 
 def apply_structuring_codegen_8616(codegen) -> bool:
-    """
-    Apply structuring-based code generation pass to codegen.
+    """Apply structuring-based code generation pass to codegen.
 
     This is the entry point for the decompiler framework integration,
     called after region-based structuring has completed.

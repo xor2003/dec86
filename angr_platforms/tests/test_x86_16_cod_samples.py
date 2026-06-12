@@ -11,14 +11,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import decompile
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.cod_extract import (
     extract_cod_proc_metadata,
     join_cod_entries_with_synthetic_globals,
 )
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
+
+import decompile
 
 _ROOT = Path(__file__).resolve().parents[2]
 _COD_DIR = _ROOT / "cod"

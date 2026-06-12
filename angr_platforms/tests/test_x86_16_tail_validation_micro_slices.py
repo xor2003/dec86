@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import angr_platforms.X86_16.tail_validation as tail_validation_module
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -20,8 +21,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-
-import angr_platforms.X86_16.tail_validation as tail_validation_module
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,

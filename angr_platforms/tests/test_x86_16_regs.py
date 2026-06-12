@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from angr_platforms.X86_16.regs import (
     coerce_reg16_t,
     coerce_reg32_t,

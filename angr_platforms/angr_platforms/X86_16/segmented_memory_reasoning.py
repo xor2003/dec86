@@ -1,5 +1,4 @@
-"""
-Segmented memory association reasoning for Inertia decompiler Phase 3.
+"""Segmented memory association reasoning for Inertia decompiler Phase 3.
 
 Real-mode x86 uses segment:offset addressing. This module tracks:
 - Segment register assignments (CS, DS, ES, SS)
@@ -158,8 +157,7 @@ class SegmentLoweringDecision:
 
 
 class SegmentedAddressClassifier:
-    """
-    Classifies segmented memory accesses.
+    """Classifies segmented memory accesses.
 
     Categories:
     - single: Always same segment (high confidence association)
@@ -189,8 +187,7 @@ class SegmentedAddressClassifier:
         return len(segments) == 1
 
     def classify(self, segment_accesses: list[SegmentAssignment]) -> str:
-        """
-        Classify segmented address pattern.
+        """Classify segmented address pattern.
 
         Args:
             segment_accesses: List of segment assignments/accesses
@@ -211,8 +208,7 @@ class SegmentedAddressClassifier:
 
 
 class SegmentAssociationAnalyzer:
-    """
-    Analyzes and builds segment associations across functions.
+    """Analyzes and builds segment associations across functions.
 
     Algorithm:
     1. Collect all segment register assignments
@@ -231,8 +227,7 @@ class SegmentAssociationAnalyzer:
         self.classifier = SegmentedAddressClassifier()
 
     def analyze(self, assignments: list[SegmentAssignment]) -> None:
-        """
-        Analyze segment assignments and build associations.
+        """Analyze segment assignments and build associations.
 
         Args:
             assignments: List of SegmentAssignment throughout binary
@@ -268,8 +263,7 @@ class SegmentAssociationAnalyzer:
             assoc.stability = self._classification_stability(classification, assoc.evidence_count)
 
     def detect_far_pointers(self, pointer_expressions: list[SegmentedPointer]) -> dict[str, FarPointerRecovery]:
-        """
-        Detect and recover far pointer patterns.
+        """Detect and recover far pointer patterns.
 
         Args:
             pointer_expressions: List of segmented pointers found
@@ -498,8 +492,7 @@ def _recover_stack_slot_from_segmented_operand_8616(node, codegen):
 
 def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
     def _impl():
-        """
-        Apply segmented memory association reasoning pass to codegen.
+        """Apply segmented memory association reasoning pass to codegen.
 
         This is the entry point for Phase 3 decompiler framework integration.
 

@@ -29,7 +29,6 @@ def install_structured_codegen_sort_compat_8616() -> bool:
     ``None`` and ``str`` idents. The compatibility layer keeps angr's ordering
     categories and only normalizes sort keys.
     """
-
     cfunc_cls = getattr(structured_c, "CFunction", None)
     if cfunc_cls is None:
         return False
@@ -129,7 +128,6 @@ def repair_cfunctioncall_render_targets_8616(codegen) -> int:
     Reattach the function from the current KB when possible; otherwise disable
     only the renderer's disambiguated-name check for that call.
     """
-
     project = getattr(codegen, "project", None)
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
     if root is None:

@@ -13,7 +13,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.address_ir import build_address_ir_8616, resolved_operand_to_address_ir_8616
 from angr_platforms.X86_16.addressing_helpers import ResolvedMemoryOperand
 from angr_platforms.X86_16.arch_86_16 import Arch86_16

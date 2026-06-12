@@ -3,6 +3,9 @@ from pyvex.expr import Const
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
 
+from angr_platforms.X86_16.emulator import Emulator
+from angr_platforms.X86_16.instruction import InstrData
+
 from .addressing_helpers import (
     load_far_pointer,
     load_resolved_operand,
@@ -56,8 +59,6 @@ from .string_helpers import (
     string_source_segment,
     string_store,
 )
-from angr_platforms.X86_16.emulator import Emulator
-from angr_platforms.X86_16.instruction import InstrData
 
 X86_16_OPCODE_HELPERS = (
     (0x40, 0x47, "inc_r16", 0),

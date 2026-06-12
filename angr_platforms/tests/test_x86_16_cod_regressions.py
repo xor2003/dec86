@@ -8,29 +8,29 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from angr import ailment
 from angr.ailment.expression import BasePointerOffset
-import decompile
-import pytest
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.calling_conventions import SimRegArg
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-from inertia_decompiler import cli_c_ast_rewrites as _cli_c_ast_rewrites
-from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
-
 from angr_platforms.X86_16 import decompiler_postprocess_stage as _postprocess_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.cod_extract import extract_cod_proc_metadata
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
-from angr_platforms.X86_16.decompiler_postprocess_utils import _replace_c_children_8616
 from angr_platforms.X86_16.decompiler_postprocess_stage import _materialize_missing_terminal_ax_return_8616
+from angr_platforms.X86_16.decompiler_postprocess_utils import _replace_c_children_8616
 from angr_platforms.X86_16.decompiler_return_compat import (
     _infer_x86_16_c_return_value_from_ax_8616,
     _resolve_codegen_prototype_8616,
     apply_x86_16_decompiler_return_compatibility,
 )
+
+import decompile
+from inertia_decompiler import cli_c_ast_rewrites as _cli_c_ast_rewrites
+from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"

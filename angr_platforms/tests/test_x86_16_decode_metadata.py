@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from bitstring import ConstBitStream
-
 from angr_platforms.X86_16.exec import ExecInstr
 from angr_platforms.X86_16.instruction import (
     CHK_IMM8,
@@ -13,6 +11,7 @@ from angr_platforms.X86_16.instruction import (
     X86Instruction,
 )
 from angr_platforms.X86_16.parse import ParseInstr
+from bitstring import ConstBitStream
 
 
 class _DecodeEmu:

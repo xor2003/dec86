@@ -3,7 +3,6 @@ from __future__ import annotations
 from copy import deepcopy
 from types import SimpleNamespace
 
-import decompile
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -21,8 +20,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
-from capstone.x86_const import X86_OP_MEM, X86_REG_BP, X86_REG_SI
-
 from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
@@ -33,8 +30,8 @@ from angr_platforms.X86_16.decompiler_postprocess_utils import (
 )
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     _build_assignment_maps_8616,
-    _dirty_reg_offset_8616,
     _direct_stack_move_materialized_ins_addrs_8616,
+    _dirty_reg_offset_8616,
     _replace_precontrol_stack_assignment_8616,
     _replace_tagged_assignment_8616,
     lower_stable_ds_es_linear_global_addresses_8616,
@@ -59,6 +56,9 @@ from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
 )
+from capstone.x86_const import X86_OP_MEM, X86_REG_BP, X86_REG_SI
+
+import decompile
 
 
 class _DummyCodegen:

@@ -4,14 +4,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.verify_80286_real_mode import (
-    _exclude_cached_passes,
-    _exclude_compare_covered,
-    _load_passed_cache,
-    _sample_compare_covered,
-    _update_passed_cache,
-)
-
 from angr_platforms.X86_16.coverage_manifest import COMPARE_VERIFIED_MOO_OPCODES
 from angr_platforms.X86_16.verification_80286 import (
     REPO_ROOT,
@@ -20,6 +12,13 @@ from angr_platforms.X86_16.verification_80286 import (
     summary_to_json,
     verify_case,
     verify_moo_file,
+)
+from scripts.verify_80286_real_mode import (
+    _exclude_cached_passes,
+    _exclude_compare_covered,
+    _load_passed_cache,
+    _sample_compare_covered,
+    _update_passed_cache,
 )
 
 SUITE_DIR = REPO_ROOT / "borrow" / "80286" / "v1_real_mode"

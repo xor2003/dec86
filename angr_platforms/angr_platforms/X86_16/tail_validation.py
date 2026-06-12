@@ -269,6 +269,8 @@ def _canonicalize_additive_fingerprint_for_compare_8616(value: str) -> str:
             return expr
         op, args_text = call
         args = _split_fingerprint_args_8616(args_text)
+        if op == "Reference" and len(args) == 1 and args[0].startswith("stack_slot:"):
+            return _canonicalize_expr(args[0])
         if op in {"Add", "Sub"}:
             terms: list[tuple[int, str]] = []
 

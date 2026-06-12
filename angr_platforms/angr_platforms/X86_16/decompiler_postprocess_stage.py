@@ -48,13 +48,13 @@ from . import decompiler_postprocess_simplify as _simplify
 from . import segmented_memory_reasoning as _segmented_mem
 from .annotations import ANNOTATION_KEY, _parse_c_prototype_8616, _source_decl_from_cod_source_lines
 from .callee_name_normalization import normalize_callee_name_8616
+from .compiler_helpers import identify_x86_16_compiler_helper_at_8616, is_x86_16_stack_probe_name_8616
 from .condition_trace import (
     dump_condition_trace_8616,
     materialized_condition_drift_detected_8616,
     record_ast_condition_trace_8616,
     record_tail_validation_condition_trace_8616,
 )
-from .compiler_helpers import identify_x86_16_compiler_helper_at_8616, is_x86_16_stack_probe_name_8616
 from .decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _structured_slot_names_8616
 from .ir.condition_ir import (
@@ -82,8 +82,8 @@ from .lowering.stack_lowering_from_facts import (
 from .pipeline.contracts import assert_pipeline_contracts_8616
 from .pipeline.errors import PipelineHardError
 from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
-from .postprocess.optimization.dead_setup import _count_dead_setup_escaped_8616
 from .postprocess.optimization.dce import _dead_code_elimination_8616
+from .postprocess.optimization.dead_setup import _count_dead_setup_escaped_8616
 from .postprocess.optimization.pass_driver import _run_optimization_passes_8616
 from .render_compat import repair_cfunctioncall_render_targets_8616
 from .tail_validation import (
@@ -416,8 +416,7 @@ def _heap_postprocess_debug_enabled_8616() -> bool:
 
 
 def _normalize_pointer_high_byte_shifts_8616(codegen) -> bool:
-    """
-    Ensure high-byte projection shifts operate on an integer expression.
+    """Ensure high-byte projection shifts operate on an integer expression.
     This keeps semantics explicit for 16-bit address-like carriers and avoids
     MS C C2116 on raw pointer shifts (e.g. ``&x >> 8``).
     """
@@ -1547,7 +1546,6 @@ def _selector_function_has_unsafe_effects_8616(project, codegen) -> bool:
     CFG selector rewrite unsafe because replacing the structured body could drop
     real side effects.
     """
-
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
     log = logging.getLogger(__name__)
     previous_insn = None
@@ -2221,7 +2219,6 @@ def _materialize_global_byte_index_sum_loop_8616(project, codegen) -> bool:
             total += global_byte_array[i];
         return total;
     """
-
     if getattr(codegen, "_inertia_global_byte_sum_loop_materialized_8616", False):
         return False
     insns = _linear_function_insns_for_codegen_8616(project, codegen)
@@ -2458,7 +2455,6 @@ def _materialize_stack_arg_accumulator_loop_8616(project, codegen) -> bool:
     This is a generic C89 backward-edge shape emitted by MS C for goto/while
     accumulators. It uses only instruction, CFG, and stack-slot evidence.
     """
-
     if getattr(codegen, "_inertia_stack_arg_accumulator_loop_materialized_8616", False):
         return False
     insns = _linear_function_insns_for_codegen_8616(project, codegen)
@@ -3068,7 +3064,6 @@ def _ensure_typed_stack_arg_expr_8616(project, codegen, disp: int, arg_type, *, 
 
 def _ensure_pointer_stack_arg_expr_8616(project, codegen, disp: int, *, pointee_size: int, fallback_name: str | None = None):
     """Materialize BP-positive slots proven by register-indirect memory use as pointer args."""
-
     pointer_type = _pointer_type_for_project_8616(project, int(pointee_size))
     return _ensure_typed_stack_arg_expr_8616(project, codegen, disp, pointer_type, fallback_name=fallback_name)
 
@@ -3446,7 +3441,6 @@ def _materialize_word_pair_pointer_accumulation_loop_8616(
     This intentionally materializes a word-pointer view, not a struct.  Struct
     naming remains a later typed-object recovery problem.
     """
-
     stats = {
         "raw_fact_count": 0,
         "classified_fact_count": 0,
@@ -3627,7 +3621,6 @@ def _materialize_word_pair_pointer_accumulation_loop_8616(
 
 def _materialize_word_pointer_first_gt_loop_8616(project, codegen, insns: tuple, index_by_addr: dict[int, int]) -> bool:
     """Recover signed word-pointer first-greater-than search loops."""
-
     stats = {
         "raw_fact_count": 0,
         "classified_fact_count": 0,
@@ -3983,7 +3976,6 @@ def _materialize_pointer_swap_8616(project, codegen, insns: tuple, _index_by_add
 
 def _materialize_pointer_memory_idioms_8616(project, codegen) -> bool:
     """Recover near-pointer C memory idioms from instruction and stack-slot evidence."""
-
     debug_pointer_memory = os.environ.get("INERTIA_DEBUG_POINTER_MEMORY_IDIOMS") == "1"
     insns = _linear_function_insns_for_codegen_8616(project, codegen)
     if debug_pointer_memory:
@@ -4018,7 +4010,6 @@ def _materialize_pointer_memory_idioms_8616(project, codegen) -> bool:
 
 def _materialize_nested_stack_counter_accumulator_loop_8616(project, codegen) -> bool:
     """Recover nested counter loops with stack-slot locals and threshold breaks."""
-
     if getattr(codegen, "_inertia_nested_stack_counter_loop_materialized_8616", False):
         return False
     insns = _linear_function_insns_for_codegen_8616(project, codegen)
@@ -6068,7 +6059,6 @@ def _prune_replaced_insert_artifact_assignments_8616(root, replaced_return_keys:
 
 def _materialize_stack_byte_pair_return_8616(project, codegen) -> bool:
     """Recover word returns built by storing adjacent stack bytes then loading the word."""
-
     insns = _linear_function_insns_for_codegen_8616(project, codegen)
     if not insns:
         return False
@@ -7219,8 +7209,7 @@ def _restore_codegen_text_state_8616(codegen, snapshot: Mapping[str, object] | N
 
 
 def _attach_tail_validation_widened_carrier_provenance_8616(codegen, cfunc, *, function_addr: int) -> None:
-    """
-    Validation-only metadata.
+    """Validation-only metadata.
 
     Attach widened stable-slot provenance to plain byte carriers that are
     already proved to seed from a materialized stack slot on the clone path.
@@ -10504,7 +10493,6 @@ def _is_cfg_return_chain_callsite_materialization_delta_8616(
 
 def _selector_return_expected_raw_stack_slots_8616(project, codegen, expected_returns: set[str]) -> set[str]:
     """Map expected selector-return arguments back to their raw BP stack slots."""
-
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None or not expected_returns:
         return set()

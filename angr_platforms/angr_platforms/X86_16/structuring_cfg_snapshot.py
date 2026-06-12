@@ -1,5 +1,4 @@
-"""
-Typed CFG snapshot surface for structuring diagnostics.
+"""Typed CFG snapshot surface for structuring diagnostics.
 
 This sits above the raw region-graph builder and gives later consumers a stable,
 deterministic graph summary without scraping rendered code.
@@ -39,7 +38,6 @@ class CFGSnapshot:
 
     def summary_line(self) -> str:
         """Compact deterministic summary for diagnostics."""
-
         entry = hex(self.entry_region_id) if self.entry_region_id is not None else "none"
         return (
             f"cfg_snapshot nodes={self.node_count} edges={self.edge_count} "
@@ -48,7 +46,6 @@ class CFGSnapshot:
 
     def to_dict(self) -> dict[str, object]:
         """Stable serialization for reports and artifacts."""
-
         return {
             "entry_region_id": hex(self.entry_region_id) if self.entry_region_id is not None else None,
             "node_count": self.node_count,
@@ -73,7 +70,6 @@ class CFGSnapshot:
 def build_cfg_snapshot(codegen: Any) -> CFGSnapshot | None:
     def _impl():
         """Build a deterministic CFG snapshot from codegen."""
-
         result = build_region_graph(codegen)
         graph = result.graph
         if graph is None:

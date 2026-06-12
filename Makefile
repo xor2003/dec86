@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: quality pytest ruff pyright vulture radon msc6-examples monkeytype-trace monkeytype-stubs monkeytype-apply types
+.PHONY: quality pytest ruff pyright vulture radon msc6-examples sortdemo-selftest monkeytype-trace monkeytype-stubs monkeytype-apply types
 
 quality: ruff pyright vulture radon pytest
 
@@ -37,6 +37,9 @@ radon:
 
 msc6-examples:
 	INERTIA_ENABLE_TAIL_VALIDATION=1 INERTIA_DISABLE_TIMING=1 $(PYTHON) scripts/build_msc6_examples.py --skip-constructs medium_structs,enum_union --decompile-mode functions --decompile-max-functions 0 --decompile-timeout 60 --decompile-run-timeout 600
+
+sortdemo-selftest:
+	$(PYTHON) scripts/build_sortdemo_selftest.py --clean
 
 monkeytype-trace:
 	$(PYTHON) scripts/collect_monkeytype_pytest.py

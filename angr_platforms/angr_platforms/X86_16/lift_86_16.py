@@ -50,8 +50,7 @@ def _bitstream_is_empty(bitstrm: bitstring.ConstBitStream) -> bool:
 
 
 class _LifterInstructionFacade:
-    """
-    Combine the raw IRSB customizer API with the higher-level Instruction helpers.
+    """Combine the raw IRSB customizer API with the higher-level Instruction helpers.
     Modern pyvex exposes jump/get/put on Instruction, but low-level IR building
     helpers like _append_stmt() and _settmp() still live on the IRSB customizer.
     """

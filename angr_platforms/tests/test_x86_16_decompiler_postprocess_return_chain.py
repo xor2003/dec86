@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import angr_platforms.X86_16.decompiler_postprocess_stage as post_stage
 from angr.analyses.decompiler.structured_codegen.c import CConstant, CIfElse, CReturn, CStatements, CVariable
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-import angr_platforms.X86_16.decompiler_postprocess_stage as post_stage
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _is_cfg_return_chain_callsite_materialization_delta_8616,
     _is_cfg_return_expr_chain_materialization_delta_8616,

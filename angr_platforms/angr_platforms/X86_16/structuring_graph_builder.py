@@ -1,5 +1,4 @@
-"""
-Deterministic region-graph construction for structuring.
+"""Deterministic region-graph construction for structuring.
 
 This module isolates the raw CFG-to-region-graph bridge from the structuring
 driver so later CFG snapshot logic can reuse the same producer.
@@ -23,7 +22,6 @@ class RegionGraphBuildResult:
 
 def resolve_clinic_from_codegen(codegen: Any) -> Any | None:
     """Resolve the clinic object from codegen or the backing function."""
-
     clinic = getattr(codegen, "_clinic", None)
     if clinic is not None:
         return clinic
@@ -43,7 +41,6 @@ def resolve_clinic_from_codegen(codegen: Any) -> Any | None:
 def build_region_graph(codegen: Any) -> RegionGraphBuildResult:
     def _impl():
         """Build a deterministic RegionGraph from a clinic AIL graph."""
-
         graph = RegionGraph()
         regions_by_addr: dict[int, Region] = {}
         clinic = resolve_clinic_from_codegen(codegen)

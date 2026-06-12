@@ -1,5 +1,4 @@
 import networkx as nx
-
 from angr_platforms.X86_16.structuring_grouping_report import (
     build_x86_16_structuring_grouping_report,
     describe_x86_16_structuring_grouping_report_surface,

@@ -177,6 +177,34 @@ def test_sortdemo_swaps_preserves_binary_proven_global_increment_and_pointer_swa
     assert "bar2[0] = local_2;" in result.stdout
 
 
+def test_sortdemo_percolateup_materializes_parent_once_and_preserves_calls():
+    result = _run_decompile_addr(
+        SORTDEMO_EXE,
+        0x109E8,
+        analysis_timeout=60,
+        subprocess_timeout=90,
+        extra_args=("--c-target", "portable-flat"),
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    assert "function: 0x109e8 PercolateUp" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "gcc syntax check failed:" not in combined
+    final_body = "void PercolateUp" + result.stdout.rsplit("void PercolateUp", 1)[-1]
+    executable_lines = tuple(
+        line.strip()
+        for line in final_body.splitlines()
+        if line.startswith("        ") or line.startswith("    ")
+    )
+    assert "local_2 = (short)i / 2;" in executable_lines
+    assert executable_lines.count("g_0BAA += 1;") == 1
+    assert sum(1 for line in executable_lines if line.startswith("Swaps(")) == 1
+    assert sum(1 for line in executable_lines if line.startswith("SwapBars(")) == 1
+    assert "flsbuf" not in final_body
+
+
 def test_sortdemo_main_uses_portable_flat_int_main_signature():
     result = _run_decompile_addr(
         SORTDEMO_EXE,

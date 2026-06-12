@@ -6,7 +6,6 @@ from angr.analyses.decompiler import structured_codegen as _scg
 from angr.analyses.decompiler.structured_codegen.c import CAssignment, CExpressionStatement, CFunctionCall, CStatements
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_stack_metadata import _generic_stack_carrier_name_8616
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616

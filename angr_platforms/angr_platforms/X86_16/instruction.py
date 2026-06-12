@@ -1,3 +1,5 @@
+from angr_platforms.X86_16.emulator import Emulator
+
 from .addressing_helpers import (
     WidthProfile,
     address_width_bits,
@@ -7,7 +9,6 @@ from .addressing_helpers import (
 )
 from .emulator import Emulator
 from .regs import sgreg_t
-from angr_platforms.X86_16.emulator import Emulator
 
 # Constants for repeat prefixes
 NONE = 0

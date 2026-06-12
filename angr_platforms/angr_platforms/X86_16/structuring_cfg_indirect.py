@@ -1,5 +1,4 @@
-"""
-Typed indirect-site placeholder classification over CFG ownership artifacts.
+"""Typed indirect-site placeholder classification over CFG ownership artifacts.
 
 This keeps indirect-site reporting explicit and conservative. It does not infer
 dispatch semantics; it only marks graph shapes that deserve later classification.
@@ -33,12 +32,10 @@ class CFGIndirectSiteArtifact:
 
     def summary_line(self) -> str:
         """Compact summary for diagnostics."""
-
         return f"cfg_indirect candidates={len(self.candidate_region_ids)} total={len(self.records)}"
 
     def to_dict(self) -> dict[str, object]:
         """Stable serialization for reports and artifacts."""
-
         return {
             "ownership": self.ownership.to_dict(),
             "candidate_region_ids": [hex(region_id) for region_id in self.candidate_region_ids],
@@ -56,7 +53,6 @@ class CFGIndirectSiteArtifact:
 
 def build_cfg_indirect_site_artifact(codegen: Any) -> CFGIndirectSiteArtifact | None:
     """Build conservative indirect-site placeholders from CFG shape."""
-
     ownership = build_cfg_ownership_artifact(codegen)
     if ownership is None:
         return None

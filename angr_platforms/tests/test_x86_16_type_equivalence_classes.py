@@ -6,7 +6,6 @@ and type constraint collection for improved type inference.
 """
 
 import pytest
-
 from angr_platforms.X86_16.ir.core import (
     AddressStatus,
     IRAddress,

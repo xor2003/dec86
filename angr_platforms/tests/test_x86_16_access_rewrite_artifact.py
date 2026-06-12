@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
+
 from inertia_decompiler.cli_access_object_hints import AccessTraitObjectHint, _build_stable_access_object_hints
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles
 from inertia_decompiler.cli_access_rewrite_artifact import (

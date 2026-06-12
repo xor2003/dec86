@@ -226,13 +226,11 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             chk[opcode] = flags
 
     def code_d0_d2(self) -> None:
-        """
-        Handle the x86 Group-2 byte shifts/rotates used by opcodes 0xD0 and 0xD2.
+        """Handle the x86 Group-2 byte shifts/rotates used by opcodes 0xD0 and 0xD2.
 
         Keeping this as an explicit dispatch table makes it easier to audit when
         a real sample trips over one of the rarely used `/digit` encodings.
         """
-
         reg = self.instr.modrm.reg
         handler_name = GROUP2_BYTE_SHIFT_ROTATE_HANDLERS.get(reg)
         if handler_name is None:
@@ -930,12 +928,10 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self._dispatch_modrm_reg((self.inc_rm8, self.dec_rm8), "0xfe")
 
     def _group2_rm8_count(self):
-        """
-        Resolve the implicit shift/rotate count for opcodes 0xD0 and 0xD2.
+        """Resolve the implicit shift/rotate count for opcodes 0xD0 and 0xD2.
 
         0xD0 uses a fixed count of 1, while 0xD2 uses CL.
         """
-
         if self.instr.opcode == 0xD2:
             return self.emu.get_gpreg(reg8_t.CL)
         return self.emu.constant(1, Type.int_8)

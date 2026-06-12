@@ -16,14 +16,14 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
 from inertia_decompiler.cli_access_profiles import (
     AccessTraitStrideEvidence,
     build_access_trait_evidence_profiles,
     infer_induction_variable,
 )
 from inertia_decompiler.cli_induction_rewrite import rewrite_for_loop_conditions_from_access_traits
-
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 
 class _DummyCodegen:

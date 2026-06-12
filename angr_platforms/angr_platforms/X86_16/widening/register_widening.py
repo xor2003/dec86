@@ -85,26 +85,29 @@ def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None, 
     def _impl():
         if alias_state is None:
             return False
-        if proof is None:
+        candidate_proof = proof
+        if candidate_proof is None:
             from .. import widening_model as _widening_model
 
-            proof = _widening_model.prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
-        if not proof.ok:
+            candidate_proof = _widening_model.prove_adjacent_storage_slices(
+                low_expr, high_expr, alias_state=alias_state
+            )
+        if not candidate_proof.ok:
             return False
-        if proof.register_pair is None:
+        if candidate_proof.register_pair is None:
             return False
-        if proof.left_version is None or proof.right_version is None:
+        if candidate_proof.left_version is None or candidate_proof.right_version is None:
             return False
-        if proof.left_version <= 0 or proof.right_version <= 0:
+        if candidate_proof.left_version <= 0 or candidate_proof.right_version <= 0:
             return False
-        if proof.left_version != proof.right_version:
+        if candidate_proof.left_version != candidate_proof.right_version:
             return False
         try:
             low_candidate = RegisterWideningCandidate.from_expr(low_expr)
             high_candidate = RegisterWideningCandidate.from_expr(high_expr)
         except ValueError:
             return False
-        expected_domain = register_domain_for_name(proof.register_pair)
+        expected_domain = register_domain_for_name(candidate_proof.register_pair)
         if expected_domain is None:
             return False
         if low_candidate.domain != expected_domain or high_candidate.domain != expected_domain:

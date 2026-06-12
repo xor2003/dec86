@@ -976,12 +976,24 @@ The compact SSA artifact records:
 - requested output register expressions
 - typed refusals
 
-The first pass supports one bounded block and register outputs. It refuses
-branches, calls, interrupts, VEX exits, explicit memory operands, memory stores,
-partial-register accesses that VEX does not normalize to whole-register
-expressions, and output slices that depend on memory loads. Unused flag
-computations and unused return-IP memory loads are dropped by the backward
-slice.
+The first pass supports one bounded VEX IRSB. It does not follow successor
+blocks, but it does lower VEX exits into a selected-block `ip` expression.
+Register outputs and a symbolic byte-array memory output are supported. VEX
+loads/stores become `loadle`/`storele` or big-endian equivalents over the shared
+memory input. Unsupported VEX statements/helpers, partial-register accesses
+that VEX does not normalize to whole-register expressions, and functions above
+the instruction bound are refused rather than guessed. Unused flag computations
+and unused return-IP memory loads are dropped by the backward slice.
+
+Lifted VEX blocks are cached on disk by default by the `ssa` CLI. Cache layout:
+
+```text
+.cache/dosunit/vex/<exe-sha256>.pickle
+```
+
+The cache file stores all lifted block entries for that EXE hash, keyed inside
+the file by linear address, size bound, and VEX opt level. AIL should use the
+same shape later under `ail/<exe-sha256>.pickle`.
 
 `compare-ssa` asks Z3:
 
@@ -993,10 +1005,10 @@ Unsat means the selected SSA outputs are equivalent for that bounded slice. Sat
 means the result must include a concrete counterexample model.
 
 When a mapping document is provided, `compare-ssa` resolves oracle functions to
-candidate functions through that mapping and skips unmapped oracle functions by
-default. `--include-unmapped` turns those skips back into visible refusals. AIL
-should later lower into the same `dosunit.ssa.v1` schema. The compare layer must
-not care whether the source was VEX or AIL.
+candidate functions through that mapping. Unmapped oracle functions are visible
+refusals by default. `--skip-unmapped` suppresses those refusals for targeted
+audits. AIL should later lower into the same `dosunit.ssa.v1` schema. The
+compare layer must not care whether the source was VEX or AIL.
 
 ### 12.3 Constraint Outputs
 
@@ -1257,6 +1269,7 @@ dosunit ssa \
   --output-reg ax \
   --output-reg bx \
   --max-insns-per-function 24 \
+  --cache-dir .cache/dosunit \
   --out ssa.json
 ```
 
@@ -1267,7 +1280,7 @@ dosunit compare-ssa \
   --oracle-ssa original.ssa.json \
   --candidate-ssa rebuilt.ssa.json \
   --mapping mapping.json \
-  --solver-timeout-ms 1000 \
+  --solver-timeout-ms 60000 \
   --out ssa-results.json
 ```
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 import contextlib
 import functools
 import re
-
 from collections.abc import MutableMapping
+from typing import Tuple
 
 from angr.sim_type import SimTypeFunction, SimTypePointer
 from angr.utils.library import convert_cproto_to_py
@@ -12,7 +12,6 @@ from angr.utils.library import convert_cproto_to_py
 from .analysis_helpers import preferred_known_helper_signature_decl, seed_calling_conventions
 from .cod_known_objects import known_cod_object_spec
 from .simos_86_16 import SimCC8616MSCsmall
-from typing import Tuple
 
 ANNOTATION_KEY = "x86_16_annotations"
 

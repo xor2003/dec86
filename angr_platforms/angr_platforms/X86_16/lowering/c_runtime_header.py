@@ -21,6 +21,9 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             "#define SEG_U8(seg, off)   (*(uint8_t  far *)MK_FP((seg), (off)))\n"
             "#define SEG_U16(seg, off)  (*(uint16_t far *)MK_FP((seg), (off)))\n"
             "#define SEG_U32(seg, off)  (*(uint32_t far *)MK_FP((seg), (off)))\n"
+            "#define MEM_U8(ptr)        (*(uint8_t  *)(ptr))\n"
+            "#define MEM_U16(ptr)       (*(uint16_t *)(ptr))\n"
+            "#define MEM_U32(ptr)       (*(uint32_t *)(ptr))\n"
         )
     if normalized == "portable-flat":
         return (
@@ -42,6 +45,9 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             "#define SEG_U8(seg, off)     (*(uint8_t  *)&inertia_memory[SEG_LINEAR((seg), (off))])\n"
             "#define SEG_U16(seg, off)    (*(uint16_t *)&inertia_memory[SEG_LINEAR((seg), (off))])\n"
             "#define SEG_U32(seg, off)    (*(uint32_t *)&inertia_memory[SEG_LINEAR((seg), (off))])\n"
+            "#define MEM_U8(ptr)          (*(uint8_t  *)(ptr))\n"
+            "#define MEM_U16(ptr)         (*(uint16_t *)(ptr))\n"
+            "#define MEM_U32(ptr)         (*(uint32_t *)(ptr))\n"
         )
     return ""
 

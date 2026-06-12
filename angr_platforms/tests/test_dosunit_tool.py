@@ -20,7 +20,7 @@ from tools.dosunit.libdosbox_import import import_libdosbox_trace
 from tools.dosunit.mapping import MappingResolutionError, apply_candidate_mapping, make_mapping_document
 from tools.dosunit.region_effects import compare_region_effect_documents, summarize_region_effects
 from tools.dosunit.runner import compare_vectors, record_oracle
-from tools.dosunit.straightline_ssa import compare_ssa_documents, lower_straightline_ssa_document
+from tools.dosunit.straightline_ssa import compare_ssa_abi_documents, compare_ssa_documents, lower_straightline_ssa_document
 from tools.dosunit.vectors import select_vectors
 
 
@@ -621,7 +621,676 @@ def test_dosunit_compare_ssa_proves_equivalent_and_finds_counterexample(tmp_path
     assert mismatch["counterexample"]["bx"] == "0x0000"
 
 
-def test_dosunit_compare_ssa_uses_mapping_and_skips_unmapped(tmp_path: Path):
+def test_dosunit_compare_ssa_shortcuts_binary_equal_functions(tmp_path: Path):
+    image = bytearray(0x240)
+    image[0x200:0x204] = b"\xb8\x34\x12\xc3"  # mov ax, 0x1234; ret
+    original = tmp_path / "original.exe"
+    candidate = tmp_path / "candidate.exe"
+    original.write_bytes(_mz_exe(bytes(image)))
+    candidate.write_bytes(_mz_exe(bytes(image)))
+    catalog = _edge_catalog("demo.exe:imm_leaf", "imm_leaf", offset=0x0200, size=4)
+
+    oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=catalog, output_regs=("ax",))
+    candidate_ssa = lower_straightline_ssa_document(exe_path=candidate, functions_catalog=catalog, output_regs=("ax",))
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate_ssa)
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["reason"] == "binary_equal"
+
+
+def test_dosunit_compare_ssa_shortcuts_ssa_equal_when_bytes_differ():
+    oracle_function = _ssa_stub("demo.exe:leaf", "leaf", ip="0x0200", linear="0x1200")
+    candidate_function = _ssa_stub("demo.exe:leaf", "leaf", ip="0x0200", linear="0x1200")
+    oracle_function["source"]["function_machine_code_sha256"] = "a" * 64
+    oracle_function["source"]["function_machine_code_size"] = 4
+    candidate_function["source"]["function_machine_code_sha256"] = "b" * 64
+    candidate_function["source"]["function_machine_code_size"] = 4
+    oracle = {"schema": "dosunit.ssa.v1", "exe": "oracle.exe", "functions": [oracle_function]}
+    candidate = {"schema": "dosunit.ssa.v1", "exe": "candidate.exe", "functions": [candidate_function]}
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate)
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["reason"] == "ssa_equal"
+
+
+def test_dosunit_compare_ssa_detects_changed_successor_block(tmp_path: Path):
+    original_image = bytearray(0x240)
+    candidate_image = bytearray(0x240)
+    original_image[0x200:0x20D] = b"\x83\xf8\x01\x75\x04\xb8\x02\x00\xc3\xb8\x03\x00\xc3"
+    candidate_image[0x200:0x20D] = b"\x83\xf8\x01\x75\x04\xb8\x02\x00\xc3\xb8\x04\x00\xc3"
+    original = tmp_path / "original.exe"
+    candidate = tmp_path / "candidate.exe"
+    original.write_bytes(_mz_exe(bytes(original_image)))
+    candidate.write_bytes(_mz_exe(bytes(candidate_image)))
+    catalog = _edge_catalog("demo.exe:branchy", "branchy", offset=0x0200, size=0x0D)
+
+    oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=catalog, output_regs=("ax",))
+    candidate_ssa = lower_straightline_ssa_document(exe_path=candidate, functions_catalog=catalog, output_regs=("ax",))
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate_ssa)
+
+    assert oracle["counters"]["ssa_parts_lowered"] == 3
+    assert candidate_ssa["counters"]["ssa_parts_lowered"] == 3
+    assert compared["summary"]["total"] == 3
+    assert compared["summary"]["failed"] == 1
+    failed = next(result for result in compared["results"] if result["status"] == "failed")
+    assert failed["oracle_detail"]["part"]["entry_delta"] == "0x0009"
+    assert failed["mismatches"][0]["kind"] == "output_expr_changed"
+    assert failed["mismatches"][0]["reg"] == "ax"
+
+
+def test_dosunit_compare_ssa_abi_composes_branchy_function_effects(tmp_path: Path):
+    original_image = bytearray(0x240)
+    candidate_image = bytearray(0x240)
+    original_image[0x200:0x217] = (
+        b"\xb3\x02"
+        b"\x81\xf9\x9d\x7d"
+        b"\x73\x0a"
+        b"\xfe\xcb"
+        b"\x81\xf9\x1a\x6a"
+        b"\x73\x02"
+        b"\xfe\xcb"
+        b"\x88\x1e\x7b\x02"
+        b"\xc3"
+    )
+    candidate_image[0x200:0x21E] = (
+        b"\x81\xf9\x9d\x7d"
+        b"\x72\x06"
+        b"\xc6\x06\x7b\x02\x02"
+        b"\xc3"
+        b"\x81\xf9\x1a\x6a"
+        b"\x72\x06"
+        b"\xc6\x06\x7b\x02\x01"
+        b"\xc3"
+        b"\xc6\x06\x7b\x02\x00"
+        b"\xc3"
+    )
+    original = tmp_path / "original.exe"
+    candidate = tmp_path / "candidate.exe"
+    original.write_bytes(_mz_exe(bytes(original_image)))
+    candidate.write_bytes(_mz_exe(bytes(candidate_image)))
+    original_catalog = _edge_catalog("demo.exe:sample_set_variant_count", "sample_set_variant_count", offset=0x0200, size=0x17)
+    candidate_catalog = _edge_catalog("demo.exe:sample_set_variant_count", "sample_set_variant_count", offset=0x0200, size=0x1E)
+
+    output_regs = ("ax", "bx", "cx", "dx", "sp", "ds", "ip")
+    oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=original_catalog, output_regs=output_regs)
+    candidate_ssa = lower_straightline_ssa_document(exe_path=candidate, functions_catalog=candidate_catalog, output_regs=output_regs)
+    abi_manifest = {
+        "schema": "test.abi.v1",
+        "functions": [
+            {
+                "name": "sample_set_variant_count",
+                "kind": "near",
+                "calling_convention": "near_register_cx",
+                "inputs": [{"location": "cx", "name": "setup_value", "width": 16}],
+                "preserved": ["ds"],
+                "clobbers": ["bx", "flags"],
+                "effects": [{"space": "DS", "segment": "ds", "offset": "0x027b", "size": 1, "name": "sample_variant_max_index"}],
+            }
+        ],
+    }
+
+    compared = compare_ssa_abi_documents(oracle=oracle, candidate=candidate_ssa, abi_manifest=abi_manifest)
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["observables"]["regs"] == ["ds", "sp"]
+    assert compared["results"][0]["observables"]["memory"][0]["name"] == "sample_variant_max_index"
+
+
+def test_dosunit_compare_ssa_abi_uses_explicit_static_observe_regs(tmp_path: Path):
+    original_image = bytearray(0x220)
+    candidate_image = bytearray(0x220)
+    original_image[0x200:0x207] = b"\xc6\x06\x7b\x02\x01\xc3"
+    candidate_image[0x200:0x207] = b"\xc6\x06\x7b\x02\x01\xc3"
+    original = tmp_path / "original.exe"
+    candidate = tmp_path / "candidate.exe"
+    original.write_bytes(_mz_exe(bytes(original_image)))
+    candidate.write_bytes(_mz_exe(bytes(candidate_image)))
+    catalog = _edge_catalog("demo.exe:enable", "enable", offset=0x0200, size=0x06)
+
+    output_regs = ("sp", "ds", "bp", "ip")
+    oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=catalog, output_regs=output_regs)
+    candidate_ssa = lower_straightline_ssa_document(exe_path=candidate, functions_catalog=catalog, output_regs=output_regs)
+    abi_manifest = {
+        "schema": "test.abi.v1",
+        "functions": [
+            {
+                "name": "enable",
+                "kind": "near",
+                "preserved": ["bp", "ds"],
+                "ssa_observe_regs": ["sp"],
+                "effects": [{"space": "DS", "segment": "ds", "offset": "0x027b", "size": 1, "name": "enabled"}],
+            }
+        ],
+    }
+
+    compared = compare_ssa_abi_documents(oracle=oracle, candidate=candidate_ssa, abi_manifest=abi_manifest)
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["observables"]["regs"] == ["sp"]
+
+
+def test_dosunit_compare_ssa_abi_canonicalizes_far_stack_arguments(tmp_path: Path):
+    original_image = bytearray(0x240)
+    candidate_image = bytearray(0x240)
+    original_image[0x200:0x21B] = (
+        b"\x55"
+        b"\x89\xe5"
+        b"\x1e"
+        b"\xb8\x00\x01"
+        b"\x8e\xd8"
+        b"\x8b\x46\x06"
+        b"\x3b\x06\x84\x02"
+        b"\x7c\x03"
+        b"\xa1\x84\x02"
+        b"\xa3\x7e\x02"
+        b"\x1f"
+        b"\x5d"
+        b"\xcb"
+    )
+    candidate_image[0x200:0x21B] = (
+        b"\x1e"
+        b"\xb8\x00\x01"
+        b"\x8e\xd8"
+        b"\x55"
+        b"\x89\xe5"
+        b"\x8b\x46\x08"
+        b"\x3b\x06\x84\x02"
+        b"\x7c\x03"
+        b"\xa1\x84\x02"
+        b"\xa3\x7e\x02"
+        b"\x5d"
+        b"\x1f"
+        b"\xcb"
+    )
+    original = tmp_path / "original.exe"
+    candidate = tmp_path / "candidate.exe"
+    original.write_bytes(_mz_exe(bytes(original_image)))
+    candidate.write_bytes(_mz_exe(bytes(candidate_image)))
+    catalog = _edge_catalog("demo.exe:set_pitch", "set_pitch", offset=0x0200, size=0x1B)
+    catalog["functions"][0]["return_kind"] = "far"
+
+    output_regs = ("ax", "bp", "ds", "sp", "ss", "ip")
+    oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=catalog, output_regs=output_regs)
+    candidate_ssa = lower_straightline_ssa_document(exe_path=candidate, functions_catalog=catalog, output_regs=output_regs)
+    abi_manifest = {
+        "schema": "test.abi.v1",
+        "data_segment_contract": {"static_data_segment": "0x0100"},
+        "functions": [
+            {
+                "name": "set_pitch",
+                "kind": "far",
+                "calling_convention": "far_stack_1_loadds",
+                "stack_args": [{"bp_offset": "0x0006", "name": "pitch", "width": 16}],
+                "preserved": ["bp", "ds"],
+                "clobbers": ["ax", "flags"],
+                "ssa_observe_regs": ["sp"],
+                "effects": [{"space": "DS", "offset": "0x027e", "size": 2, "name": "pitch_clamped"}],
+            }
+        ],
+    }
+
+    compared = compare_ssa_abi_documents(oracle=oracle, candidate=candidate_ssa, abi_manifest=abi_manifest)
+
+    assert compared["summary"]["passed"] == 1
+
+
+def test_dosunit_compare_ssa_matches_mapped_parts_by_entry_delta_before_index():
+    oracle_function = _ssa_stub("oracle.exe:dispatch", "dispatch", ip="0x010b", linear="0x110b")
+    oracle_function["id"] = "ssa-function:oracle-dispatch-delta-000b"
+    oracle_function["part"] = {"kind": "block", "index": 1, "entry_delta": "0x000b"}
+    oracle_function["outputs"] = {"ax": {"op": "const", "value": "0x0001", "width": 16}}
+
+    wrong_index_candidate = _ssa_stub("candidate.exe:dispatch", "dispatch", ip="0x011a", linear="0x111a")
+    wrong_index_candidate["id"] = "ssa-function:candidate-wrong-index"
+    wrong_index_candidate["part"] = {"kind": "block", "index": 1, "entry_delta": "0x001a"}
+    wrong_index_candidate["outputs"] = {"ax": {"op": "const", "value": "0x0002", "width": 16}}
+
+    matching_delta_candidate = _ssa_stub("candidate.exe:dispatch", "dispatch", ip="0x010b", linear="0x110b")
+    matching_delta_candidate["id"] = "ssa-function:candidate-matching-delta"
+    matching_delta_candidate["part"] = {"kind": "block", "index": 2, "entry_delta": "0x000b"}
+    matching_delta_candidate["outputs"] = {"ax": {"op": "const", "value": "0x0001", "width": 16}}
+
+    mapping = {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:test",
+        "functions": [
+            {
+                "oracle_id": "oracle.exe:dispatch",
+                "oracle_name": "dispatch",
+                "candidate_id": "candidate.exe:dispatch",
+                "candidate_name": "dispatch",
+            }
+        ],
+    }
+
+    compared = compare_ssa_documents(
+        oracle={"schema": "dosunit.ssa.v1", "exe": "oracle.exe", "functions": [oracle_function]},
+        candidate={"schema": "dosunit.ssa.v1", "exe": "candidate.exe", "functions": [wrong_index_candidate, matching_delta_candidate]},
+        mapping_document=mapping,
+    )
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["candidate_function"] == "ssa-function:candidate-matching-delta"
+
+
+def test_dosunit_compare_ssa_accepts_both_sides_stopping_at_indirect_call():
+    oracle_function = _ssa_stub("oracle.exe:dispatch", "dispatch", ip="0x0200", linear="0x1200", jumpkind="Ijk_Call")
+    candidate_function = _ssa_stub("candidate.exe:dispatch", "dispatch", ip="0x0300", linear="0x1300", jumpkind="Ijk_Call")
+
+    compared = compare_ssa_documents(
+        oracle={"schema": "dosunit.ssa.v1", "exe": "oracle.exe", "functions": [oracle_function]},
+        candidate={"schema": "dosunit.ssa.v1", "exe": "candidate.exe", "functions": [candidate_function]},
+    )
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["call_compare"]["equivalent"] is True
+    assert compared["results"][0]["call_compare"]["reason"] == "both call targets are indirect expressions"
+
+
+def test_dosunit_compare_ssa_reports_output_set_changes():
+    oracle_function = _ssa_stub("demo.exe:leaf", "leaf", ip="0x0200", linear="0x1200")
+    candidate_function = _ssa_stub("demo.exe:leaf", "leaf", ip="0x0200", linear="0x1200")
+    candidate_function["outputs"] = {
+        **candidate_function["outputs"],
+        "dx": {"op": "const", "value": "0x0000", "width": 16},
+    }
+    oracle = {"schema": "dosunit.ssa.v1", "exe": "oracle.exe", "functions": [oracle_function]}
+    candidate = {"schema": "dosunit.ssa.v1", "exe": "candidate.exe", "functions": [candidate_function]}
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate)
+
+    assert compared["summary"]["failed"] == 1
+    mismatch = compared["results"][0]["mismatches"][0]
+    assert mismatch["kind"] == "output_set_changed"
+    assert mismatch["candidate_only"] == ["dx"]
+
+
+def test_dosunit_compare_ssa_normalizes_layout_memory_operands():
+    oracle_function = _manual_ssa_function(
+        "global_load",
+        ["mov ax, word ptr [0x61fe]"],
+        inputs=[{"kind": "memory", "name": "mem", "addr_width": 32, "value_width": 8}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "loadle",
+                "width": 16,
+                "args": [
+                    {"op": "mem_input", "name": "mem", "addr_width": 32, "value_width": 8},
+                    {"op": "const", "value": "0x61fe", "width": 32},
+                ],
+            }
+        ],
+        outputs={"ax": {"ref": "v0"}},
+    )
+    candidate_function = _manual_ssa_function(
+        "global_load",
+        ["mov ax, word ptr [0xa0e8]"],
+        inputs=[{"kind": "memory", "name": "mem", "addr_width": 32, "value_width": 8}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "loadle",
+                "width": 16,
+                "args": [
+                    {"op": "mem_input", "name": "mem", "addr_width": 32, "value_width": 8},
+                    {"op": "const", "value": "0xa0e8", "width": 32},
+                ],
+            }
+        ],
+        outputs={"ax": {"ref": "v0"}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["layout_normalization"]["pairs"] == [
+        {"oracle": "0x61fe", "candidate": "0xa0e8", "reason": "absolute_memory_operand"}
+    ]
+
+
+def test_dosunit_compare_ssa_normalizes_absolute_layout_memory_operands():
+    oracle_function = _manual_ssa_function(
+        "global_store",
+        ["mov byte ptr [0x286], 1"],
+        inputs=[{"kind": "memory", "name": "mem", "addr_width": 32, "value_width": 8}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "storele",
+                "width": 8,
+                "args": [
+                    {"op": "mem_input", "name": "mem", "addr_width": 32, "value_width": 8},
+                    {"op": "const", "value": "0x0286", "width": 32},
+                    {"op": "const", "value": "0x01", "width": 8},
+                ],
+            }
+        ],
+        outputs={"memory": {"ref": "v0"}},
+    )
+    candidate_function = _manual_ssa_function(
+        "global_store",
+        ["mov byte ptr [0x28a], 1"],
+        inputs=[{"kind": "memory", "name": "mem", "addr_width": 32, "value_width": 8}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "storele",
+                "width": 8,
+                "args": [
+                    {"op": "mem_input", "name": "mem", "addr_width": 32, "value_width": 8},
+                    {"op": "const", "value": "0x028a", "width": 32},
+                    {"op": "const", "value": "0x01", "width": 8},
+                ],
+            }
+        ],
+        outputs={"memory": {"ref": "v0"}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["layout_normalization"]["pairs"] == [
+        {"oracle": "0x0286", "candidate": "0x028a", "reason": "absolute_memory_operand"}
+    ]
+
+
+def test_dosunit_compare_ssa_normalizes_loadds_segment_immediates():
+    oracle_function = _manual_ssa_function(
+        "loadds",
+        ["mov ax, 0x100", "mov ds, ax"],
+        outputs={"ds": {"op": "const", "value": "0x0100", "width": 16}},
+    )
+    candidate_function = _manual_ssa_function(
+        "loadds",
+        ["mov ax, 0x200", "mov ds, ax"],
+        outputs={"ds": {"op": "const", "value": "0x0200", "width": 16}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["layout_normalization"]["pairs"] == [
+        {"oracle": "0x0100", "candidate": "0x0200", "reason": "data_segment_immediate"}
+    ]
+
+
+def test_dosunit_compare_ssa_normalizes_signed_layout_displacements():
+    oracle_function = _manual_ssa_function(
+        "signed_global_load",
+        ["mov ax, word ptr [bx + 0x629e]"],
+        inputs=[{"kind": "memory", "name": "mem", "addr_width": 32, "value_width": 8}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "loadle",
+                "width": 16,
+                "args": [
+                    {"op": "mem_input", "name": "mem", "addr_width": 32, "value_width": 8},
+                    {"op": "const", "value": "0x0000629e", "width": 32},
+                ],
+            }
+        ],
+        outputs={"ax": {"ref": "v0"}},
+    )
+    candidate_function = _manual_ssa_function(
+        "signed_global_load",
+        ["mov ax, word ptr [bx - 0x5e78]"],
+        inputs=[{"kind": "memory", "name": "mem", "addr_width": 32, "value_width": 8}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "loadle",
+                "width": 16,
+                "args": [
+                    {"op": "mem_input", "name": "mem", "addr_width": 32, "value_width": 8},
+                    {"op": "const", "value": "0xffffa188", "width": 32},
+                ],
+            }
+        ],
+        outputs={"ax": {"ref": "v0"}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["layout_normalization"]["pairs"] == [
+        {"oracle": "0x629e", "candidate": "0xa188", "reason": "memory_operand"}
+    ]
+
+
+def test_dosunit_compare_ssa_normalizes_same_delta_address_bases():
+    oracle_function = _manual_ssa_function(
+        "same_delta_base",
+        ["sub ax, 0x1000", "mov cx, word ptr [0x2000]"],
+        inputs=[{"name": "ax", "width": 16}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "sub",
+                "width": 16,
+                "args": [{"op": "input", "name": "ax", "width": 16}, {"op": "const", "value": "0x1000", "width": 16}],
+            }
+        ],
+        outputs={"ax": {"ref": "v0"}},
+    )
+    candidate_function = _manual_ssa_function(
+        "same_delta_base",
+        ["sub ax, 0x3000", "mov cx, word ptr [0x4000]"],
+        inputs=[{"name": "ax", "width": 16}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "sub",
+                "width": 16,
+                "args": [{"op": "input", "name": "ax", "width": 16}, {"op": "const", "value": "0x3000", "width": 16}],
+            }
+        ],
+        outputs={"ax": {"ref": "v0"}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["layout_normalization"]["pairs"] == [
+        {"oracle": "0x2000", "candidate": "0x4000", "reason": "absolute_memory_operand"},
+        {"oracle": "0x1000", "candidate": "0x3000", "reason": "same_delta_address_base"},
+    ]
+
+
+def test_dosunit_compare_ssa_normalizes_sub_on_pointer_register_when_used_as_memory_base():
+    oracle_function = _manual_ssa_function(
+        "pointer_sub",
+        ["sub bx, 0x1000", "mov ax, word ptr [bx]"],
+        inputs=[{"name": "bx", "width": 16}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "sub",
+                "width": 16,
+                "args": [{"op": "input", "name": "bx", "width": 16}, {"op": "const", "value": "0x1000", "width": 16}],
+            }
+        ],
+        outputs={"bx": {"ref": "v0"}},
+    )
+    candidate_function = _manual_ssa_function(
+        "pointer_sub",
+        ["sub bx, 0x3000", "mov ax, word ptr [bx]"],
+        inputs=[{"name": "bx", "width": 16}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "sub",
+                "width": 16,
+                "args": [{"op": "input", "name": "bx", "width": 16}, {"op": "const", "value": "0x3000", "width": 16}],
+            }
+        ],
+        outputs={"bx": {"ref": "v0"}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["layout_normalization"]["pairs"] == [
+        {"oracle": "0x1000", "candidate": "0x3000", "reason": "pointer_arithmetic"}
+    ]
+
+
+def test_dosunit_compare_ssa_does_not_normalize_sub_on_pointer_register_without_memory_use():
+    oracle_function = _manual_ssa_function(
+        "integer_sub",
+        ["sub bx, 0x1000", "ret"],
+        inputs=[{"name": "bx", "width": 16}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "sub",
+                "width": 16,
+                "args": [{"op": "input", "name": "bx", "width": 16}, {"op": "const", "value": "0x1000", "width": 16}],
+            }
+        ],
+        outputs={"bx": {"ref": "v0"}},
+    )
+    candidate_function = _manual_ssa_function(
+        "integer_sub",
+        ["sub bx, 0x3000", "ret"],
+        inputs=[{"name": "bx", "width": 16}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "sub",
+                "width": 16,
+                "args": [{"op": "input", "name": "bx", "width": 16}, {"op": "const", "value": "0x3000", "width": 16}],
+            }
+        ],
+        outputs={"bx": {"ref": "v0"}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["failed"] == 1
+    assert compared["results"][0].get("layout_normalization") is None
+
+
+def test_dosunit_compare_ssa_normalizes_repeated_same_delta_constant_sets():
+    oracle_function = _manual_ssa_function(
+        "same_delta_constants",
+        ["sub ax, 0x61fe", "add ax, 0x629e"],
+        inputs=[{"name": "ax", "width": 16}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "sub",
+                "width": 16,
+                "args": [{"op": "input", "name": "ax", "width": 16}, {"op": "const", "value": "0x61fe", "width": 16}],
+            },
+            {
+                "id": "v1",
+                "op": "add",
+                "width": 16,
+                "args": [{"ref": "v0"}, {"op": "const", "value": "0x629e", "width": 16}],
+            },
+        ],
+        outputs={"ax": {"ref": "v1"}},
+    )
+    candidate_function = _manual_ssa_function(
+        "same_delta_constants",
+        ["sub ax, 0xa0e8", "add ax, 0xa188"],
+        inputs=[{"name": "ax", "width": 16}],
+        assignments=[
+            {
+                "id": "v0",
+                "op": "sub",
+                "width": 16,
+                "args": [{"op": "input", "name": "ax", "width": 16}, {"op": "const", "value": "0xa0e8", "width": 16}],
+            },
+            {
+                "id": "v1",
+                "op": "add",
+                "width": 16,
+                "args": [{"ref": "v0"}, {"op": "const", "value": "0xa188", "width": 16}],
+            },
+        ],
+        outputs={"ax": {"ref": "v1"}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["layout_normalization"]["pairs"] == [
+        {"oracle": "0x61fe", "candidate": "0xa0e8", "reason": "same_delta_constant_set"},
+        {"oracle": "0x629e", "candidate": "0xa188", "reason": "same_delta_constant_set"},
+    ]
+
+
+def test_dosunit_compare_ssa_normalizes_ivt_segment_constants():
+    oracle_function = _manual_ssa_function(
+        "install_handler",
+        ["mov ax, 0x1088", "mov word ptr es:[2], ax"],
+        outputs={"ax": {"op": "const", "value": "0x1088", "width": 16}},
+    )
+    candidate_function = _manual_ssa_function(
+        "install_handler",
+        ["mov ax, 0x1159", "mov word ptr es:[2], ax"],
+        outputs={"ax": {"op": "const", "value": "0x1159", "width": 16}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["passed"] == 1
+    assert compared["results"][0]["layout_normalization"]["pairs"] == [
+        {"oracle": "0x1088", "candidate": "0x1159", "reason": "ivt_segment"}
+    ]
+
+
+def test_dosunit_compare_ssa_does_not_normalize_plain_changed_immediates():
+    oracle_function = _manual_ssa_function(
+        "changed_immediate",
+        ["mov ax, 0x2000"],
+        outputs={"ax": {"op": "const", "value": "0x2000", "width": 16}},
+    )
+    candidate_function = _manual_ssa_function(
+        "changed_immediate",
+        ["mov ax, 0x3000"],
+        outputs={"ax": {"op": "const", "value": "0x3000", "width": 16}},
+    )
+
+    compared = compare_ssa_documents(oracle=_ssa_doc(oracle_function), candidate=_ssa_doc(candidate_function))
+
+    assert compared["summary"]["failed"] == 1
+    assert compared["results"][0].get("layout_normalization") is None
+    assert compared["results"][0]["mismatches"][0]["kind"] == "output_expr_changed"
+
+
+def test_dosunit_report_shows_layout_normalization_on_failed_rows():
+    document = {
+        "schema": "dosunit.ssa_compare.v1",
+        "oracle": "oracle.exe",
+        "candidate": "candidate.exe",
+        "mapping": None,
+        "summary": {"total": 1, "passed": 0, "failed": 1, "refused": 0, "skipped_unmapped": 0, "solver_time_ms": 0},
+        "results": [
+            {
+                "status": "failed",
+                "reason": "observable_mismatch",
+                "function": {"id": "demo.exe:global_load", "name": "global_load"},
+                "layout_normalization": {
+                    "kind": "layout_constants",
+                    "pairs": [{"oracle": "0x61fe", "candidate": "0xa0e8", "reason": "memory_operand"}],
+                },
+                "mismatches": [{"kind": "output_expr_changed", "reg": "ax"}],
+            }
+        ],
+    }
+
+    report = render_failure_report(document)
+
+    assert "Layout constant normalization" in report
+    assert "candidate `0xa0e8` -> oracle `0x61fe`" in report
+
+
+def test_dosunit_compare_ssa_uses_mapping_and_reports_unmapped_by_default(tmp_path: Path):
     original_image = bytearray(0x280)
     candidate_image = bytearray(0x280)
     original_image[0x200:0x206] = b"\x89\xd8\x83\xc0\x01\xc3"  # mov ax, bx; add ax, 1; ret
@@ -667,17 +1336,416 @@ def test_dosunit_compare_ssa_uses_mapping_and_skips_unmapped(tmp_path: Path):
 
     oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=original_catalog, output_regs=("ax", "bx"))
     candidate_ssa = lower_straightline_ssa_document(exe_path=candidate, functions_catalog=candidate_catalog, output_regs=("ax", "bx"))
-    compared = compare_ssa_documents(oracle=oracle, candidate=candidate_ssa, mapping_document=mapping, include_unmapped=False)
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate_ssa, mapping_document=mapping)
 
-    assert compared["summary"]["total"] == 1
+    assert compared["summary"]["total"] == 2
     assert compared["summary"]["passed"] == 1
+    assert compared["summary"]["refused"] == 1
     assert compared["summary"]["skipped_unmapped"] == 1
     assert compared["results"][0]["candidate_function"] == candidate_ssa["functions"][0]["id"]
+    assert compared["results"][1]["reason"] == "mapping_missing"
     report = render_failure_report(compared)
-    assert "Skipped unmapped: 1" in report
+    assert "Unmapped oracle functions: 1" in report
+    assert "Missing-function rows skipped: 1" in report
+    assert "function_missing" not in report
+
+    skipped = compare_ssa_documents(oracle=oracle, candidate=candidate_ssa, mapping_document=mapping, include_unmapped=False)
+    assert skipped["summary"]["total"] == 1
+    assert skipped["summary"]["refused"] == 0
 
 
-def test_dosunit_straightline_ssa_refuses_memory_load_in_output_slice(tmp_path: Path):
+def test_dosunit_compare_ssa_normalizes_mapped_direct_call_targets(tmp_path: Path):
+    original_image = bytearray(0x300)
+    candidate_image = bytearray(0x300)
+    original_image[0x200:0x204] = b"\xe8\x2d\x00\xc3"  # call 0x1230; ret
+    original_image[0x230:0x234] = b"\xb8\x34\x12\xc3"  # mov ax, 0x1234; ret
+    candidate_image[0x220:0x224] = b"\xe8\x3d\x00\xc3"  # call 0x1260; ret
+    candidate_image[0x260:0x264] = b"\xb8\x34\x12\xc3"  # mov ax, 0x1234; ret
+    original = tmp_path / "original.exe"
+    candidate = tmp_path / "candidate.exe"
+    original.write_bytes(_mz_exe(bytes(original_image)))
+    candidate.write_bytes(_mz_exe(bytes(candidate_image)))
+    original_catalog = {
+        "schema": "dosunit.functions.v1",
+        "id": "functions:original",
+        "module": "demo.exe",
+        "program_kind": "mz_exe",
+        "functions": [
+            _edge_function("demo.exe:caller", "caller", offset=0x0200, size=4),
+            _edge_function("demo.exe:callee", "callee", offset=0x0230, size=4),
+        ],
+        "diagnostics": [],
+    }
+    candidate_catalog = {
+        "schema": "dosunit.functions.v1",
+        "id": "functions:candidate",
+        "module": "demo.exe",
+        "program_kind": "mz_exe",
+        "functions": [
+            _edge_function("demo.exe:caller_rebuilt", "caller_rebuilt", offset=0x0220, size=4),
+            _edge_function("demo.exe:callee_rebuilt", "callee_rebuilt", offset=0x0260, size=4),
+        ],
+        "diagnostics": [],
+    }
+    mapping = {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:test",
+        "functions": [
+            {
+                "oracle_id": "demo.exe:caller",
+                "oracle_name": "caller",
+                "candidate_id": "demo.exe:caller_rebuilt",
+                "candidate_name": "caller_rebuilt",
+                "candidate_entry": {"cs": "0x0000", "ip": "0x0220", "kind": "near"},
+                "sources": ["fixture"],
+            },
+            {
+                "oracle_id": "demo.exe:callee",
+                "oracle_name": "callee",
+                "candidate_id": "demo.exe:callee_rebuilt",
+                "candidate_name": "callee_rebuilt",
+                "candidate_entry": {"cs": "0x0000", "ip": "0x0260", "kind": "near"},
+                "sources": ["fixture"],
+            },
+        ],
+    }
+
+    oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=original_catalog, output_regs=("ax",))
+    candidate_ssa = lower_straightline_ssa_document(exe_path=candidate, functions_catalog=candidate_catalog, output_regs=("ax",))
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate_ssa, mapping_document=mapping)
+
+    caller = next(result for result in compared["results"] if result["function"]["name"] == "caller")
+    assert caller["status"] == "passed"
+    assert caller["call_compare"]["equivalent"] is True
+    assert caller["call_compare"]["oracle"]["resolved"]["name"] == "callee"
+    assert caller["call_compare"]["candidate"]["resolved"]["name"] == "callee_rebuilt"
+    assert caller["call_compare"]["oracle"]["resolved"]["instructions"][0]["disassembly"] == "mov ax, 0x1234"
+    assert all(item["applied"] for item in caller["call_compare"]["normalizations"])
+    report_document = {
+        "schema": "dosunit.ssa_compare.v1",
+        "oracle": str(original),
+        "candidate": str(candidate),
+        "mapping": "mapping:test",
+        "summary": {"total": 1, "passed": 0, "failed": 1, "refused": 0, "skipped_unmapped": 0, "solver_time_ms": 0},
+        "results": [{**caller, "status": "failed", "reason": "observable_mismatch", "mismatches": [{"kind": "output_expr_changed", "reg": "call_target"}]}],
+    }
+    report = render_failure_report(report_document)
+    assert "Target first instructions" in report
+    assert "mov ax, 0x1234" in report
+
+
+def test_dosunit_compare_ssa_resolves_near_call_low16_linear_before_ip_collision():
+    oracle = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "oracle.exe",
+        "functions": [
+            _ssa_stub("oracle.exe:drawNumber", "drawNumber", ip="0xa183", linear="0xb183", jumpkind="Ijk_Call", call_raw="0xfa3a"),
+            _ssa_stub("oracle.exe:itoa", "itoa", ip="0xea3a", linear="0xfa3a"),
+        ],
+    }
+    candidate = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "candidate.exe",
+        "functions": [
+            _ssa_stub("candidate.exe:drawNumber", "drawNumber", ip="0x6169", linear="0x7169", jumpkind="Ijk_Call", call_raw="0x0390"),
+            _ssa_stub("candidate.exe:itoa", "itoa", ip="0xf390", linear="0x10390"),
+            _ssa_stub("candidate.exe:clipComputeOutcode", "clipComputeOutcode", ip="0x0390", linear="0x11920"),
+        ],
+    }
+    mapping = {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:test",
+        "functions": [
+            {
+                "oracle_id": "oracle.exe:drawNumber",
+                "oracle_name": "drawNumber",
+                "candidate_id": "candidate.exe:drawNumber",
+                "candidate_name": "drawNumber",
+                "candidate_entry": {"cs": "0x0000", "ip": "0x6169", "kind": "near"},
+            },
+            {
+                "oracle_id": "oracle.exe:itoa",
+                "oracle_name": "itoa",
+                "candidate_id": "candidate.exe:itoa",
+                "candidate_name": "itoa",
+                "candidate_entry": {"cs": "0x0000", "ip": "0xf390", "kind": "near"},
+            },
+        ],
+    }
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate, mapping_document=mapping)
+
+    caller = compared["results"][0]
+    assert caller["status"] == "passed"
+    assert caller["call_compare"]["equivalent"] is True
+    assert caller["call_compare"]["candidate"]["resolved"]["name"] == "itoa"
+
+
+def test_dosunit_compare_ssa_resolves_linear_low16_aliases_before_ip_collision():
+    oracle = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "oracle.exe",
+        "functions": [
+            _ssa_stub("oracle.exe:__getbuf", "__getbuf", ip="0xf288", linear="0x10288", jumpkind="Ijk_Call", call_raw="0x05d2"),
+            _ssa_stub("oracle.exe:unk_libc6", "unk_libc6", ip="0xf5d2", linear="0x105d2"),
+        ],
+    }
+    candidate = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "candidate.exe",
+        "functions": [
+            _ssa_stub("candidate.exe:__getbuf", "__getbuf", ip="0xea22", linear="0xfa22", jumpkind="Ijk_Call", call_raw="0x0096"),
+            _ssa_stub("candidate.exe:__nmalloc", "__nmalloc", ip="0xf096", linear="0x10096"),
+            _ssa_stub("candidate.exe:malloc", "malloc", ip="0xf096", linear="0x10096"),
+            _ssa_stub("candidate.exe:projectVertexToScreen", "projectVertexToScreen", ip="0x0096", linear="0x11626"),
+        ],
+    }
+    mapping = {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:test",
+        "functions": [
+            {
+                "oracle_id": "oracle.exe:__getbuf",
+                "oracle_name": "__getbuf",
+                "candidate_id": "candidate.exe:__getbuf",
+                "candidate_name": "__getbuf",
+                "candidate_entry": {"cs": "0x0000", "ip": "0xea22", "kind": "near"},
+            },
+            {
+                "oracle_id": "oracle.exe:unk_libc6",
+                "oracle_name": "unk_libc6",
+                "candidate_id": "candidate.exe:__nmalloc",
+                "candidate_name": "__nmalloc",
+                "candidate_entry": {"cs": "0x0000", "ip": "0xf096", "kind": "near"},
+            },
+        ],
+    }
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate, mapping_document=mapping)
+
+    caller = compared["results"][0]
+    assert caller["status"] == "passed"
+    assert caller["call_compare"]["equivalent"] is True
+    assert caller["call_compare"]["candidate"]["resolved"]["name"] == "__nmalloc"
+    assert [alias["name"] for alias in caller["call_compare"]["candidate"]["aliases"]] == ["__nmalloc", "malloc"]
+
+
+def test_dosunit_compare_ssa_accepts_semantically_identical_renamed_call_targets():
+    oracle = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "oracle.exe",
+        "functions": [
+            _ssa_stub("oracle.exe:caller", "caller", ip="0x0200", linear="0x1200", jumpkind="Ijk_Call", call_raw="0x1500"),
+            _ssa_stub("oracle.exe:unk_libc6", "unk_libc6", ip="0x0500", linear="0x1500"),
+        ],
+    }
+    candidate = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "candidate.exe",
+        "functions": [
+            _ssa_stub("candidate.exe:caller", "caller", ip="0x0300", linear="0x1300", jumpkind="Ijk_Call", call_raw="0x2600"),
+            _ssa_stub("candidate.exe:__nmalloc", "__nmalloc", ip="0x0600", linear="0x2600"),
+        ],
+    }
+    mapping = {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:test",
+        "functions": [
+            {
+                "oracle_id": "oracle.exe:caller",
+                "oracle_name": "caller",
+                "candidate_id": "candidate.exe:caller",
+                "candidate_name": "caller",
+                "candidate_entry": {"cs": "0x0000", "ip": "0x0300", "kind": "near"},
+            }
+        ],
+    }
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate, mapping_document=mapping)
+
+    caller = compared["results"][0]
+    assert caller["status"] == "passed"
+    assert caller["call_compare"]["equivalent"] is True
+    assert caller["call_compare"]["reason"] == "direct call target entry blocks have identical compact SSA"
+
+
+def test_dosunit_compare_ssa_accepts_decorated_call_target_symbol_names():
+    oracle = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "oracle.exe",
+        "functions": [
+            _ssa_stub("oracle.exe:caller", "caller", ip="0x0200", linear="0x1200", jumpkind="Ijk_Call", call_raw="0x1500"),
+            _ssa_stub("oracle.exe:anuldiv", "anuldiv", ip="0x0500", linear="0x1500"),
+        ],
+    }
+    candidate = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "candidate.exe",
+        "functions": [
+            _ssa_stub("candidate.exe:caller", "caller", ip="0x0300", linear="0x1300", jumpkind="Ijk_Call", call_raw="0x2600"),
+            _ssa_stub("candidate.exe:__aNuldiv", "__aNuldiv", ip="0x0600", linear="0x2600"),
+        ],
+    }
+    mapping = {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:test",
+        "functions": [
+            {
+                "oracle_id": "oracle.exe:caller",
+                "oracle_name": "caller",
+                "candidate_id": "candidate.exe:caller",
+                "candidate_name": "caller",
+                "candidate_entry": {"cs": "0x0000", "ip": "0x0300", "kind": "near"},
+            }
+        ],
+    }
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate, mapping_document=mapping)
+
+    caller = compared["results"][0]
+    assert caller["status"] == "passed"
+    assert caller["call_compare"]["equivalent"] is True
+    assert caller["call_compare"]["reason"] == "direct call targets have equivalent normalized symbol names"
+
+
+def test_dosunit_compare_ssa_resolves_same_entry_call_target_aliases_by_default():
+    oracle = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "oracle.exe",
+        "functions": [
+            _ssa_stub("oracle.exe:rand", "rand", ip="0xebda", linear="0xfbda", jumpkind="Ijk_Call", call_raw="0xfcb0"),
+            _ssa_stub("oracle.exe:__aNlmul", "__aNlmul", ip="0xecb0", linear="0xfcb0"),
+        ],
+    }
+    candidate = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "candidate.exe",
+        "functions": [
+            _ssa_stub("candidate.exe:rand", "rand", ip="0xf582", linear="0x10582", jumpkind="Ijk_Call", call_raw="0x0666"),
+            _ssa_stub("candidate.exe:__aNlmul", "__aNlmul", ip="0xf666", linear="0x10666"),
+            _ssa_stub("candidate.exe:__aNulmul", "__aNulmul", ip="0xf666", linear="0x10666"),
+        ],
+    }
+    mapping = {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:test",
+        "functions": [
+            {
+                "oracle_id": "oracle.exe:rand",
+                "oracle_name": "rand",
+                "candidate_id": "candidate.exe:rand",
+                "candidate_name": "rand",
+                "candidate_entry": {"cs": "0x0000", "ip": "0xf582", "kind": "near"},
+            },
+            {
+                "oracle_id": "oracle.exe:__aNlmul",
+                "oracle_name": "__aNlmul",
+                "candidate_id": "candidate.exe:__aNlmul",
+                "candidate_name": "__aNlmul",
+                "candidate_entry": {"cs": "0x0000", "ip": "0xf666", "kind": "near"},
+            },
+        ],
+    }
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate, mapping_document=mapping)
+
+    rand = compared["results"][0]
+    assert rand["status"] == "passed"
+    assert rand["call_compare"]["equivalent"] is True
+    assert rand["call_compare"]["candidate"]["resolution_note"] == "resolved through same-entry aliases by by_linear_low16_all"
+    assert [alias["name"] for alias in rand["call_compare"]["candidate"]["aliases"]] == ["__aNlmul", "__aNulmul"]
+
+
+def test_dosunit_compare_ssa_resolves_exact_linear_same_entry_call_target_aliases():
+    oracle = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "oracle.exe",
+        "functions": [
+            _ssa_stub("oracle.exe:caller", "caller", ip="0x0100", linear="0x1100", jumpkind="Ijk_Call", call_raw="0x2080"),
+            _ssa_stub("oracle.exe:target_b", "target_b", ip="0x1080", linear="0x2080"),
+        ],
+    }
+    candidate = {
+        "schema": "dosunit.ssa.v1",
+        "exe": "candidate.exe",
+        "functions": [
+            _ssa_stub("candidate.exe:caller", "caller", ip="0x0200", linear="0x1200", jumpkind="Ijk_Call", call_raw="0x1300"),
+            _ssa_stub("candidate.exe:target_a", "target_a", ip="0x0300", linear="0x1300"),
+            _ssa_stub("candidate.exe:target_b", "target_b", ip="0x0300", linear="0x1300"),
+        ],
+    }
+    mapping = {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:test",
+        "functions": [
+            {
+                "oracle_id": "oracle.exe:caller",
+                "oracle_name": "caller",
+                "candidate_id": "candidate.exe:caller",
+                "candidate_name": "caller",
+                "candidate_entry": {"cs": "0x0000", "ip": "0x0200", "kind": "near"},
+            },
+            {
+                "oracle_id": "oracle.exe:target_b",
+                "oracle_name": "target_b",
+                "candidate_id": "candidate.exe:target_b",
+                "candidate_name": "target_b",
+                "candidate_entry": {"cs": "0x0000", "ip": "0x0300", "kind": "near"},
+            },
+        ],
+    }
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate, mapping_document=mapping)
+
+    caller = compared["results"][0]
+    assert caller["status"] == "passed"
+    assert caller["call_compare"]["equivalent"] is True
+    assert caller["call_compare"]["candidate"]["resolution_note"] == "resolved through same-entry aliases by by_linear_all"
+    assert [alias["name"] for alias in caller["call_compare"]["candidate"]["aliases"]] == ["target_a", "target_b"]
+
+
+def test_dosunit_report_hides_unresolved_call_targets_unless_requested(tmp_path: Path):
+    document = {
+        "schema": "dosunit.ssa_compare.v1",
+        "oracle": "oracle.exe",
+        "candidate": "candidate.exe",
+        "mapping": "mapping:test",
+        "summary": {"total": 1, "passed": 0, "failed": 1, "refused": 0, "skipped_unmapped": 0, "solver_time_ms": 0},
+        "results": [
+            {
+                "status": "failed",
+                "reason": "observable_mismatch",
+                "function": {"id": "oracle.exe:caller", "name": "caller"},
+                "call_compare": {
+                    "kind": "direct_call",
+                    "equivalent": False,
+                    "reason": "one or both direct call targets did not resolve to SSA functions",
+                    "oracle": {"kind": "direct", "raw": "0x1000", "low16": "0x1000", "resolved": None, "reason": "no SSA function starts at the direct call target"},
+                    "candidate": {"kind": "direct", "raw": "0x2000", "low16": "0x2000", "resolved": None, "reason": "no SSA function starts at the direct call target"},
+                },
+                "mismatches": [{"kind": "output_expr_changed", "reg": "call_target"}],
+            }
+        ],
+    }
+    results_path = tmp_path / "ssa.results.json"
+    hidden_path = tmp_path / "hidden.md"
+    shown_path = tmp_path / "shown.md"
+    results_path.write_text(json.dumps(document))
+
+    hidden = render_failure_report(document)
+    shown = render_failure_report(document, show_unresolved_call_targets=True)
+
+    assert "Unresolved-call-target rows skipped: 1" in hidden
+    assert "caller" not in hidden
+    assert "Unresolved-call-target rows skipped: 0" in shown
+    assert "caller" in shown
+    assert dosunit_main(["report-failures", "--results", str(results_path), "--out", str(hidden_path)]) == 0
+    assert dosunit_main(["report-failures", "--results", str(results_path), "--show-unresolved-call-targets", "--out", str(shown_path)]) == 0
+    assert "caller" not in hidden_path.read_text()
+    assert "caller" in shown_path.read_text()
+
+
+def test_dosunit_straightline_ssa_lowers_memory_load_in_output_slice(tmp_path: Path):
     image = bytearray(0x240)
     image[0x200:0x204] = b"\x8b\x44\x04\xc3"  # mov ax, [si+4]; ret
     exe = tmp_path / "demo.exe"
@@ -686,8 +1754,40 @@ def test_dosunit_straightline_ssa_refuses_memory_load_in_output_slice(tmp_path: 
 
     document = lower_straightline_ssa_document(exe_path=exe, functions_catalog=catalog, output_regs=("ax",))
 
-    assert document["counters"]["functions_refused"] == 1
-    assert document["refusals"][0]["reason"] == "unbounded_memory"
+    assert document["counters"]["functions_lowered"] == 1
+    function = document["functions"][0]
+    assert {"kind": "memory", "name": "mem", "addr_width": 32, "value_width": 8} in function["inputs"]
+    assert "loadle" in json.dumps(function["assignments"], sort_keys=True)
+
+
+def test_dosunit_compare_ssa_checks_memory_store_effects(tmp_path: Path):
+    original_image = bytearray(0x240)
+    equivalent_image = bytearray(0x240)
+    changed_image = bytearray(0x240)
+    original_image[0x200:0x204] = b"\x89\x44\x04\xc3"  # mov [si+4], ax; ret
+    equivalent_image[0x200:0x204] = b"\x89\x44\x04\xc3"  # mov [si+4], ax; ret
+    changed_image[0x200:0x204] = b"\x89\x5c\x04\xc3"  # mov [si+4], bx; ret
+    original = tmp_path / "original.exe"
+    equivalent = tmp_path / "equivalent.exe"
+    changed = tmp_path / "changed.exe"
+    original.write_bytes(_mz_exe(bytes(original_image)))
+    equivalent.write_bytes(_mz_exe(bytes(equivalent_image)))
+    changed.write_bytes(_mz_exe(bytes(changed_image)))
+    catalog = _edge_catalog("demo.exe:store_indexed", "store_indexed", offset=0x0200, size=4)
+
+    oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=catalog, output_regs=("ax",))
+    equivalent_ssa = lower_straightline_ssa_document(exe_path=equivalent, functions_catalog=catalog, output_regs=("ax",))
+    changed_ssa = lower_straightline_ssa_document(exe_path=changed, functions_catalog=catalog, output_regs=("ax",))
+
+    assert oracle["counters"]["functions_lowered"] == 1
+    assert "memory" in oracle["functions"][0]["outputs"]
+    assert "storele" in json.dumps(oracle["functions"][0]["assignments"], sort_keys=True)
+    passed = compare_ssa_documents(oracle=oracle, candidate=equivalent_ssa)
+    failed = compare_ssa_documents(oracle=oracle, candidate=changed_ssa)
+
+    assert passed["summary"]["passed"] == 1
+    assert failed["summary"]["failed"] == 1
+    assert any(mismatch["kind"] == "memory_expr_changed" for mismatch in failed["results"][0]["mismatches"])
 
 
 def test_dosunit_straightline_ssa_lowers_vex_normalized_partial_register_write(tmp_path: Path):
@@ -707,6 +1807,146 @@ def test_dosunit_straightline_ssa_lowers_vex_normalized_partial_register_write(t
     assert "0x12" in serialized
     assert '"and"' in serialized
     assert '"or"' in serialized
+
+
+def test_dosunit_straightline_ssa_lowers_ail_equivalent_to_vex(tmp_path: Path):
+    image = bytearray(0x240)
+    image[0x200:0x206] = b"\x89\xd8\x83\xc0\x01\xc3"  # mov ax, bx; add ax, 1; ret
+    exe = tmp_path / "demo.exe"
+    exe.write_bytes(_mz_exe(bytes(image)))
+    catalog = _edge_catalog("demo.exe:leaf_math", "leaf_math", offset=0x0200, size=6)
+
+    vex = lower_straightline_ssa_document(exe_path=exe, functions_catalog=catalog, output_regs=("ax", "sp"), source_ir="vex")
+    ail = lower_straightline_ssa_document(exe_path=exe, functions_catalog=catalog, output_regs=("ax", "sp"), source_ir="ail")
+    compared = compare_ssa_documents(oracle=vex, candidate=ail)
+
+    assert ail["source_ir"] == "ail"
+    assert ail["parameters"]["source_ir"] == "ail"
+    assert ail["functions"][0]["source"]["ir"] == "ail"
+    assert ail["counters"]["functions_lowered"] == 1
+    assert compared["summary"]["passed"] == 1
+    serialized = json.dumps(ail["functions"][0]["assignments"], sort_keys=True)
+    assert "add" in serialized
+    assert "flags" not in serialized
+
+
+def test_dosunit_straightline_ssa_lowers_ail_memory_and_call_boundary(tmp_path: Path):
+    store_image = bytearray(0x240)
+    call_image = bytearray(0x260)
+    store_image[0x200:0x204] = b"\x89\x44\x04\xc3"  # mov [si+4], ax; ret
+    call_image[0x200:0x204] = b"\xe8\x1d\x00\xc3"  # call 0x1220; ret
+    call_image[0x220:0x224] = b"\xb8\x34\x12\xc3"  # mov ax, 0x1234; ret
+    store_exe = tmp_path / "store.exe"
+    call_exe = tmp_path / "call.exe"
+    store_exe.write_bytes(_mz_exe(bytes(store_image)))
+    call_exe.write_bytes(_mz_exe(bytes(call_image)))
+    store_catalog = _edge_catalog("demo.exe:store_indexed", "store_indexed", offset=0x0200, size=4)
+    call_catalog = {
+        "schema": "dosunit.functions.v1",
+        "id": "functions:call",
+        "module": "demo.exe",
+        "program_kind": "mz_exe",
+        "functions": [
+            _edge_function("demo.exe:caller", "caller", offset=0x0200, size=4),
+            _edge_function("demo.exe:callee", "callee", offset=0x0220, size=4),
+        ],
+        "diagnostics": [],
+    }
+
+    vex_store = lower_straightline_ssa_document(exe_path=store_exe, functions_catalog=store_catalog, output_regs=("ax", "sp"), source_ir="vex")
+    ail_store = lower_straightline_ssa_document(exe_path=store_exe, functions_catalog=store_catalog, output_regs=("ax", "sp"), source_ir="ail")
+    vex_call = lower_straightline_ssa_document(exe_path=call_exe, functions_catalog=call_catalog, output_regs=("ax", "sp"), source_ir="vex")
+    ail_call = lower_straightline_ssa_document(exe_path=call_exe, functions_catalog=call_catalog, output_regs=("ax", "sp"), source_ir="ail")
+
+    assert "memory" in ail_store["functions"][0]["outputs"]
+    assert "storele" in json.dumps(ail_store["functions"][0]["assignments"], sort_keys=True)
+    assert compare_ssa_documents(oracle=vex_store, candidate=ail_store)["summary"]["passed"] == 1
+    caller = next(function for function in ail_call["functions"] if function["function"]["name"] == "caller")
+    assert caller["source"]["jumpkind"] == "Ijk_Call"
+    assert caller["source"]["transfer"]["target"]["low16"] == "0x1220"
+    assert "memory" in caller["outputs"]
+    assert compare_ssa_documents(oracle=vex_call, candidate=ail_call)["summary"]["passed"] == 2
+
+
+def test_dosunit_straightline_ssa_refuses_oversized_slices_by_assignment_gate(tmp_path: Path):
+    image = bytearray(0x240)
+    image[0x200:0x206] = b"\x89\xd8\x83\xc0\x01\xc3"  # mov ax, bx; add ax, 1; ret
+    exe = tmp_path / "demo.exe"
+    exe.write_bytes(_mz_exe(bytes(image)))
+    catalog = _edge_catalog("demo.exe:leaf_math", "leaf_math", offset=0x0200, size=6)
+
+    document = lower_straightline_ssa_document(
+        exe_path=exe,
+        functions_catalog=catalog,
+        output_regs=("ax", "sp"),
+        max_assignments_per_function=1,
+    )
+
+    assert document["counters"]["functions_refused"] == 1
+    assert document["refusals"][0]["reason"] == "slice_too_large"
+    assert "SSA assignment limit reached" in document["refusals"][0]["detail"]["message"]
+
+
+def test_dosunit_compare_ssa_refuses_solver_slices_over_gate(tmp_path: Path):
+    original_image = bytearray(0x240)
+    changed_image = bytearray(0x240)
+    original_image[0x200:0x206] = b"\x89\xd8\x83\xc0\x01\xc3"  # mov ax, bx; add ax, 1; ret
+    changed_image[0x200:0x206] = b"\x89\xd8\x83\xc0\x02\xc3"  # mov ax, bx; add ax, 2; ret
+    original = tmp_path / "original.exe"
+    changed = tmp_path / "changed.exe"
+    original.write_bytes(_mz_exe(bytes(original_image)))
+    changed.write_bytes(_mz_exe(bytes(changed_image)))
+    catalog = _edge_catalog("demo.exe:leaf_math", "leaf_math", offset=0x0200, size=6)
+    oracle = lower_straightline_ssa_document(exe_path=original, functions_catalog=catalog, output_regs=("ax", "sp"))
+    candidate = lower_straightline_ssa_document(exe_path=changed, functions_catalog=catalog, output_regs=("ax", "sp"))
+
+    compared = compare_ssa_documents(oracle=oracle, candidate=candidate, max_solver_assignments=1, skip_binary_equal=False)
+
+    assert compared["summary"]["refused"] == 1
+    assert compared["results"][0]["reason"] == "slice_too_large"
+    assert compared["results"][0]["mismatches"][0]["kind"] == "solver_gate"
+    assert compared["results"][0]["mismatches"][0]["metric"] == "assignments"
+
+
+def test_dosunit_straightline_ssa_uses_single_file_vex_disk_cache(tmp_path: Path):
+    image = bytearray(0x240)
+    image[0x200:0x204] = b"\xb8\x34\x12\xc3"  # mov ax, 0x1234; ret
+    exe = tmp_path / "demo.exe"
+    exe.write_bytes(_mz_exe(bytes(image)))
+    catalog = _edge_catalog("demo.exe:imm_leaf", "imm_leaf", offset=0x0200, size=4)
+    cache_dir = tmp_path / "cache"
+
+    first = lower_straightline_ssa_document(exe_path=exe, functions_catalog=catalog, output_regs=("ax",), cache_dir=cache_dir)
+    second = lower_straightline_ssa_document(exe_path=exe, functions_catalog=catalog, output_regs=("ax",), cache_dir=cache_dir)
+
+    assert first["counters"]["lifter_cache_misses"] == 1
+    assert first["counters"]["lifter_cache_writes"] == 1
+    assert second["counters"]["lifter_cache_hits"] == 1
+    assert second["counters"]["lifter_blocks_lifted"] == 0
+    cache_files = list((cache_dir / "vex").glob("*.pickle"))
+    assert len(cache_files) == 1
+
+
+def test_dosunit_cli_ssa_defaults_to_msc16_near_and_accepts_ail(tmp_path: Path):
+    image = bytearray(0x240)
+    image[0x200:0x204] = b"\xb8\x34\x12\xc3"  # mov ax, 0x1234; ret
+    exe = tmp_path / "demo.exe"
+    exe.write_bytes(_mz_exe(bytes(image)))
+    catalog = _edge_catalog("demo.exe:imm_leaf", "imm_leaf", offset=0x0200, size=4)
+    functions_path = tmp_path / "functions.json"
+    default_path = tmp_path / "default.ssa.json"
+    raw_path = tmp_path / "raw.ssa.json"
+    functions_path.write_text(json.dumps(catalog))
+
+    assert dosunit_main(["ssa", "--ir", "ail", "--exe", str(exe), "--functions", str(functions_path), "--out", str(default_path)]) == 0
+    assert dosunit_main(["ssa", "--abi", "raw-all", "--exe", str(exe), "--functions", str(functions_path), "--out", str(raw_path)]) == 0
+    default_doc = json.loads(default_path.read_text())
+    raw_doc = json.loads(raw_path.read_text())
+
+    assert default_doc["source_ir"] == "ail"
+    assert default_doc["parameters"]["output_regs"] == ["ax", "dx", "sp"]
+    assert set(default_doc["functions"][0]["outputs"]) == {"ax", "dx", "sp"}
+    assert raw_doc["parameters"]["output_regs"] == ["ax", "bx", "cx", "dx", "si", "di", "bp", "sp"]
 
 
 def test_dosunit_cli_ssa_and_compare_ssa(tmp_path: Path):
@@ -805,6 +2045,73 @@ def _edge_function(function_id: str, name: str, *, offset: int, size: int) -> di
         "confidence": "medium",
         "size": size,
         "safe_traps": [],
+    }
+
+
+def _ssa_stub(
+    function_id: str,
+    name: str,
+    *,
+    ip: str,
+    linear: str,
+    jumpkind: str = "Ijk_Ret",
+    call_raw: str | None = None,
+) -> dict[str, object]:
+    instructions = [{"address": {"ip": ip, "linear": linear}, "disassembly": "ret", "size": 1}]
+    source: dict[str, object] = {"jumpkind": jumpkind, "instruction_count": len(instructions), "instructions": instructions}
+    if call_raw is not None:
+        source["transfer"] = {
+            "kind": "direct_call",
+            "jumpkind": "Ijk_Call",
+            "target": {"raw": call_raw, "low16": f"0x{int(call_raw, 0) & 0xFFFF:04x}"},
+            "fallthrough": {"linear": linear, "low16": f"0x{int(linear, 0) & 0xFFFF:04x}"},
+        }
+    return {
+        "id": f"ssa-function:{function_id}",
+        "function": {"id": function_id, "name": name},
+        "entry": {"cs": "0x0000", "ip": ip, "linear": linear},
+        "source": source,
+        "inputs": [],
+        "outputs": {"ax": {"op": "const", "value": "0x0000", "width": 16}},
+        "assignments": [],
+    }
+
+
+def _ssa_doc(function: dict[str, object]) -> dict[str, object]:
+    return {"schema": "dosunit.ssa.v1", "exe": "demo.exe", "functions": [function]}
+
+
+def _manual_ssa_function(
+    name: str,
+    instruction_texts: list[str],
+    *,
+    outputs: dict[str, object],
+    inputs: list[dict[str, object]] | None = None,
+    assignments: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    instructions: list[dict[str, object]] = []
+    for index, text in enumerate(instruction_texts):
+        parts = text.split(None, 1)
+        mnemonic = parts[0].lower()
+        op_str = parts[1].lower() if len(parts) == 2 else ""
+        instructions.append(
+            {
+                "address": {"ip": f"0x{0x0200 + index:04x}", "linear": f"0x{0x1200 + index:04x}"},
+                "size": 1,
+                "mnemonic": mnemonic,
+                "op_str": op_str,
+                "disassembly": text.lower(),
+            }
+        )
+    function_id = f"demo.exe:{name}"
+    return {
+        "id": f"ssa-function:{name}",
+        "function": {"id": function_id, "name": name},
+        "entry": {"cs": "0x0000", "ip": "0x0200", "linear": "0x1200"},
+        "source": {"jumpkind": "Ijk_Ret", "instruction_count": len(instructions), "instructions": instructions},
+        "inputs": inputs or [],
+        "outputs": outputs,
+        "assignments": assignments or [],
     }
 
 

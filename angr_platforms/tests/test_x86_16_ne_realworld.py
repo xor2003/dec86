@@ -4,7 +4,6 @@ from pathlib import Path
 
 import angr
 import pytest
-
 from angr_platforms.X86_16.ne_exe_parse import parse_ne_exe
 
 ZEEK1_EXE = Path("/home/xor/games/zeek/ZEEK1.EXE")

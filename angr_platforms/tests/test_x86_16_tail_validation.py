@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from types import SimpleNamespace
 
+import angr_platforms.X86_16.tail_validation as tail_validation_module
+import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
     CAssignment,
@@ -23,10 +25,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-from inertia_decompiler.tail_validation import tail_validation_snapshot_for_function_run
-
-import angr_platforms.X86_16.tail_validation as tail_validation_module
-import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
 from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.tail_validation import (
@@ -56,6 +54,8 @@ from angr_platforms.X86_16.tail_validation import (
 from angr_platforms.X86_16.tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
 from angr_platforms.X86_16.tail_validation_fingerprint import build_x86_16_contextual_call_fingerprints
 from angr_platforms.X86_16.tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
+
+from inertia_decompiler.tail_validation import tail_validation_snapshot_for_function_run
 
 
 class _DummyCodegen:
@@ -1058,6 +1058,38 @@ def test_tail_validation_compare_flattens_equivalent_ss_stack_byte_write_locatio
         segmented_writes=(
             "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-3)",
             "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-7)",
+        ),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_compare_treats_stack_slot_reference_as_same_segmented_write_location():
+    before = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(
+            "deref:Add(Mul(reg:ss,const:16),Reference(stack_slot:SS:BP-0x8:size1),const:-17)",
+        ),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(
+            "deref:Add(Mul(reg:ss,const:16),stack_slot:SS:BP-0x8:size1,const:-17)",
         ),
         returns=(),
         conditions=(),

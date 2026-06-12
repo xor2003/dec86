@@ -1,5 +1,4 @@
-"""
-NE (New Executable) format parser for Windows/OS2 16-bit binaries.
+"""NE (New Executable) format parser for Windows/OS2 16-bit binaries.
 
 This module works with the existing CLE DOSNE loader (load_dos_ne.py).
 It extracts symbol information (function names, entry points) and uses

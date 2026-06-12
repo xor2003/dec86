@@ -1,5 +1,4 @@
-"""
-Natural-loop detection helpers for region-based structuring.
+"""Natural-loop detection helpers for region-based structuring.
 
 This module isolates loop-specific CFG reasoning from the main
 `structuring_analysis` driver so later CFG snapshot work can build on a
@@ -44,13 +43,11 @@ def compute_loop_body(
     header: Region,
     back_edges: list[Region],
 ) -> set[Region]:
-    """
-    Compute the natural-loop body for `header`.
+    """Compute the natural-loop body for `header`.
 
     The body is the header plus every predecessor chain dominated by the
     header and feeding a back-edge source.
     """
-
     body = set(back_edges)
     body.add(header)
 
@@ -73,13 +70,11 @@ def is_well_structured_multi_exit(
     body_regions: set[Region],
     exit_edges: list[tuple[Region, Region]],
 ) -> bool:
-    """
-    Heuristic for reducible multi-exit loops.
+    """Heuristic for reducible multi-exit loops.
 
     If most exits originate from different body regions, treat the loop as a
     structured loop-with-breaks candidate rather than an irreducible branch fan.
     """
-
     del body_regions
     exit_sources = {src for src, _ in exit_edges}
     unique_ratio = len(exit_sources) / max(len(exit_edges), 1)
@@ -94,7 +89,6 @@ def compute_loop_confidence(
     is_reducible: bool,
 ) -> float:
     """Score how likely the loop is to be a real natural loop."""
-
     del header
     score = 0.5
 
@@ -126,12 +120,10 @@ def detect_natural_loop(
     region: Region,
 ) -> Optional[NaturalLoopInfo]:
     def _impl():
-        """
-        Detect a natural loop rooted at `region`.
+        """Detect a natural loop rooted at `region`.
 
         Returns a typed summary or `None` if the region is not a loop header.
         """
-
         if region not in graph.nodes:
             return None
 

@@ -136,7 +136,19 @@ def _strip_comments_for_placeholder_scan_8616(c_text: str) -> str:
 
 def _dangerous_segment_linearization_expr_8616(expr_text: str, tainted_names: set[str]) -> bool:
     text = str(expr_text or "").strip()
-    if not text or any(helper in text for helper in ("SEG_PTR(", "SEG_U8(", "SEG_U16(", "SEG_U32(", "MK_FP(")):
+    if not text or any(
+        helper in text
+        for helper in (
+            "SEG_PTR(",
+            "SEG_U8(",
+            "SEG_U16(",
+            "SEG_U32(",
+            "MK_FP(",
+            "MEM_U8(",
+            "MEM_U16(",
+            "MEM_U32(",
+        )
+    ):
         return False
     lowered = text.lower()
     for name in {"ss", "ds", "es", *tainted_names}:

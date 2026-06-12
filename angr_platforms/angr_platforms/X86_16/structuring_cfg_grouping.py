@@ -1,5 +1,4 @@
-"""
-Grouped-entry and entry-fragment artifact over CFG ownership surfaces.
+"""Grouped-entry and entry-fragment artifact over CFG ownership surfaces.
 
 This is a deterministic export layer for later cross-entry grouping work. It
 does not perform grouping yet; it only emits explicit candidates and refusals.
@@ -33,7 +32,6 @@ class CFGGroupingArtifact:
 
     def summary_line(self) -> str:
         """Compact summary for diagnostics."""
-
         return (
             f"cfg_grouping grouped_candidates={len(self.grouped_entry_candidate_ids)} "
             f"entry_fragments={len(self.entry_fragment_ids)}"
@@ -41,7 +39,6 @@ class CFGGroupingArtifact:
 
     def to_dict(self) -> dict[str, object]:
         """Stable serialization for reports and artifacts."""
-
         return {
             "indirect": self.indirect.to_dict(),
             "grouped_entry_candidate_ids": [hex(region_id) for region_id in self.grouped_entry_candidate_ids],
@@ -59,7 +56,6 @@ class CFGGroupingArtifact:
 
 def build_cfg_grouping_artifact(codegen: Any) -> CFGGroupingArtifact | None:
     """Build deterministic grouping/export candidates from CFG ownership artifacts."""
-
     indirect = build_cfg_indirect_site_artifact(codegen)
     if indirect is None:
         return None

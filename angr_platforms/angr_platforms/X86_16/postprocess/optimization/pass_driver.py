@@ -7,9 +7,9 @@ Inserted early in the postprocess stage, before rewrite passes.
 
 Forbidden: semantic recovery, alias decisions, type inference."""
 
-from dataclasses import dataclass
 import os
 import sys
+from dataclasses import dataclass
 from typing import Callable
 
 from ...widening.widening_copyprop_8616 import _widening_copy_propagation_8616
@@ -45,7 +45,8 @@ def _normalize_cfunc_root_for_optimization_8616(codegen) -> None:
     with a raw list, which broke c_repr_chunks() downstream.
     The monkey-patch above makes tuple(CStatements) work natively.
 
-    Kept as a hook point for future optimization setup."""
+    Kept as a hook point for future optimization setup.
+    """
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return

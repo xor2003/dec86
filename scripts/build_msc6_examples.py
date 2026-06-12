@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Build, decompile, rebuild, and run the MS C construct examples."""
 
 from __future__ import annotations
 
@@ -10,8 +11,8 @@ import re
 import shutil
 import subprocess
 import sys
-import time
 import textwrap
+import time
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
@@ -20,14 +21,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from signature_catalog import build_signature_catalog
+from angr_platforms.X86_16.quality import measure_x86_16_codegen_quality_8616  # noqa: E402
 
-from angr_platforms.X86_16.quality import measure_x86_16_codegen_quality_8616
-
-from inertia_decompiler.flair_paths import default_flair_startup_root
-
+from inertia_decompiler.flair_paths import default_flair_startup_root  # noqa: E402
 from inertia_decompiler.project_loading import _build_project  # noqa: E402
 from inertia_decompiler.sidecar_metadata import _load_lst_metadata  # noqa: E402
+from signature_catalog import build_signature_catalog  # noqa: E402
 
 DEFAULT_EXAMPLES_DIR = REPO_ROOT / "examples" / "msc6_constructs"
 DEFAULT_OUT_DIR = REPO_ROOT / "examples" / "build_msc6"
@@ -47,10 +46,14 @@ DECOMPILE_FUNCTION_PROCESS_SETUP_SECONDS = 30
 
 
 class HarnessAcceptanceReason(str, Enum):
+    """Reason a harness decompilation result was accepted or stopped."""
+
     TIMEOUT = "timeout"
 
 
 class FocusedDecompileRetryReason(str, Enum):
+    """Reason to retry focused decompilation with a different fallback mode."""
+
     ASM_FALLBACK = "asm_fallback"
     TIMEOUT = "timeout"
 
@@ -573,8 +576,7 @@ def _normalize_extracted_function_arg_placeholders(function_body: str) -> str:
 
 
 def _declares_c89_local_identifier(function_body: str, identifier: str) -> bool:
-    """
-    Detect simple local declarations before harness-side argument placeholder rewrites.
+    """Detect simple local declarations before harness-side argument placeholder rewrites.
 
     This is intentionally a rebuild-harness compatibility check, not production
     decompiler recovery. If the generated body already declares ``arg_4`` as a
@@ -632,6 +634,8 @@ def _make_decompile_env(force_rizin_8616: bool, *, trace_label: str | None = Non
 
 @dataclass(frozen=True)
 class ExampleResult:
+    """Build, decompile, rebuild, and runtime result for one construct example."""
+
     name: str
     source: str
     exe: str
@@ -734,9 +738,7 @@ def _prepare_signature_catalog(
 
 
 def _dos_safe_names(stem: str, counter: int | None = None) -> tuple[str, str, str, str]:
-    """
-    Return short DOS-friendly base names for C source, OBJ, EXE and MAP outputs.
-    """
+    """Return short DOS-friendly base names for C source, OBJ, EXE and MAP outputs."""
     normalized = "".join(ch for ch in stem.upper() if ch.isalnum())
     if not normalized:
         normalized = "DECOMPILE"
@@ -757,9 +759,7 @@ def _dos_safe_names(stem: str, counter: int | None = None) -> tuple[str, str, st
 
 
 def _ensure_msvc6_compat_headers(out_dir: Path) -> None:
-    """
-    MS C 6 in this test harness may miss stdbool/stdint, so emit minimal shims.
-    """
+    """Emit minimal stdbool/stdint shims when the MS C test root misses them."""
     stdbool = """#ifndef _STDBOOL_H\n#define _STDBOOL_H\n\n#define bool unsigned char\n#define true 1\n#define false 0\n\n#endif\n"""
     stdint = """#ifndef _STDINT_H\n#define _STDINT_H\n\ntypedef unsigned char uint8_t;\ntypedef signed char int8_t;\ntypedef unsigned short uint16_t;\ntypedef signed short int16_t;\ntypedef unsigned long uint32_t;\ntypedef signed long int32_t;\ntypedef unsigned int uintptr_t;\n\ntypedef unsigned long size_t;\n\ntypedef uint8_t u8;\ntypedef uint16_t u16;\ntypedef uint32_t u32;\n\ntypedef int32_t ptrdiff_t;\n\ntypedef int16_t int_fast16_t;\ntypedef uint16_t uint_fast16_t;\n\ntypedef int32_t int_least32_t;\ntypedef uint32_t uint_least32_t;\n\ntypedef int16_t int_least16_t;\ntypedef uint16_t uint_least16_t;\n\n#endif\n"""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -787,8 +787,7 @@ def _sanitize_decompiled_source(raw_c_text: str) -> str:
     return "\n".join(keep_lines) + ("\n" if raw_c_text.endswith("\n") else "")
 
 def _prepare_decompiled_source_for_c89(raw_c_text: str) -> str:
-    """
-    Prepare decompiler output for legacy MS C 5.x/6.x compilers.
+    """Prepare decompiler output for legacy MS C 5.x/6.x compilers.
 
     We intentionally preserve text-order but add a small compatibility phase:
 
@@ -802,15 +801,13 @@ def _prepare_decompiled_source_for_c89(raw_c_text: str) -> str:
 
 
 def _inject_ms_c89_forward_decls(raw_c_text: str) -> str:
-    """
-    MS C 5.x/6.x compilers predate mandatory modern prototypes.
+    """MS C 5.x/6.x compilers predate mandatory modern prototypes.
 
     If a function is used before its definition, implicit declarations can
     generate stale return-type assumptions and spuriously fail with
     redefinition diagnostics. Inject forward declarations from emitted function
     signatures so decompiled output links on legacy compilers.
     """
-
     signature_re = re.compile(
         r"(?m)^([A-Za-z_][\w\s\*]*?)\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\r?\n\s*\{"
     )
@@ -882,7 +879,10 @@ def _compile_and_link(
     runtime_support: bool = False,
 ) -> tuple[bool, str, str, str, str]:
     _ensure_msvc6_compat_headers(out_dir)
-    for artifact_name in (obj_name, exe_name, map_name):
+    artifact_names = [obj_name, exe_name, map_name]
+    if cod_name is not None:
+        artifact_names.append(cod_name)
+    for artifact_name in artifact_names:
         with contextlib.suppress(OSError):
             (out_dir / artifact_name).unlink()
     compile_cmd = [
@@ -2221,6 +2221,7 @@ def _decompile_and_validate(
 
 
 def main() -> int:
+    """Run the MS C construct build/decompile/rebuild harness."""
     ap = argparse.ArgumentParser(description="Build simple/medium MS C 6 examples via kvikdos and try decompilation.")
     ap.add_argument("--examples-dir", type=Path, default=DEFAULT_EXAMPLES_DIR)
     ap.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)

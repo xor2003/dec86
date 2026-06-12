@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from angr_platforms.X86_16.corpus_scan import (
     FunctionScanResult,
     ScanTimeout,

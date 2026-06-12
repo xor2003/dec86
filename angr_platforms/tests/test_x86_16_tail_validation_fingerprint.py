@@ -15,7 +15,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
@@ -606,6 +605,24 @@ def test_runtime_segment_helper_matches_raw_dereference_fingerprint():
 
     raw = _ds_linear_deref(project, 2978, codegen)
     helper = CFunctionCall("SEG_U16", None, [_reg(project, "ds", codegen), _const(2978, codegen)], codegen=codegen)
+
+    assert _expr_fingerprint(raw, project) == _expr_fingerprint(helper, project)
+    assert _location_fingerprint(raw, project) == _location_fingerprint(helper, project)
+
+
+def test_runtime_pointer_helper_matches_raw_dereference_fingerprint():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    mem = CVariable(SimMemoryVariable(0x8F0, 1, name="mem_08F0"), codegen=codegen)
+    addr = CUnaryOp("Reference", mem, codegen=codegen)
+    raw = CUnaryOp("Dereference", addr, codegen=codegen)
+    helper = CFunctionCall(
+        "MEM_U16",
+        None,
+        [addr],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_pointer_helper": "MEM_U16"},
+    )
 
     assert _expr_fingerprint(raw, project) == _expr_fingerprint(helper, project)
     assert _location_fingerprint(raw, project) == _location_fingerprint(helper, project)

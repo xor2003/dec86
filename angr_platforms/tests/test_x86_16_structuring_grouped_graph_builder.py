@@ -1,5 +1,4 @@
 import networkx as nx
-
 from angr_platforms.X86_16.ir.core import (
     AddressStatus,
     IRAddress,

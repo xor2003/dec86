@@ -11,24 +11,25 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CExpressionStatement,
     CForLoop,
     CFunctionCall,
-    CVariable,
     CReturn,
     CStatements,
+    CVariable,
 )
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_stack_metadata import _prune_dead_stack_carrier_assignments_8616
 from angr_platforms.X86_16.callsite_summary import CallsitePushExprOp8616, CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _align_cod_call_names_8616,
     _attach_callsite_summaries_8616,
+    _cod_metadata_for_function_8616,
     _materialize_callsite_prototypes_8616,
     _materialize_callsite_stack_arguments_8616,
     _missing_calls_from_sequences_8616,
     _normalize_call_target_names_8616,
     _ordered_missing_from_source_8616,
+    _recover_expected_calls_8616,
     _recover_missing_direct_calls_from_evidence_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_utils import (
@@ -675,6 +676,86 @@ def test_align_cod_call_names_uses_rebased_original_function_metadata(monkeypatc
     assert changed is True
     assert calls[1].callee_func.name == "InitMenu"
     assert calls[1].callee_target == "InitMenu"
+
+
+def test_cod_metadata_for_function_keeps_original_project_in_original_address_space(monkeypatch):
+    project = _project()
+    original_project = _project()
+    project._inertia_original_project = original_project
+    project._inertia_original_linear_delta = 0xF9E8
+    project._inertia_lst_metadata = SimpleNamespace(
+        cod_path="/tmp/fake.cod",
+        cod_proc_kinds={0x1000: "NEAR", 0x109E8: "NEAR"},
+    )
+    original_project._inertia_lst_metadata = SimpleNamespace(
+        cod_path="/tmp/fake.cod",
+        cod_proc_kinds={0x1000: "NEAR", 0x109E8: "NEAR"},
+    )
+
+    functions_by_addr = {
+        0x1000: SimpleNamespace(addr=0x1000, name="_flsbuf"),
+        0x109E8: SimpleNamespace(addr=0x109E8, name="_PercolateUp"),
+    }
+    original_project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda addr=None, create=False: functions_by_addr.get(addr))
+    )
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda addr=None, create=False: functions_by_addr.get(addr))
+    )
+    seen: list[str] = []
+
+    def _extract(_path, name, _kind):
+        seen.append(name)
+        return SimpleNamespace(call_names=(name,))
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.extract_cod_proc_metadata",
+        _extract,
+    )
+
+    metadata = _cod_metadata_for_function_8616(project, 0x1000)
+
+    assert metadata.call_names == ("_PercolateUp",)
+    assert "_flsbuf" not in seen
+
+
+def test_recover_expected_calls_prefers_cod_call_names_over_rebased_target_guess(monkeypatch):
+    project = _project()
+    cfunc = SimpleNamespace(addr=0x1000, name="PercolateUp")
+    function = SimpleNamespace(
+        addr=0x1000,
+        get_call_sites=lambda: [0x1006, 0x1052, 0x105E],
+        get_call_target=lambda callsite: {0x1006: 0x11222, 0x1052: 0x10794, 0x105E: 0x1075B}[callsite],
+    )
+    wrong_names = {
+        0x11222: "aNchkstk",
+        0x10794: "flsbuf",
+        0x1075B: "flsbuf",
+    }
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._lookup_callee_function_8616",
+        lambda _project, target: SimpleNamespace(name=wrong_names[target]),
+    )
+    summaries = {
+        callsite: CallsiteSummary8616(callsite, function.get_call_target(callsite), callsite + 3, "near", 0, (), 0, None, False)
+        for callsite in function.get_call_sites()
+    }
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
+        lambda _function, callsite: summaries[callsite],
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
+        lambda _project, _func_addr: ("aNchkstk", "Swaps", "SwapBars"),
+    )
+
+    expected, summary_by_name, source = _recover_expected_calls_8616(project, cfunc, function, 0x1000)
+
+    assert expected == ["aNchkstk", "Swaps", "SwapBars"]
+    assert source == ["aNchkstk", "Swaps", "SwapBars"]
+    assert summary_by_name["Swaps"] == [summaries[0x1052]]
+    assert summary_by_name["SwapBars"] == [summaries[0x105E]]
 
 
 def test_materialize_callsite_stack_arguments_rewrites_preceding_stack_store_into_call_arg():

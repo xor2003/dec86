@@ -46,21 +46,20 @@ Assignment terms:
 
 Allowed:
 
-- one bounded VEX block
+- one bounded VEX IRSB
 - straight-line arithmetic and bitwise expressions
 - register inputs and outputs
+- VEX memory loads/stores over one symbolic byte-array memory input
+- VEX exits represented as a selected-block `ip` output expression
 - near `ret` noise may exist in VEX, but return-IP memory loads are dropped if
   not observed
 - unused flag computations are dropped by backward slicing
+- disk cache at `vex/<exe-sha256>.pickle` under the selected cache root
 
 Refused:
 
-- conditional/unconditional branches
-- calls and interrupts
-- VEX exits
-- explicit memory operands, until segmented symbolic memory is added
-- memory stores
-- output slices depending on memory loads
+- successor-block traversal beyond the bounded IRSB
+- unsupported VEX `Dirty` helpers/statements
 - partial-register reads/writes that VEX does not normalize to whole-register
   expressions
 - unsupported VEX statement/expression kinds
@@ -94,6 +93,10 @@ Required fixtures:
 - unused flag computations and return-IP stack loads are absent from the slice
 - `mov ax,bx; add ax,1; ret` is equivalent to `mov ax,bx; inc ax; ret`
 - `add ax,1` vs `add ax,2` fails with a Z3 counterexample
-- output depending on `[si+disp]` is refused as `unbounded_memory`
+- output depending on `[si+disp]` lowers as a `loadle` memory expression
+- memory stores compare through symbolic memory-array output
 - `mov al,imm; ret` lowers through VEX as `(AX & 0xff00) | imm`
 - mapped functions compare successfully even when original and rebuilt names differ
+- unmapped functions are visible refusals by default; targeted runs may suppress
+  them with `include_unmapped=False`/`--skip-unmapped`
+- a second run with the same EXE hash hits the single-file VEX disk cache

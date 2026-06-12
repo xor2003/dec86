@@ -6,7 +6,6 @@ import archinfo
 import claripy
 from angr import ailment
 from angr.analyses.decompiler.condition_processor import ConditionProcessor
-
 from angr_platforms.X86_16.decompiler_structuring_stage import (
     _guard_condition_processor_multibit_bool_predicates_8616,
 )
