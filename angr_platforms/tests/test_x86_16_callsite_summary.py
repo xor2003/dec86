@@ -117,6 +117,32 @@ def test_callsite_summary_reports_push_args_cleanup_and_return_use(monkeypatch):
     )
 
 
+def test_callsite_summary_treats_previous_call_cleanup_as_return_arg_carrier(monkeypatch):
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "push", [_Operand(imm=0, size=2)]),
+            _Insn(0x1001, "call"),
+            _Insn(0x1004, "add", [_Operand(reg=1), _Operand(imm=2)], reg_names={1: "sp"}),
+            _Insn(0x1007, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1008, "call"),
+            _Insn(0x100B, "add", [_Operand(reg=1), _Operand(imm=2)], reg_names={1: "sp"}),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [
+            CallTargetSeed(0x1001, 0x2000, 0x1004, "direct_near"),
+            CallTargetSeed(0x1008, 0x2004, 0x100B, "direct_near"),
+        ],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1008)
+
+    assert summary is not None
+    assert summary.arg_widths == (2,)
+    assert summary.push_arg_sources == (("ret_reg", 0x1001, "ax"),)
+
+
 def test_callsite_summary_returns_empty_shape_when_block_has_no_neighbors(monkeypatch):
     function = _function_with_block([_Insn(0x1002, "call")])
     monkeypatch.setattr(

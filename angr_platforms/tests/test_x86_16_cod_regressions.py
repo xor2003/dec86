@@ -1254,6 +1254,66 @@ def test_decompiler_return_compat_infers_ax_stack_load_without_prototype():
         ReturnMaker._handle_Return = original_handle_return
 
 
+def test_decompiler_return_compat_resolves_ax_self_update_return_source():
+    original_handle_return = ReturnMaker._handle_Return
+
+    def fake_handle_return(_self, _stmt_idx, _stmt, _block):
+        return "fallback"
+
+    class _FakeGraph:
+        def __init__(self, block):
+            self._block = block
+
+        def nodes(self):
+            return [self._block]
+
+        def predecessors(self, _node):
+            return []
+
+    try:
+        ReturnMaker._handle_Return = fake_handle_return
+        apply_x86_16_decompiler_return_compatibility()
+
+        arch = Arch86_16()
+        bp = ailment.Expr.Register(1, None, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
+        four = ailment.Expr.Const(2, None, 4, 16, ins_addr=0x100B4)
+        bp_plus_four = ailment.Expr.BinaryOp(3, "Add", [bp, four], bits=16, ins_addr=0x100B4)
+        stack_load = ailment.Expr.Load(4, bp_plus_four, 2, arch.memory_endness, ins_addr=0x100B4)
+        ax_dst = ailment.Expr.Register(5, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
+        load_assignment = ailment.Stmt.Assignment(6, ax_dst, stack_load, ins_addr=0x100B4)
+        ax_read = ailment.Expr.Register(7, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B5)
+        one = ailment.Expr.Const(8, None, 1, 16, ins_addr=0x100B5)
+        inc_expr = ailment.Expr.BinaryOp(9, "Add", [ax_read, one], bits=16, ins_addr=0x100B5)
+        ax_dst_update = ailment.Expr.Register(10, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B5)
+        inc_assignment = ailment.Stmt.Assignment(11, ax_dst_update, inc_expr, ins_addr=0x100B5)
+        ret_stmt = ailment.Stmt.Return(12, [], ins_addr=0x100BF)
+        block = SimpleNamespace(statements=[load_assignment, inc_assignment, ret_stmt])
+        function = SimpleNamespace(addr=0x1000, prototype=None, calling_convention=None)
+        fake_self = SimpleNamespace(
+            function=function,
+            graph=_FakeGraph(block),
+            arch=arch,
+            _next_atom=lambda: 99,
+            _new_block=None,
+        )
+
+        result = ReturnMaker._handle_Return(fake_self, 2, ret_stmt, block)
+
+        assert isinstance(result, ailment.Stmt.Return)
+        assert len(result.ret_exprs) == 1
+        retval = result.ret_exprs[0]
+        assert isinstance(retval, ailment.Expr.BinaryOp)
+        assert retval.op == "Add"
+        load_expr, const_expr = retval.operands
+        assert isinstance(load_expr, ailment.Expr.Load)
+        assert isinstance(load_expr.addr, BasePointerOffset)
+        assert load_expr.addr.offset == 4
+        assert isinstance(const_expr, ailment.Expr.Const)
+        assert const_expr.value == 1
+    finally:
+        ReturnMaker._handle_Return = original_handle_return
+
+
 def test_decompiler_return_compat_refuses_ax_inference_for_source_proven_void():
     original_handle_return = ReturnMaker._handle_Return
     calls: list[tuple[int, object, object]] = []
@@ -1652,6 +1712,72 @@ def test_decompiler_return_compat_infers_c_return_value_from_terminal_ax_stack_l
     assert getattr(function, "_inertia_return_compat_c_ast_materialized_count", 0) == 1
 
 
+def test_terminal_stack_arg_expr_does_not_create_fake_arg_for_positive_bp_offset_without_evidence():
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=(),
+        variables_in_use={},
+        unified_local_vars={},
+        functy=SimTypeFunction([], SimTypeShort(False), arg_names=()).with_arch(arch),
+    )
+
+    expr = _postprocess_stage._terminal_stack_arg_expr_8616(project, codegen, 3, 2)
+
+    assert isinstance(expr, structured_c.CVariable)
+    assert isinstance(expr.variable, SimStackVariable)
+    assert _postprocess_stage._canonical_stack_offset_8616(expr.variable.offset) == 3
+    assert expr.variable.name.startswith("local_")
+    assert codegen.cfunc.arg_list == ()
+    assert len(getattr(codegen.cfunc, "variables_in_use", {})) == 1
+
+
+def test_terminal_stack_arg_expr_reuses_existing_stack_slot_for_positive_offset():
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    local_var = SimStackVariable(6, 2, base="bp", name="v_6", region=0x1000)
+    local_cvar = structured_c.CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=(),
+        variables_in_use={local_var: local_cvar},
+        unified_local_vars={},
+        functy=SimTypeFunction([], SimTypeShort(False), arg_names=()).with_arch(arch),
+    )
+
+    expr = _postprocess_stage._terminal_stack_arg_expr_8616(project, codegen, 6, 2)
+
+    assert isinstance(expr, structured_c.CVariable)
+    assert isinstance(expr.variable, SimStackVariable)
+    assert expr.variable.name == local_var.name
+
+
+def test_terminal_stack_arg_expr_uses_prototype_arg_offsets():
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    proto = SimTypeFunction([SimTypeShort(False), SimTypeShort(False)], SimTypeShort(False), arg_names=["a", "b"]).with_arch(arch)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=(),
+        variables_in_use={},
+        unified_local_vars={},
+        prototype=proto,
+    )
+
+    expr = _postprocess_stage._terminal_stack_arg_expr_8616(project, codegen, 4, 2)
+
+    assert isinstance(expr, structured_c.CVariable)
+    assert isinstance(expr.variable, SimStackVariable)
+    assert expr.variable.name == "arg_4"
+    assert expr.variable.offset == 4
+    assert len(getattr(codegen.cfunc, "arg_list", ())) == 1
+    assert getattr(codegen.cfunc.arg_list[0].variable, "offset", None) == 4
+
+
 def test_missing_terminal_ax_return_replaces_segmented_artifact_with_direct_global_load():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
@@ -1696,10 +1822,17 @@ def test_missing_terminal_ax_return_replaces_segmented_artifact_with_direct_glob
     ret = SimpleNamespace(mnemonic="ret", operands=(), reg_name=lambda _reg: "")
     block = SimpleNamespace(capstone=SimpleNamespace(insns=(mov_ax_direct, ret)))
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, prototype=codegen.cfunc.functy)
+    cod_metadata = SimpleNamespace(
+        cod_raw_entries=(
+            {"text": "mov\tax,WORD PTR _g_work+10"},
+            {"text": "add\tax,WORD PTR _g_work"},
+        )
+    )
     project = SimpleNamespace(
         arch=arch,
         factory=SimpleNamespace(block=lambda *_args, **_kwargs: block),
         kb=SimpleNamespace(functions=SimpleNamespace(function=lambda *_args, **_kwargs: function)),
+        _inertia_cod_metadata_by_func_addr_8616={0x1000: cod_metadata},
     )
     codegen.project = project
 
@@ -1710,6 +1843,89 @@ def test_missing_terminal_ax_return_replaces_segmented_artifact_with_direct_glob
     assert isinstance(bad_return.retval, structured_c.CVariable)
     assert isinstance(bad_return.retval.variable, SimMemoryVariable)
     assert bad_return.retval.variable.addr == 0x48
+
+
+def test_missing_terminal_ax_return_materializes_direct_global_add_return():
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    seg = structured_c.CVariable(
+        SimRegisterVariable(20, 2, name="ds"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    bad_return = structured_c.CReturn(
+        structured_c.CBinaryOp(
+            "Add",
+            structured_c.CFunctionCall(
+                "SEG_U16",
+                None,
+                [seg, structured_c.CConstant(0x4E, SimTypeShort(False), codegen=codegen)],
+                codegen=codegen,
+            ),
+            structured_c.CVariable(
+                SimRegisterVariable(0, 2, name="vvar_58"),
+                variable_type=SimTypeShort(False),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([bad_return], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=root,
+        body=root,
+        variables_in_use={},
+        unified_local_vars={},
+        functy=SimTypeFunction([], SimTypeShort(False)).with_arch(arch),
+    )
+    mov_ax_direct = SimpleNamespace(
+        mnemonic="mov",
+        operands=(
+            SimpleNamespace(type=1, reg=1),
+            SimpleNamespace(type=3, size=2, mem=SimpleNamespace(base=0, index=0, disp=0x4E)),
+        ),
+        reg_name=lambda reg: "ax" if reg == 1 else "",
+    )
+    add_ax_direct = SimpleNamespace(
+        mnemonic="add",
+        operands=(
+            SimpleNamespace(type=1, reg=1),
+            SimpleNamespace(type=3, size=2, mem=SimpleNamespace(base=0, index=0, disp=0x44)),
+        ),
+        reg_name=lambda reg: "ax" if reg == 1 else "",
+    )
+    ret = SimpleNamespace(mnemonic="ret", operands=(), reg_name=lambda _reg: "")
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(mov_ax_direct, add_ax_direct, ret)))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, prototype=codegen.cfunc.functy)
+    cod_metadata = SimpleNamespace(
+        cod_raw_entries=(
+            {"text": "mov\tax,WORD PTR _g_work+10"},
+            {"text": "add\tax,WORD PTR _g_work"},
+        )
+    )
+    project = SimpleNamespace(
+        arch=arch,
+        factory=SimpleNamespace(block=lambda *_args, **_kwargs: block),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda *_args, **_kwargs: function)),
+        _inertia_cod_metadata_by_func_addr_8616={0x1000: cod_metadata},
+    )
+    codegen.project = project
+
+    changed = _materialize_missing_terminal_ax_return_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [bad_return]
+    assert isinstance(bad_return.retval, structured_c.CBinaryOp)
+    assert bad_return.retval.op == "Add"
+    assert isinstance(bad_return.retval.lhs, structured_c.CIndexedVariable)
+    assert isinstance(bad_return.retval.rhs, structured_c.CIndexedVariable)
+    assert bad_return.retval.lhs.variable.name == "g_work"
+    assert bad_return.retval.rhs.variable.name == "g_work"
+    assert bad_return.retval.lhs.index.value == 5
+    assert bad_return.retval.rhs.index.value == 0
 
 
 def test_missing_terminal_ax_return_replaces_generic_byte_return_artifact_from_binary_evidence():

@@ -4753,6 +4753,91 @@ def test_materialize_callsite_stack_arguments_keeps_exact_imm_push_source_over_r
     assert call_arg.value == 0xFFFC
 
 
+def test_materialize_callsite_stack_arguments_unknown_positive_bp_source_uses_local_name():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    call = CFunctionCall("sortproc", SimpleNamespace(name="sortproc"), [], codegen=codegen)
+    codegen.cfunc.statements = CStatements([CExpressionStatement(call, codegen=codegen)], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("bp", 4),),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    final_stmt = codegen.cfunc.statements.statements[-1]
+    if isinstance(final_stmt, CExpressionStatement):
+        call_stmt = final_stmt
+    elif isinstance(final_stmt, CStatements):
+        call_stmt = final_stmt.statements[-1]
+    else:
+        raise AssertionError(type(final_stmt))
+    assert isinstance(call_stmt, CExpressionStatement)
+    assert len(call_stmt.expr.args) == 1
+    arg0 = call_stmt.expr.args[0]
+    assert getattr(getattr(arg0, "variable", None), "name", None) == "local_2"
+
+
+def test_materialize_callsite_stack_arguments_known_positive_bp_source_keeps_arg_name():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    known_arg = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [known_arg]
+
+    call = CFunctionCall("sortproc", SimpleNamespace(name="sortproc"), [], codegen=codegen)
+    codegen.cfunc.statements = CStatements([CExpressionStatement(call, codegen=codegen)], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("bp", 4),),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    final_stmt = codegen.cfunc.statements.statements[-1]
+    if isinstance(final_stmt, CExpressionStatement):
+        call_stmt = final_stmt
+    elif isinstance(final_stmt, CStatements):
+        call_stmt = final_stmt.statements[-1]
+    else:
+        raise AssertionError(type(final_stmt))
+    assert isinstance(call_stmt, CExpressionStatement)
+    assert len(call_stmt.expr.args) == 1
+    arg0 = call_stmt.expr.args[0]
+    assert getattr(getattr(arg0, "variable", None), "name", None) == "arg_2"
+
+
 def test_materialize_callsite_stack_arguments_keeps_stack_value_arithmetic_as_value():
     project = _project()
     codegen = _empty_codegen(project)
@@ -5330,6 +5415,76 @@ def test_materialize_callsite_stack_arguments_consumes_dx_ax_return_push_pair():
         for arg in final_call.args
         for node in (arg, *_iter_c_nodes_deep_8616(arg))
     )
+    assert getattr(codegen, "_inertia_return_register_call_args_materialized_8616", 0) == 1
+
+
+def test_materialize_callsite_stack_arguments_consumes_assignment_wrapped_ax_return_call():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    carrier = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="time_seed", region=0x4010),
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    time_call = CFunctionCall(
+        "time",
+        SimpleNamespace(addr=0x2000, name="time", block_addrs_set={0x2000}),
+        [structured_c.CConstant(0, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    srand_call = CFunctionCall(
+        "srand",
+        SimpleNamespace(addr=0x2004, name="srand", block_addrs_set={0x2004}),
+        [],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(carrier, time_call, codegen=codegen),
+            CExpressionStatement(srand_call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(time_call): CallsiteSummary8616(
+            callsite_addr=0x1001,
+            target_addr=0x2000,
+            return_addr=0x1004,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register="ax",
+            return_used=True,
+            return_shape="ax",
+        ),
+        id(srand_call): CallsiteSummary8616(
+            callsite_addr=0x1008,
+            target_addr=0x2004,
+            return_addr=0x100B,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register="ax",
+            return_used=False,
+            push_arg_sources=(("ret_reg", 0x1001, "ax"),),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    final_call = statements[0].expr
+    assert final_call.callee_target == "srand"
+    assert len(final_call.args) == 1
+    assert isinstance(final_call.args[0], CFunctionCall)
+    assert final_call.args[0].callee_target == "time"
     assert getattr(codegen, "_inertia_return_register_call_args_materialized_8616", 0) == 1
 
 

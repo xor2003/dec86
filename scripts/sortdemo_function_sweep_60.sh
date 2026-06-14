@@ -36,11 +36,15 @@ entries=(
 )
 
 echo "function,addr,status,validation,tail"
+failures=0
 for entry in "${entries[@]}"; do
   addr="${entry%%:*}"
   name="${entry#*:}"
   log_file="${LOG_DIR}/${addr}.log"
-  "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/decompile.py" --brief --alternate-source-c --timeout "$TIMEOUT_SECONDS" --addr "$addr" "$BINARY" >"$log_file" 2>&1 || true
+  set +e
+  "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/decompile.py" --brief --alternate-source-c --timeout "$TIMEOUT_SECONDS" --addr "$addr" "$BINARY" >"$log_file" 2>&1
+  decompile_rc=$?
+  set -e
 
   if rg -q "Decompilation timeout" "$log_file"; then
     status="timeout"
@@ -53,6 +57,9 @@ for entry in "${entries[@]}"; do
     status="tail_failed"
   else
     status="ok"
+  fi
+  if [[ "$decompile_rc" -ne 0 && "$status" == "ok" ]]; then
+    status="failed"
   fi
 
   if rg -q "whole-tail validation failed" "$log_file"; then
@@ -84,4 +91,9 @@ for entry in "${entries[@]}"; do
   fi
 
   echo "${name},${addr},${status},${validation},${tail}"
+  if [[ "$status" != "ok" || "$validation" != "ok" || "$tail" != "clean" ]]; then
+    failures=1
+  fi
 done
+
+exit "$failures"

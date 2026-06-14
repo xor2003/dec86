@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from inertia_decompiler.cli_c_text_postprocess import (
     _align_unknown_call_names_from_cod_evidence_text,
     _align_function_header_with_cod_source_decl_text,
+    _annotate_cod_proc_output,
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_generic_local_declarations_text,
     _materialize_missing_direct_call_prototypes_text,
@@ -16,6 +17,7 @@ from inertia_decompiler.cli_c_text_postprocess import (
     _collapse_annotated_stack_aliases_text,
     _prune_non_lvalue_arithmetic_assignments,
     _prune_parameter_shadow_declarations_text,
+    _prune_standalone_stack_probe_calls_text,
     _prune_weaker_conflicting_prototypes_text,
     _prune_unused_local_declarations_text,
     _prune_unused_staging_assignments,
@@ -44,6 +46,26 @@ int select_and_apply(int which, int value)
     assert "unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn" in rewritten
 
 
+def test_dedupe_duplicate_local_declarations_handles_pointer_declarator():
+    c_text = """\
+int sortdemo_single_pass_swap(void)
+{
+    unsigned short v24;
+    unsigned short changed;
+    char *v24;  // 4113
+
+    changed = 0;
+    return changed;
+}
+"""
+
+    rewritten = _dedupe_duplicate_local_declarations_text(c_text)
+
+    assert "unsigned short v24;\n" not in rewritten
+    assert "char *v24;  // 4113" in rewritten
+    assert "return changed;" in rewritten
+
+
 def test_missing_generic_local_declarations_recognizes_function_pointer_decl():
     c_text = """\
 int select_and_apply(int value)
@@ -58,6 +80,57 @@ int select_and_apply(int value)
 
     assert "unsigned short local_2;\n" not in rewritten
     assert "unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn" in rewritten
+
+
+def test_dedupe_duplicate_local_declarations_parses_function_pointer_parameter():
+    c_text = """\
+short apply_twice(unsigned short (*arg)(unsigned short), unsigned short value)
+{
+    int local_2;  // [bp-0x2]
+    int local_2;  // [bp+0x2] fn
+
+    value = arg(value);
+    return value;
+}
+"""
+
+    rewritten = _dedupe_duplicate_local_declarations_text(c_text)
+
+    assert rewritten.count("int local_2;") == 1
+    assert "// [bp+0x2] fn" not in rewritten
+    assert "value = arg(value);" in rewritten
+
+
+def test_prune_unused_local_declarations_parses_function_pointer_parameter():
+    c_text = """\
+short apply_twice(unsigned short (*arg)(unsigned short), unsigned short value)
+{
+    unsigned short v6;  // ss
+
+    value = arg(value);
+    return value;
+}
+"""
+
+    rewritten = _prune_unused_local_declarations_text(c_text)
+
+    assert "unsigned short v6;" not in rewritten
+    assert "value = arg(value);" in rewritten
+
+
+def test_missing_generic_local_declarations_materializes_tmp_temps():
+    c_text = """\
+int f(void)
+{
+    vvar_1 = tmp_35 + 1;
+    return tmp_35;
+}
+"""
+
+    rewritten = _materialize_missing_generic_local_declarations_text(c_text)
+
+    assert "unsigned short tmp_35;" in rewritten
+    assert "unsigned short vvar_1;" in rewritten
 
 
 def test_collapse_annotated_stack_aliases_renames_function_pointer_decl():
@@ -78,6 +151,37 @@ int select_and_apply(int value)
     assert "local_2" not in rewritten
 
 
+def test_cod_annotation_renames_function_pointer_parameter_from_stack_alias():
+    c_text = """\
+short apply_twice(unsigned short (*arg)(unsigned short), unsigned short value)
+{
+    value = arg(value);
+    value = arg(value);
+    return value;
+}
+"""
+    metadata = SimpleNamespace(
+        stack_aliases={4: "fn", 6: "value"},
+        call_names=(),
+        global_names=(),
+        source_lines=(
+            "int apply_twice(int (*fn)(int), int value)",
+            "{",
+            "value = fn(value);",
+            "value = fn(value);",
+            "return value;",
+            "}",
+        ),
+    )
+    function = SimpleNamespace(name="apply_twice")
+
+    rewritten = _annotate_cod_proc_output(c_text, function, metadata)
+
+    assert "unsigned short (*fn)(unsigned short)" in rewritten
+    assert "value = fn(value);" in rewritten
+    assert "arg(value)" not in rewritten
+
+
 def test_text_cod_call_alignment_is_disabled_by_default(monkeypatch):
     monkeypatch.delenv("INERTIA_ENABLE_LEGACY_TEXT_CALL_NAME_ALIGNMENT", raising=False)
     c_text = """/* COD annotations:
@@ -94,6 +198,30 @@ void f(void)
     assert rewritten == c_text
     assert "sub_10079();" in rewritten
     assert "aNchkstk();" not in rewritten
+
+
+def test_prune_standalone_stack_probe_calls_removes_prototype_and_call():
+    c_text = """\
+/* COD annotations:
+ * calls = aNchkstk, DrawBar
+ */
+void aNchkstk(void);
+void DrawBar(unsigned short row);
+
+int f(void)
+{
+    aNchkstk();
+    DrawBar(1);
+    return 0;
+}
+"""
+
+    rewritten = _prune_standalone_stack_probe_calls_text(c_text)
+
+    assert "void aNchkstk(void);" not in rewritten
+    assert "    aNchkstk();" not in rewritten
+    assert "calls = aNchkstk, DrawBar" in rewritten
+    assert "DrawBar(1);" in rewritten
 
 
 def test_source_header_args_unmaterialized_refuses_void_header_when_generated_arg_is_live():
@@ -179,6 +307,31 @@ def test_materialize_annotated_cod_declarations_uses_source_void_return_for_call
 
     assert "void Swaps();" in rewritten
     assert "int Swaps();" not in rewritten
+
+
+def test_materialize_annotated_cod_declarations_uses_local_source_void_return_for_header():
+    c_text = """short Swaps(unsigned short *bar1, unsigned short *bar2)
+{
+    bar1[0] = bar2[0];
+}
+"""
+    metadata = SimpleNamespace(
+        source_lines=("short Swaps(unsigned short *bar1, unsigned short *bar2)", "{", "bar1[0] = bar2[0];", "}"),
+        source_return_lines=(),
+        call_names=(),
+        global_names=(),
+    )
+    function = SimpleNamespace(name="Swaps")
+
+    rewritten = _materialize_annotated_cod_declarations_text(
+        c_text,
+        function,
+        metadata,
+        source_return_types={"Swaps": "void"},
+    )
+
+    assert "void Swaps(unsigned short *bar1, unsigned short *bar2)" in rewritten
+    assert "short Swaps(unsigned short *bar1, unsigned short *bar2)" not in rewritten
 
 
 def test_materialize_missing_direct_call_prototypes_uses_source_void_return():
@@ -271,6 +424,20 @@ def test_prune_void_function_return_values_text_preserves_call_side_effect():
     assert "return;" not in rewritten
 
 
+def test_prune_void_function_return_values_text_preserves_address_qualified_call_side_effect():
+    c_text = """void main(void)
+{
+    return ::0x1294f::setvideomode(65535);
+}
+"""
+
+    rewritten = _prune_void_function_return_values_text(c_text)
+
+    assert "return ::0x1294f::setvideomode" not in rewritten
+    assert "::0x1294f::setvideomode(65535);" in rewritten
+    assert "return;" not in rewritten
+
+
 def test_prune_void_call_assignments_preserves_call_side_effect():
     c_text = """void DrawTime();
 void f(void)
@@ -312,6 +479,22 @@ LABEL_114d:
 
     assert "LABEL_114d:;" in rewritten
     assert "LABEL_114d:\n    }" not in rewritten
+
+
+def test_normalize_boolean_conditions_simplifies_negated_zero_one_ternary_for_loop():
+    c_text = """void f(void)
+{
+    for (i = 1; !((i < g_rows ? 0 : 1)); i = i + 1)
+    {
+        step(i);
+    }
+}
+"""
+
+    rewritten = _normalize_boolean_conditions(c_text)
+
+    assert "for (i = 1; i < g_rows; i = i + 1)" in rewritten
+    assert "? 0 : 1" not in rewritten
 
 
 def test_normalize_integer_dereference_stores_text_refuses_fake_segment_zero_store():
@@ -367,6 +550,28 @@ void SwapBars(int iRow1, int iRow2)
 
     assert "unsigned int arg_1;" not in rewritten
     assert "DrawBar(iRow2);" in rewritten
+
+
+def test_prune_unused_local_declarations_text_removes_commented_generated_memory_and_segment_locals():
+    c_text = """
+int demo(int i)
+{
+    unsigned short ds;  // ds
+    char mem_0042;  // [0x42]
+    char tmp_2;  // [bp-0x4]
+    unsigned short tmp; // [bp-0x2] tmp
+    tmp = i;
+    return tmp;
+}
+"""
+
+    rewritten = _prune_unused_local_declarations_text(c_text)
+
+    assert "unsigned short ds;" not in rewritten
+    assert "char mem_0042;" not in rewritten
+    assert "char tmp_2;" not in rewritten
+    assert "unsigned short tmp;" in rewritten
+    assert "return tmp;" in rewritten
 
 
 def test_prune_parameter_shadow_declarations_text_keeps_return_of_parameter_name():

@@ -16,7 +16,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CDoWhileLoop,
     CFunctionCall,
     CIfBreak,
+    CIfElse,
     CReturn,
+    CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
@@ -87,6 +89,7 @@ class _DecodedCmpGuard8616:
     rhs: object
     op: str
     expr: object | None = None
+    consumed_branch_keys: tuple[tuple[int, int], ...] = ()
 
 
 class _JccPolarityEvidence8616(Enum):
@@ -94,6 +97,12 @@ class _JccPolarityEvidence8616(Enum):
     JCC_TARGET_BODY = "jcc_target_body"
     BREAK_CONDITION = "break_condition"
     LOOP_CONTINUATION = "loop_continuation"
+
+
+class _JccDuplicateGuardDecision8616(Enum):
+    KEEP_UNKNOWN = "keep_unknown"
+    PRUNE_CURRENT_RAW_DUPLICATE = "prune_current_raw_duplicate"
+    PRUNE_PREVIOUS_RAW_DUPLICATE = "prune_previous_raw_duplicate"
 
 
 def _condition_tags_8616(node) -> tuple[int, int] | None:
@@ -1198,6 +1207,10 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
         low_op = _JCC_LOW_OP_8616.get(jcc3)
         if low_op is None:
             return None
+        consumed_low_branch_keys = (
+            (int(getattr(jcc2_insn, "address", 0)), int(mid_addr)),
+            (int(getattr(jcc3_insn, "address", 0)), int(cmp2_addr)),
+        )
 
         lhs_hi = _resolve_cmp_operand_expr_8616(
             project, codegen, cmp_insn.operands[0], reg_state, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
@@ -1267,7 +1280,12 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
 
         if jcc1 in {"jl", "jnge", "jb", "jnae", "jc"} and jcc2 in {"jge", "jnl", "jae", "jnb", "jnc"}:
             if lhs_wide is not None and rhs_wide is not None:
-                return _DecodedCmpGuard8616(lhs=lhs_wide, rhs=rhs_wide, op="CmpLT")
+                return _DecodedCmpGuard8616(
+                    lhs=lhs_wide,
+                    rhs=rhs_wide,
+                    op="CmpLT",
+                    consumed_branch_keys=consumed_low_branch_keys,
+                )
             return _DecodedCmpGuard8616(
                 lhs=None,
                 rhs=None,
@@ -1282,6 +1300,7 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
                     lhs=lhs_wide,
                     rhs=rhs_wide,
                     op="CmpLT" if low_op == "CmpLT" else "CmpLE",
+                    consumed_branch_keys=consumed_low_branch_keys,
                 )
             return _DecodedCmpGuard8616(
                 lhs=None,
@@ -1293,7 +1312,12 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
             )
         if jcc1 in {"jg", "jnle", "ja", "jnbe"} and jcc2 in {"jle", "jng", "jbe", "jna"}:
             if lhs_wide is not None and rhs_wide is not None:
-                return _DecodedCmpGuard8616(lhs=lhs_wide, rhs=rhs_wide, op="CmpGT")
+                return _DecodedCmpGuard8616(
+                    lhs=lhs_wide,
+                    rhs=rhs_wide,
+                    op="CmpGT",
+                    consumed_branch_keys=consumed_low_branch_keys,
+                )
             return _DecodedCmpGuard8616(
                 lhs=None,
                 rhs=None,
@@ -1308,6 +1332,7 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
                     lhs=lhs_wide,
                     rhs=rhs_wide,
                     op="CmpGT" if low_op == "CmpGT" else "CmpGE",
+                    consumed_branch_keys=consumed_low_branch_keys,
                 )
             return _DecodedCmpGuard8616(
                 lhs=None,
@@ -1319,11 +1344,21 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
             )
         if jcc1 in {"je", "jz"} and jcc2 in {"je", "jz", "jne", "jnz"}:
             if lhs_wide is not None and rhs_wide is not None:
-                return _DecodedCmpGuard8616(lhs=lhs_wide, rhs=rhs_wide, op="CmpEQ")
+                return _DecodedCmpGuard8616(
+                    lhs=lhs_wide,
+                    rhs=rhs_wide,
+                    op="CmpEQ",
+                    consumed_branch_keys=consumed_low_branch_keys,
+                )
             return _DecodedCmpGuard8616(lhs=None, rhs=None, op="CmpEQ", expr=eq_expr)
         if jcc1 in {"jne", "jnz"} and jcc2 in {"je", "jz", "jne", "jnz"}:
             if lhs_wide is not None and rhs_wide is not None:
-                return _DecodedCmpGuard8616(lhs=lhs_wide, rhs=rhs_wide, op="CmpNE")
+                return _DecodedCmpGuard8616(
+                    lhs=lhs_wide,
+                    rhs=rhs_wide,
+                    op="CmpNE",
+                    consumed_branch_keys=consumed_low_branch_keys,
+                )
             ne_expr = CBinaryOp(
                 "LogicalOr",
                 CBinaryOp("CmpNE", lhs_hi, rhs_hi, codegen=codegen),
@@ -1908,6 +1943,31 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
         key_conflicts: set[tuple[int, int]] = set()
         unknown_polarity_refused_keys: set[tuple[int, int]] = set()
         raw_state_refused_keys: set[tuple[int, int]] = set()
+        consumed_wide_compare_low_branch_keys: set[tuple[int, int]] = {
+            key
+            for key in tuple(getattr(codegen, "_inertia_jcc_consumed_32bit_low_guard_keys_8616", ()) or ())
+            if isinstance(key, tuple)
+            and len(key) == 2
+            and isinstance(key[0], int)
+            and isinstance(key[1], int)
+        }
+
+        def _record_consumed_decoded_guard_keys_8616(decoded: _DecodedCmpGuard8616) -> None:
+            if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")) and decoded.consumed_branch_keys:
+                _log.warning("[jcc-rewrite] record consumed branch keys=%r", decoded.consumed_branch_keys)
+            for key in decoded.consumed_branch_keys:
+                if not (
+                    isinstance(key, tuple)
+                    and len(key) == 2
+                    and isinstance(key[0], int)
+                    and isinstance(key[1], int)
+                ):
+                    continue
+                consumed_wide_compare_low_branch_keys.add(key)
+            if consumed_wide_compare_low_branch_keys:
+                codegen._inertia_jcc_consumed_32bit_low_guard_keys_8616 = tuple(
+                    sorted(consumed_wide_compare_low_branch_keys)
+                )
 
         def _is_literal_condition_8616(expr) -> bool:
             node = expr
@@ -2273,10 +2333,17 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     rhs=None,
                     op=decoded.op,
                     expr=CUnaryOp("Not", decoded.expr, codegen=codegen, tags=tags),
+                    consumed_branch_keys=decoded.consumed_branch_keys,
                 )
             inverted_op = _INVERT_CMP_OP_8616.get(decoded.op)
             if inverted_op is not None and not _decoded_guard_contains_real_call_8616(decoded):
-                return _DecodedCmpGuard8616(lhs=decoded.lhs, rhs=decoded.rhs, op=inverted_op, expr=None)
+                return _DecodedCmpGuard8616(
+                    lhs=decoded.lhs,
+                    rhs=decoded.rhs,
+                    op=inverted_op,
+                    expr=None,
+                    consumed_branch_keys=decoded.consumed_branch_keys,
+                )
             return _DecodedCmpGuard8616(
                 lhs=None,
                 rhs=None,
@@ -2287,6 +2354,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     codegen=codegen,
                     tags=tags,
                 ),
+                consumed_branch_keys=decoded.consumed_branch_keys,
             )
 
         def _jcc_target_for_key_8616(key: tuple[int, int] | None) -> int | None:
@@ -2303,7 +2371,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 return None
             return _branch_target_imm_8616(insns[jcc_index])
 
-        def _root_contains_ins_addr_8616(root, target_addr: int) -> bool:
+        def _root_contains_ins_addr_8616(root, target_addr: int, *, max_forward_bytes: int = 0) -> bool:
             if root is None:
                 return False
             pending = [root]
@@ -2320,8 +2388,16 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     continue
                 seen.add(marker)
                 tags = getattr(current, "tags", None)
-                if isinstance(tags, dict) and tags.get("ins_addr") == target_addr:
-                    return True
+                if isinstance(tags, dict):
+                    ins_addr = tags.get("ins_addr")
+                    if ins_addr == target_addr:
+                        return True
+                    if (
+                        isinstance(ins_addr, int)
+                        and max_forward_bytes > 0
+                        and int(target_addr) <= ins_addr <= int(target_addr) + int(max_forward_bytes)
+                    ):
+                        return True
                 stmts = getattr(current, "statements", None)
                 if stmts is not None:
                     pending.extend(reversed(tuple(stmts or ())))
@@ -2339,7 +2415,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
 
         def _jcc_polarity_evidence_8616(key: tuple[int, int] | None, body) -> _JccPolarityEvidence8616:
             target = _jcc_target_for_key_8616(key)
-            if isinstance(target, int) and _root_contains_ins_addr_8616(body, target):
+            if isinstance(target, int) and _root_contains_ins_addr_8616(body, target, max_forward_bytes=0x40):
                 return _JccPolarityEvidence8616.JCC_TARGET_BODY
             return _JccPolarityEvidence8616.UNKNOWN
 
@@ -2612,7 +2688,13 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 pass
             if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
                 _log.warning("[jcc-rewrite] rebound call-return guard key=%r source=%r", key, source)
-            return _DecodedCmpGuard8616(lhs=lhs, rhs=rhs, op=decoded.op, expr=None)
+            return _DecodedCmpGuard8616(
+                lhs=lhs,
+                rhs=rhs,
+                op=decoded.op,
+                expr=None,
+                consumed_branch_keys=decoded.consumed_branch_keys,
+            )
 
         def _decoded_signature_8616(decoded: _DecodedCmpGuard8616):
             if getattr(decoded, "expr", None) is not None:
@@ -2674,11 +2756,13 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             # but still carry insn/block tags for a decodable cmp+jcc origin.
             tagged_key = _condition_tags_8616(cond)
             debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
+            has_raw_register_carrier = _expr_uses_nonsegment_register_carrier_8616(cond)
             has_carrier_evidence = (
                 _c_expr_uses_register_8616(cond, flags_offset)
                 or _is_literal_condition_8616(cond)
                 or _is_tagged_condition_carrier_8616(cond)
                 or _has_materialized_nonflag_cmp_8616(cond)
+                or has_raw_register_carrier
             )
             if not (
                 has_carrier_evidence
@@ -2729,6 +2813,11 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                         rhs_fp,
                 )
                 return None
+
+            if has_raw_register_carrier and not _decoded_guard_uses_raw_state_register_8616(decoded):
+                codegen._inertia_jcc_raw_register_condition_carrier_decoded_8616 = int(
+                    getattr(codegen, "_inertia_jcc_raw_register_condition_carrier_decoded_8616", 0) or 0
+                ) + 1
 
             # Guardrail: once a condition is an explicit non-flag comparison,
             # treat it as materialized. Exception: a compare sourced from an
@@ -2788,6 +2877,7 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 with contextlib.suppress(Exception):
                     if not isinstance(getattr(decoded.expr, "tags", None), dict):
                         decoded.expr.tags = tags
+                _record_consumed_decoded_guard_keys_8616(decoded)
                 return decoded.expr
             replacement = _try_build_arch_safe_binary_op_8616(
                 project,
@@ -2801,6 +2891,8 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 codegen._inertia_jcc_rewrite_refused_archless_type_replacement_8616 = int(
                     getattr(codegen, "_inertia_jcc_rewrite_refused_archless_type_replacement_8616", 0) or 0
                 ) + 1
+            else:
+                _record_consumed_decoded_guard_keys_8616(decoded)
             return replacement
 
         def _decoded_condition_replacement(
@@ -2991,6 +3083,243 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     if new_cond is not cond:
                         node.condition = new_cond
                         changed = True
+
+        def _empty_return_body_8616(body) -> bool:
+            if isinstance(body, CReturn):
+                return getattr(body, "retval", None) is None
+            if isinstance(body, CStatements):
+                statements = tuple(getattr(body, "statements", ()) or ())
+                return len(statements) == 1 and _empty_return_body_8616(statements[0])
+            return False
+
+        def _empty_statement_root_8616(root) -> bool:
+            if root is None:
+                return True
+            if isinstance(root, CStatements):
+                return not tuple(getattr(root, "statements", ()) or ())
+            return False
+
+        def _prune_consumed_low_guard_node_8616(node):
+            if isinstance(node, CStatements):
+                local_changed = False
+                rebuilt = []
+                for stmt in tuple(getattr(node, "statements", ()) or ()):
+                    replacement, stmt_changed = _prune_consumed_low_guard_node_8616(stmt)
+                    local_changed = local_changed or stmt_changed
+                    if replacement is not None:
+                        rebuilt.append(replacement)
+                if local_changed:
+                    node.statements = rebuilt
+                return node, local_changed
+            if not isinstance(node, CIfElse):
+                local_changed = False
+                for attr in ("body", "else_node", "iftrue", "iffalse"):
+                    child = getattr(node, attr, None)
+                    if child is None:
+                        continue
+                    new_child, child_changed = _prune_consumed_low_guard_node_8616(child)
+                    if child_changed:
+                        setattr(node, attr, new_child)
+                        local_changed = True
+                return node, local_changed
+
+            local_changed = False
+            cond_pairs = getattr(node, "condition_and_nodes", None)
+            if isinstance(cond_pairs, (list, tuple)):
+                new_pairs = []
+                for cond, body in tuple(cond_pairs):
+                    new_body, body_changed = _prune_consumed_low_guard_node_8616(body)
+                    local_changed = local_changed or body_changed
+                    if (
+                        _condition_tags_8616(cond) in consumed_wide_compare_low_branch_keys
+                        and _empty_return_body_8616(new_body)
+                    ):
+                        codegen._inertia_jcc_consumed_32bit_low_guard_pruned_8616 = int(
+                            getattr(codegen, "_inertia_jcc_consumed_32bit_low_guard_pruned_8616", 0) or 0
+                        ) + 1
+                        local_changed = True
+                        continue
+                    new_pairs.append((cond, new_body))
+                if local_changed:
+                    node.condition_and_nodes = type(cond_pairs)(new_pairs)
+            else_node = getattr(node, "else_node", None)
+            new_else, else_changed = _prune_consumed_low_guard_node_8616(else_node)
+            if else_changed:
+                node.else_node = new_else
+                local_changed = True
+
+            cond_pairs = getattr(node, "condition_and_nodes", None)
+            if isinstance(cond_pairs, (list, tuple)) and not cond_pairs and _empty_statement_root_8616(
+                getattr(node, "else_node", None)
+            ):
+                return None, True
+            if isinstance(cond_pairs, (list, tuple)) and len(cond_pairs) == 1:
+                cond, body = cond_pairs[0]
+                if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
+                    _log.warning(
+                        "[jcc-rewrite] consumed-low prune candidate key=%r consumed=%r body_empty=%s else_empty=%s",
+                        _condition_tags_8616(cond),
+                        tuple(sorted(consumed_wide_compare_low_branch_keys)),
+                        _empty_return_body_8616(body),
+                        _empty_statement_root_8616(getattr(node, "else_node", None)),
+                    )
+                if (
+                    _condition_tags_8616(cond) in consumed_wide_compare_low_branch_keys
+                    and _empty_return_body_8616(body)
+                    and _empty_statement_root_8616(getattr(node, "else_node", None))
+                ):
+                    codegen._inertia_jcc_consumed_32bit_low_guard_pruned_8616 = int(
+                        getattr(codegen, "_inertia_jcc_consumed_32bit_low_guard_pruned_8616", 0) or 0
+                    ) + 1
+                    return None, True
+            return node, local_changed
+
+        if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
+            if_node_count = sum(
+                1 for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements) if isinstance(node, CIfElse)
+            )
+            _log.warning(
+                "[jcc-rewrite] consumed-low prune start consumed=%r if_nodes=%d root_type=%s",
+                tuple(sorted(consumed_wide_compare_low_branch_keys)),
+                if_node_count,
+                type(codegen.cfunc.statements).__name__,
+            )
+        if consumed_wide_compare_low_branch_keys:
+            _pruned_root, pruned_changed = _prune_consumed_low_guard_node_8616(codegen.cfunc.statements)
+            if pruned_changed:
+                changed = True
+
+        def _condition_contains_real_call_8616(cond) -> bool:
+            if cond is None:
+                return False
+            for child in _iter_c_nodes_deep_8616(cond):
+                if not isinstance(child, CFunctionCall):
+                    continue
+                callee = getattr(child, "callee_target", None)
+                if isinstance(callee, str) and callee in {
+                    "SEG_PTR",
+                    "MK_FP",
+                    "SEG_U8",
+                    "SEG_U16",
+                    "SEG_U32",
+                    "MEM_U8",
+                    "MEM_U16",
+                    "MEM_U32",
+                }:
+                    continue
+                return True
+            return False
+
+        def _cmp_root_op_8616(cond) -> str | None:
+            node = cond
+            while isinstance(node, CTypeCast):
+                node = getattr(node, "expr", None)
+            if isinstance(node, CUnaryOp):
+                return None
+            if isinstance(node, CBinaryOp):
+                op = getattr(node, "op", None)
+                if isinstance(op, str) and op.startswith("Cmp"):
+                    return op
+            return None
+
+        def _is_stable_materialized_guard_8616(cond) -> bool:
+            if cond is None:
+                return False
+            if _condition_contains_real_call_8616(cond):
+                return False
+            if _expr_uses_nonsegment_register_carrier_8616(cond):
+                return False
+            return _condition_materialized_by_jcc_8616(cond) or _has_materialized_nonflag_cmp_8616(cond)
+
+        def _is_raw_register_guard_8616(cond) -> bool:
+            if cond is None:
+                return False
+            if _condition_contains_real_call_8616(cond):
+                return False
+            return _expr_uses_nonsegment_register_carrier_8616(cond)
+
+        def _classify_duplicate_jcc_ifbreak_guard_8616(
+            previous_stmt,
+            current_stmt,
+        ) -> _JccDuplicateGuardDecision8616:
+            if not isinstance(previous_stmt, CIfBreak) or not isinstance(current_stmt, CIfBreak):
+                return _JccDuplicateGuardDecision8616.KEEP_UNKNOWN
+            previous_cond = getattr(previous_stmt, "condition", None)
+            current_cond = getattr(current_stmt, "condition", None)
+            previous_key = _condition_tags_8616(previous_cond)
+            current_key = _condition_tags_8616(current_cond)
+            if previous_key is None or previous_key != current_key:
+                return _JccDuplicateGuardDecision8616.KEEP_UNKNOWN
+            previous_op = _cmp_root_op_8616(previous_cond)
+            current_op = _cmp_root_op_8616(current_cond)
+            if previous_op is None or previous_op != current_op:
+                return _JccDuplicateGuardDecision8616.KEEP_UNKNOWN
+
+            previous_materialized = _is_stable_materialized_guard_8616(previous_cond)
+            current_materialized = _is_stable_materialized_guard_8616(current_cond)
+            previous_raw = _is_raw_register_guard_8616(previous_cond)
+            current_raw = _is_raw_register_guard_8616(current_cond)
+            if previous_materialized and current_raw and not previous_raw:
+                return _JccDuplicateGuardDecision8616.PRUNE_CURRENT_RAW_DUPLICATE
+            if current_materialized and previous_raw and not current_raw:
+                return _JccDuplicateGuardDecision8616.PRUNE_PREVIOUS_RAW_DUPLICATE
+            return _JccDuplicateGuardDecision8616.KEEP_UNKNOWN
+
+        def _prune_duplicate_raw_jcc_ifbreaks_8616(root) -> bool:
+            if root is None:
+                return False
+            local_changed = False
+            if isinstance(root, CStatements):
+                rebuilt = []
+                for stmt in tuple(getattr(root, "statements", ()) or ()):
+                    if _prune_duplicate_raw_jcc_ifbreaks_8616(stmt):
+                        local_changed = True
+                    if rebuilt:
+                        codegen._inertia_jcc_duplicate_guard_candidates_8616 = int(
+                            getattr(codegen, "_inertia_jcc_duplicate_guard_candidates_8616", 0) or 0
+                        ) + 1
+                        decision = _classify_duplicate_jcc_ifbreak_guard_8616(rebuilt[-1], stmt)
+                        if decision is _JccDuplicateGuardDecision8616.PRUNE_CURRENT_RAW_DUPLICATE:
+                            codegen._inertia_jcc_duplicate_raw_guard_pruned_8616 = int(
+                                getattr(codegen, "_inertia_jcc_duplicate_raw_guard_pruned_8616", 0) or 0
+                            ) + 1
+                            local_changed = True
+                            continue
+                        if decision is _JccDuplicateGuardDecision8616.PRUNE_PREVIOUS_RAW_DUPLICATE:
+                            codegen._inertia_jcc_duplicate_raw_guard_pruned_8616 = int(
+                                getattr(codegen, "_inertia_jcc_duplicate_raw_guard_pruned_8616", 0) or 0
+                            ) + 1
+                            rebuilt[-1] = stmt
+                            local_changed = True
+                            continue
+                        codegen._inertia_jcc_duplicate_raw_guard_refused_8616 = int(
+                            getattr(codegen, "_inertia_jcc_duplicate_raw_guard_refused_8616", 0) or 0
+                        ) + 1
+                    rebuilt.append(stmt)
+                if local_changed:
+                    root.statements = rebuilt
+                return local_changed
+            for attr in ("body", "else_node", "iftrue", "iffalse"):
+                child = getattr(root, attr, None)
+                if child is None:
+                    continue
+                if _prune_duplicate_raw_jcc_ifbreaks_8616(child):
+                    local_changed = True
+            cond_pairs = getattr(root, "condition_and_nodes", None)
+            if isinstance(cond_pairs, (list, tuple)):
+                new_pairs = []
+                pair_changed = False
+                for cond, body in tuple(cond_pairs):
+                    if _prune_duplicate_raw_jcc_ifbreaks_8616(body):
+                        pair_changed = True
+                    new_pairs.append((cond, body))
+                if pair_changed:
+                    root.condition_and_nodes = type(cond_pairs)(new_pairs)
+                    local_changed = True
+            return local_changed
+
+        if _prune_duplicate_raw_jcc_ifbreaks_8616(codegen.cfunc.statements):
+            changed = True
 
         if changed:
             lane = getattr(codegen, "_inertia_condition_lane", None)

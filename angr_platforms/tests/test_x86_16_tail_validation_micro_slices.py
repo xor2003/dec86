@@ -333,6 +333,50 @@ def test_tail_validation_micro_slice_preserves_stack_loop_write_shape():
     assert diff["changed"] is False
 
 
+def test_tail_validation_micro_slice_detects_return_local_write_moved_out_of_loop():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before = _codegen(
+        [
+            CWhileLoop(
+                CBinaryOp("CmpGT", _stack(-4, before_codegen), _const(0, before_codegen), codegen=before_codegen),
+                CStatements(
+                    [
+                        CAssignment(_stack(-2, before_codegen), _stack(-4, before_codegen), codegen=before_codegen),
+                        CBreak(codegen=before_codegen),
+                    ],
+                    codegen=before_codegen,
+                ),
+                codegen=before_codegen,
+            ),
+            CReturn(_stack(-2, before_codegen), codegen=before_codegen),
+        ],
+        before_codegen,
+    )
+    after = _codegen(
+        [
+            CWhileLoop(
+                CBinaryOp("CmpGT", _stack(-4, after_codegen), _const(0, after_codegen), codegen=after_codegen),
+                CStatements([CBreak(codegen=after_codegen)], codegen=after_codegen),
+                codegen=after_codegen,
+            ),
+            CAssignment(_stack(-2, after_codegen), _stack(-4, after_codegen), codegen=after_codegen),
+            CReturn(_stack(-2, after_codegen), codegen=after_codegen),
+        ],
+        after_codegen,
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(
+        collect_x86_16_tail_validation_summary(project, before, mode="live_out"),
+        collect_x86_16_tail_validation_summary(project, after, mode="live_out"),
+    )
+
+    assert diff["changed"] is True
+    assert diff["delta"]["stack_writes"] == {"added": (), "removed": ()}
+    assert diff["delta"]["control_flow_effects"]["removed"]
+
+
 def test_tail_validation_micro_slice_preserves_helper_call_identity():
     project = _project()
     before_codegen = _DummyCodegen()

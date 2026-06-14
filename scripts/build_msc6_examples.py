@@ -393,7 +393,7 @@ int main(void)
 STORAGE_CLASSES_PREFIX = """
 short g_counter = 3;
 unsigned char g_table[4] = { 1, 2, 3, 4 };
-unsigned short g_0048 = 10;
+unsigned short _S104_seen = 10;
 """
 
 STORAGE_CLASSES_HARNESS_MAIN = """
@@ -410,6 +410,70 @@ int main(void)
     }
     if (bump_static() != 14) {
         return 3;
+    }
+    return 255;
+}
+"""
+
+SORTDEMO_PATTERNS_HARNESS_MAIN = """
+int main(void)
+{
+    if (sortdemo_loop_bound() != 15) {
+        return 1;
+    }
+    if (sortdemo_descend_count(4) != 10) {
+        return 2;
+    }
+    if (sortdemo_global_pair_sum() != 12) {
+        return 3;
+    }
+    if (sortdemo_adjacent_gt(1) != 1) {
+        return 4;
+    }
+    if (sortdemo_adjacent_gt(2) != 0) {
+        return 5;
+    }
+    sortdemo_reset_work();
+    if (sortdemo_adjacent_swap_once(1) != 1) {
+        return 6;
+    }
+    if (g_work[0] != 1 || g_work[1] != 9) {
+        return 7;
+    }
+    if (sortdemo_adjacent_swap_once(2) != 1) {
+        return 8;
+    }
+    if (g_work[1] != 5 || g_work[2] != 9) {
+        return 9;
+    }
+    sortdemo_reset_work();
+    if (sortdemo_single_pass_swap() != 11) {
+        return 10;
+    }
+    if (g_work[0] != 1 || g_work[5] != 9) {
+        return 11;
+    }
+    sortdemo_reset_work();
+    if (sortdemo_switch_loop() != 10) {
+        return 12;
+    }
+    if (g_work[0] != 1 || g_work[5] != 9) {
+        return 13;
+    }
+    sortdemo_reset_work();
+    if (sortdemo_pivot_scan(0, 5) != 4) {
+        return 14;
+    }
+    if (g_work[0] != 2 || g_work[3] != 9) {
+        return 15;
+    }
+    sortdemo_exchangedata_init();
+    sortdemo_heap_percolate_up(4);
+    if (g_demo_len[1] != 8 || g_demo_len[2] != 1 || g_demo_len[4] != 5) {
+        return 16;
+    }
+    if (g_demo_bar[1] != 4 || g_demo_bar[2] != 1 || g_demo_bar[4] != 2) {
+        return 17;
     }
     return 255;
 }
@@ -491,6 +555,35 @@ FALLBACK_EXAMPLE_REBUILD = {
         "functions": ("_sum_globals", "bump_static"),
         "prefix": STORAGE_CLASSES_PREFIX,
         "harness": STORAGE_CLASSES_HARNESS_MAIN,
+    },
+    "sortdemo_patterns": {
+        "functions": (
+            "sortdemo_reset_work",
+            "sortdemo_loop_bound",
+            "sortdemo_descend_count",
+            "sortdemo_global_pair_sum",
+            "sortdemo_adjacent_gt",
+            "sortdemo_adjacent_swap_once",
+            "sortdemo_single_pass_swap",
+            "sortdemo_switch_loop",
+            "sortdemo_pivot_scan",
+            "DrawTime",
+            "Swaps",
+            "SwapBars",
+            "sortdemo_exchangedata_init",
+            "sortdemo_exchange_sort",
+            "sortdemo_heap_percolate_up",
+        ),
+        "prefix": (
+            "unsigned short g_rows = 6;\n"
+            "unsigned short g_work[8] = { 9, 1, 5, 2, 8, 3, 7, 4 };\n"
+            "unsigned short g_demo_rows = 6;\n"
+            "unsigned short g_demo_len[6] = { 9, 1, 5, 2, 8, 3 };\n"
+            "unsigned short g_demo_bar[6] = { 0, 1, 2, 3, 4, 5 };\n"
+            "unsigned short g_demo_draw_calls = 0;\n"
+            "unsigned short g_demo_draw_last = 0;\n"
+        ),
+        "harness": SORTDEMO_PATTERNS_HARNESS_MAIN,
     },
     "enum_union": {
         "functions": ("token_cost", "combine_bytes"),
@@ -1553,6 +1646,7 @@ def _build_from_function_decompiles(
         obj_name=decompile_obj_name,
         exe_name=decompile_exe_name,
         map_name=decompile_map_name,
+        cod_name=Path(decompile_c_name).with_suffix(".COD").name,
         runtime_support=True,
     )
     run_exit: int | None = None
@@ -2152,6 +2246,7 @@ def _decompile_and_validate(
         obj_name=obj_name,
         exe_name=exe_name,
         map_name=map_name,
+        cod_name=Path(decomp_name).with_suffix(".COD").name,
         runtime_support=True,
     )
     decompile_run_exit: int | None = None
@@ -2373,6 +2468,7 @@ def main() -> int:
         "enum_union": "EUNION.C",
         "function_pointers": "FPTR.C",
         "storage_classes": "STORE.C",
+        "sortdemo_patterns": "SORTPAT.C",
     }
     decompile_skip = set(args.skip_constructs)
     decompile_idx = 0

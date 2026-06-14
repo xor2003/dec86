@@ -172,9 +172,9 @@ def test_sortdemo_swaps_preserves_binary_proven_global_increment_and_pointer_swa
     assert "gcc syntax check failed:" not in combined
     assert "void Swaps(unsigned short *bar1, unsigned short *bar2)" in result.stdout
     assert "iSwaps += 1;" in result.stdout
-    assert "local_2 = bar1[0];" in result.stdout
+    assert "barTmp = bar1[0];" in result.stdout or "local_2 = bar1[0];" in result.stdout
     assert "bar1[0] = bar2[0];" in result.stdout
-    assert "bar2[0] = local_2;" in result.stdout
+    assert "bar2[0] = local_2;" in result.stdout or "bar2[0] = barTmp;" in result.stdout
 
 
 def test_sortdemo_percolateup_materializes_parent_once_and_preserves_calls():
@@ -568,6 +568,9 @@ def test_sortdemo_acceptance_scorecards_capture_main_sleep_and_percolateup_state
     assert sleep_scorecard.source_present is True
     assert "flags_2 = ...;" not in sleep_result.stdout
     assert "(flags_3 & 128) == (flags_3 & 0x800)" not in sleep_result.stdout
+    assert "else if" not in sleep_result.stdout
+    assert "if (clock() <= goal)" not in sleep_result.stdout
+    assert "if (clock() > goal)" in sleep_result.stdout or "while (clock() <= goal)" in sleep_result.stdout
     assert sleep_scorecard.raw_ss_linear_count == 0
     assert sleep_scorecard.validation_verdict == "stable"
     if percolate_result.returncode == 0:

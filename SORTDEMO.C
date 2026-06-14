@@ -26,6 +26,31 @@
 #include <TIME.H>           // time, clock
 
 #ifdef SORTDEMO_FUNCTION_SELFTEST
+static int sortdemo_textrows_calls;
+static int sortdemo_clear_calls;
+static int sortdemo_cursor_calls;
+static int sortdemo_config_calls;
+static int sortdemo_position_calls;
+static int sortdemo_color_calls;
+static int sortdemo_bkcolor_calls;
+static int sortdemo_outtext_calls;
+static int sortdemo_videomode_calls;
+static int sortdemo_drawbar_calls;
+static int sortdemo_drawbar_last_row;
+static int sortdemo_drawtime_calls;
+static int sortdemo_drawtime_last_row;
+static int sortdemo_beep_calls;
+static int sortdemo_beep_last_frequency;
+static int sortdemo_beep_last_duration;
+static int sortdemo_sleep_calls;
+static clock_t sortdemo_sleep_last_wait;
+static const char *sortdemo_key_input;
+static int sortdemo_key_index;
+static int sortdemo_key_calls;
+
+static int sortdemo_selftest_getch( void );
+#define getch sortdemo_selftest_getch
+
 typedef struct videoconfig
 {
     int monitor;
@@ -42,22 +67,25 @@ typedef struct videoconfig
 
 static int _settextrows( int rows )
 {
-    (void)rows;
+    sortdemo_textrows_calls++;
     return 0;
 }
 
 static void _clearscreen( int flags )
 {
+    sortdemo_clear_calls++;
     (void)flags;
 }
 
 static void _displaycursor( int state )
 {
+    sortdemo_cursor_calls++;
     (void)state;
 }
 
 static int _getvideoconfig( videoconfig *config )
 {
+    sortdemo_config_calls++;
     if( config != 0 )
     {
         config->monitor = _MONO;
@@ -68,6 +96,7 @@ static int _getvideoconfig( videoconfig *config )
 
 static int _settextposition( int row, int col )
 {
+    sortdemo_position_calls++;
     (void)row;
     (void)col;
     return 0;
@@ -75,23 +104,27 @@ static int _settextposition( int row, int col )
 
 static int _settextcolor( int color )
 {
+    sortdemo_color_calls++;
     (void)color;
     return 0;
 }
 
 static void _setbkcolor( long color )
 {
+    sortdemo_bkcolor_calls++;
     (void)color;
 }
 
 static int _outtext( const char *text )
 {
+    sortdemo_outtext_calls++;
     (void)text;
     return 0;
 }
 
 static int _setvideomode( int mode )
 {
+    sortdemo_videomode_calls++;
     (void)mode;
     return 0;
 }
@@ -196,28 +229,116 @@ char *aszMenu[] =
 int cszMenu = sizeof( aszMenu ) / sizeof( aszMenu[0] );
 
 #ifdef SORTDEMO_FUNCTION_SELFTEST
-#define SORTDEMO_SELFTEST_ROWS 5
-#define SORTDEMO_SELFTEST_SUCCESS_EXIT 255
+enum SORTDEMO_SELFTEST_RESULT
+{
+    SORTDEMO_SELFTEST_ROWS = 5,
+    SORTDEMO_FAIL_INITMENU = 1,
+    SORTDEMO_FAIL_DRAWFRAME = 2,
+    SORTDEMO_FAIL_RUNMENU = 3,
+    SORTDEMO_FAIL_DRAWTIME = 4,
+    SORTDEMO_FAIL_INITBARS = 5,
+    SORTDEMO_FAIL_REINITBARS = 6,
+    SORTDEMO_FAIL_DRAWBAR = 7,
+    SORTDEMO_FAIL_SWAPBARS = 8,
+    SORTDEMO_FAIL_SWAPS = 9,
+    SORTDEMO_FAIL_INSERTIONSORT = 10,
+    SORTDEMO_FAIL_BUBBLESORT = 11,
+    SORTDEMO_FAIL_HEAPSORT = 12,
+    SORTDEMO_FAIL_PERCOLATEUP = 13,
+    SORTDEMO_FAIL_PERCOLATEDOWN = 14,
+    SORTDEMO_FAIL_EXCHANGESORT = 15,
+    SORTDEMO_FAIL_SHELLSORT = 16,
+    SORTDEMO_FAIL_QUICKSORT = 17,
+    SORTDEMO_FAIL_BEEP = 18,
+    SORTDEMO_FAIL_SLEEP = 19,
+    SORTDEMO_SELFTEST_SUCCESS_EXIT = 255
+};
 
-static void sortdemo_init_test_rows(void)
+static void sortdemo_reset_observation( void )
+{
+    sortdemo_textrows_calls = 0;
+    sortdemo_clear_calls = 0;
+    sortdemo_cursor_calls = 0;
+    sortdemo_config_calls = 0;
+    sortdemo_position_calls = 0;
+    sortdemo_color_calls = 0;
+    sortdemo_bkcolor_calls = 0;
+    sortdemo_outtext_calls = 0;
+    sortdemo_videomode_calls = 0;
+    sortdemo_drawbar_calls = 0;
+    sortdemo_drawbar_last_row = -1;
+    sortdemo_drawtime_calls = 0;
+    sortdemo_drawtime_last_row = -1;
+    sortdemo_beep_calls = 0;
+    sortdemo_beep_last_frequency = 0;
+    sortdemo_beep_last_duration = 0;
+    sortdemo_sleep_calls = 0;
+    sortdemo_sleep_last_wait = 0;
+    sortdemo_key_input = "";
+    sortdemo_key_index = 0;
+    sortdemo_key_calls = 0;
+}
+
+static void sortdemo_set_keys( const char *keys )
+{
+    sortdemo_key_input = keys;
+    sortdemo_key_index = 0;
+    sortdemo_key_calls = 0;
+}
+
+static int sortdemo_selftest_getch( void )
+{
+    int ch;
+
+    sortdemo_key_calls++;
+    ch = ESC;
+    if( sortdemo_key_input != 0 && sortdemo_key_input[sortdemo_key_index] != '\0' )
+    {
+        ch = sortdemo_key_input[sortdemo_key_index];
+        sortdemo_key_index++;
+    }
+    return ch;
+}
+
+static void sortdemo_set_bar( BAR *bar, int len, int clr )
+{
+    bar->len = (char)len;
+    bar->clr = (char)clr;
+}
+
+static void sortdemo_set_work_lengths( int len0, int len1, int len2, int len3, int len4 )
+{
+    cRow = SORTDEMO_SELFTEST_ROWS;
+    sortdemo_set_bar( &abarWork[0], len0, 1 );
+    sortdemo_set_bar( &abarWork[1], len1, 2 );
+    sortdemo_set_bar( &abarWork[2], len2, 3 );
+    sortdemo_set_bar( &abarWork[3], len3, 4 );
+    sortdemo_set_bar( &abarWork[4], len4, 5 );
+}
+
+static void sortdemo_init_test_rows( void )
 {
     cRow = SORTDEMO_SELFTEST_ROWS;
     clPause = 30L;
     fSound = FALSE;
 
-    abarPerm[0].len = 5;
-    abarPerm[0].clr = 1;
-    abarPerm[1].len = 3;
-    abarPerm[1].clr = 2;
-    abarPerm[2].len = 4;
-    abarPerm[2].clr = 3;
-    abarPerm[3].len = 1;
-    abarPerm[3].clr = 4;
-    abarPerm[4].len = 2;
-    abarPerm[4].clr = 5;
+    sortdemo_set_bar( &abarPerm[0], 5, 1 );
+    sortdemo_set_bar( &abarPerm[1], 3, 2 );
+    sortdemo_set_bar( &abarPerm[2], 4, 3 );
+    sortdemo_set_bar( &abarPerm[3], 1, 4 );
+    sortdemo_set_bar( &abarPerm[4], 2, 5 );
 }
 
-static int sortdemo_check_bars_equal(int start, int count, const BAR *expected)
+static int sortdemo_check_work_lengths( int len0, int len1, int len2, int len3, int len4 )
+{
+    return ( (int)abarWork[0].len == len0 &&
+             (int)abarWork[1].len == len1 &&
+             (int)abarWork[2].len == len2 &&
+             (int)abarWork[3].len == len3 &&
+             (int)abarWork[4].len == len4 );
+}
+
+static int sortdemo_check_bars_equal( int start, int count, const BAR *expected )
 {
     int idx;
 
@@ -231,7 +352,7 @@ static int sortdemo_check_bars_equal(int start, int count, const BAR *expected)
     return 1;
 }
 
-static int sortdemo_is_non_decreasing_len(void)
+static int sortdemo_is_non_decreasing_len( void )
 {
     int idx;
 
@@ -243,250 +364,375 @@ static int sortdemo_is_non_decreasing_len(void)
     return 1;
 }
 
-static int sortdemo_check_reinit(void)
+static int sortdemo_perm_lengths_are_valid( void )
+{
+    int idx;
+    int len;
+    int seen[44];
+
+    for( idx = 0; idx < 44; idx++ )
+        seen[idx] = 0;
+    for( idx = 0; idx < cRow; idx++ )
+    {
+        len = (int)abarPerm[idx].len;
+        if( len < 1 || len > cRow )
+            return 0;
+        if( (int)abarPerm[idx].clr != BLANKCOLOR )
+            return 0;
+        seen[len]++;
+    }
+    for( idx = 1; idx <= cRow; idx++ )
+    {
+        if( seen[idx] != 1 )
+            return 0;
+    }
+    return 1;
+}
+
+static int sortdemo_work_equals_perm( void )
+{
+    int idx;
+
+    for( idx = 0; idx < cRow; idx++ )
+    {
+        if( (int)abarWork[idx].len != (int)abarPerm[idx].len )
+            return 0;
+        if( (int)abarWork[idx].clr != (int)abarPerm[idx].clr )
+            return 0;
+    }
+    return 1;
+}
+
+static int sortdemo_test_initmenu( void )
+{
+    cRow = SORTDEMO_SELFTEST_ROWS;
+    fSound = TRUE;
+    clPause = 30L;
+    sortdemo_reset_observation();
+
+    InitMenu();
+    if( sortdemo_color_calls == 0 || sortdemo_bkcolor_calls == 0 )
+        return SORTDEMO_FAIL_INITMENU;
+    if( sortdemo_outtext_calls <= cszMenu )
+        return SORTDEMO_FAIL_INITMENU;
+    if( sortdemo_position_calls != sortdemo_outtext_calls )
+        return SORTDEMO_FAIL_INITMENU;
+    return 0;
+}
+
+static int sortdemo_test_drawframe( void )
+{
+    sortdemo_reset_observation();
+
+    DrawFrame( 1, 2, 5, 3 );
+    if( sortdemo_outtext_calls != 4 )
+        return SORTDEMO_FAIL_DRAWFRAME;
+    if( sortdemo_position_calls != 4 )
+        return SORTDEMO_FAIL_DRAWFRAME;
+    return 0;
+}
+
+static int sortdemo_test_runmenu( void )
+{
+    sortdemo_init_test_rows();
+    fSound = FALSE;
+    clPause = 30L;
+    sortdemo_reset_observation();
+    sortdemo_set_keys( "T><\033" );
+
+    RunMenu();
+    if( sortdemo_key_calls != 4 )
+        return SORTDEMO_FAIL_RUNMENU;
+    if( fSound != TRUE )
+        return SORTDEMO_FAIL_RUNMENU;
+    if( clPause != 30L )
+        return SORTDEMO_FAIL_RUNMENU;
+    if( sortdemo_cursor_calls != 8 )
+        return SORTDEMO_FAIL_RUNMENU;
+    return 0;
+}
+
+static int sortdemo_test_drawtime( void )
+{
+    fSound = FALSE;
+    clPause = 42L;
+    sortdemo_reset_observation();
+
+    DrawTime( 3 );
+    if( sortdemo_drawtime_calls != 1 || sortdemo_drawtime_last_row != 3 )
+        return SORTDEMO_FAIL_DRAWTIME;
+    if( sortdemo_sleep_calls != 1 || sortdemo_sleep_last_wait != 42L )
+        return SORTDEMO_FAIL_DRAWTIME;
+    return 0;
+}
+
+static int sortdemo_test_initbars( void )
+{
+    cRow = SORTDEMO_SELFTEST_ROWS;
+    sortdemo_reset_observation();
+
+    InitBars();
+    if( fSound != TRUE || clPause != 30L )
+        return SORTDEMO_FAIL_INITBARS;
+    if( sortdemo_config_calls != 1 )
+        return SORTDEMO_FAIL_INITBARS;
+    if( sortdemo_drawbar_calls != cRow )
+        return SORTDEMO_FAIL_INITBARS;
+    if( !sortdemo_perm_lengths_are_valid() )
+        return SORTDEMO_FAIL_INITBARS;
+    if( !sortdemo_work_equals_perm() )
+        return SORTDEMO_FAIL_INITBARS;
+    return 0;
+}
+
+static int sortdemo_test_reinitbars( void )
 {
     BAR expected[SORTDEMO_SELFTEST_ROWS];
 
     sortdemo_init_test_rows();
+    sortdemo_reset_observation();
     ReInitBars();
 
-    expected[0].len = 5;
-    expected[0].clr = 1;
-    expected[1].len = 3;
-    expected[1].clr = 2;
-    expected[2].len = 4;
-    expected[2].clr = 3;
-    expected[3].len = 1;
-    expected[3].clr = 4;
-    expected[4].len = 2;
-    expected[4].clr = 5;
+    sortdemo_set_bar( &expected[0], 5, 1 );
+    sortdemo_set_bar( &expected[1], 3, 2 );
+    sortdemo_set_bar( &expected[2], 4, 3 );
+    sortdemo_set_bar( &expected[3], 1, 4 );
+    sortdemo_set_bar( &expected[4], 2, 5 );
     if( !sortdemo_check_bars_equal(0, cRow, expected) )
-        return 1;
+        return SORTDEMO_FAIL_REINITBARS;
+    if( sortdemo_drawbar_calls != cRow )
+        return SORTDEMO_FAIL_REINITBARS;
 
     return 0;
 }
 
-static int sortdemo_check_swaps(void)
+static int sortdemo_test_drawbar( void )
+{
+    sortdemo_init_test_rows();
+    ReInitBars();
+    sortdemo_reset_observation();
+
+    DrawBar( 2 );
+    if( sortdemo_drawbar_calls != 1 )
+        return SORTDEMO_FAIL_DRAWBAR;
+    if( sortdemo_drawbar_last_row != 2 )
+        return SORTDEMO_FAIL_DRAWBAR;
+    return 0;
+}
+
+static int sortdemo_test_swapbars( void )
 {
     BAR expected[SORTDEMO_SELFTEST_ROWS];
 
     sortdemo_init_test_rows();
     ReInitBars();
-
-    iSwaps = 0;
-    Swaps( &abarWork[0], &abarWork[1] );
-
-    expected[0].len = 3;
-    expected[0].clr = 2;
-    expected[1].len = 5;
-    expected[1].clr = 1;
-    expected[2].len = 4;
-    expected[2].clr = 3;
-    expected[3].len = 1;
-    expected[3].clr = 4;
-    expected[4].len = 2;
-    expected[4].clr = 5;
-    if( !sortdemo_check_bars_equal(0, cRow, expected) )
-        return 2;
-    if( iSwaps != 1 )
-        return 3;
+    sortdemo_reset_observation();
 
     SwapBars( 1, 2 );
-    expected[0].len = 3;
-    expected[0].clr = 2;
-    expected[1].len = 5;
-    expected[1].clr = 1;
-    expected[2].len = 4;
-    expected[2].clr = 3;
-    expected[3].len = 1;
-    expected[3].clr = 4;
-    expected[4].len = 2;
-    expected[4].clr = 5;
+    sortdemo_set_bar( &expected[0], 5, 1 );
+    sortdemo_set_bar( &expected[1], 3, 2 );
+    sortdemo_set_bar( &expected[2], 4, 3 );
+    sortdemo_set_bar( &expected[3], 1, 4 );
+    sortdemo_set_bar( &expected[4], 2, 5 );
     if( !sortdemo_check_bars_equal(0, cRow, expected) )
-        return 4;
-
+        return SORTDEMO_FAIL_SWAPBARS;
+    if( sortdemo_drawbar_calls != 2 || sortdemo_drawbar_last_row != 2 )
+        return SORTDEMO_FAIL_SWAPBARS;
+    if( sortdemo_drawtime_calls != 1 || sortdemo_drawtime_last_row != 1 )
+        return SORTDEMO_FAIL_SWAPBARS;
     return 0;
 }
 
-static int sortdemo_check_perc(void)
+static int sortdemo_test_swaps( void )
 {
-    BAR expected_after[5];
+    BAR expected[SORTDEMO_SELFTEST_ROWS];
 
     sortdemo_init_test_rows();
-    abarWork[0].len = 3;
-    abarWork[0].clr = 1;
-    abarWork[1].len = 1;
-    abarWork[1].clr = 2;
-    abarWork[2].len = 2;
-    abarWork[2].clr = 3;
-    abarWork[3].len = 4;
-    abarWork[3].clr = 4;
-    abarWork[4].len = 5;
-    abarWork[4].clr = 5;
+    ReInitBars();
+    iSwaps = 0;
+
+    Swaps( &abarWork[0], &abarWork[1] );
+
+    sortdemo_set_bar( &expected[0], 3, 2 );
+    sortdemo_set_bar( &expected[1], 5, 1 );
+    sortdemo_set_bar( &expected[2], 4, 3 );
+    sortdemo_set_bar( &expected[3], 1, 4 );
+    sortdemo_set_bar( &expected[4], 2, 5 );
+    if( !sortdemo_check_bars_equal(0, cRow, expected) )
+        return SORTDEMO_FAIL_SWAPS;
+    if( iSwaps != 1 )
+        return SORTDEMO_FAIL_SWAPS;
+    return 0;
+}
+
+static int sortdemo_test_percolateup( void )
+{
+    sortdemo_set_work_lengths( 3, 1, 2, 4, 5 );
 
     PercolateUp( 3 );
-    expected_after[0].len = 4;
-    expected_after[0].clr = 4;
-    expected_after[1].len = 3;
-    expected_after[1].clr = 1;
-    expected_after[2].len = 2;
-    expected_after[2].clr = 3;
-    expected_after[3].len = 1;
-    expected_after[3].clr = 2;
-    expected_after[4].len = 5;
-    expected_after[4].clr = 5;
-    if( !sortdemo_check_bars_equal(0, cRow, expected_after) )
-        return 5;
-
-    PercolateDown( 3 );
-    if( !sortdemo_check_bars_equal(0, cRow, expected_after) )
-        return 6;
-
+    if( !sortdemo_check_work_lengths( 4, 3, 2, 1, 5 ) )
+        return SORTDEMO_FAIL_PERCOLATEUP;
     return 0;
 }
 
-static int sortdemo_check_ins(void)
+static int sortdemo_test_percolatedown( void )
 {
-    sortdemo_init_test_rows();
-    abarWork[0].len = 4;
-    abarWork[0].clr = 1;
-    abarWork[1].len = 2;
-    abarWork[1].clr = 2;
-    abarWork[2].len = 5;
-    abarWork[2].clr = 3;
-    abarWork[3].len = 3;
-    abarWork[3].clr = 4;
-    abarWork[4].len = 1;
-    abarWork[4].clr = 5;
+    sortdemo_set_work_lengths( 1, 5, 4, 3, 2 );
+
+    PercolateDown( 4 );
+    if( !sortdemo_check_work_lengths( 5, 4, 2, 3, 1 ) )
+        return SORTDEMO_FAIL_PERCOLATEDOWN;
+    return 0;
+}
+
+static int sortdemo_test_insertionsort( void )
+{
+    sortdemo_set_work_lengths( 4, 2, 5, 3, 1 );
 
     InsertionSort();
     if( !sortdemo_is_non_decreasing_len() )
-        return 7;
+        return SORTDEMO_FAIL_INSERTIONSORT;
     return 0;
 }
 
-static int sortdemo_check_bubble(void)
+static int sortdemo_test_bubblesort( void )
 {
-    sortdemo_init_test_rows();
-    abarWork[0].len = 4;
-    abarWork[0].clr = 1;
-    abarWork[1].len = 1;
-    abarWork[1].clr = 2;
-    abarWork[2].len = 5;
-    abarWork[2].clr = 3;
-    abarWork[3].len = 3;
-    abarWork[3].clr = 4;
-    abarWork[4].len = 2;
-    abarWork[4].clr = 5;
+    sortdemo_set_work_lengths( 4, 1, 5, 3, 2 );
 
     BubbleSort();
     if( !sortdemo_is_non_decreasing_len() )
-        return 8;
+        return SORTDEMO_FAIL_BUBBLESORT;
     return 0;
 }
 
-static int sortdemo_check_exshell(void)
+static int sortdemo_test_heapsort( void )
 {
-    sortdemo_init_test_rows();
-    abarWork[0].len = 5;
-    abarWork[0].clr = 1;
-    abarWork[1].len = 4;
-    abarWork[1].clr = 2;
-    abarWork[2].len = 3;
-    abarWork[2].clr = 3;
-    abarWork[3].len = 2;
-    abarWork[3].clr = 4;
-    abarWork[4].len = 1;
-    abarWork[4].clr = 5;
-
-    ExchangeSort();
-    if( !sortdemo_is_non_decreasing_len() )
-        return 9;
-
-    abarWork[0].len = 5;
-    abarWork[0].clr = 1;
-    abarWork[1].len = 3;
-    abarWork[1].clr = 2;
-    abarWork[2].len = 4;
-    abarWork[2].clr = 3;
-    abarWork[3].len = 1;
-    abarWork[3].clr = 4;
-    abarWork[4].len = 2;
-    abarWork[4].clr = 5;
-
-    ShellSort();
-    if( !sortdemo_is_non_decreasing_len() )
-        return 10;
-
-    return 0;
-}
-
-static int sortdemo_check_heap(void)
-{
-    sortdemo_init_test_rows();
-    abarWork[0].len = 5;
-    abarWork[0].clr = 1;
-    abarWork[1].len = 1;
-    abarWork[1].clr = 2;
-    abarWork[2].len = 4;
-    abarWork[2].clr = 3;
-    abarWork[3].len = 2;
-    abarWork[3].clr = 4;
-    abarWork[4].len = 3;
-    abarWork[4].clr = 5;
+    sortdemo_set_work_lengths( 5, 1, 4, 2, 3 );
 
     HeapSort();
     if( !sortdemo_is_non_decreasing_len() )
-        return 11;
+        return SORTDEMO_FAIL_HEAPSORT;
     return 0;
 }
 
-static int sortdemo_check_quick(void)
+static int sortdemo_test_exchangesort( void )
 {
-    sortdemo_init_test_rows();
-    abarWork[0].len = 2;
-    abarWork[0].clr = 1;
-    abarWork[1].len = 5;
-    abarWork[1].clr = 2;
-    abarWork[2].len = 1;
-    abarWork[2].clr = 3;
-    abarWork[3].len = 4;
-    abarWork[3].clr = 4;
-    abarWork[4].len = 3;
-    abarWork[4].clr = 5;
+    sortdemo_set_work_lengths( 5, 4, 3, 2, 1 );
+
+    ExchangeSort();
+    if( !sortdemo_is_non_decreasing_len() )
+        return SORTDEMO_FAIL_EXCHANGESORT;
+    return 0;
+}
+
+static int sortdemo_test_shellsort( void )
+{
+    sortdemo_set_work_lengths( 5, 3, 4, 1, 2 );
+
+    ShellSort();
+    if( !sortdemo_is_non_decreasing_len() )
+        return SORTDEMO_FAIL_SHELLSORT;
+    return 0;
+}
+
+static int sortdemo_test_quicksort( void )
+{
+    sortdemo_set_work_lengths( 2, 5, 1, 4, 3 );
 
     QuickSort( 0, cRow - 1 );
     if( !sortdemo_is_non_decreasing_len() )
-        return 12;
+        return SORTDEMO_FAIL_QUICKSORT;
     return 0;
 }
 
-static int sortdemo_function_selftest(void)
+static int sortdemo_test_beep( void )
+{
+    sortdemo_reset_observation();
+    Beep( 0, 30 );
+    if( sortdemo_beep_calls != 1 || sortdemo_beep_last_frequency != 0 )
+        return SORTDEMO_FAIL_BEEP;
+    if( sortdemo_beep_last_duration != 30 || sortdemo_sleep_last_wait != 30L )
+        return SORTDEMO_FAIL_BEEP;
+
+    sortdemo_reset_observation();
+    Beep( 120, 30 );
+    if( sortdemo_beep_calls != 1 || sortdemo_beep_last_frequency != 120 )
+        return SORTDEMO_FAIL_BEEP;
+    if( sortdemo_beep_last_duration != 75 || sortdemo_sleep_last_wait != 75L )
+        return SORTDEMO_FAIL_BEEP;
+    return 0;
+}
+
+static int sortdemo_test_sleep( void )
+{
+    sortdemo_reset_observation();
+    Sleep( 17L );
+    if( sortdemo_sleep_calls != 1 )
+        return SORTDEMO_FAIL_SLEEP;
+    if( sortdemo_sleep_last_wait != 17L )
+        return SORTDEMO_FAIL_SLEEP;
+    return 0;
+}
+
+static int sortdemo_function_selftest( void )
 {
     int status;
 
-    status = sortdemo_check_reinit();
+    status = sortdemo_test_initmenu();
     if( status )
         return status;
-    status = sortdemo_check_swaps();
+    status = sortdemo_test_drawframe();
     if( status )
         return status;
-    status = sortdemo_check_perc();
+    status = sortdemo_test_runmenu();
     if( status )
         return status;
-    status = sortdemo_check_ins();
+    status = sortdemo_test_drawtime();
     if( status )
         return status;
-    status = sortdemo_check_bubble();
+    status = sortdemo_test_initbars();
     if( status )
         return status;
-    status = sortdemo_check_exshell();
+    status = sortdemo_test_reinitbars();
     if( status )
         return status;
-    status = sortdemo_check_heap();
+    status = sortdemo_test_drawbar();
     if( status )
         return status;
-    status = sortdemo_check_quick();
+    status = sortdemo_test_swapbars();
+    if( status )
+        return status;
+    status = sortdemo_test_swaps();
+    if( status )
+        return status;
+    status = sortdemo_test_insertionsort();
+    if( status )
+        return status;
+    status = sortdemo_test_bubblesort();
+    if( status )
+        return status;
+    status = sortdemo_test_heapsort();
+    if( status )
+        return status;
+    status = sortdemo_test_percolateup();
+    if( status )
+        return status;
+    status = sortdemo_test_percolatedown();
+    if( status )
+        return status;
+    status = sortdemo_test_exchangesort();
+    if( status )
+        return status;
+    status = sortdemo_test_shellsort();
+    if( status )
+        return status;
+    status = sortdemo_test_quicksort();
+    if( status )
+        return status;
+    status = sortdemo_test_beep();
+    if( status )
+        return status;
+    status = sortdemo_test_sleep();
     if( status )
         return status;
 
@@ -684,7 +930,15 @@ void RunMenu()
 void DrawTime( int iCurrentRow )
 {
 #ifdef SORTDEMO_FUNCTION_SELFTEST
-    (void)iCurrentRow;
+    sortdemo_drawtime_calls++;
+    sortdemo_drawtime_last_row = iCurrentRow;
+    if( fSound )
+    {
+        Beep( 60 * iCurrentRow, 75 );
+        Sleep( clPause - 75L );
+    }
+    else
+        Sleep( clPause );
 #else
     char achTiming[80];
 
@@ -785,7 +1039,8 @@ void ReInitBars()
 void DrawBar( int iRow )
 {
 #ifdef SORTDEMO_FUNCTION_SELFTEST
-    (void)iRow;
+    sortdemo_drawbar_calls++;
+    sortdemo_drawbar_last_row = iRow;
 #else
     int  cSpace;
     char achT[43];
@@ -1174,8 +1429,12 @@ void QuickSort( int iLow, int iHigh )
 void Beep( int frequency, int duration )
 {
 #ifdef SORTDEMO_FUNCTION_SELFTEST
-    (void)frequency;
-    (void)duration;
+    if( frequency && duration < 75 )
+        duration = 75;
+    sortdemo_beep_calls++;
+    sortdemo_beep_last_frequency = frequency;
+    sortdemo_beep_last_duration = duration;
+    Sleep( (clock_t)duration );
 #else
 /* Use system call for OS/2 */
 #if defined( OS2 )
@@ -1229,7 +1488,8 @@ void Beep( int frequency, int duration )
 void Sleep( clock_t wait )
 {
 #ifdef SORTDEMO_FUNCTION_SELFTEST
-    (void)wait;
+    sortdemo_sleep_calls++;
+    sortdemo_sleep_last_wait = wait;
 #else
     clock_t goal;
 

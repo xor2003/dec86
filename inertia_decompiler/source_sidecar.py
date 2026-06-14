@@ -110,10 +110,11 @@ def _extract_function_from_lines(lines: tuple[str, ...], function_name: str) -> 
 
 def _source_function_header_match(line: str) -> re.Match[str] | None:
     stripped = _strip_c_comments_and_strings(line).strip()
-    if not stripped or stripped.startswith("#") or ";" in stripped or "{" in stripped or "}" in stripped:
+    if not stripped or stripped.startswith("#") or ";" in stripped or "}" in stripped:
         return None
     match = re.match(
-        r"^(?:(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+)?(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^;{}()]*)\)\s*$",
+        r"^(?:(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+)?"
+        r"(?P<name>[A-Za-z_]\w*)\s*\([^;{}()]*\)\s*\{?\s*$",
         stripped,
     )
     if match is None:
@@ -124,6 +125,8 @@ def _source_function_header_match(line: str) -> re.Match[str] | None:
 
 
 def _source_header_has_body(lines: tuple[str, ...], header_index: int) -> bool:
+    if "{" in _strip_c_comments_and_strings(lines[header_index]):
+        return True
     for probe in range(header_index + 1, min(header_index + 12, len(lines))):
         stripped = _strip_c_comments_and_strings(lines[probe]).strip()
         if not stripped or stripped.startswith("#"):
@@ -148,6 +151,9 @@ def _collect_source_return_types_for_path(path: Path) -> dict[str, str]:
         if not name or name in result:
             continue
         result[name] = return_type
+    for name, return_type in list(result.items()):
+        if name.startswith("_"):
+            result.setdefault(name[1:], return_type)
     return result
 
 

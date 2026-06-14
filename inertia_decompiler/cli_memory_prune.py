@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import re
+
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable
+
+
+def _is_prunable_generated_memory_name_8616(name: object) -> bool:
+    return isinstance(name, str) and (name.startswith("g_") or re.fullmatch(r"mem_[0-9A-Fa-f]+", name) is not None)
 
 
 def _prune_unused_unnamed_memory_declarations(codegen, *, iter_c_nodes_deep):
@@ -28,7 +34,7 @@ def _prune_unused_unnamed_memory_declarations(codegen, *, iter_c_nodes_deep):
                 if not isinstance(variable, SimMemoryVariable):
                     continue
                 name = getattr(variable, "name", None)
-                if not isinstance(name, str) or not name.startswith("g_"):
+                if not _is_prunable_generated_memory_name_8616(name):
                     continue
                 if id(variable) in used_variables:
                     continue
@@ -45,7 +51,7 @@ def _prune_unused_unnamed_memory_declarations(codegen, *, iter_c_nodes_deep):
                 if not isinstance(variable, SimMemoryVariable):
                     continue
                 name = getattr(variable, "name", None)
-                if not isinstance(name, str) or not name.startswith("g_"):
+                if not _is_prunable_generated_memory_name_8616(name):
                     continue
                 if id(variable) in used_variables:
                     continue

@@ -7,6 +7,7 @@ def test_decompilation_cache_surface_includes_tail_validation_layers():
     names = {Path(path).name for path in DECOMPILATION_CACHE_SOURCE_FILES}
 
     assert "tail_validation.py" in names
+    assert "tail_validation_condition_context.py" in names
     assert "tail_validation_fingerprint.py" in names
     assert "tail_validation_routing.py" in names
 
@@ -17,8 +18,21 @@ def test_decompilation_cache_surface_includes_condition_and_induction_rewrite_la
     assert "cli_decompilation.py" in names
     assert "condition_ir.py" in names
     assert "decompiler_postprocess_flags.py" in names
+    assert "decompiler_postprocess_jcc.py" in names
     assert "decompiler_postprocess_stage.py" in names
     assert "type_array_matching.py" in names
     assert "cli_access_object_hints.py" in names
     assert "cli_access_profiles.py" in names
     assert "cli_access_traits.py" in names
+
+
+def test_decompilation_cache_surface_includes_postprocess_optimization_layers():
+    names = {Path(path).name for path in DECOMPILATION_CACHE_SOURCE_FILES}
+
+    assert "const_prop.py" in names
+    assert "dce.py" in names
+    assert "dead_setup.py" in names
+    assert "pass_driver.py" in names
+    assert "decompiler_postprocess_typed_conditions.py" in names
+    assert "decompiler_postprocess_utils.py" in names
+    assert "segmented_memory_reasoning.py" in names

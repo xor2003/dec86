@@ -10,6 +10,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CDirtyExpression,
+    CFunctionCall,
+    CIndexedVariable,
     CStatements,
     CTypeCast,
     CUnaryOp,
@@ -608,6 +610,16 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
                 and _same_c_expression_8616(lhs.iftrue, rhs.iftrue)
                 and _same_c_expression_8616(lhs.iffalse, rhs.iffalse)
             )
+        if isinstance(lhs, CFunctionCall):
+            if not _same_call_target_8616(lhs, rhs):
+                return False
+            lhs_args = tuple(getattr(lhs, "args", ()) or ())
+            rhs_args = tuple(getattr(rhs, "args", ()) or ())
+            return len(lhs_args) == len(rhs_args) and all(
+                _same_c_expression_8616(lhs_arg, rhs_arg) for lhs_arg, rhs_arg in zip(lhs_args, rhs_args, strict=True)
+            )
+        if isinstance(lhs, CIndexedVariable):
+            return _same_c_expression_8616(lhs.variable, rhs.variable) and _same_c_expression_8616(lhs.index, rhs.index)
         if isinstance(lhs, CDirtyExpression):
             lhs_key = _dirty_identity_8616(lhs)
             rhs_key = _dirty_identity_8616(rhs)
@@ -630,6 +642,24 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
         return lhs is rhs
 
     return _impl()
+
+
+def _same_call_target_8616(lhs: CFunctionCall, rhs: CFunctionCall) -> bool:
+    lhs_func = getattr(lhs, "callee_func", None)
+    rhs_func = getattr(rhs, "callee_func", None)
+    if lhs_func is not None or rhs_func is not None:
+        if lhs_func is None or rhs_func is None:
+            return False
+        lhs_addr = getattr(lhs_func, "addr", None)
+        rhs_addr = getattr(rhs_func, "addr", None)
+        if isinstance(lhs_addr, int) or isinstance(rhs_addr, int):
+            return lhs_addr == rhs_addr
+        return getattr(lhs_func, "name", None) == getattr(rhs_func, "name", None)
+    lhs_target = getattr(lhs, "callee_target", None)
+    rhs_target = getattr(rhs, "callee_target", None)
+    if lhs_target is None or rhs_target is None:
+        return lhs_target is rhs_target
+    return _same_c_expression_8616(lhs_target, rhs_target)
 
 
 def _is_shifted_high_byte_8616(high_expr, low_expr) -> bool:

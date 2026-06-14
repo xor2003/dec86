@@ -256,6 +256,9 @@ def test_acceptance_failure_does_not_mutate_tail_validation_snapshot():
     assert result.status == "validation_failed"
     assert snapshot["postprocess"]["status"] == "stable"
     assert snapshot["postprocess"]["changed"] is False
+    assert result.validated_payload.strip()
+    assert result.gcc_checked_payload == ""
+    assert result.gcc_checked_payload_hash == cli_core._sha256_text_8616("")
 
 
 def test_source_call_arity_score_rejects_stale_sleep_arity():
@@ -3099,6 +3102,341 @@ def test_function_attempt_status_reports_failed_for_changed_tail_validation(caps
     )
 
     assert "attempt=decompiled validation=failed" in capsys.readouterr().out
+
+
+def test_emit_function_result_does_not_fabricate_passed_tail_validation_when_disabled(tmp_path, capsys):
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_tail_validation_enabled=False,
+    )
+    function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+    item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
+    result = decompile.FunctionWorkResult(
+        index=item.index,
+        status="ok",
+        payload="int sub_10010(void) { return 0; }",
+        debug_output="",
+        function=function,
+        function_cfg=item.function_cfg,
+        tail_validation={},
+    )
+    args = SimpleNamespace(
+        addr=None,
+        show_asm=False,
+        binary=tmp_path / "sample.exe",
+        alternate_source_c=False,
+    )
+
+    decompiled, failed = decompile._emit_function_result(
+        item,
+        result,
+        project=project,
+        args=args,
+        lst_metadata=None,
+        cod_metadata=None,
+        synthetic_globals=None,
+        precise_sidecar_regions=False,
+        allow_heavy_fallbacks=False,
+        interactive_stdout=False,
+        use_serial_fork_per_function=False,
+        fallback_tail_validation_by_index={},
+    )
+
+    out = capsys.readouterr().out
+    assert (decompiled, failed) == (1, 0)
+    assert "failure family: status=ok" in out
+    assert "validation=uncollected" in out
+    assert "validation=passed" not in out
+
+
+def test_emit_function_result_retries_with_recovered_result_function(monkeypatch, tmp_path, capsys):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    original_function = SimpleNamespace(addr=0x10010, name="main", project=project)
+    recovered_function = SimpleNamespace(addr=0x1000, name="main", project=project)
+    original_cfg = SimpleNamespace(name="original-cfg")
+    recovered_cfg = SimpleNamespace(name="recovered-cfg")
+    item = decompile.FunctionWorkItem(index=1, function_cfg=original_cfg, function=original_function)
+    result = decompile.FunctionWorkResult(
+        index=item.index,
+        status="validation_failed",
+        payload="Final quality guard rejected emitted C (stack-base).",
+        debug_output="",
+        function=recovered_function,
+        function_cfg=recovered_cfg,
+        tail_validation={},
+    )
+    args = SimpleNamespace(
+        addr=None,
+        show_asm=False,
+        binary=tmp_path / "sample.exe",
+        alternate_source_c=False,
+        timeout=60,
+        api_style="default",
+    )
+    seen = {}
+
+    def _fake_retry(**kwargs):
+        seen["item"] = kwargs["item"]
+        seen["function"] = kwargs["function"]
+        seen["project"] = kwargs["project"]
+        return True
+
+    monkeypatch.setattr(decompile, "_try_emit_retry_recovered_candidate_8616", _fake_retry)
+
+    decompiled, failed = decompile._emit_function_result(
+        item,
+        result,
+        project=project,
+        args=args,
+        lst_metadata=None,
+        cod_metadata=None,
+        synthetic_globals=None,
+        precise_sidecar_regions=False,
+        allow_heavy_fallbacks=False,
+        interactive_stdout=False,
+        use_serial_fork_per_function=False,
+        fallback_tail_validation_by_index={},
+    )
+
+    assert (decompiled, failed) == (1, 0)
+    assert seen["item"].function is recovered_function
+    assert seen["item"].function_cfg is recovered_cfg
+    assert seen["function"] is original_function
+    assert seen["project"] is project
+    assert "failure family: status=validation_failed" in capsys.readouterr().out
+
+
+def test_emit_function_result_retry_budget_stays_with_configured_timeout(monkeypatch, tmp_path, capsys):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    function = SimpleNamespace(addr=0x1005D, name="InitMenu", project=project)
+    item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
+    result = decompile.FunctionWorkResult(
+        index=item.index,
+        status=decompile.WorkItemStatus.TIMEOUT.value,
+        payload="Timed out after 130s.",
+        debug_output="",
+        function=function,
+        function_cfg=item.function_cfg,
+        tail_validation={},
+        elapsed=130.0,
+    )
+    args = SimpleNamespace(
+        addr=None,
+        show_asm=False,
+        binary=tmp_path / "sample.exe",
+        alternate_source_c=False,
+        timeout=60,
+        api_style="default",
+    )
+    seen = {}
+
+    def _fake_retry(**kwargs):
+        seen["retry_timeout"] = kwargs["retry_timeout"]
+        return True
+
+    monkeypatch.setattr(decompile, "_try_emit_retry_recovered_candidate_8616", _fake_retry)
+
+    decompiled, failed = decompile._emit_function_result(
+        item,
+        result,
+        project=project,
+        args=args,
+        lst_metadata=None,
+        cod_metadata=None,
+        synthetic_globals=None,
+        precise_sidecar_regions=False,
+        allow_heavy_fallbacks=False,
+        interactive_stdout=False,
+        use_serial_fork_per_function=False,
+        fallback_tail_validation_by_index={},
+    )
+
+    assert (decompiled, failed) == (1, 0)
+    assert seen["retry_timeout"] == 60
+    assert "failure family: status=timeout" in capsys.readouterr().out
+
+
+def test_retry_recovered_candidate_is_bounded_by_worker_timeout(monkeypatch, tmp_path, capsys):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    function = SimpleNamespace(addr=0x10010, name="main", project=project)
+    item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
+    args = SimpleNamespace(
+        binary=tmp_path / "sample.exe",
+        timeout=7,
+        api_style="default",
+        alternate_source_c=False,
+    )
+    wrapper_calls = {}
+
+    def _fake_daemon_thread(fn, *, timeout, thread_name_prefix):  # noqa: ANN001
+        wrapper_calls["timeout"] = timeout
+        wrapper_calls["thread_name_prefix"] = thread_name_prefix
+        return fn()
+
+    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+        return decompile.FunctionWorkResult(
+            index=work_item.index,
+            status="ok",
+            payload="int main(void) { return 0; }",
+            debug_output="",
+            function=work_item.function,
+            function_cfg=work_item.function_cfg,
+            tail_validation={
+                "structuring": {"status": "stable", "changed": False},
+                "postprocess": {"status": "stable", "changed": False},
+            },
+        )
+
+    monkeypatch.setattr(decompile.os, "name", "nt")
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_daemon_thread)
+    monkeypatch.setattr(decompile, "_run_function_work_item", _fake_work_item)
+
+    ok = decompile._try_emit_retry_recovered_candidate_8616(
+        item=item,
+        function=function,
+        project=project,
+        args=args,
+        lst_metadata=None,
+        cod_metadata=None,
+        synthetic_globals=None,
+    )
+
+    assert ok is True
+    assert wrapper_calls == {
+        "timeout": 9,
+        "thread_name_prefix": "retry-recovered-candidate",
+    }
+    assert "retry lane: recovered validation-passed candidate" in capsys.readouterr().out
+
+
+def test_retry_recovered_candidate_uses_thread_when_tail_validation_enabled(monkeypatch, tmp_path, capsys):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"), _inertia_tail_validation_enabled=True)
+    function = SimpleNamespace(addr=0x10060, name="InitMenu", project=project)
+    item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
+    args = SimpleNamespace(
+        binary=tmp_path / "sample.exe",
+        timeout=7,
+        api_style="default",
+        alternate_source_c=False,
+    )
+    wrapper_calls = {}
+
+    def _fake_fork(*_args, **_kwargs):  # noqa: ANN001
+        raise AssertionError("tail-validation retry must not use fork isolation")
+
+    def _fake_daemon_thread(fn, *, timeout, thread_name_prefix):  # noqa: ANN001
+        wrapper_calls["timeout"] = timeout
+        wrapper_calls["thread_name_prefix"] = thread_name_prefix
+        return fn()
+
+    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+        return decompile.FunctionWorkResult(
+            index=work_item.index,
+            status="ok",
+            payload="void InitMenu(void) { }",
+            debug_output="",
+            function=work_item.function,
+            function_cfg=work_item.function_cfg,
+            tail_validation={
+                "structuring": {"status": "stable", "changed": False},
+                "postprocess": {"status": "stable", "changed": False},
+            },
+        )
+
+    monkeypatch.setattr(decompile.os, "name", "posix")
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", _fake_fork)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_daemon_thread)
+    monkeypatch.setattr(decompile, "_run_function_work_item", _fake_work_item)
+
+    ok = decompile._try_emit_retry_recovered_candidate_8616(
+        item=item,
+        function=function,
+        project=project,
+        args=args,
+        lst_metadata=None,
+        cod_metadata=None,
+        synthetic_globals=None,
+    )
+
+    assert ok is True
+    assert wrapper_calls == {
+        "timeout": 9,
+        "thread_name_prefix": "retry-recovered-candidate",
+    }
+    assert "retry lane: recovered validation-passed candidate" in capsys.readouterr().out
+
+
+def test_retry_recovered_candidate_uses_fresh_sidecar_work_item(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x10000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000)),
+        _inertia_c_target="portable-flat",
+    )
+    original_function = SimpleNamespace(addr=0x10554, name="InitBars", project=project)
+    item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=original_function)
+    metadata = SimpleNamespace(absolute_addrs=True)
+    args = SimpleNamespace(
+        addr=None,
+        binary=binary,
+        timeout=7,
+        api_style="default",
+        alternate_source_c=False,
+        window=0x200,
+    )
+    fresh_project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    recovered_function = SimpleNamespace(addr=0x1000, name="InitBars", project=fresh_project)
+    recovered_cfg = SimpleNamespace(name="fresh-cfg")
+    seen = {}
+
+    def _fake_build_project(*_args, **_kwargs):
+        return fresh_project
+
+    def _fake_recover_lst_function(project_arg, metadata_arg, offset, name, **_kwargs):  # noqa: ANN001
+        seen["recover"] = (project_arg, metadata_arg, offset, name)
+        return recovered_cfg, recovered_function
+
+    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+        seen["work_item"] = work_item
+        seen["allow_isolated_retry"] = _kwargs.get("allow_isolated_retry")
+        return decompile.FunctionWorkResult(
+            index=work_item.index,
+            status="ok",
+            payload="void InitBars(void) { }",
+            debug_output="",
+            function=work_item.function,
+            function_cfg=work_item.function_cfg,
+            tail_validation={
+                "structuring": {"status": "stable", "changed": False},
+                "postprocess": {"status": "stable", "changed": False},
+            },
+        )
+
+    monkeypatch.setattr(decompile.os, "name", "nt")
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_build_project", _fake_build_project)
+    monkeypatch.setattr(decompile, "attach_lst_metadata_to_project", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_recover_lst_function", _fake_recover_lst_function)
+    monkeypatch.setattr(decompile, "_run_function_work_item", _fake_work_item)
+
+    ok = decompile._try_emit_retry_recovered_candidate_8616(
+        item=item,
+        function=original_function,
+        project=project,
+        args=args,
+        lst_metadata=metadata,
+        cod_metadata=None,
+        synthetic_globals=None,
+    )
+
+    assert ok is True
+    assert seen["recover"] == (fresh_project, metadata, 0x10554, "InitBars")
+    assert seen["work_item"].function is recovered_function
+    assert seen["work_item"].function_cfg is recovered_cfg
+    assert seen["allow_isolated_retry"] is False
+    assert "retry lane: recovered validation-passed candidate" in capsys.readouterr().out
 
 
 def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path):

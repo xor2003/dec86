@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-import os
 
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 
@@ -19,6 +19,51 @@ def _sanitize_nested_block_comments(text: str) -> str:
         content = content.replace("/*", "/ *")
         return "/*" + content + "*/"
     return re.sub(r"/\*(.*?)\*/", _fix_inner, text, flags=re.DOTALL)
+
+
+def _c89_line_comment_start_8616(line: str) -> int | None:
+    in_string = False
+    in_char = False
+    escaped = False
+    for index, char in enumerate(line[:-1]):
+        if escaped:
+            escaped = False
+            continue
+        if (in_string or in_char) and char == "\\":
+            escaped = True
+            continue
+        if not in_char and char == '"':
+            in_string = not in_string
+            continue
+        if not in_string and char == "'":
+            in_char = not in_char
+            continue
+        if in_string or in_char:
+            continue
+        if char == "/" and line[index + 1] == "/":
+            return index
+    return None
+
+
+def _sanitize_c99_line_comments_for_msc_8616(text: str) -> str:
+    lines: list[str] = []
+    for line in str(text or "").splitlines(keepends=True):
+        newline = ""
+        body = line
+        if line.endswith("\r\n"):
+            body = line[:-2]
+            newline = "\r\n"
+        elif line.endswith("\n"):
+            body = line[:-1]
+            newline = "\n"
+        comment_start = _c89_line_comment_start_8616(body)
+        if comment_start is None:
+            lines.append(line)
+            continue
+        prefix = body[:comment_start]
+        comment = body[comment_start + 2 :].replace("/*", "/ *").replace("*/", "* /")
+        lines.append(f"{prefix}/*{comment} */{newline}")
+    return "".join(lines)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +84,14 @@ _DEFAULT_KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
 _DEFAULT_MSC51_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v5.1")
 _MSC51_MIRROR_CACHE: dict[Path, Path] = {}
 _DEFAULT_RECOMPILE_TIMEOUT_SEC = 20
+_MSC51_TRANSIENT_RETRY_LIMIT = 5
 
 
 def _compile_input_payload_8616(c_text: str, *, target: str) -> str:
-    sanitized = _sanitize_nested_block_comments(_with_runtime_header_8616(c_text, target=target))
+    header_payload = _with_runtime_header_8616(c_text, target=target)
+    if target == "msc-dos":
+        header_payload = _sanitize_c99_line_comments_for_msc_8616(header_payload)
+    sanitized = _sanitize_nested_block_comments(header_payload)
     return sanitized
 
 
@@ -58,6 +107,20 @@ def _recompile_timeout_sec() -> int:
     except ValueError:
         value = _DEFAULT_RECOMPILE_TIMEOUT_SEC
     return max(1, value)
+
+
+def _msc51_transient_emulator_failure_8616(stdout_text: str, stderr_text: str, exit_code: int) -> bool:
+    if int(exit_code) == 0:
+        return False
+    combined_text = f"{stderr_text}\n{stdout_text}".lower()
+    has_compiler_error = (" error c" in combined_text) or ("fatal error c" in combined_text)
+    if has_compiler_error:
+        return False
+    return (
+        "unexpected kvm exit" in combined_text
+        or "unexpected hlt" in combined_text
+        or "not a valid dos pathname" in combined_text
+    )
 
 
 def _sanitize_empty_control_bodies_for_compile_8616(text: str) -> str:
@@ -79,7 +142,7 @@ def _with_runtime_header_8616(c_text: str, *, target: str) -> str:
             return text
         return f"{render_c_runtime_header_8616(target)}\n{text.lstrip()}"
     if target == "msc-dos":
-        if "#define SEG_U8(seg, off)" in text and "#include <dos.h>" in text:
+        if "#define SEG_U8(seg, off)" in text and "#include <dos.h>" in text.lower():
             return text
         return f"{render_c_runtime_header_8616(target)}\n{text.lstrip()}"
     return f"{render_c_runtime_header_8616(target)}\n{text.lstrip()}"
@@ -184,7 +247,6 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
                 source_path=None,
             )
 
-        mirror_root = _prepare_msc51_mirror_tree(msc_root)
         tmpdir = Path(tempfile.mkdtemp(prefix="inertia-recompile-msc51-"))
         src_path = tmpdir / "GEN.C"
         compile_payload = _compile_input_payload_8616(c_text, target=target)
@@ -194,38 +256,48 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
         upper_src_path.write_text(compile_payload, encoding="utf-8")
         command = (
             str(kvikdos),
-            f"--mount=c-{mirror_root}/",
-            f"--mount=d-{tmpdir}/",
-            "--drive=d",
-            "--cwd-dos=d:\\",
-            "--env=INCLUDE=C:\\INCLUDE",
-            "--env=LIB=C:\\LIB",
-            r"c:\bin\cl.exe",
+            f"--mount=c:{tmpdir}/",
+            f"--mount=e:{msc_root}/",
+            "--drive=c",
+            "--cwd-dos=c:\\",
+            "--path-dos=e:\\BIN",
+            "--env=INCLUDE=E:\\INCLUDE",
+            "--env=LIB=E:\\LIB",
+            "--prog=e:\\BIN\\CL.EXE",
+            r"e:\BIN\CL.EXE",
             "/nologo",
             "/c",
-            r"d:\gen.c",
+            r"/Foc:\GEN.OBJ",
+            r"c:\GEN.C",
         )
-        try:
-            proc = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=_recompile_timeout_sec(),
-            )
-        except subprocess.TimeoutExpired as ex:
-            return RecompileCheckResult(
-                passed=False,
-                target=target,
-                exit_code=124,
-                compiler=str(kvikdos),
-                stdout=(ex.stdout or ""),
-                stderr=((ex.stderr or "") + "\nrecompile timeout (msc-dos)"),
-                command=command,
-                checked_payload=checked_payload,
-                checked_payload_hash=checked_hash,
-                source_path=str(src_path),
-            )
+        attempts: list[subprocess.CompletedProcess[str]] = []
+        for _attempt_index in range(_MSC51_TRANSIENT_RETRY_LIMIT):
+            try:
+                proc = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=_recompile_timeout_sec(),
+                )
+            except subprocess.TimeoutExpired as ex:
+                return RecompileCheckResult(
+                    passed=False,
+                    target=target,
+                    exit_code=124,
+                    compiler=str(kvikdos),
+                    stdout=(ex.stdout or ""),
+                    stderr=((ex.stderr or "") + "\nrecompile timeout (msc-dos)"),
+                    command=command,
+                    checked_payload=checked_payload,
+                    checked_payload_hash=checked_hash,
+                    source_path=str(src_path),
+                )
+            attempts.append(proc)
+            if not _msc51_transient_emulator_failure_8616(proc.stdout or "", proc.stderr or "", proc.returncode):
+                break
+        else:
+            proc = attempts[-1]
         stderr_text = proc.stderr or ""
         stdout_text = proc.stdout or ""
         combined_text = f"{stderr_text}\n{stdout_text}".lower()
@@ -236,13 +308,16 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
             source_path = None
         else:
             source_path = str(src_path)
+        if not passed and len(attempts) > 1:
+            stdout_text = "\n".join(attempt.stdout or "" for attempt in attempts)
+            stderr_text = "\n".join(attempt.stderr or "" for attempt in attempts)
         return RecompileCheckResult(
             passed=passed,
             target=target,
             exit_code=proc.returncode,
             compiler=str(kvikdos),
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=stdout_text,
+            stderr=stderr_text,
             command=command,
             checked_payload=checked_payload,
             checked_payload_hash=checked_hash,

@@ -11,6 +11,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFakeVariable,
     CForLoop,
     CFunctionCall,
+    CReturn,
     CIfElse,
     CIndexedVariable,
     CStatements,
@@ -21,6 +22,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
 from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
+from angr_platforms.X86_16 import decompiler_postprocess_stage as _postprocess_stage
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -31,9 +33,12 @@ from angr_platforms.X86_16.decompiler_postprocess_utils import (
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     _build_assignment_maps_8616,
     _direct_stack_move_materialized_ins_addrs_8616,
+    _direct_stack_move_fallback_decision_8616,
     _dirty_reg_offset_8616,
     _replace_precontrol_stack_assignment_8616,
     _replace_tagged_assignment_8616,
+    _resolve_direct_stack_update_cvar_8616,
+    DirectStackMoveFallbackDecision8616,
     lower_stable_ds_es_linear_global_addresses_8616,
     lower_stable_ds_es_linear_global_dereferences_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
@@ -41,7 +46,10 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     match_stable_ds_es_linear_global_address_8616,
     match_stable_ss_linear_stack_access_8616,
 )
-from angr_platforms.X86_16.lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
+from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
+    apply_runtime_segment_lowering_8616,
+    lower_runtime_ss_segment_helpers_to_stack_8616,
+)
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
@@ -164,6 +172,36 @@ def test_direct_stack_move_consumes_previous_materialization_evidence():
     )
 
     assert _direct_stack_move_materialized_ins_addrs_8616(codegen) == frozenset({0x103C, 0x1042})
+
+
+def test_direct_stack_update_resolution_applies_preferred_stack_identity_name():
+    project, codegen = _codegen([])
+    codegen._func = SimpleNamespace(info={"x86_16_annotations": {"stack_vars": {-6: "changed"}}})
+    variable = SimStackVariable(-6, 2, base="bp", name="arg_3", region=0x4010)
+    cvar = CVariable(variable, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[variable] = cvar
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(cvar, _const(0, codegen), codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    resolved = _resolve_direct_stack_update_cvar_8616(codegen, -6, 2)
+
+    assert resolved is cvar
+    assert variable.name == "changed"
+    assert getattr(cvar, "name", None) == "changed"
+
+
+def test_direct_stack_move_fallback_refuses_structured_control_scope():
+    project, codegen = _codegen([])
+    body = CStatements([CAssignment(_stack(-2, codegen), _const(1, codegen), codegen=codegen)], codegen=codegen)
+    root = CStatements([CForLoop(None, None, None, body, codegen=codegen)], codegen=codegen)
+
+    decision = _direct_stack_move_fallback_decision_8616(root)
+
+    assert decision is DirectStackMoveFallbackDecision8616.REFUSE_STRUCTURED_CONTROL_SCOPE
 
 
 def _const(value: int, codegen):
@@ -1382,6 +1420,35 @@ def test_real_mode_linear_stack_base_bias_uses_bp_memory_operands_without_sideca
     assert codegen._inertia_stack_bp_offsets_from_capstone_count_8616 == 2
 
 
+def test_real_mode_linear_stack_base_bias_uses_single_exact_entry_arg_slot():
+    project, codegen = _codegen([])
+
+    def _bp_mem_operand(offset: int):
+        return SimpleNamespace(type=X86_OP_MEM, mem=SimpleNamespace(base=X86_REG_BP, disp=offset))
+
+    fake_func = SimpleNamespace(
+        blocks=[SimpleNamespace(capstone=SimpleNamespace(insns=[SimpleNamespace(operands=[_bp_mem_operand(4)])]))]
+    )
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda addr, create=False: fake_func if addr == 0x4010 else None)
+    )
+    ss = _reg(project, "ss", codegen)
+    stack_base = CFakeVariable("stack_base", SimTypePointer(SimTypeBottom()), codegen=codegen)
+    word_access = _unresolved_segment_stack_base_deref(project, ss, stack_base, 2, codegen)
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(word_access, _const(1, codegen), codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = lower_stable_ss_linear_stack_dereferences_8616(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements[0].lhs.variable.offset == 4
+    assert codegen._inertia_stack_base_bp_bias_single_arg_inferred_count_8616 == 1
+
+
 def test_real_mode_linear_stack_base_bias_uses_multiple_bp_alias_facts_for_post_prologue_slice():
     project, codegen = _codegen([])
     codegen._inertia_semantic_alias_facts = [
@@ -1576,6 +1643,45 @@ def test_runtime_ss_segment_helper_lowering_materializes_stack_base_offset():
     assert isinstance(rhs, CVariable)
     assert isinstance(rhs.variable, SimStackVariable)
     assert rhs.variable.offset == -4
+    assert rhs.variable.size == 2
+    assert codegen._inertia_runtime_ss_helper_candidate_count_8616 == 1
+    assert codegen._inertia_runtime_ss_helper_materialized_count_8616 == 1
+    assert codegen._inertia_runtime_ss_helper_refused_count_8616 == 0
+
+
+def test_runtime_ss_segment_helper_lowering_materializes_ss_register_carrier_stack_base_offset():
+    project, codegen = _codegen([])
+    codegen._inertia_semantic_alias_facts = [
+        _stack_storage_facts_for_segmented_address_8616("ss", -6, 2, region=0x4010)
+    ]
+    ss_reg_offset, ss_reg_size = project.arch.registers["ss"]
+    ss_carrier = CVariable(SimRegisterVariable(ss_reg_offset, ss_reg_size, name="v3"), codegen=codegen)
+    stack_base = CFakeVariable("stack_base", SimTypePointer(SimTypeBottom()), codegen=codegen)
+    helper = CFunctionCall(
+        "SEG_U16",
+        None,
+        [
+            ss_carrier,
+            CBinaryOp("Add", stack_base, _const(-8, codegen), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    target = _stack(-10, codegen, name="sink")
+    codegen.cfunc.variables_in_use[target.variable] = target
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(target, helper, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project)
+
+    assert changed is True
+    rhs = codegen.cfunc.statements.statements[0].rhs
+    assert isinstance(rhs, CVariable)
+    assert isinstance(rhs.variable, SimStackVariable)
+    assert rhs.variable.offset == -6
     assert rhs.variable.size == 2
     assert codegen._inertia_runtime_ss_helper_candidate_count_8616 == 1
     assert codegen._inertia_runtime_ss_helper_materialized_count_8616 == 1
@@ -2296,3 +2402,38 @@ def test_stack_lowering_builder_refuses_non_ss_or_unknown_width_facts():
     }
 
     assert build_typed_stack_probe_return_facts_8616(codegen) == {}
+
+
+def test_missing_terminal_ax_return_replaces_return_value_without_dropping_statements(monkeypatch):
+    project, codegen = _codegen([])
+    lhs = CVariable(SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010), codegen=codegen)
+    setup_stmt = CAssignment(lhs, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen)
+    old_retval = CConstant(0x1234, SimTypeShort(False), codegen=codegen)
+    new_retval = CConstant(0x55AA, SimTypeShort(False), codegen=codegen)
+    return_stmt = CReturn(old_retval, codegen=codegen)
+    root = CStatements([setup_stmt, return_stmt], addr=0x4010, codegen=codegen)
+    function = SimpleNamespace(addr=0x4010)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        statements=root,
+        functy=SimpleNamespace(returnty=SimTypeShort(False)),
+    )
+    codegen._inertia_current_function_8616 = function
+
+    monkeypatch.setattr(
+        _postprocess_stage,
+        "_return_expr_has_insert_artifact_8616",
+        lambda expr: expr is old_retval,
+    )
+    monkeypatch.setattr(_postprocess_stage, "_return_depends_on_insert_artifact_8616", lambda _root, _node: False)
+    monkeypatch.setattr(
+        _postprocess_stage,
+        "_linear_terminal_ax_return_expr_8616",
+        lambda _project, _codegen, _function: new_retval,
+    )
+
+    changed = _postprocess_stage._materialize_missing_terminal_ax_return_8616(project, codegen)
+
+    assert changed is True
+    assert list(root.statements) == [setup_stmt, return_stmt]
+    assert return_stmt.retval is new_retval

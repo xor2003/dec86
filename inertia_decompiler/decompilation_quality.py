@@ -1,11 +1,15 @@
+"""Refusal gates for unresolved decompiler output."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
 class DecompilationQualityAssessment:
+    """Final-output quality verdict and the markers that triggered it."""
+
     reject_as_decompiled: bool
     markers: tuple[str, ...]
 
@@ -50,25 +54,33 @@ _RAW_IR_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+_SOURCE_BACKED_LEAKAGE_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("unresolved-vvar", re.compile(r"\bvvar_\d+\b")),
+    ("expr-cycle", re.compile(r"\bexpr_cycle\b")),
+    ("raw-ds-segmented-access", re.compile(r"\b(?:SEG_PTR|SEG_U8|SEG_U16|SEG_U32|MK_FP)\s*\(\s*ds\s*,")),
+    ("raw-ss-segmented-access", re.compile(r"\b(?:SEG_PTR|SEG_U8|SEG_U16|SEG_U32|MK_FP)\s*\(\s*ss\s*,")),
+    ("raw-memory-symbol", re.compile(r"\bmem_[0-9a-fA-F]{4,}\b")),
+)
+
+
+def _code_only_text(rendered_text: str) -> str:
+    code_lines = [
+        line.strip()
+        for line in rendered_text.splitlines()
+        if line.strip() and line.strip() not in {"{", "}"} and not line.strip().startswith(("/*", "*", "//"))
+    ]
+    return "\n".join(code_lines)
+
+
 def assess_decompiled_c_text(rendered_text: str) -> DecompilationQualityAssessment:
-    def _impl():
-        """
-        Classify emitted C text as acceptable or unresolved IR-shaped output.
+    """Classify emitted C text as acceptable or unresolved IR-shaped output."""
 
-        This is a refusal gate only. It does not infer semantics from text; it
-        rejects output that still exposes raw AIL/VEX/storage internals and should
-        not be presented as successful decompilation.
-        """
-
+    def _impl() -> DecompilationQualityAssessment:
         if not isinstance(rendered_text, str) or not rendered_text.strip():
             return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
 
-        code_lines = [
-            line.strip()
-            for line in rendered_text.splitlines()
-            if line.strip() and line.strip() not in {"{", "}"} and not line.strip().startswith(("/*", "*", "//"))
-        ]
-        code_only_text = "\n".join(code_lines)
+        code_only_text = _code_only_text(rendered_text)
+        code_lines = code_only_text.splitlines()
         markers = tuple(label for label, pattern in _RAW_IR_MARKERS if pattern.search(code_only_text))
         if not markers:
             return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
@@ -89,3 +101,25 @@ def assess_decompiled_c_text(rendered_text: str) -> DecompilationQualityAssessme
         )
 
     return _impl()
+
+
+def assess_source_backed_c_text(rendered_text: str) -> DecompilationQualityAssessment:
+    """Refuse source-evidenced output that still exposes unresolved recovery state.
+
+    The generic quality gate intentionally allows some ugly but honest C for
+    binaries without source evidence.  When source/COD evidence is embedded in
+    the acceptance payload, unresolved temporaries and raw segmented accesses are
+    evidence that a semantic stage failed to materialize facts before rewrite.
+    """
+    base = assess_decompiled_c_text(rendered_text)
+    if base.reject_as_decompiled:
+        return base
+    if not isinstance(rendered_text, str) or not rendered_text.strip():
+        return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
+
+    code_only_text = _code_only_text(rendered_text)
+    markers = tuple(label for label, pattern in _SOURCE_BACKED_LEAKAGE_MARKERS if pattern.search(code_only_text))
+    return DecompilationQualityAssessment(
+        reject_as_decompiled=bool(markers),
+        markers=markers,
+    )

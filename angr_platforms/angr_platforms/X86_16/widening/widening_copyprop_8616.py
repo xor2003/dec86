@@ -4,7 +4,7 @@ from __future__ import annotations
 # Responsibility: copy propagation using proven alias storage domains.
 # Equivalent to LLVM: EarlyCSE + local copy prop (Local.cpp).
 # Forbidden: C text generation, type inference, rewrite ownership.
-from ..decompiler_postprocess_utils import _unwrap_statements_8616
+from ..decompiler_postprocess_utils import _replace_c_children_8616, _unwrap_statements_8616
 from ..semantics.alias_query import (
     describe_alias_storage,
 )
@@ -13,7 +13,7 @@ from ..semantics.expression_analysis import _unwrap_c_casts
 __all__ = ["_widening_copy_propagation_8616"]
 
 
-def _widening_copy_propagation_8616(codegen) -> bool:
+def _widening_copy_propagation_8616(codegen, *, enable_nested: bool = False) -> bool:
     """Propagate copies using alias storage domains.
 
     For each block, maintain a map from storage domain to the last
@@ -58,20 +58,55 @@ def _widening_copy_propagation_8616(codegen) -> bool:
             # Unknown lvalue shape: conservatively treat it as an observable memory write.
             return True
 
+        def _replacement_for_variable(node):
+            if not isinstance(node, structured_c.CVariable):
+                return None
+            storage_facts = describe_alias_storage(node)
+            storage_key = _block_def_key(storage_facts)
+            if storage_key is None:
+                return None
+            return block_defs.get(storage_key)
+
+        def _propagate_expr(expr):
+            nonlocal changed
+            replacement = _replacement_for_variable(expr)
+            if replacement is not None and not _is_same_expr(replacement, expr):
+                changed = True
+                if enable_nested:
+                    codegen.widening_copyprop_nested_replacements_8616 = (
+                        int(getattr(codegen, "widening_copyprop_nested_replacements_8616", 0) or 0) + 1
+                    )
+                return _unwrap_c_casts(replacement)
+            if not enable_nested:
+                return expr
+
+            def transform(node):
+                nonlocal changed
+                nested_replacement = _replacement_for_variable(node)
+                if nested_replacement is None or _is_same_expr(nested_replacement, node):
+                    return node
+                changed = True
+                codegen.widening_copyprop_nested_replacements_8616 = (
+                    int(getattr(codegen, "widening_copyprop_nested_replacements_8616", 0) or 0) + 1
+                )
+                return _unwrap_c_casts(nested_replacement)
+
+            if _replace_c_children_8616(expr, transform):
+                changed = True
+            return expr
+
         for stmt in stmts:
             if isinstance(stmt, structured_c.CAssignment):
                 rhs = getattr(stmt, "rhs", None)
                 lhs = getattr(stmt, "lhs", None)
 
-                # Attempt copy propagation: if RHS is a variable, check for prior def
-                if isinstance(rhs, structured_c.CVariable):
-                    rhs_facts = describe_alias_storage(rhs)
-                    rhs_key = _block_def_key(rhs_facts)
-                    if rhs_key is not None and rhs_key in block_defs:
-                        replacement = block_defs[rhs_key]
-                        if replacement is not None and not _is_same_expr(replacement, rhs):
-                            stmt.rhs = _unwrap_c_casts(replacement)
-                            changed = True
+                # Attempt copy propagation on the RHS before applying memory-write
+                # kills. The store itself is the effect; its value expression can
+                # still consume earlier proven copies.
+                propagated_rhs = _propagate_expr(rhs)
+                if propagated_rhs is not rhs:
+                    stmt.rhs = propagated_rhs
+                    rhs = propagated_rhs
 
                 # A memory write can invalidate any previous expression whose
                 # source may have read memory. Alias precision is not available
@@ -84,7 +119,6 @@ def _widening_copy_propagation_8616(codegen) -> bool:
                     block_defs.clear()
                     if _is_side_effecting(rhs):
                         block_defs.clear()
-                    _walk_node(stmt)
                     continue
 
                 # Record this definition's source for future propagation.
@@ -103,6 +137,7 @@ def _widening_copy_propagation_8616(codegen) -> bool:
                 # Record writes via pointer-like stores (kill specific domains)
                 if isinstance(rhs, structured_c.CFunctionCall):
                     block_defs.clear()
+                continue
 
             _walk_node(stmt)
 

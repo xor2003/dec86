@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+from pathlib import Path
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 from enum import Enum
@@ -2194,14 +2195,20 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
     # Return-shape reclassification mutates function prototypes and can affect
     # observable memory/ABI behavior. Keep it opt-in until fully proven stable.
     def _impl():
-        if os.environ.get("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "").strip().lower() not in {"1", "true", "yes", "on"}:
-            return False
-
         func, prototype = _resolve_codegen_function_and_prototype_8616(project, codegen)
         if func is None or prototype is None:
             return False
 
-        source_return_lines, source_lines, source_decl_is_void = _collect_source_return_annotation_8616(func)
+        source_return_lines, source_lines, source_decl_is_void = _collect_source_return_annotation_8616(
+            func,
+            project=project,
+        )
+        if (
+            os.environ.get("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "").strip().lower()
+            not in {"1", "true", "yes", "on"}
+            and not source_decl_is_void
+        ):
+            return False
 
         return_nodes = [node for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements) if isinstance(node, CReturn)]
         if not return_nodes:
@@ -2283,7 +2290,7 @@ def _resolve_codegen_function_and_prototype_8616(project: SimpleNamespace, codeg
     return func, prototype
 
 
-def _collect_source_return_annotation_8616(func) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
+def _collect_source_return_annotation_8616(func, project=None) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
     source_return_lines: tuple[str, ...] = ()
     source_lines: tuple[str, ...] = ()
     info = getattr(func, "info", None)
@@ -2294,25 +2301,68 @@ def _collect_source_return_annotation_8616(func) -> tuple[tuple[str, ...], tuple
             source_lines = tuple(annotations.get("source_lines", ()) or ())
     source_decl = _source_decl_from_cod_source_lines(source_lines, getattr(func, "name", None)) if source_lines else None
     if not (isinstance(source_decl, str) and source_decl):
-        return source_return_lines, source_lines, False
+        return source_return_lines, source_lines, _local_source_return_decl_is_void_8616(func, project=project)
     try:
         _, source_proto, _ = _parse_c_prototype_8616(source_decl)
     except Exception as ex:
         logging.getLogger(__name__).debug("source decl proto parsing failed decl=%r: %s", source_decl, ex)
         source_proto = None
     source_decl_is_void = _is_void_return_type_8616(getattr(source_proto, "returnty", None))
+    if not source_decl_is_void and project is not None:
+        source_decl_is_void = _local_source_return_decl_is_void_8616(func, project=project)
     return source_return_lines, source_lines, source_decl_is_void
+
+
+def _local_source_return_decl_is_void_8616(func, project=None) -> bool:
+    if func is None:
+        return False
+    func_name = getattr(func, "name", None)
+    if not isinstance(func_name, str) or not func_name:
+        return False
+    project_obj = project
+    if project_obj is None:
+        project_obj = getattr(func, "project", None)
+
+    binary_path: str | Path | None = None
+    if project_obj is not None:
+        binary_path = getattr(project_obj, "filename", None)
+        if binary_path is None:
+            loader = getattr(project_obj, "loader", None)
+            main_object = getattr(loader, "main_object", None) if loader is not None else None
+            binary_path = getattr(main_object, "binary", None)
+            if binary_path is None:
+                binary_path = getattr(main_object, "binary_filename", None)
+
+    if not isinstance(binary_path, (str, Path)):
+        return False
+
+    try:
+        from inertia_decompiler.source_sidecar import collect_local_source_sidecar_return_types
+
+        cache_name = "_inertia_local_source_return_types_8616"
+        source_return_types = getattr(project_obj, cache_name, None)
+        if not isinstance(source_return_types, dict):
+            source_return_types = collect_local_source_sidecar_return_types(Path(binary_path))
+            if project_obj is not None:
+                setattr(project_obj, cache_name, source_return_types)
+        return_type = source_return_types.get(func_name) or source_return_types.get(func_name.lstrip("_"))
+        if not isinstance(return_type, str):
+            return False
+        normalized_return_type = " ".join(return_type.strip().split())
+        return normalized_return_type.endswith(" void") or normalized_return_type == "void"
+    except Exception:
+        return False
 
 
 def _is_void_return_type_8616(return_type) -> bool:
     return isinstance(return_type, SimTypeBottom) and getattr(return_type, "label", None) == "void"
 
 
-def _function_has_void_return_prototype_8616(func) -> bool:
+def _function_has_void_return_prototype_8616(func, project=None) -> bool:
     prototype = getattr(func, "prototype", None)
     if _is_void_return_type_8616(getattr(prototype, "returnty", None)):
         return True
-    return _collect_source_return_annotation_8616(func)[2]
+    return _collect_source_return_annotation_8616(func, project=project)[2]
 
 
 def _codegen_has_void_return_evidence_8616(_project, codegen, func) -> bool:
@@ -2330,7 +2380,7 @@ def _codegen_has_void_return_evidence_8616(_project, codegen, func) -> bool:
         getattr(codegen, "_inertia_current_function_8616", None),
         func,
     ):
-        if candidate_func is not None and _collect_source_return_annotation_8616(candidate_func)[2]:
+        if candidate_func is not None and _collect_source_return_annotation_8616(candidate_func, project=_project)[2]:
             return True
     return False
 

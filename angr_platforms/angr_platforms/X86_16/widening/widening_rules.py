@@ -3,8 +3,11 @@ from __future__ import annotations
 import copy
 import os
 import sys
+from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+
+from ..structuring.simple_loop_recovery import _function_instruction_summaries_8616
 
 
 def run_typed_widening_pass_8616(
@@ -52,12 +55,32 @@ def collect_bp_stack_access_widths_from_instructions_8616(project, codegen) -> d
             function = functions.function(addr=int(func_addr), create=False)
         except Exception:
             function = None
+    if function is None:
+        function = SimpleNamespace(
+            addr=int(func_addr),
+            size=getattr(cfunc, "size", None),
+            name=getattr(cfunc, "name", None),
+        )
+
+    widths: dict[int, int] = {}
+    for insn in _function_instruction_summaries_8616(project, function):
+        for operand_kind, operand_value, operand_size in (
+            (insn.op0_kind, insn.op0_value, insn.op0_size),
+            (insn.op1_kind, insn.op1_value, insn.op1_size),
+        ):
+            if operand_kind != "bp_mem" or not isinstance(operand_value, int):
+                continue
+            size = int(operand_size or 0)
+            if size <= 0:
+                continue
+            widths[int(operand_value)] = max(widths.get(int(operand_value), 0), size)
+    if widths:
+        return widths
 
     block_addrs = tuple(sorted(getattr(function, "block_addrs", ()) or ()))
     if not block_addrs:
         block_addrs = (int(func_addr),)
 
-    widths: dict[int, int] = {}
     for block_addr in block_addrs:
         try:
             block = project.factory.block(int(block_addr), opt_level=0)

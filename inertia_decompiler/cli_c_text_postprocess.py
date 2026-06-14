@@ -418,7 +418,7 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
         header_start_re = re.compile(r"^\s*(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+[A-Za-z_]\w*\s*\(")
         return_re = re.compile(r"^(?P<indent>\s*)return\s+(?P<expr>[^;]+);\s*$")
         bare_return_re = re.compile(r"^\s*return;\s*$")
-        side_effect_call_re = re.compile(r"^[A-Za-z_]\w*\s*\(.*\)$")
+        side_effect_call_re = re.compile(r"^(?:(?:::0x[0-9a-fA-F]+::)?[A-Za-z_]\w*)\s*\(.*\)$")
 
         def _return_line_is_terminal(start_index: int, current_depth: int) -> bool:
             depth = current_depth
@@ -743,11 +743,11 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
         trailing_newline = c_text.endswith("\n")
         lines = c_text.splitlines()
         generic_name_re = re.compile(
-            r"^(?:a\d+|v\d+|vvar_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)$"
+            r"^(?:a\d+|v\d+|vvar_\d+|tmp_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)$"
         )
         decl_name_re = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s*;\s*$")
         generic_use_re = re.compile(
-            r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)(?![A-Za-z_])"
+            r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+|tmp_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)(?![A-Za-z_])"
         )
         arg_name_re = re.compile(r"\((?P<args>[^()]*)\)")
         header_re = re.compile(r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[$A-Za-z_][$\w]*)\s*\((?P<args>[^()]*)\)")
@@ -1008,7 +1008,7 @@ def _materialize_annotated_cod_declarations_text(
 
         lines = c_text.splitlines()
         header_re = re.compile(
-            rf"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{{;]?)\s*$"
+            rf"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>.*)\)\s*(?P<suffix>[{{;]?)\s*$"
         )
         header_index = _find_header_index_8616(lines, header_re)
         if header_index is None:
@@ -1038,14 +1038,28 @@ def _materialize_annotated_cod_declarations_text(
         if source_arg_text:
             pointer_evidence_text = f"{source_arg_text}\n{pointer_evidence_text}"
         source_decl = _source_decl_from_cod_source_lines(metadata.source_lines, func_name)
+        local_return_type = None
+        if source_return_types is not None:
+            local_return_type = source_return_types.get(func_name)
+            if local_return_type is None:
+                local_return_type = source_return_types.get(func_name.lstrip("_"))
         source_prototypes = _source_function_prototype_decls_from_cod_source_lines(metadata.source_lines)
         if not preserve_source_header:
-            header_changed = _apply_source_decl_to_header_8616(
+            if source_decl:
+                header_changed = _apply_source_decl_to_header_8616(
+                    lines,
+                    header_index=header_index,
+                    header_re=header_re,
+                    func_name=func_name,
+                    source_decl=source_decl,
+                    header_changed=header_changed,
+                )
+            header_changed = _apply_local_return_type_to_header_8616(
                 lines,
                 header_index=header_index,
                 header_re=header_re,
                 func_name=func_name,
-                source_decl=source_decl,
+                local_return_type=local_return_type,
                 header_changed=header_changed,
             )
 
@@ -1244,13 +1258,14 @@ def _source_header_args_unmaterialized_8616(
     func_name: str,
     source_decl: str | None,
     source_arg_text: str | None = None,
+    allowed_positive_arg_aliases: Sequence[str] | None = None,
 ) -> bool:
     if not isinstance(func_name, str) or not func_name:
         return False
     if not source_decl and not source_arg_text:
         return False
     header_re = re.compile(
-        rf"(?m)^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>[^()]*)\)\s*(?:\{{|$)"
+        rf"(?m)^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>.*)\)\s*(?:\{{|$)"
     )
     current_header = header_re.search(c_text)
     if current_header is None:
@@ -1259,9 +1274,7 @@ def _source_header_args_unmaterialized_8616(
     current_parts = _split_c_signature_args_8616(current_header.group("args"))
     source_args_text = ""
     if source_decl is not None:
-        source_match = re.search(r"\((?P<args>[^()]*)\)\s*;?$", source_decl.strip())
-        if source_match is not None:
-            source_args_text = source_match.group("args").strip()
+        source_args_text = _source_decl_args_text_8616(source_decl) or ""
     if not source_parts and source_args_text in {"", "void"} and current_parts:
         body_text = c_text[current_header.end() :]
         for current_part in current_parts:
@@ -1273,6 +1286,7 @@ def _source_header_args_unmaterialized_8616(
     if not source_parts or len(source_parts) != len(current_parts):
         return False
     body_text = c_text[current_header.end() :]
+    allowed_aliases = set(allowed_positive_arg_aliases or ())
     for current_part, source_part in zip(current_parts, source_parts):
         current_name = _decl_arg_name_8616(current_part)
         source_name = _decl_arg_name_8616(source_part)
@@ -1281,6 +1295,8 @@ def _source_header_args_unmaterialized_8616(
         current_used = re.search(rf"(?<![A-Za-z_]){re.escape(current_name)}(?![A-Za-z_])", body_text) is not None
         source_used = re.search(rf"(?<![A-Za-z_]){re.escape(source_name)}(?![A-Za-z_])", body_text) is not None
         if current_used and not source_used:
+            if source_name in allowed_aliases:
+                continue
             return True
     return False
 
@@ -1341,6 +1357,36 @@ def _apply_source_decl_to_header_8616(
     ):
         return header_changed
     replacement_header = f"{current_header.group('indent')}{source_ret} {func_name}({source_args_text})"
+    if current_header.group("suffix") == "{":
+        replacement_header += " {"
+    elif current_header.group("suffix") == ";":
+        replacement_header += ";"
+    if lines[header_index] != replacement_header:
+        lines[header_index] = replacement_header
+        return True
+    return header_changed
+
+
+def _apply_local_return_type_to_header_8616(
+    lines: list[str],
+    *,
+    header_index: int,
+    header_re: re.Pattern[str],
+    func_name: str,
+    local_return_type: str | None,
+    header_changed: bool,
+) -> bool:
+    if not isinstance(local_return_type, str):
+        return header_changed
+    normalized_return_type = " ".join(local_return_type.strip().split())
+    if not (normalized_return_type == "void" or normalized_return_type.endswith(" void")):
+        return header_changed
+    normalized_return_type = "void"
+    current_header = header_re.match(lines[header_index])
+    if current_header is None:
+        return header_changed
+    current_args = current_header.group("args")
+    replacement_header = f"{current_header.group('indent')}{local_return_type.strip()} {func_name}({current_args})"
     if current_header.group("suffix") == "{":
         replacement_header += " {"
     elif current_header.group("suffix") == ";":
@@ -2448,10 +2494,10 @@ def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name:
             candidate_names.add(stripped_name)
 
         decl_res = (
-            re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?:\{|;)?\s*$"),
+            re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>.*)\)\s*(?:\{|;)?\s*$"),
             re.compile(
                 r"^(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+"
-                r"(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^()]*)\)\s*(?:\{|;)?\s*$"
+                r"(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>.*)\)\s*(?:\{|;)?\s*$"
             ),
         )
         for line in source_lines:
@@ -2848,11 +2894,37 @@ def _find_block_end(lines: list[str], brace_index: int) -> int:
 
 
 def _extract_reserved_arg_names(args_text: str) -> set[str]:
-    return {
-        arg_match.group(1)
-        for arg in _split_function_args_preserving_nesting(args_text)
-        if (arg_match := re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", arg)) is not None
-    }
+    return _parameter_names_from_args_text_8616(args_text)
+
+
+def _function_definition_args_text_8616(line: str) -> str | None:
+    stripped = line.strip()
+    if stripped.startswith(("if", "while", "for", "switch")):
+        return None
+    return _extract_function_header_args_8616(line)
+
+
+def _source_decl_args_text_8616(source_decl: str | None) -> str | None:
+    if source_decl is None:
+        return None
+    text = source_decl.strip().rstrip(";")
+    close_idx = text.rfind(")")
+    if close_idx < 0:
+        return None
+    depth = 0
+    open_idx = None
+    for idx in range(close_idx, -1, -1):
+        char = text[idx]
+        if char == ")":
+            depth += 1
+        elif char == "(":
+            depth -= 1
+            if depth == 0:
+                open_idx = idx
+                break
+    if open_idx is None:
+        return None
+    return text[open_idx + 1 : close_idx].strip()
 
 
 class _LocalDeclKind8616(Enum):
@@ -2950,7 +3022,8 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
         )
         decl_re = re.compile(
             r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default|continue|break)\b)"
-            r"(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$"
+            r"(?P<type>(?:[A-Za-z_][\w\[\]]*\s+)+(?:\*+\s*)*|[A-Za-z_][\w\[\]]*\s*\*+\s*)"
+            r"(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$"
         )
         func_ptr_decl_re = re.compile(
             r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)"
@@ -2961,7 +3034,8 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
         index = 0
         while index < len(lines):
             match = header_re.match(lines[index])
-            if match is None:
+            args_text = match.group("args") if match is not None else _function_definition_args_text_8616(lines[index])
+            if args_text is None:
                 index += 1
                 continue
 
@@ -2972,7 +3046,7 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
 
             body_start = brace_index + 1
             body_end = _find_block_end(lines, brace_index)
-            reserved_names = _extract_reserved_arg_names(match.group("args"))
+            reserved_names = _extract_reserved_arg_names(args_text)
             decl_lines, local_used_names = _collect_local_decl_entries(
                 lines, body_start, body_end, decl_re, func_ptr_decl_re
             )
@@ -3005,7 +3079,11 @@ def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
     def _impl():
         trailing_newline = c_text.endswith("\n")
         lines = c_text.splitlines()
-        decl_re = re.compile(r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$")
+        decl_re = re.compile(
+            r"^(?P<indent>\s*)"
+            r"(?P<type>(?:[A-Za-z_][\w\[\]]*\s+)+(?:\*+\s*)*|[A-Za-z_][\w\[\]]*\s*\*+\s*)"
+            r"(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$"
+        )
         declared_names: set[str] = set()
         decls_by_name: dict[str, tuple[int, str | None]] = {}
         for idx, line in enumerate(lines):
@@ -3612,6 +3690,75 @@ def _split_simple_assignment_conditions(c_text: str) -> str:
         )
 
     return pattern.sub(_replace, c_text)
+
+
+def _split_top_level_ternary_8616(expr: str) -> tuple[str, str, str] | None:
+    depth = 0
+    question_index: int | None = None
+    for index, ch in enumerate(expr):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(depth - 1, 0)
+        elif ch == "?" and depth == 0 and question_index is None:
+            question_index = index
+        elif ch == ":" and depth == 0 and question_index is not None:
+            return (
+                expr[:question_index].strip(),
+                expr[question_index + 1 : index].strip(),
+                expr[index + 1 :].strip(),
+            )
+    return None
+
+
+def _strip_single_outer_parens_8616(expr: str) -> str:
+    stripped = expr.strip()
+    if len(stripped) < 2 or not stripped.startswith("(") or not stripped.endswith(")"):
+        return stripped
+    depth = 0
+    for index, ch in enumerate(stripped):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0 and index != len(stripped) - 1:
+                return stripped
+    if depth != 0:
+        return stripped
+    return stripped[1:-1].strip()
+
+
+def _simplify_negated_zero_one_ternary_condition_8616(condition: str) -> str:
+    stripped = condition.strip()
+    if not stripped.startswith("!((") or not stripped.endswith("))"):
+        return condition
+
+    inner = stripped[3:-2].strip()
+    ternary = _split_top_level_ternary_8616(inner)
+    if ternary is None:
+        return condition
+
+    predicate, true_expr, false_expr = ternary
+    if true_expr != "0" or false_expr != "1":
+        return condition
+
+    return _strip_single_outer_parens_8616(predicate)
+
+
+def _split_for_header_8616(header: str) -> list[str] | None:
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for index, ch in enumerate(header):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(depth - 1, 0)
+        elif ch == ";" and depth == 0:
+            parts.append(header[start:index].strip())
+            start = index + 1
+    parts.append(header[start:].strip())
+    return parts if len(parts) == 3 else None
 
 def _simplify_x86_16_wrapped_stack_offsets(c_text: str) -> str:
     def _replace(match: re.Match[str]) -> str:
@@ -4338,11 +4485,17 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
         func_name = getattr(function, "name", None) or ""
         source_decl = _source_decl_from_cod_source_lines(metadata.source_lines, getattr(function, "name", None))
         source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, getattr(function, "name", None))
+        raw_positive_arg_aliases = [
+            name
+            for disp, name in _sorted_metadata_stack_aliases(metadata)
+            if disp > 0 and isinstance(name, str) and name
+        ]
         source_header_unmaterialized = _source_header_args_unmaterialized_8616(
             c_text,
             func_name=func_name,
             source_decl=source_decl,
             source_arg_text=source_arg_text,
+            allowed_positive_arg_aliases=raw_positive_arg_aliases,
         )
         source_header_materialized = bool(source_decl) and not source_header_unmaterialized
         preserve_codegen_header = (
@@ -4351,11 +4504,7 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
         ) or source_header_unmaterialized
         header_source_decl = None if preserve_codegen_header else source_decl
         header_source_arg_text = None if preserve_codegen_header else source_arg_text
-        positive_arg_aliases = [
-            name
-            for disp, name in _sorted_metadata_stack_aliases(metadata)
-            if not preserve_codegen_header and disp > 0 and isinstance(name, str) and name
-        ]
+        positive_arg_aliases = [] if preserve_codegen_header else raw_positive_arg_aliases
         positive_aliases = _build_cod_positive_bp_alias_map(
             [
                 disp
@@ -4433,7 +4582,7 @@ def _annotate_cod_lines_with_aliases_8616(
         for index, line in enumerate(input_lines):
             next_line = input_lines[index + 1] if index + 1 < len(input_lines) else None
             line_header_match = re.match(
-                r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)(?P<suffix>\s*[;{]?\s*)$",
+                r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>.*)\)(?P<suffix>\s*[;{]?\s*)$",
                 line,
             )
             local_positive_arg_aliases = positive_arg_aliases
@@ -4444,6 +4593,7 @@ def _annotate_cod_lines_with_aliases_8616(
                 func_name=line_header_match.group("name"),
                 source_decl=source_decl,
                 source_arg_text=source_arg_text,
+                allowed_positive_arg_aliases=positive_arg_aliases,
             ):
                 local_positive_arg_aliases = []
                 local_source_decl = None
@@ -4456,6 +4606,15 @@ def _annotate_cod_lines_with_aliases_8616(
                 source_decl=local_source_decl,
                 source_arg_text=local_source_arg_text,
             )
+            if line_header_match is not None and local_positive_arg_aliases:
+                header_parts = _split_c_signature_args_8616(line_header_match.group("args"))
+                for arg_index, part in enumerate(header_parts):
+                    if arg_index >= len(local_positive_arg_aliases):
+                        break
+                    current_name = _decl_arg_name_8616(part)
+                    alias = local_positive_arg_aliases[arg_index]
+                    if current_name and alias and current_name != alias:
+                        alias_replacements.setdefault(current_name, alias)
             match = re.search(r"// \[bp([+-])0x([0-9a-f]+)\]", line)
             if match is not None:
                 disp = int(match.group(2), 16)
@@ -4496,7 +4655,7 @@ def _rewrite_cod_header_args_line_8616(
         if not positive_arg_aliases and source_decl is None:
             return line
         header_match = re.match(
-            r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)(?P<suffix>\s*[;{]?\s*)$",
+            r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>.*)\)(?P<suffix>\s*[;{]?\s*)$",
             line,
         )
         if header_match is None:
@@ -4526,11 +4685,9 @@ def _rewrite_cod_header_args_line_8616(
 
 def _split_source_decl_args_8616(source_decl: str | None, source_arg_text: str | None) -> list[str]:
     if source_decl is not None:
-        source_match = re.search(r"\((?P<args>[^()]*)\)\s*;?$", source_decl.strip())
-        if source_match is not None:
-            source_args = source_match.group("args").strip()
-            if source_args and source_args != "void":
-                return _split_c_signature_args_8616(source_args)
+        source_args = _source_decl_args_text_8616(source_decl)
+        if source_args and source_args != "void":
+            return _split_c_signature_args_8616(source_args)
     if source_arg_text is not None:
         return _split_c_signature_args_8616(source_arg_text)
     return []
@@ -4566,6 +4723,7 @@ def _rewrite_cod_header_arg_parts_8616(
             text = text.replace("FAR *", "*").replace("FAR*", "*")
             text = text.replace("const char*", "const char *").replace("char*", "char *")
             text = re.sub(r"\s*\*\s*", " *", text)
+            text = re.sub(r"\(\s+\*", "(*", text)
             return re.sub(r"\s+", " ", text).strip()
 
         def alias_looks_pointer_like(alias: str) -> bool:
@@ -4607,12 +4765,12 @@ def _rewrite_cod_header_arg_parts_8616(
             prefix = part[: part.rfind(split)]
             if split == alias:
                 if alias_looks_pointer_like(alias) and "*" not in prefix and "[" not in prefix:
-                    rewritten.append(f"{prefix.rstrip()} *{alias}")
+                    rewritten.append(_replace_decl_arg_name_8616(part, alias, f"*{alias}"))
                     changed = True
                 else:
                     rewritten.append(part)
                 continue
-            rewritten.append(f"{prefix}{alias}")
+            rewritten.append(_replace_decl_arg_name_8616(part, split, alias))
             changed = True
         if use_source_args and rewritten == candidate_parts and args_text.strip() != ", ".join(rewritten):
             changed = True
@@ -5122,6 +5280,9 @@ def _decl_arg_name_8616(arg_text: str) -> str | None:
     text = arg_text.rstrip()
     if not text or text in {"void", "..."}:
         return None
+    fnptr_match = re.search(r"\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)", text)
+    if fnptr_match is not None:
+        return fnptr_match.group("name")
     idx = len(text)
     while idx > 0 and text[idx - 1].isspace():
         idx -= 1
@@ -5133,6 +5294,18 @@ def _decl_arg_name_8616(arg_text: str) -> str | None:
     name = text[idx:end]
     prefix = text[:idx]
     return name if prefix.strip() else None
+
+
+def _replace_decl_arg_name_8616(arg_text: str, old_name: str, new_name: str) -> str:
+    fnptr_match = re.search(r"\(\s*\*\s*" + re.escape(old_name) + r"\s*\)", arg_text)
+    if fnptr_match is not None:
+        start, end = fnptr_match.span()
+        replacement = re.sub(re.escape(old_name), new_name, arg_text[start:end], count=1)
+        return f"{arg_text[:start]}{replacement}{arg_text[end:]}"
+    name_match = re.search(rf"(?<![A-Za-z_]){re.escape(old_name)}(?![A-Za-z_])", arg_text)
+    if name_match is None:
+        return arg_text
+    return f"{arg_text[: name_match.start()]}{new_name}{arg_text[name_match.end():]}"
 
 
 def _annotated_bp_arg_names_8616(lines_before_header: list[str]) -> list[str]:
@@ -5183,7 +5356,7 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
             r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default)\b)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$"
         )
         synthetic_name_re = re.compile(
-            r"^(?:ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|stack_bp_[pm][0-9a-fA-F]+_b\d+|tmp_slot_\d+|v\d+|vvar_\d+|a\d+|arg_\d+|ax(?:_\d+)?|dx(?:_\d+)?|cx(?:_\d+)?|bx(?:_\d+)?|al|ah)$"
+            r"^(?:ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|stack_bp_[pm][0-9a-fA-F]+_b\d+|tmp_slot_\d+|tmp_\d+|mem_[0-9A-Fa-f]+|v\d+|vvar_\d+|a\d+|arg_\d+|ax(?:_\d+)?|dx(?:_\d+)?|cx(?:_\d+)?|bx(?:_\d+)?|(?:cs|ds|es|ss|fs|gs)(?:_\d+)?|al|ah)$"
         )
 
         def _split_args(args_text: str) -> list[str]:
@@ -5218,7 +5391,8 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
         index = 0
         while index < len(lines):
             match = header_re.match(lines[index])
-            if match is None:
+            args_text = match.group("args") if match is not None else _function_definition_args_text_8616(lines[index])
+            if args_text is None:
                 index += 1
                 continue
 
@@ -5243,10 +5417,7 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
                 body_end += 1
 
             arg_names: set[str] = set()
-            for arg in _split_args(match.group("args")):
-                arg_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", arg)
-                if arg_match is not None:
-                    arg_names.add(arg_match.group(1))
+            arg_names.update(_parameter_names_from_args_text_8616(args_text))
 
             local_decl_names: list[tuple[int, str]] = []
             for scan_index in range(body_start, body_end):
@@ -5286,6 +5457,31 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
         if trailing_newline:
             normalized += "\n"
         return normalized
+
+    return _impl()
+
+
+def _prune_standalone_stack_probe_calls_text(c_text: str) -> str:
+    def _impl():
+        trailing_newline = c_text.endswith("\n")
+        probe_names = ("aNchkstk", "__aNchkstk", "_chkstk", "__chkstk")
+        probe_alt = "|".join(re.escape(name) for name in probe_names)
+        call_re = re.compile(rf"^\s*(?:{probe_alt})\s*\(\s*\)\s*;\s*$")
+        proto_re = re.compile(rf"^\s*void\s+(?:{probe_alt})\s*\(\s*(?:void)?\s*\)\s*;\s*$")
+        lines = c_text.splitlines()
+        without_calls = [line for line in lines if call_re.match(line) is None]
+        if without_calls == lines:
+            return c_text
+        remaining_text = "\n".join(without_calls)
+        kept_lines = []
+        for line in without_calls:
+            if proto_re.match(line) is not None and re.search(rf"\b(?:{probe_alt})\s*\(", remaining_text.replace(line, "", 1)) is None:
+                continue
+            kept_lines.append(line)
+        result = "\n".join(kept_lines)
+        if trailing_newline:
+            result += "\n"
+        return result
 
     return _impl()
 
@@ -5468,6 +5664,31 @@ def _normalize_boolean_conditions(c_text: str) -> str:
         r"(?m)^(?P<indent>\s*)\}\s*while \(!\(\((?P<expr>[^()]*(?:\([^()]*\)[^()]*)*)\)\)\);"
     )
     rewritten = brace_while_pattern.sub(lambda m: f"{m.group('indent')}}} while (({m.group('expr')}) == 0);", rewritten)
+
+    control_ternary_pattern = re.compile(
+        r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \((?P<condition>!\(\(.+\)\))\)(?P<suffix>.*)$"
+    )
+
+    def _rewrite_control_ternary(match: re.Match[str]) -> str:
+        simplified = _simplify_negated_zero_one_ternary_condition_8616(match.group("condition"))
+        if simplified == match.group("condition"):
+            return match.group(0)
+        return f"{match.group('indent')}{match.group('kind')} ({simplified}){match.group('suffix')}"
+
+    rewritten = control_ternary_pattern.sub(_rewrite_control_ternary, rewritten)
+
+    for_ternary_pattern = re.compile(r"(?m)^(?P<indent>\s*)for \((?P<header>.+)\)(?P<suffix>.*)$")
+
+    def _rewrite_for_ternary(match: re.Match[str]) -> str:
+        parts = _split_for_header_8616(match.group("header"))
+        if parts is None:
+            return match.group(0)
+        simplified = _simplify_negated_zero_one_ternary_condition_8616(parts[1])
+        if simplified == parts[1]:
+            return match.group(0)
+        return f"{match.group('indent')}for ({parts[0]}; {simplified}; {parts[2]}){match.group('suffix')}"
+
+    rewritten = for_ternary_pattern.sub(_rewrite_for_ternary, rewritten)
 
     addr_pattern = re.compile(
         r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \(&(?P<name>[A-Za-z_][\w$?@]*)\)$"

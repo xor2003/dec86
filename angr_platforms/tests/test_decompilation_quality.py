@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
+from inertia_decompiler.decompilation_quality import assess_decompiled_c_text, assess_source_backed_c_text
 
 
 def test_assess_decompiled_c_text_rejects_raw_ir_shaped_output() -> None:
@@ -55,3 +55,45 @@ def test_assess_decompiled_c_text_rejects_stack_base_address_escape() -> None:
 
     assert assessment.reject_as_decompiled is True
     assert "stack-base" in assessment.markers
+
+
+def test_assess_source_backed_c_text_rejects_unresolved_temporaries() -> None:
+    assessment = assess_source_backed_c_text(
+        "void SwapBars(void)\n"
+        "{\n"
+        "    int v1;\n"
+        "    int *vvar_18;\n"
+        "    vvar_18 = &v1;\n"
+        "}\n"
+    )
+
+    assert assessment.reject_as_decompiled is True
+    assert "unresolved-vvar" in assessment.markers
+
+
+def test_assess_source_backed_c_text_rejects_raw_segmented_globals() -> None:
+    assessment = assess_source_backed_c_text(
+        "void DrawBar(void)\n"
+        "{\n"
+        "    DrawOne(SEG_U16(ds, 0x0b4c), mem_0B4E);\n"
+        "}\n"
+    )
+
+    assert assessment.reject_as_decompiled is True
+    assert "raw-ds-segmented-access" in assessment.markers
+    assert "raw-memory-symbol" in assessment.markers
+
+
+def test_assess_source_backed_c_text_accepts_generic_c() -> None:
+    assessment = assess_source_backed_c_text(
+        "void HeapSort(void)\n"
+        "{\n"
+        "    while (i > 1) {\n"
+        "        SwapBars(i, 1);\n"
+        "        i -= 1;\n"
+        "    }\n"
+        "}\n"
+    )
+
+    assert assessment.reject_as_decompiled is False
+    assert assessment.markers == ()

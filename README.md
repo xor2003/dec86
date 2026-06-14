@@ -460,8 +460,10 @@ string instructions, loops, and backward branches. Only functions with no
 branch/call/interrupt/loop hazards and a low risk score are emitted as
 `whole_function` comparison parts. `ssa` reuses the existing x86-16 VEX lifter
 for instruction semantics. By default it follows direct in-function successors
-and lowers up to `--max-blocks-per-function 8` bounded basic blocks into compact
-SSA parts; `--ir ail` converts each cached VEX block through angr AIL and lowers
+and direct call fallthrough, then lowers up to `--max-blocks-per-function 64`
+bounded basic blocks and `--max-insns-per-function 64` instructions into compact
+SSA parts; use `--no-follow-call-fallthrough` to stop each SSA part at calls.
+`--ir ail` converts each cached VEX block through angr AIL and lowers
 that AIL block into the same compact SSA form. The default output ABI is
 `--abi msc16-near`, which observes `AX`, `DX`, and `SP`; use repeated
 `--output-reg` for an explicit set or `--abi raw-all` to observe
@@ -490,16 +492,40 @@ Before Z3, `compare-ssa` applies `--max-solver-assignments`,
 `--max-solver-inputs`, and `--max-solver-memory-stores` gates so hard functions
 appear as structured `slice_too_large` refusals instead of blocking the full
 report. The default memory-store solver gate is 15 modeled stores.
+For multi-block functions, `compare-ssa` also builds a composed acyclic
+function-region summary by default. This is a stronger gate than block matching:
+if the composed original and rebuilt summaries are Z3-equivalent, block-layout
+differences can be marked `covered_by_region_equal`. Direct-successor blocks
+must expose `ip`, loops are refused unless `--max-region-loop-unroll` is set,
+and raw region equality requires complete bounded paths: finite constant loops
+can be pruned and proved, while symbolic loop paths that hit the bound are
+reported as `loop_bound_incomplete`. Region-proven callees are recorded as
+function-scope proof facts, so callers can normalize shifted call targets
+through the same proof cache. `--disable-region-equality` keeps the older
+block-only behavior for debugging. Region failures/refusals are shown in
+`report-failures` under `Function Region Equality`, including entry addresses
+and an instruction preview. The same report summary shows direct connectivity
+edge counts plus edge-local successor-state proof counts. Cyclic direct-control
+SCCs are reported separately as loop SCCs; they pass only when the member block
+and edge proofs already passed, without inventing loop invariants. Resolved
+direct recursive call cycles are reported as call SCCs under the same rule;
+recursive assume-guarantee proof is intentionally not implied by this report.
+If you only want solver/block-level proof and direct call-target normalization,
+add `--disable-connectivity` to keep region equality and block-level comparison
+results without successor-state stitching checks.
 `compare-ssa-abi` is the function-level static ABI gate: it composes bounded
 acyclic SSA parts for each mapped function and asks Z3 only about declared ABI
 observables from an ABI manifest. The manifest records calling convention,
 register inputs, stack arguments, return registers, preserved registers,
-clobbers, and data effects. By default the solver observes return registers,
-preserved registers, and `SP`; a function can set `ssa_observe_regs` to a
+target sets for recovered indirect calls, clobbers, and data effects. By default
+the solver observes return registers, preserved registers, and `SP`; a function
+can set `ssa_observe_regs` to a
 narrower static proof set when preserved-register checking needs concrete stack
 or callee summaries. Declared memory effects are compared bytewise at the named
 segmented offsets, while temporary stack writes and whole-memory equality are
-ignored.
+ignored. A call-summary `memory_clobber` with concrete `segment`/`offset`/`size`
+invalidates only that range; omit the range or use `scope: all` for a broad
+unknown memory clobber.
 Edge coverage metadata belongs to the original binary only; rebuilt comparison
 still replays concrete vectors at mapped function entries and does not require
 rebuilt CFG/block alignment. Full VEX/AIL path exploration, per-call libdosbox

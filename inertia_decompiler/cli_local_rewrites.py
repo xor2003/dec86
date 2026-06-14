@@ -622,7 +622,24 @@ def _materialize_missing_register_local_declarations(
 
         for variable, cvar in register_candidates.values():
             identity = _local_identity(variable)
-            if id(variable) in arg_variables or identity in existing_identities:
+            if id(variable) in arg_variables:
+                continue
+            if isinstance(variable, SimRegisterVariable):
+                declared_variable = next(
+                    (
+                        candidate
+                        for candidate in unified_locals
+                        if isinstance(candidate, SimRegisterVariable) and candidate == variable
+                    ),
+                    None,
+                )
+                if declared_variable is not None:
+                    if getattr(cvar, "unified_variable", None) is not declared_variable:
+                        with contextlib.suppress(Exception):
+                            cvar.unified_variable = declared_variable
+                            changed = True
+                    continue
+            elif identity in existing_identities:
                 continue
 
             reg_name = getattr(variable, "name", None)

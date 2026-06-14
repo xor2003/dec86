@@ -7,13 +7,17 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CDoWhileLoop,
+    CExpressionStatement,
     CForLoop,
     CFunctionCall,
     CIfElse,
+    CIndexedVariable,
     CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
+    CWhileLoop,
 )
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -35,6 +39,7 @@ from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
     lower_runtime_segment_address_8616,
 )
 from angr_platforms.X86_16.pipeline.architecture_guard import assert_final_c_quality_8616
+from angr_platforms.X86_16.decompiler_postprocess_stage import _is_direct_stack_update_materialization_delta_8616
 from capstone.x86_const import (
     X86_INS_ADC,
     X86_INS_ADD,
@@ -63,6 +68,7 @@ from capstone.x86_const import (
     X86_REG_SI,
 )
 
+import inertia_decompiler.recompile_check as recompile_check
 from inertia_decompiler.cli_arg_parser import _build_cli_argument_parser
 from inertia_decompiler.recompile_check import check_c_recompiles_8616
 
@@ -719,6 +725,31 @@ def test_materialize_direct_stack_inc_instruction_replaces_stack_slot_iterator_e
     assert loop.iterator.rhs.rhs.value == 1
 
 
+def test_direct_stack_update_validation_delta_accepts_loop_body_write_evidence():
+    codegen = SimpleNamespace(
+        _inertia_direct_stack_update_lowering_8616={"materialized_count": 1},
+        _inertia_direct_stack_update_evidence_8616=(
+            (
+                ("offset", -4),
+                ("width", 2),
+                ("delta", 1),
+                ("ins_addr", 0x4018),
+            ),
+        ),
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {"added": ("stack_slot:SS:BP-0x4:size2",), "removed": ()},
+            "control_flow_effects": {
+                "added": ("for-body-writes:CmpLT(stack_slot:SS:BP-0x2:size2,expr_cycle):stack_slot:SS:BP-0x4:size2",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(codegen, validation) is True
+
+
 def test_materialize_direct_stack_inc_instruction_removes_duplicate_tagged_assignments():
     project, codegen = _project()
     stack_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
@@ -807,6 +838,82 @@ def test_materialize_direct_stack_add_stack_slot_replaces_tagged_assignment():
     assert stmt.rhs.op == "Add"
     assert stmt.rhs.lhs.variable is total_var
     assert stmt.rhs.rhs.variable is i_var
+
+
+def test_materialize_direct_stack_add_indexed_pointer_source_replaces_tagged_assignment():
+    project, codegen = _project()
+    total_var = SimStackVariable(-2, 2, base="bp", name="total", region=0x4010)
+    i_var = SimStackVariable(-4, 2, base="bp", name="i", region=0x4010)
+    src_var = SimStackVariable(4, 2, base="bp", name="src", region=0x4010)
+    total_cvar = CVariable(total_var, variable_type=SimTypeShort(False), codegen=codegen)
+    i_cvar = CVariable(i_var, variable_type=SimTypeShort(False), codegen=codegen)
+    src_cvar = CVariable(src_var, variable_type=SimTypePointer(SimTypeShort(False)), codegen=codegen)
+    codegen.cfunc.variables_in_use[total_var] = total_cvar
+    codegen.cfunc.variables_in_use[i_var] = i_cvar
+    codegen.cfunc.variables_in_use[src_var] = src_cvar
+    codegen.cfunc.unified_local_vars[total_var] = {(total_cvar, SimTypeShort(False))}
+    codegen.cfunc.unified_local_vars[i_var] = {(i_cvar, SimTypeShort(False))}
+    codegen.cfunc.unified_local_vars[src_var] = {(src_cvar, SimTypePointer(SimTypeShort(False)))}
+
+    bad_stmt = CAssignment(
+        total_cvar,
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    codegen.cfunc.statements.statements.append(bad_stmt)
+
+    bx_load = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _bp_mem_operand(-4)),
+    )
+    bx_scale = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_SHL,
+        operands=(_reg_operand(X86_REG_BX), _imm_operand(1)),
+    )
+    si_load = SimpleNamespace(
+        address=0x4015,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(4)),
+    )
+    indexed_load = SimpleNamespace(
+        address=0x4017,
+        id=X86_INS_MOV,
+        operands=(
+            _reg_operand(X86_REG_AX),
+            SimpleNamespace(
+                type=X86_OP_MEM,
+                size=2,
+                mem=SimpleNamespace(base=X86_REG_BX, index=X86_REG_SI, disp=0),
+            ),
+        ),
+    )
+    update = SimpleNamespace(
+        address=0x4018,
+        id=X86_INS_ADD,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(bx_load, bx_scale, si_load, indexed_load, update))),),
+    )
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    evidence = dict(codegen._inertia_direct_stack_update_evidence_8616[0])
+    assert evidence["source_kind"] is DirectStackUpdateSourceKind8616.INDEXED_POINTER
+    stmt = codegen.cfunc.statements.statements[0]
+    assert isinstance(stmt, CAssignment)
+    assert stmt.lhs.variable is total_var
+    assert isinstance(stmt.rhs, CBinaryOp)
+    assert stmt.rhs.op == "Add"
+    assert stmt.rhs.lhs.variable is total_var
+    assert isinstance(stmt.rhs.rhs, CIndexedVariable)
+    assert stmt.rhs.rhs.variable.variable is src_var
+    assert stmt.rhs.rhs.index.variable is i_var
 
 
 def test_materialize_direct_stack_or_immediate_replaces_tagged_assignment():
@@ -1040,6 +1147,86 @@ def test_materialize_direct_stack_mov_immediate_inserts_missing_setup_before_loo
     assert inserted.rhs.value == 0
     assert statements[1] is loop
     assert codegen._inertia_direct_stack_move_lowering_8616["materialized_count"] == 1
+    assert codegen._inertia_direct_stack_move_lowering_8616["already_materialized_count"] == 1
+
+
+def test_materialize_direct_stack_mov_stale_evidence_keeps_existing_for_initializer():
+    project, codegen = _project()
+    changed_var = SimStackVariable(-6, 2, base="bp", name="changed", region=0x4010)
+    i_var = SimStackVariable(-4, 2, base="bp", name="i", region=0x4010)
+    changed_cvar = CVariable(changed_var, variable_type=SimTypeShort(False), codegen=codegen)
+    i_cvar = CVariable(i_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[changed_var] = changed_cvar
+    codegen.cfunc.variables_in_use[i_var] = i_cvar
+    i_init = CAssignment(
+        i_cvar,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1010},
+    )
+    loop = CForLoop(
+        i_init,
+        CBinaryOp("CmpLT", i_cvar, CConstant(6, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        CAssignment(
+            i_cvar,
+            CBinaryOp("Add", i_cvar, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(loop)
+
+    changed_store = SimpleNamespace(
+        address=0x100B,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _imm_operand(0)),
+    )
+    i_store = SimpleNamespace(
+        address=0x1010,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-4), _imm_operand(1)),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(changed_store, i_store))),),
+    )
+    def _evidence(offset: int, value: int, ins_addr: int):
+        return (
+            ("dst_offset", offset),
+            ("width", 2),
+            ("source_kind", DirectStackMoveSourceKind8616.IMMEDIATE),
+            ("source_value", value),
+            ("source_offset", None),
+            ("source_op", None),
+            ("source_immediate", None),
+            ("source_call_target", None),
+            ("source_call_name", None),
+            ("source_call_ins_addr", None),
+            ("source_segment_name", None),
+            ("source_displacement", None),
+            ("source_index_offset", None),
+            ("source_index_shift", None),
+            ("source_access_width", None),
+            ("source_sign_extend", False),
+            ("ins_addr", ins_addr),
+        )
+
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        _evidence(-6, 0, 0x100B),
+        _evidence(-4, 1, 0x1010),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 2
+    assert isinstance(statements[0], CAssignment)
+    assert statements[0].lhs is changed_cvar
+    assert statements[1] is loop
+    assert loop.initializer is i_init
+    assert codegen._inertia_direct_stack_move_lowering_8616["stale_evidence_rematerialized_count"] == 1
     assert codegen._inertia_direct_stack_move_lowering_8616["already_materialized_count"] == 1
 
 
@@ -1544,6 +1731,83 @@ def test_materialize_direct_stack_mov_signed_idiv_remainder_replaces_tagged_assi
     assert stmt.rhs.rhs.expr.rhs.value == 1
 
 
+def test_materialize_direct_stack_mov_signed_idiv_remainder_replaces_nested_insert_artifact():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    wrong_lhs_var = SimStackVariable(0x74, 2, base="bp", name="arg_74", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    wrong_lhs_cvar = CVariable(wrong_lhs_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[wrong_lhs_var] = wrong_lhs_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    insert_artifact = CFunctionCall(
+        "_INSERT",
+        None,
+        [_reg(project, "ax", codegen), _const(2, codegen), CBinaryOp("Add", divisor_cvar, _const(1, codegen), codegen=codegen)],
+        codegen=codegen,
+    )
+    bad_stmt = CAssignment(
+        wrong_lhs_cvar,
+        CBinaryOp("Mod", insert_artifact, divisor_cvar, codegen=codegen),
+        codegen=codegen,
+    )
+    tagged_store = CAssignment(dst_cvar, _reg(project, "dx", codegen), codegen=codegen, tags={"ins_addr": 0x4020})
+    loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        None,
+        CStatements([bad_stmt], codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.extend([tagged_store, loop])
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(call,))),
+            SimpleNamespace(capstone=SimpleNamespace(insns=(load_divisor, inc_divisor, sign_extend, idiv, store_remainder))),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    tagged_rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(tagged_rewritten, CAssignment)
+    assert isinstance(tagged_rewritten.rhs, CBinaryOp)
+    assert tagged_rewritten.rhs.op == "Mod"
+    rewritten = loop.body.statements[0]
+    assert isinstance(rewritten, CAssignment)
+    assert rewritten.lhs.variable is dst_var
+    assert isinstance(rewritten.rhs, CBinaryOp)
+    assert rewritten.rhs.op == "Mod"
+    assert isinstance(rewritten.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs.lhs.expr, CFunctionCall)
+    assert rewritten.rhs.lhs.expr.callee_target == "rand"
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["materialized_count"] == 1
+    assert stats["idiv_artifact_materialized_count"] == 1
+    assert stats["idiv_artifact_stack_lhs_bridge_count"] == 1
+    assert stats["failure_count"] == 0
+
+
 def test_materialize_direct_stack_mov_signed_idiv_reuses_call_result_and_reload():
     project, codegen = _project()
     project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
@@ -1763,6 +2027,399 @@ def test_materialize_direct_stack_mov_stack_copy_inserts_after_nearest_preceding
     inserted = codegen.cfunc.statements.statements[1]
     assert inserted.lhs is dst_cvar
     assert inserted.rhs is src_cvar
+
+
+def test_materialize_direct_stack_mov_stack_copy_uses_nested_child_tag_same_block():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-6, 2, base="bp", name="iSwitch", region=0x4010)
+    src_var = SimStackVariable(-2, 2, base="bp", name="iRow", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    src_cvar = CVariable(src_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[src_var] = src_cvar
+    call = CFunctionCall("SwapBars", None, [], codegen=codegen, tags={"ins_addr": 0x4063})
+    guarded_body = CStatements([CExpressionStatement(call, codegen=codegen)], codegen=codegen)
+    guard = CConstant(1, SimTypeShort(False), codegen=codegen)
+    if_stmt = CIfElse([(guard, guarded_body)], codegen=codegen)
+    codegen.cfunc.statements.statements.append(if_stmt)
+
+    src_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-2)
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-6)
+    ax_dst = SimpleNamespace(type=X86_OP_REG, size=2, reg=X86_REG_AX)
+    ax_src = SimpleNamespace(type=X86_OP_REG, size=2, reg=X86_REG_AX)
+    push_setup = SimpleNamespace(address=0x4063, id=X86_INS_PUSH, operands=(_reg_operand(X86_REG_AX),))
+    call_insn = SimpleNamespace(address=0x4067, id=X86_INS_CALL, size=3, operands=(_imm_operand(0x2000),))
+    load = SimpleNamespace(
+        address=0x406D,
+        id=X86_INS_MOV,
+        operands=(ax_dst, SimpleNamespace(type=X86_OP_MEM, size=2, mem=src_mem)),
+    )
+    store = SimpleNamespace(
+        address=0x4070,
+        id=X86_INS_MOV,
+        operands=(SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem), ax_src),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(addr=0x4063, capstone=SimpleNamespace(insns=(push_setup, call_insn))),
+            SimpleNamespace(addr=0x406A, capstone=SimpleNamespace(insns=(load, store))),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [if_stmt]
+    assert len(guarded_body.statements) == 2
+    inserted = guarded_body.statements[1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is dst_cvar
+    assert inserted.rhs is src_cvar
+
+
+def test_materialize_direct_stack_mov_immediate_nested_insert_is_idempotent():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-6, 2, base="bp", name="changed", region=0x4010)
+    anchor_var = SimStackVariable(-2, 2, base="bp", name="anchor", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    anchor_cvar = CVariable(anchor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[anchor_var] = anchor_cvar
+    anchor = CAssignment(
+        anchor_cvar,
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1063},
+    )
+    guarded_body = CStatements([anchor], codegen=codegen)
+    guard = CConstant(1, SimTypeShort(False), codegen=codegen)
+    if_stmt = CIfElse([(guard, guarded_body)], codegen=codegen)
+    codegen.cfunc.statements.statements.append(if_stmt)
+
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-6)
+    anchor_insn = SimpleNamespace(address=0x1063, id=X86_INS_PUSH, operands=(_reg_operand(X86_REG_AX),))
+    store = SimpleNamespace(
+        address=0x1067,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _imm_operand(1)),
+    )
+    store.operands[0].mem = dst_mem
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x1063, capstone=SimpleNamespace(insns=(anchor_insn, store))),),
+    )
+
+    first = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+    second = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert first is True
+    assert second is False
+    changed_assignments = [
+        stmt
+        for stmt in guarded_body.statements
+        if isinstance(stmt, CAssignment) and getattr(stmt, "lhs", None) is dst_cvar
+    ]
+    assert len(changed_assignments) == 1
+    assert getattr(changed_assignments[0].rhs, "value", None) == 1
+    assert codegen._inertia_direct_stack_move_lowering_8616["already_materialized_count"] == 1
+
+
+def test_materialize_direct_stack_mov_rematerializes_stale_evidence_after_rollback():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-6, 2, base="bp", name="changed", region=0x4010)
+    anchor_var = SimStackVariable(-2, 2, base="bp", name="anchor", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    anchor_cvar = CVariable(anchor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[anchor_var] = anchor_cvar
+    anchor = CAssignment(
+        anchor_cvar,
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1063},
+    )
+    guarded_body = CStatements([anchor], codegen=codegen)
+    if_stmt = CIfElse([(CConstant(1, SimTypeShort(False), codegen=codegen), guarded_body)], codegen=codegen)
+    codegen.cfunc.statements.statements.append(if_stmt)
+
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-6)
+    anchor_insn = SimpleNamespace(address=0x1063, id=X86_INS_PUSH, operands=(_reg_operand(X86_REG_AX),))
+    store = SimpleNamespace(
+        address=0x1067,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _imm_operand(1)),
+    )
+    store.operands[0].mem = dst_mem
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x1063, capstone=SimpleNamespace(insns=(anchor_insn, store))),),
+    )
+
+    first = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+    guarded_body.statements = [stmt for stmt in guarded_body.statements if getattr(stmt, "lhs", None) is not dst_cvar]
+    second = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert first is True
+    assert second is True
+    changed_assignments = [
+        stmt
+        for stmt in guarded_body.statements
+        if isinstance(stmt, CAssignment) and getattr(stmt, "lhs", None) is dst_cvar
+    ]
+    assert len(changed_assignments) == 1
+    assert getattr(changed_assignments[0].rhs, "value", None) == 1
+    assert codegen._inertia_direct_stack_move_lowering_8616["stale_evidence_rematerialized_count"] == 1
+
+
+def test_materialize_direct_stack_mov_stack_copy_replaces_post_call_cleanup_artifact():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-6, 2, base="bp", name="iSwitch", region=0x4010)
+    src_var = SimStackVariable(-2, 2, base="bp", name="iRow", region=0x4010)
+    cleanup_var = SimRegisterVariable(0x200, 2, name="sp_cleanup")
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    src_cvar = CVariable(src_var, variable_type=SimTypeShort(False), codegen=codegen)
+    cleanup_cvar = CVariable(cleanup_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[src_var] = src_cvar
+    call = CFunctionCall("SwapBars", None, [], codegen=codegen, tags={"ins_addr": 0x4067})
+    cleanup = CAssignment(
+        cleanup_cvar,
+        CBinaryOp(
+            "Add",
+            cleanup_cvar,
+            CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x406A},
+    )
+    guarded_body = CStatements([CExpressionStatement(call, codegen=codegen), cleanup], codegen=codegen)
+    guard = CConstant(1, SimTypeShort(False), codegen=codegen)
+    if_stmt = CIfElse([(guard, guarded_body)], codegen=codegen)
+    codegen.cfunc.statements.statements.append(if_stmt)
+
+    src_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-2)
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-6)
+    ax_dst = SimpleNamespace(type=X86_OP_REG, size=2, reg=X86_REG_AX)
+    ax_src = SimpleNamespace(type=X86_OP_REG, size=2, reg=X86_REG_AX)
+    call_insn = SimpleNamespace(address=0x4067, id=X86_INS_CALL, size=3, operands=(_imm_operand(0x2000),))
+    cleanup_insn = SimpleNamespace(address=0x406A, id=X86_INS_ADD, operands=())
+    load = SimpleNamespace(
+        address=0x406D,
+        id=X86_INS_MOV,
+        operands=(ax_dst, SimpleNamespace(type=X86_OP_MEM, size=2, mem=src_mem)),
+    )
+    store = SimpleNamespace(
+        address=0x4070,
+        id=X86_INS_MOV,
+        operands=(SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem), ax_src),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(addr=0x4067, capstone=SimpleNamespace(insns=(call_insn, cleanup_insn, load, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [if_stmt]
+    assert len(guarded_body.statements) == 2
+    replaced = guarded_body.statements[1]
+    assert isinstance(replaced, CAssignment)
+    assert replaced.lhs is dst_cvar
+    assert replaced.rhs is src_cvar
+
+
+def test_materialize_direct_stack_mov_stack_copy_appends_before_do_while_condition():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-4, 2, base="bp", name="iLimit", region=0x4010)
+    src_var = SimStackVariable(-6, 2, base="bp", name="iSwitch", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    src_cvar = CVariable(src_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[src_var] = src_cvar
+    inner_call = CFunctionCall("SwapBars", None, [], codegen=codegen, tags={"ins_addr": 0x4068})
+    inner_body = CStatements([CExpressionStatement(inner_call, codegen=codegen)], codegen=codegen)
+    while_loop = CDoWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x4072}),
+        inner_body,
+        codegen=codegen,
+    )
+    condition = CVariable(src_var, variable_type=SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x4080})
+    do_body = CStatements([while_loop], codegen=codegen)
+    do_loop = CDoWhileLoop(condition, do_body, codegen=codegen)
+    codegen.cfunc.statements.statements.append(do_loop)
+
+    src_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-6)
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-4)
+    ax_dst = SimpleNamespace(type=X86_OP_REG, size=2, reg=X86_REG_AX)
+    ax_src = SimpleNamespace(type=X86_OP_REG, size=2, reg=X86_REG_AX)
+    load = SimpleNamespace(
+        address=0x4076,
+        id=X86_INS_MOV,
+        operands=(ax_dst, SimpleNamespace(type=X86_OP_MEM, size=2, mem=src_mem)),
+    )
+    store = SimpleNamespace(
+        address=0x4079,
+        id=X86_INS_MOV,
+        operands=(SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem), ax_src),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(addr=0x4068, capstone=SimpleNamespace(insns=())),
+            SimpleNamespace(addr=0x4076, capstone=SimpleNamespace(insns=(load, store))),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [do_loop]
+    assert len(do_body.statements) == 2
+    inserted = do_body.statements[1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is dst_cvar
+    assert inserted.rhs is src_cvar
+    assert len(inner_body.statements) == 1
+
+
+def test_materialize_direct_stack_mov_arg_copy_inserts_before_precontrol_loop():
+    project, codegen = _project()
+    low_var = SimStackVariable(4, 2, base="bp", name="low", region=0x4010)
+    up_var = SimStackVariable(-4, 2, base="bp", name="up", region=0x4010)
+    low_cvar = CVariable(low_var, variable_type=SimTypeShort(False), codegen=codegen)
+    up_cvar = CVariable(up_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[low_var] = low_cvar
+    codegen.cfunc.variables_in_use[up_var] = up_cvar
+    loop_condition = CVariable(
+        up_var,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x1010},
+    )
+    loop = CWhileLoop(loop_condition, CStatements([], codegen=codegen), codegen=codegen)
+    codegen.cfunc.statements.statements.append(loop)
+
+    ax_dst = _reg_operand(X86_REG_AX)
+    ax_src = _reg_operand(X86_REG_AX)
+    load = SimpleNamespace(
+        address=0x100B,
+        id=X86_INS_MOV,
+        operands=(ax_dst, _bp_mem_operand(4)),
+    )
+    store = SimpleNamespace(
+        address=0x100E,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-4), ax_src),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x100B, capstone=SimpleNamespace(insns=(load, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 2
+    inserted = codegen.cfunc.statements.statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is up_cvar
+    assert inserted.rhs is low_cvar
+    assert codegen.cfunc.statements.statements[1] is loop
+
+
+def test_materialize_direct_stack_mov_adjusted_arg_copy_inserts_before_precontrol_loop():
+    project, codegen = _project()
+    high_var = SimStackVariable(6, 2, base="bp", name="high", region=0x4010)
+    down_var = SimStackVariable(-6, 2, base="bp", name="down", region=0x4010)
+    high_cvar = CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    down_cvar = CVariable(down_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[high_var] = high_cvar
+    codegen.cfunc.variables_in_use[down_var] = down_cvar
+    loop_condition = CVariable(
+        down_var,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x1010},
+    )
+    loop = CWhileLoop(loop_condition, CStatements([], codegen=codegen), codegen=codegen)
+    codegen.cfunc.statements.statements.append(loop)
+
+    ax_dst = _reg_operand(X86_REG_AX)
+    ax_src = _reg_operand(X86_REG_AX)
+    load = SimpleNamespace(
+        address=0x100B,
+        id=X86_INS_MOV,
+        operands=(ax_dst, _bp_mem_operand(6)),
+    )
+    decrement = SimpleNamespace(
+        address=0x100E,
+        id=X86_INS_DEC,
+        operands=(ax_dst,),
+    )
+    store = SimpleNamespace(
+        address=0x100F,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), ax_src),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x100B, capstone=SimpleNamespace(insns=(load, decrement, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 2
+    inserted = codegen.cfunc.statements.statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is down_cvar
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Sub"
+    assert inserted.rhs.lhs is high_cvar
+    assert inserted.rhs.rhs.value == 1
+    assert codegen.cfunc.statements.statements[1] is loop
+
+
+def test_materialize_direct_stack_mov_immediate_inserts_at_do_while_body_start():
+    project, codegen = _project()
+    changed_var = SimStackVariable(-6, 2, base="bp", name="changed", region=0x4010)
+    changed_cvar = CVariable(changed_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[changed_var] = changed_cvar
+    body_stmt = CExpressionStatement(
+        CFunctionCall("body_step", None, [], codegen=codegen, tags={"ins_addr": 0x1010}),
+        codegen=codegen,
+    )
+    condition = CVariable(changed_var, variable_type=SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x106F})
+    do_body = CStatements([body_stmt], codegen=codegen)
+    do_loop = CDoWhileLoop(condition, do_body, codegen=codegen)
+    codegen.cfunc.statements.statements.append(do_loop)
+
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-6)
+    store = SimpleNamespace(
+        address=0x100B,
+        id=X86_INS_MOV,
+        operands=(
+            SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem),
+            SimpleNamespace(type=X86_OP_IMM, size=2, imm=0),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x100B, capstone=SimpleNamespace(insns=(store,))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(do_body.statements) == 2
+    inserted = do_body.statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is changed_cvar
+    assert inserted.rhs.value == 0
+    assert do_body.statements[1] is body_stmt
 
 
 def test_materialize_direct_stack_mov_stack_copy_is_idempotent():
@@ -2176,3 +2833,80 @@ def test_recompile_check_accepts_simple_portable_flat_c():
     )
 
     assert result.passed is True, result.stderr
+
+
+def test_recompile_check_msc51_uses_strict_kvikdos_drive_mounts(monkeypatch, tmp_path):
+    kvikdos = tmp_path / "kvikdos"
+    kvikdos.write_text("", encoding="utf-8")
+    msc_root = tmp_path / "Microsoft C v5.1"
+    (msc_root / "BIN").mkdir(parents=True)
+    captured = {}
+
+    def _fake_run(command, **_kwargs):
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="c:\\GEN.C\n", stderr="Microsoft C\n")
+
+    monkeypatch.setattr(recompile_check, "_resolve_kvikdos_path", lambda: kvikdos)
+    monkeypatch.setattr(recompile_check, "_resolve_msc51_root", lambda: msc_root)
+    monkeypatch.setattr(recompile_check.subprocess, "run", _fake_run)
+
+    result = check_c_recompiles_8616("int main(void) { return 0; }\n", target="msc-dos")
+
+    command = captured["command"]
+    assert result.passed is True
+    assert command[1].startswith("--mount=c:")
+    assert command[1].endswith("/")
+    assert command[2] == f"--mount=e:{msc_root}/"
+    assert "--path-dos=e:\\BIN" in command
+    assert "--prog=e:\\BIN\\CL.EXE" in command
+    assert "e:\\BIN\\CL.EXE" in command
+    assert "c:\\GEN.C" in command
+
+
+def test_recompile_check_msc51_retries_transient_kvikdos_failure(monkeypatch, tmp_path):
+    kvikdos = tmp_path / "kvikdos"
+    kvikdos.write_text("", encoding="utf-8")
+    msc_root = tmp_path / "Microsoft C v5.1"
+    (msc_root / "BIN").mkdir(parents=True)
+    calls = {"count": 0}
+
+    def _fake_run(_command, **_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return SimpleNamespace(
+                returncode=252,
+                stdout="fatal: unexpected KVM exit: reason=9\n",
+                stderr="Microsoft C\n",
+            )
+        return SimpleNamespace(returncode=0, stdout="c:\\GEN.C\n", stderr="Microsoft C\n")
+
+    monkeypatch.setattr(recompile_check, "_resolve_kvikdos_path", lambda: kvikdos)
+    monkeypatch.setattr(recompile_check, "_resolve_msc51_root", lambda: msc_root)
+    monkeypatch.setattr(recompile_check.subprocess, "run", _fake_run)
+
+    result = check_c_recompiles_8616("int main(void) { return 0; }\n", target="msc-dos")
+
+    assert result.passed is True
+    assert calls["count"] == 2
+
+
+def test_recompile_check_msc51_sanitizes_c99_line_comments():
+    payload = recompile_check._compile_input_payload_8616(
+        'int demo(void) { return 1; } // ax\n/// /* source sidecar */\nchar *url = "http://example";\n',
+        target="msc-dos",
+    )
+
+    assert "// ax" not in payload
+    assert "/* ax */" in payload
+    assert "///" not in payload
+    assert "source sidecar" in payload
+    assert '"http://example"' in payload
+
+
+def test_recompile_check_msc51_accepts_uppercase_existing_dos_header():
+    payload = recompile_check._compile_input_payload_8616(
+        "#include <DOS.H>\n#define SEG_U8(seg, off) (*(uint8_t far *)MK_FP((seg), (off)))\n",
+        target="msc-dos",
+    )
+
+    assert payload.count("#include <DOS.H>") == 1

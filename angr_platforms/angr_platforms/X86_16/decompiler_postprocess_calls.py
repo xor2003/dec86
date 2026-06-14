@@ -4613,6 +4613,28 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         slot_index = max(((-offset) + 1) // 2, 1)
         return f"local_{slot_index}"
 
+    def _known_positive_bp_arg_offset_8616(offset: int) -> bool:
+        if not isinstance(offset, int) or offset <= 0:
+            return False
+        cfunc_obj = getattr(codegen, "cfunc", None)
+        for arg in tuple(getattr(cfunc_obj, "arg_list", ()) or ()):
+            arg_variable = getattr(arg, "variable", None)
+            if not isinstance(arg_variable, SimStackVariable):
+                continue
+            if getattr(arg_variable, "base", None) != "bp":
+                continue
+            arg_offset = getattr(arg_variable, "offset", None)
+            if isinstance(arg_offset, int) and arg_offset == offset:
+                return True
+        return False
+
+    def _materialize_fallback_stack_name_8616(offset: int, preferred_name: str | None = None) -> str:
+        fallback_name = preferred_name if isinstance(preferred_name, str) and preferred_name else _stack_slot_fallback_name(offset)
+        if offset >= 0 and fallback_name.startswith("arg_") and not _known_positive_bp_arg_offset_8616(offset):
+            slot_index = max(offset // 2, 1)
+            return f"local_{slot_index}"
+        return fallback_name
+
     def _stack_name_preference(name: str | None) -> int:
         if not isinstance(name, str) or not name:
             return 0
@@ -4750,7 +4772,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             if _stack_name_preference(exact_name) <= 1:
                 return _clone_c_ast_tree(
                     _register_synthetic_stack_cvar(
-                        _stack_slot_fallback_name(offset),
+                        _materialize_fallback_stack_name_8616(offset, exact_alias_name),
                         getattr(exact_match, "variable_type", None) or _word_type_8616(project),
                     )
                 )
@@ -4795,14 +4817,14 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             if _stack_name_preference(best_name) <= 1:
                 return _clone_c_ast_tree(
                     _register_synthetic_stack_cvar(
-                        _stack_slot_fallback_name(offset),
+                        _materialize_fallback_stack_name_8616(offset),
                         getattr(best, "variable_type", None) or _word_type_8616(project),
                     )
                 )
             return _clone_c_ast_tree(best)
 
         return _clone_c_ast_tree(
-            _register_synthetic_stack_cvar(_stack_slot_fallback_name(offset), _word_type_8616(project))
+            _register_synthetic_stack_cvar(_materialize_fallback_stack_name_8616(offset), _word_type_8616(project))
         )
 
     def _set_stack_slot_type_8616(offset: int, variable_type) -> bool:
@@ -8073,6 +8095,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return True
         return getattr(stmt, "expr", None) is call
 
+    def _is_consumable_return_call_statement_8616(stmt, call) -> bool:
+        if _is_standalone_call_statement_8616(stmt, call):
+            return True
+        return isinstance(stmt, structured_c.CAssignment) and getattr(stmt, "rhs", None) is call
+
     def _ret_reg_source_info_8616(source) -> tuple[int, str] | None:
         if not (
             isinstance(source, tuple)
@@ -8103,7 +8130,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         call is not None
                         and summary is not None
                         and getattr(summary, "callsite_addr", None) == callsite_addr
-                        and _is_standalone_call_statement_8616(stmt, call)
+                        and _is_consumable_return_call_statement_8616(stmt, call)
                     ):
                         matches.append((container, idx, call, summary))
                     walk_node(stmt)
@@ -8133,7 +8160,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             if (
                 summary is not None
                 and getattr(summary, "callsite_addr", None) == callsite_addr
-                and _is_standalone_call_statement_8616(stmt, call)
+                and _is_consumable_return_call_statement_8616(stmt, call)
             ):
                 return statements, idx, call, summary
             return None

@@ -34,6 +34,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
     catalog = discover_functions(
         exe_path=_path_or_none(args.exe),
         map_path=_path_or_none(args.map),
+        cod_listing_path=_path_or_none(args.cod_listing),
         ida_listing_path=_path_or_none(args.ida_listing),
         module=args.module,
     )
@@ -111,6 +112,7 @@ def cmd_ssa(args: argparse.Namespace) -> int:
         max_assignments_per_function=args.max_ssa_assignments,
         scan_limit=args.scan_limit,
         cache_dir=None if args.no_cache else Path(args.cache_dir),
+        follow_call_fallthrough=bool(args.follow_call_fallthrough),
     )
     write_json(Path(args.out), document)
     return 0
@@ -130,6 +132,11 @@ def cmd_compare_ssa(args: argparse.Namespace) -> int:
         max_solver_inputs=args.max_solver_inputs,
         max_solver_memory_stores=args.max_solver_memory_stores,
         skip_binary_equal=not bool(args.no_skip_binary_equal),
+        enable_callee_lemmas=not bool(args.disable_callee_lemmas),
+        semantic_proof_passes=args.semantic_proof_passes,
+        enable_region_equality=not bool(args.disable_region_equality),
+        enable_connectivity=not bool(args.disable_connectivity),
+        max_region_loop_unroll=args.max_region_loop_unroll,
     )
     write_json(Path(args.out), document)
     summary = document.get("summary", {})
@@ -150,6 +157,7 @@ def cmd_compare_ssa_abi(args: argparse.Namespace) -> int:
         max_solver_assignments=args.max_solver_assignments,
         max_solver_inputs=args.max_solver_inputs,
         max_solver_memory_stores=args.max_solver_memory_stores,
+        max_loop_unroll=args.max_loop_unroll,
     )
     write_json(Path(args.out), document)
     summary = document.get("summary", {})
@@ -248,6 +256,8 @@ def cmd_report_failures(args: argparse.Namespace) -> int:
         limit=args.limit,
         mismatch_limit=args.mismatch_limit,
         show_unresolved_call_targets=bool(args.show_unresolved_call_targets),
+        failed_only=bool(args.failed_only),
+        group_by_function=bool(args.group_by_function),
     )
     if args.out:
         out_path = Path(args.out)
@@ -277,6 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
     discover = subparsers.add_parser("discover", help="Discover function catalog from DOS metadata")
     discover.add_argument("--exe")
     discover.add_argument("--map")
+    discover.add_argument("--cod-listing")
     discover.add_argument("--ida-listing")
     discover.add_argument("--module")
     discover.add_argument("--out", required=True)
@@ -330,12 +341,14 @@ def build_parser() -> argparse.ArgumentParser:
     ssa.add_argument("--ir", default="vex", choices=["vex", "ail"], help="Source IR to lower into compact SSA")
     ssa.add_argument("--abi", default=DEFAULT_ABI, choices=sorted(ABI_OUTPUT_REGS), help="Default output-register preset used when --output-reg is omitted")
     ssa.add_argument("--output-reg", action="append")
-    ssa.add_argument("--max-blocks-per-function", type=int, default=8, help="Maximum direct in-function basic blocks to lower for a function")
-    ssa.add_argument("--max-insns-per-function", type=int, default=24)
+    ssa.add_argument("--max-blocks-per-function", type=int, default=64, help="Maximum direct in-function basic blocks to lower for a function")
+    ssa.add_argument("--max-insns-per-function", type=int, default=64)
     ssa.add_argument("--max-ssa-assignments", type=int, default=512, help="Refuse a function when compact SSA assignments exceed this limit; 0 disables the gate")
     ssa.add_argument("--scan-limit", type=lambda value: int(value, 0), default=0x100)
     ssa.add_argument("--cache-dir", default=os.environ.get("DOSUNIT_CACHE_DIR", ".cache/dosunit"))
     ssa.add_argument("--no-cache", action="store_true")
+    ssa.add_argument("--follow-call-fallthrough", dest="follow_call_fallthrough", action="store_true", default=True, help="Also lower the direct fallthrough block after call blocks for ABI composition")
+    ssa.add_argument("--no-follow-call-fallthrough", dest="follow_call_fallthrough", action="store_false", help="Stop each lowered SSA part at direct calls")
     ssa.add_argument("--out", required=True)
     ssa.set_defaults(func=cmd_ssa)
 
@@ -345,9 +358,14 @@ def build_parser() -> argparse.ArgumentParser:
     compare_ssa.add_argument("--mapping")
     compare_ssa.add_argument("--skip-unmapped", action="store_true", help="Do not emit refusals for mapped-oracle functions that have no candidate SSA")
     compare_ssa.add_argument("--solver-timeout-ms", type=int, default=60000)
-    compare_ssa.add_argument("--max-solver-assignments", type=int, default=128, help="Refuse a function before Z3 when either side has more SSA assignments; 0 disables the gate")
+    compare_ssa.add_argument("--max-solver-assignments", type=int, default=256, help="Refuse a function before Z3 when either side has more SSA assignments; 0 disables the gate")
     compare_ssa.add_argument("--max-solver-inputs", type=int, default=16, help="Refuse a function before Z3 when either side has more SSA inputs; 0 disables the gate")
-    compare_ssa.add_argument("--max-solver-memory-stores", type=int, default=15, help="Refuse a memory-output function before Z3 when either side has more store operations; 0 disables the gate")
+    compare_ssa.add_argument("--max-solver-memory-stores", type=int, default=32, help="Refuse a memory-output function before Z3 when either side has more store operations; 0 disables the gate")
+    compare_ssa.add_argument("--semantic-proof-passes", type=int, default=4, help="Retry call blocks this many passes while callee equality facts are discovered")
+    compare_ssa.add_argument("--disable-callee-lemmas", action="store_true", help="Do not require/use proven callee equality facts for mapped/name-equivalent direct calls")
+    compare_ssa.add_argument("--disable-region-equality", action="store_true", help="Disable composed acyclic function/region equality proof")
+    compare_ssa.add_argument("--disable-connectivity", action="store_true", help="Disable SSA block connectivity proof")
+    compare_ssa.add_argument("--max-region-loop-unroll", type=int, default=1, help="Bounded unroll count for raw region equality; 0 refuses loops")
     compare_ssa.add_argument("--no-skip-binary-equal", action="store_true", help="Run normal SSA/Z3 comparison even when function or block machine bytes are identical")
     compare_ssa.add_argument("--out", required=True)
     compare_ssa.set_defaults(func=cmd_compare_ssa)
@@ -361,6 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare_ssa_abi.add_argument("--max-solver-assignments", type=int, default=512)
     compare_ssa_abi.add_argument("--max-solver-inputs", type=int, default=32)
     compare_ssa_abi.add_argument("--max-solver-memory-stores", type=int, default=32)
+    compare_ssa_abi.add_argument("--max-loop-unroll", type=int, default=1, help="Bounded unroll count for repeated blocks before cutting loop paths; 0 refuses loops")
     compare_ssa_abi.add_argument("--out", required=True)
     compare_ssa_abi.set_defaults(func=cmd_compare_ssa_abi)
 
@@ -425,7 +444,24 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--results", required=True)
     report.add_argument("--limit", type=int, default=0, help="Maximum rows per section; 0 means all rows")
     report.add_argument("--mismatch-limit", type=int, default=8)
-    report.add_argument("--show-unresolved-call-targets", action="store_true", help="Include SSA failures caused by unresolved direct call targets")
+    report.add_argument(
+        "--show-unresolved-call-targets",
+        action="store_true",
+        default=True,
+        help="Include SSA failures caused by unresolved direct call targets",
+    )
+    report.add_argument(
+        "--hide-unresolved-call-targets",
+        dest="show_unresolved_call_targets",
+        action="store_false",
+        help="Hide SSA failures caused by unresolved direct call targets",
+    )
+    report.add_argument("--failed-only", action="store_true", help="Show only results with status failed (hide refused rows)")
+    report.add_argument(
+        "--group-by-function",
+        action="store_true",
+        help="Group SSA compare rows by function (deduplicates repeated block/region entries)",
+    )
     report.add_argument("--out")
     report.set_defaults(func=cmd_report_failures)
 

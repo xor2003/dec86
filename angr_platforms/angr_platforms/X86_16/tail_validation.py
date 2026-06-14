@@ -548,6 +548,12 @@ def _normalize_helper_call_fingerprint_8616(project, token: str | None) -> str |
             if isinstance(resolved_addr, int):
                 normalized = _normalized_call_target_addr_8616(project, resolved_addr)
                 return f"addr:{normalized:#x}" if isinstance(normalized, int) else f"addr:{resolved_addr:#x}"
+        if token.startswith("codcall:"):
+            raw_name = token[8:]
+            resolved_addr = _resolve_call_symbol_addr_8616(project, raw_name)
+            if isinstance(resolved_addr, int):
+                normalized = _normalized_call_target_addr_8616(project, resolved_addr)
+                return f"addr:{normalized:#x}" if isinstance(normalized, int) else f"addr:{resolved_addr:#x}"
         return token
 
     return _impl()
@@ -2356,11 +2362,40 @@ def _process_control_flow_node_8616(
     *,
     project,
     mode: str,
+    observed_locations: set[str],
     contextual_condition_fingerprints: Mapping[int, str],
     normalized_loop_conditions: Mapping[int, str],
+    prunable_segment_write_ids: set[int],
     conditions: set[str],
     control_flow_effects: set[str],
 ) -> bool:
+    def _observable_body_write_locations(body) -> tuple[str, ...]:
+        locations: set[str] = set()
+        for child in _iter_c_nodes_deep_8616(body):
+            if not isinstance(child, CAssignment) or id(child) in prunable_segment_write_ids:
+                continue
+            location = _location_fingerprint(getattr(child, "lhs", None), project, resolve_copy_alias=False)
+            if location.startswith("reg:"):
+                if mode == "coarse" or location in observed_locations:
+                    locations.add(location)
+            elif location.startswith(("stack:", "stack_slot:")):
+                if include_x86_16_tail_validation_stack_write(
+                    location,
+                    mode=mode,
+                    observed_locations=observed_locations,
+                ):
+                    locations.add(location)
+            elif location.startswith(("global:", "deref:")):
+                locations.add(location)
+        return _sorted_unique(locations)
+
+    def _record_loop_body_writes(kind: str, cond_fp: str, body) -> None:
+        body_writes = _observable_body_write_locations(body)
+        if not body_writes:
+            return
+        writes_fp = ",".join(body_writes)
+        control_flow_effects.add(f"{kind}-body-writes:{cond_fp}:{writes_fp}")
+
     def _impl():
         if isinstance(node, CIfElse):
             pairs = tuple(getattr(node, "condition_and_nodes", ()) or ())
@@ -2386,6 +2421,7 @@ def _process_control_flow_node_8616(
             cond = getattr(node, "condition", None)
             cond_fp = normalized_loop_conditions.get(id(node), contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project)))
             control_flow_effects.add(f"while:{cond_fp}")
+            _record_loop_body_writes("while", cond_fp, getattr(node, "body", None))
             if mode == "live_out":
                 conditions.add(cond_fp)
             return True
@@ -2393,13 +2429,18 @@ def _process_control_flow_node_8616(
             cond = getattr(node, "condition", None)
             cond_fp = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
             control_flow_effects.add(f"dowhile:{cond_fp}")
+            _record_loop_body_writes("dowhile", cond_fp, getattr(node, "body", None))
             if mode == "live_out":
                 conditions.add(cond_fp)
             return True
         if isinstance(node, CForLoop):
             cond = getattr(node, "condition", None)
-            cond_fp = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
+            cond_fp = normalized_loop_conditions.get(
+                id(node),
+                contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project)),
+            )
             control_flow_effects.add(f"for:{cond_fp}")
+            _record_loop_body_writes("for", cond_fp, getattr(node, "body", None))
             if mode == "live_out":
                 conditions.add(cond_fp)
             return True
@@ -2477,7 +2518,7 @@ def _process_tail_validation_node_8616(
             if location.startswith("reg:"):
                 if mode == "coarse" or location in observed_locations:
                     register_writes.add(location)
-            elif location.startswith("stack:"):
+            elif location.startswith(("stack:", "stack_slot:")):
                 if include_x86_16_tail_validation_stack_write(location, mode=mode, observed_locations=observed_locations):
                     stack_writes.add(location)
             elif location.startswith("global:"):
@@ -2494,8 +2535,10 @@ def _process_tail_validation_node_8616(
             node,
             project=project,
             mode=mode,
+            observed_locations=observed_locations,
             contextual_condition_fingerprints=contextual_condition_fingerprints,
             normalized_loop_conditions=normalized_loop_conditions,
+            prunable_segment_write_ids=prunable_segment_write_ids,
             conditions=conditions,
             control_flow_effects=control_flow_effects,
         )
@@ -2612,7 +2655,7 @@ def collect_x86_16_tail_validation_summary(
                 normalized_loop_conditions: dict[int, str] = {}
                 suppressed_control_flow_nodes: set[int] = set()
                 for node in _iter_c_nodes_deep_8616(root):
-                    if not isinstance(node, CWhileLoop):
+                    if not isinstance(node, (CWhileLoop, CForLoop)):
                         continue
                     normalized = _extract_loop_break_guard_normalization_8616(
                         node,

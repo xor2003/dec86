@@ -131,8 +131,15 @@ def _summarize_capstone_insn_8616(insn) -> InsnSummary8616:
             return "imm", int(getattr(operand, "imm", 0) or 0), size
         if op_type == 3:
             mem = getattr(operand, "mem", None)
-            if mem is not None and str(insn.reg_name(mem.base)).lower() == "bp":
-                return "bp_mem", int(getattr(mem, "disp", 0) or 0), size
+            if mem is not None:
+                base = int(getattr(mem, "base", 0) or 0)
+                index = int(getattr(mem, "index", 0) or 0)
+                base_name = str(insn.reg_name(base) or "").lower()
+                if base_name == "bp":
+                    return "bp_mem", int(getattr(mem, "disp", 0) or 0), size
+                if base == 0 and index == 0:
+                    return "direct_mem", int(getattr(mem, "disp", 0) or 0), size
+                return "indexed_mem", int(getattr(mem, "disp", 0) or 0), size
             return "mem", None, size
         return None, None, size
 

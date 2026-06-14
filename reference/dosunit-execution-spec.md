@@ -1268,10 +1268,15 @@ dosunit ssa \
   --functions functions.json \
   --output-reg ax \
   --output-reg bx \
-  --max-insns-per-function 24 \
+  --max-blocks-per-function 64 \
+  --max-insns-per-function 64 \
   --cache-dir .cache/dosunit \
   --out ssa.json
 ```
+
+By default `ssa` follows direct in-function successors and direct call
+fallthrough. Use `--no-follow-call-fallthrough` when a report must stop each
+SSA part at call boundaries.
 
 ### 15.8 `compare-ssa`
 
@@ -1281,8 +1286,18 @@ dosunit compare-ssa \
   --candidate-ssa rebuilt.ssa.json \
   --mapping mapping.json \
   --solver-timeout-ms 60000 \
+  --max-region-loop-unroll 0 \
   --out ssa-results.json
 ```
+
+`compare-ssa` enables acyclic multi-block region equality by default. Use
+`--disable-region-equality` for block-only debugging. Region equality refuses
+loops at the default `--max-region-loop-unroll 0`; raising the bound permits
+bounded loop exploration but does not prove loop invariants. Raw region equality
+requires complete bounded paths: constant loop branches may be pruned after SSA
+substitution, while symbolic paths that hit the unroll bound refuse as
+`loop_bound_incomplete`. Use `--disable-connectivity` to skip edge-stitching
+checks between individual SSA parts when you only want direct pairwise results.
 
 ### 15.9 `compare-regions`
 

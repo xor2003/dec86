@@ -14,7 +14,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CContinue,
     CDirtyExpression,
     CExpressionStatement,
+    CForLoop,
     CFunctionCall,
+    CIfBreak,
     CIfElse,
     CReturn,
     CStatements,
@@ -293,6 +295,13 @@ def test_tail_validation_normalizes_named_helper_call_with_project_label_to_addr
     project.kb = SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: None), labels={0x112BA: "_sprintf"})
 
     assert tail_validation_module._normalize_helper_call_fingerprint_8616(project, "name:sprintf") == "addr:0x112ba"
+
+
+def test_tail_validation_normalizes_cod_helper_call_with_project_label_to_addr():
+    project = _project()
+    project.kb = SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: None), labels={0x11414: "_rand"})
+
+    assert tail_validation_module._normalize_helper_call_fingerprint_8616(project, "codcall:rand") == "addr:0x11414"
 
 
 def test_tail_validation_normalizes_exact_slice_call_target_to_original_addr():
@@ -746,6 +755,22 @@ def test_tail_validation_live_out_ignores_nonsemantic_zero_stack_slot_write():
             observed_locations={"stack:+0x4"},
         )
         is True
+    )
+    assert (
+        include_x86_16_tail_validation_stack_write(
+            "stack:-0x2",
+            mode="live_out",
+            observed_locations={"stack:-0x2"},
+        )
+        is True
+    )
+    assert (
+        include_x86_16_tail_validation_stack_write(
+            "stack:-0x4",
+            mode="live_out",
+            observed_locations={"stack:-0x2"},
+        )
+        is False
     )
 
 
@@ -1691,6 +1716,65 @@ def test_tail_validation_collects_control_flow_effects():
         "if:else",
         "while:CmpEQ(reg:ax,const:0)",
     )
+
+
+def test_tail_validation_normalizes_for_loop_break_guard_equivalence():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    before_cond = CBinaryOp(
+        "CmpNE",
+        _reg(project, "ax", before_codegen),
+        _const(0, before_codegen),
+        codegen=before_codegen,
+    )
+    before = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CForLoop(
+                    None,
+                    before_cond,
+                    None,
+                    CStatements([], codegen=before_codegen),
+                    codegen=before_codegen,
+                )
+            ],
+            before_codegen,
+        ),
+        mode="live_out",
+    )
+
+    after_codegen = _DummyCodegen()
+    after_break_cond = CBinaryOp(
+        "CmpEQ",
+        _reg(project, "ax", after_codegen),
+        _const(0, after_codegen),
+        codegen=after_codegen,
+    )
+    after = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CForLoop(
+                    None,
+                    _const(1, after_codegen),
+                    None,
+                    CStatements([CIfBreak(after_break_cond, codegen=after_codegen)], codegen=after_codegen),
+                    codegen=after_codegen,
+                )
+            ],
+            after_codegen,
+        ),
+        mode="live_out",
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert before.conditions == ("CmpNE(reg:ax,const:0)",)
+    assert before.control_flow_effects == ("for:CmpNE(reg:ax,const:0)",)
+    assert after.conditions == before.conditions
+    assert after.control_flow_effects == before.control_flow_effects
 
 
 def test_tail_validation_normalizes_boolean_cite_projection_noise():

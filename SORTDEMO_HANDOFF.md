@@ -44,6 +44,28 @@ This builds `SORTDEMO.C` with MS C 5.1 using
 `examples/build_msc6/sortdemo_selftest/`, runs the result with kvikdos, and
 requires DOS exit code `255`.
 
+Selftest failure codes are per implemented SORTDEMO function:
+
+- `1` `InitMenu`
+- `2` `DrawFrame`
+- `3` `RunMenu`
+- `4` `DrawTime`
+- `5` `InitBars`
+- `6` `ReInitBars`
+- `7` `DrawBar`
+- `8` `SwapBars`
+- `9` `Swaps`
+- `10` `InsertionSort`
+- `11` `BubbleSort`
+- `12` `HeapSort`
+- `13` `PercolateUp`
+- `14` `PercolateDown`
+- `15` `ExchangeSort`
+- `16` `ShellSort`
+- `17` `QuickSort`
+- `18` `Beep`
+- `19` `Sleep`
+
 ## Current fix plan
 
 Work function-by-function, smallest first, but fix each defect at the owning

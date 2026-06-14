@@ -223,6 +223,83 @@ def _resolve_same_block_tmps_in_expr_8616(expr, statements, *, before_index: int
     return copy
 
 
+def _resolve_same_block_register_reads_in_expr_8616(
+    self,
+    expr,
+    statements,
+    *,
+    before_index: int,
+    reg_offset: int,
+    reg_size: int,
+    depth: int = 0,
+):
+    if depth > 8 or expr is None:
+        return expr
+    if isinstance(expr, ailment.Expr.Register):
+        if getattr(expr, "reg_offset", None) != reg_offset or getattr(expr, "bits", None) != reg_size * 8:
+            return expr
+        for idx in range(before_index - 1, -1, -1):
+            src = _register_assignment_source_8616(statements[idx], reg_offset=reg_offset, reg_size=reg_size)
+            if src is None:
+                continue
+            src = _resolve_same_block_tmp_source_8616(src, statements, before_index=idx)
+            src = _resolve_same_block_tmps_in_expr_8616(src, statements, before_index=idx)
+            return _resolve_same_block_register_reads_in_expr_8616(
+                self,
+                src,
+                statements,
+                before_index=idx,
+                reg_offset=reg_offset,
+                reg_size=reg_size,
+                depth=depth + 1,
+            )
+        return expr
+
+    copy = _copy_ail_expr_8616(expr)
+    for attr in ("addr", "operand", "expr"):
+        if not hasattr(copy, attr):
+            continue
+        try:
+            child = getattr(copy, attr)
+            setattr(
+                copy,
+                attr,
+                _resolve_same_block_register_reads_in_expr_8616(
+                    self,
+                    child,
+                    statements,
+                    before_index=before_index,
+                    reg_offset=reg_offset,
+                    reg_size=reg_size,
+                    depth=depth + 1,
+                ),
+            )
+        except Exception:
+            pass
+    if hasattr(copy, "operands"):
+        try:
+            operands = getattr(copy, "operands")
+            setattr(
+                copy,
+                "operands",
+                [
+                    _resolve_same_block_register_reads_in_expr_8616(
+                        self,
+                        child,
+                        statements,
+                        before_index=before_index,
+                        reg_offset=reg_offset,
+                        reg_size=reg_size,
+                        depth=depth + 1,
+                    )
+                    for child in operands
+                ],
+            )
+        except Exception:
+            pass
+    return copy
+
+
 def _copy_ail_expr_8616(expr):
     copy = getattr(expr, "copy", None)
     if callable(copy):
@@ -312,28 +389,42 @@ def _bp_offset_from_linear_stack_addr_8616(self, addr_expr) -> int | None:
 
 
 def _materialize_return_stack_load_8616(self, expr):
-    if not isinstance(expr, ailment.Expr.Load):
-        return expr
-    offset = _bp_offset_from_linear_stack_addr_8616(self, getattr(expr, "addr", None))
-    if not isinstance(offset, int):
-        return expr
-    bits = getattr(expr, "bits", None)
-    size = max(bits // self.arch.byte_width, 1) if isinstance(bits, int) and bits > 0 else 2
-    region = getattr(getattr(self, "function", None), "addr", None)
-    variable = SimStackVariable(offset, size, base="bp", region=region)
-    materialized_addr = BasePointerOffset(
-        self._next_atom(),
-        size * self.arch.byte_width,
-        "bp",
-        offset,
-        variable=variable,
-        ins_addr=getattr(expr, "tags", {}).get("ins_addr", None),
-    )
+    if isinstance(expr, ailment.Expr.Load):
+        offset = _bp_offset_from_linear_stack_addr_8616(self, getattr(expr, "addr", None))
+        if not isinstance(offset, int):
+            return expr
+        bits = getattr(expr, "bits", None)
+        size = max(bits // self.arch.byte_width, 1) if isinstance(bits, int) and bits > 0 else 2
+        region = getattr(getattr(self, "function", None), "addr", None)
+        variable = SimStackVariable(offset, size, base="bp", region=region)
+        materialized_addr = BasePointerOffset(
+            self._next_atom(),
+            size * self.arch.byte_width,
+            "bp",
+            offset,
+            variable=variable,
+            ins_addr=getattr(expr, "tags", {}).get("ins_addr", None),
+        )
+        result = _copy_ail_expr_8616(expr)
+        try:
+            result.addr = materialized_addr
+        except Exception:
+            return expr
+        return result
+
     result = _copy_ail_expr_8616(expr)
-    try:
-        result.addr = materialized_addr
-    except Exception:
-        return expr
+    for attr in ("addr", "operand", "expr"):
+        if not hasattr(result, attr):
+            continue
+        try:
+            setattr(result, attr, _materialize_return_stack_load_8616(self, getattr(result, attr)))
+        except Exception:
+            pass
+    if hasattr(result, "operands"):
+        try:
+            result.operands = [_materialize_return_stack_load_8616(self, operand) for operand in result.operands]
+        except Exception:
+            pass
     return result
 
 
@@ -360,6 +451,14 @@ def _find_terminal_register_source_8616(self, stmt, *, reg_offset: int, reg_size
                 continue
             src = _resolve_same_block_tmp_source_8616(src, statements, before_index=idx)
             src = _resolve_same_block_tmps_in_expr_8616(src, statements, before_index=idx)
+            src = _resolve_same_block_register_reads_in_expr_8616(
+                self,
+                src,
+                statements,
+                before_index=idx,
+                reg_offset=reg_offset,
+                reg_size=reg_size,
+            )
             candidates.append((ins_addr, id(graph_block), src))
             if sum(1 for candidate in candidates if candidate[0] == ins_addr) > 1:
                 tied = True
@@ -399,6 +498,14 @@ def _find_reaching_register_source_8616(self, block, *, reg_offset: int, reg_siz
                 if src is not None:
                     src = _resolve_same_block_tmp_source_8616(src, statements, before_index=idx)
                     src = _resolve_same_block_tmps_in_expr_8616(src, statements, before_index=idx)
+                    src = _resolve_same_block_register_reads_in_expr_8616(
+                        self,
+                        src,
+                        statements,
+                        before_index=idx,
+                        reg_offset=reg_offset,
+                        reg_size=reg_size,
+                    )
                     candidates.append(src)
                     break
             else:
@@ -512,6 +619,14 @@ def _terminal_register_sources_for_function_8616(
                     continue
                 src = _resolve_same_block_tmp_source_8616(src, statements, before_index=idx)
                 src = _resolve_same_block_tmps_in_expr_8616(src, statements, before_index=idx)
+                src = _resolve_same_block_register_reads_in_expr_8616(
+                    type("_ReturnCompatCtx8616", (), {"arch": arch})(),
+                    src,
+                    statements,
+                    before_index=idx,
+                    reg_offset=reg_offset,
+                    reg_size=reg_size,
+                )
                 if best is None or ins_addr > best[0]:
                     best = (ins_addr, src)
                     tied = False

@@ -55,7 +55,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION = 8
+TAIL_VALIDATION_FINGERPRINT_VERSION = 9
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 50000
@@ -1713,6 +1713,9 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
             return _cached(f"const:{node.value!r}")
         if isinstance(node, CVariable):
             return _cached(_location_fingerprint(node, project))
+        indexed_global_location = _global_indexed_location_fingerprint_8616(node)
+        if indexed_global_location is not None:
+            return _cached(indexed_global_location)
         indexed_stack_location = _stack_indexed_location_fingerprint_8616(node, project)
         if indexed_stack_location is not None:
             return _cached(indexed_stack_location)
@@ -1723,7 +1726,7 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
             if node.op == "Dereference":
                 deref_location = _location_fingerprint(node, project)
                 if isinstance(deref_location, str) and deref_location.startswith(
-                    ("stack:", "stack_slot:", "unresolved_stack_carrier:")
+                    ("global:", "stack:", "stack_slot:", "unresolved_stack_carrier:")
                 ):
                     return _cached(deref_location)
                 operand_fp = _expr_fingerprint(node.operand, project, _child_seen())
@@ -2111,6 +2114,10 @@ def _location_fingerprint(node, project, _seen: set[int] | None = None, *, resol
             )
             if isinstance(variable_fingerprint, str):
                 return variable_fingerprint
+        if isinstance(node, CIndexedVariable):
+            indexed_global_location = _global_indexed_location_fingerprint_8616(node)
+            if indexed_global_location is not None:
+                return indexed_global_location
 
         if isinstance(node, CTypeCast):
             return _location_fingerprint(node.expr, project, _seen, resolve_copy_alias=resolve_copy_alias)
@@ -2172,6 +2179,29 @@ def _cvariable_location_fingerprint_8616(node, project, *, _seen: set[int], reso
         return None
 
     return _impl()
+
+
+def _global_indexed_location_fingerprint_8616(node) -> str | None:
+    node = _strip_validation_casts(node)
+    if not isinstance(node, CIndexedVariable):
+        return None
+    base = _strip_validation_casts(getattr(node, "variable", None))
+    index = _strip_validation_casts(getattr(node, "index", None))
+    if isinstance(base, CUnaryOp) and base.op == "Reference":
+        base = _strip_validation_casts(base.operand)
+    if not isinstance(base, CVariable):
+        return None
+    variable = getattr(base, "variable", None)
+    if not isinstance(variable, SimMemoryVariable):
+        return None
+    addr = getattr(variable, "addr", None)
+    elem_size = getattr(variable, "size", None)
+    index_value = _c_constant_int_value(index)
+    if not isinstance(addr, int) or not isinstance(elem_size, int) or not isinstance(index_value, int):
+        return None
+    if addr < 0 or elem_size <= 0:
+        return None
+    return f"global:{(addr + index_value * elem_size) & 0xFFFF:#x}"
 
 
 def _deref_location_fingerprint_8616(node, project) -> str | None:

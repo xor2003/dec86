@@ -471,7 +471,7 @@ from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
 
 from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
 
-from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
+from inertia_decompiler.decompilation_quality import assess_decompiled_c_text, assess_source_backed_c_text
 from inertia_decompiler.recompile_check import check_c_recompiles_8616
 
 from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
@@ -548,6 +548,7 @@ from inertia_decompiler.work_items import (
     FunctionDecompileTask,
     FunctionWorkItem,
     FunctionWorkResult,
+    WorkItemStatus,
     emit_tail_validation_for_function_run_or_uncollected as _emit_tail_validation_for_function_run_or_uncollected,
     emit_tail_validation_snapshot_or_uncollected as _emit_tail_validation_snapshot_or_uncollected,
     function_attempt_display_status as _function_attempt_display_status,
@@ -1464,11 +1465,14 @@ def _run_function_work_item(
             acceptance_gcc_hash = acceptance.gcc_checked_payload_hash
             payload = acceptance.gcc_checked_payload
             if acceptance_blocker is not None:
-                preserved_candidate = (
-                    partial_payload
-                    if isinstance(partial_payload, str) and partial_payload.strip()
-                    else (acceptance_payload if isinstance(acceptance_payload, str) and acceptance_payload.strip() else None)
-                )
+                if status == WorkItemStatus.VALIDATION_FAILED.value:
+                    preserved_candidate = None
+                else:
+                    preserved_candidate = (
+                        partial_payload
+                        if isinstance(partial_payload, str) and partial_payload.strip()
+                        else (acceptance_payload if isinstance(acceptance_payload, str) and acceptance_payload.strip() else None)
+                    )
                 payload = acceptance_blocker
                 partial_payload = preserved_candidate
             if status in {"empty", "validation_failed"}:
@@ -1541,8 +1545,8 @@ def _run_function_work_item(
                 payload=payload,
                 partial_payload=partial_payload,
                 debug_output=debug_output,
-                function=item.function,
-                function_cfg=item.function_cfg,
+                function=decompile_function,
+                function_cfg=decompile_cfg,
                 tail_validation=tail_validation_snapshot,
                 elapsed=elapsed,
                 block_count=block_count,
@@ -1608,13 +1612,23 @@ def _run_function_work_item(
                 local_block_count, local_byte_count = _function_complexity(function_obj)
                 local_arch_name = getattr(getattr(project_obj, "arch", None), "name", "")
                 local_clinic_policy = DirectClinicPolicy8616.STANDARD
-                if local_arch_name == "86_16" and (local_block_count >= 32 or local_byte_count >= 280):
+                if local_arch_name == "86_16":
+                    local_callsite_count = (
+                        _safe_function_callsite_count_8616(function_obj)
+                        if _clinic_policy_needs_callsite_count_8616(
+                            arch_name=local_arch_name,
+                            direct_addr_mode=True,
+                            block_count=local_block_count,
+                            byte_count=local_byte_count,
+                        )
+                        else 0
+                    )
                     local_clinic_policy = _direct_clinic_policy_8616(
                         arch_name=local_arch_name,
                         direct_addr_mode=True,
                         block_count=local_block_count,
                         byte_count=local_byte_count,
-                        call_site_count=0,
+                        call_site_count=local_callsite_count,
                     )
                 with _temporary_clinic_policy_8616(project_obj, local_clinic_policy):
                     status, payload, partial_payload, block_count, byte_count, elapsed = _decompile_function_with_stats(
@@ -1861,13 +1875,15 @@ def _normalize_gcc_checked_payload_8616(checked_payload: str, emitted_payload: s
 
 def _acceptance_result_8616(status: str, blocker: str | None, payload: str) -> CAcceptanceResult8616:
     payload_hash = _sha256_text_8616(payload)
+    checked_payload = payload if status == "ok" and blocker is None else ""
+    checked_payload_hash = payload_hash if checked_payload else _sha256_text_8616("")
     return CAcceptanceResult8616(
         status=status,
         blocker=blocker,
         validated_payload=payload,
         validated_payload_hash=payload_hash,
-        gcc_checked_payload=payload,
-        gcc_checked_payload_hash=payload_hash,
+        gcc_checked_payload=checked_payload,
+        gcc_checked_payload_hash=checked_payload_hash,
     )
 
 
@@ -2032,6 +2048,18 @@ def _validated_generated_c_acceptance_8616(
             if len(quality.markers) > 3:
                 marker_summary += ", ..."
             return _validation_fail(f"Final quality guard rejected emitted C ({marker_summary}).")
+        source_backed = (
+            isinstance(source_evidence_payload, str)
+            and bool(source_evidence_payload.strip())
+            and "///" in source_evidence_payload
+        )
+        if source_backed:
+            source_quality = assess_source_backed_c_text(accepted_payload)
+            if source_quality.reject_as_decompiled:
+                marker_summary = ", ".join(source_quality.markers[:3]) if source_quality.markers else "unresolved"
+                if len(source_quality.markers) > 3:
+                    marker_summary += ", ..."
+                return _validation_fail(f"Source-backed quality guard rejected emitted C ({marker_summary}).")
         semantic_gate_payload = source_evidence_payload if isinstance(source_evidence_payload, str) else accepted_payload
         missing_returns = _missing_expected_return_values_from_embedded_evidence_8616(semantic_gate_payload)
         if missing_returns:
@@ -2105,6 +2133,13 @@ def _validated_generated_c_acceptance_8616(
         )
 
     return _impl()
+
+
+def _is_source_backed_quality_blocker_8616(blocker: object) -> bool:
+    return (
+        isinstance(blocker, str)
+        and blocker.startswith("Source-backed quality guard rejected emitted C")
+    )
 
 
 def _with_source_evidence_comments_8616(
@@ -3164,6 +3199,83 @@ def _remember_fallback_tail_validation(
     return snapshot
 
 
+def _tail_validation_snapshot_from_result_8616(raw_tail_validation) -> dict[str, object]:
+    if isinstance(raw_tail_validation, Mapping) and (
+        "structuring" in raw_tail_validation or "postprocess" in raw_tail_validation
+    ):
+        return dict(raw_tail_validation)
+    return _extract_x86_16_tail_validation_snapshot(raw_tail_validation)
+
+
+def _fresh_sidecar_retry_work_item_8616(
+    *,
+    item: FunctionWorkItem,
+    project: angr.Project,
+    args: Any,
+    lst_metadata: Any,
+) -> FunctionWorkItem | None:
+    if lst_metadata is None or getattr(args, "binary", None) is None:
+        return None
+    if getattr(args, "addr", None) is not None:
+        return None
+    binary_path = Path(args.binary)
+    if binary_path.suffix.lower() != ".exe":
+        return None
+    if getattr(getattr(project, "arch", None), "name", "") != "86_16":
+        return None
+    source_addr = function_original_addr(item.function)
+    if not isinstance(source_addr, int):
+        source_addr = getattr(item.function, "addr", None)
+    if not isinstance(source_addr, int):
+        return None
+    source_name = getattr(item.function, "name", None)
+    if not isinstance(source_name, str) or not source_name:
+        source_name = f"sub_{source_addr:x}"
+    loader = getattr(project, "loader", None)
+    main_object = getattr(loader, "main_object", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    if not isinstance(linked_base, int):
+        linked_base = 0
+    fresh_project = _build_project(
+        binary_path,
+        force_blob=False,
+        base_addr=linked_base,
+        entry_point=getattr(project, "entry", linked_base),
+    )
+    attach_lst_metadata_to_project(fresh_project, lst_metadata)
+    _inherit_tail_validation_runtime_policy(fresh_project, project)
+    fresh_project._inertia_c_target = getattr(project, "_inertia_c_target", getattr(args, "c_target", "portable-flat"))
+    fresh_project._inertia_trace_c_stages = bool(getattr(args, "trace_c_stages", False))
+    fresh_project._inertia_dump_layers = bool(getattr(args, "dump_layers", False))
+    fresh_project._inertia_dump_layer_root = getattr(args, "dump_layer_dir", None)
+    fresh_project._inertia_dump_layer_filter = getattr(args, "dump_layer_filter", None)
+    cfg, function = _recover_lst_function(
+        fresh_project,
+        lst_metadata,
+        source_addr if getattr(lst_metadata, "absolute_addrs", False) else source_addr - fresh_project.entry,
+        source_name,
+        timeout=max(1, min(int(getattr(args, "timeout", 60) or 60), 60)),
+        window=int(getattr(args, "window", 0x200) or 0x200),
+        low_memory=_prefer_low_memory_path(),
+    )
+    return FunctionWorkItem(index=item.index, function_cfg=cfg, function=function)
+
+
+def _work_item_status_8616(status: str) -> WorkItemStatus:
+    try:
+        return WorkItemStatus(status)
+    except (TypeError, ValueError):
+        return WorkItemStatus.UNKNOWN
+
+
+def _retry_timeout_for_failed_result_8616(result: FunctionWorkResult, args: Any) -> int:
+    base_timeout = args.timeout if isinstance(args.timeout, int) else 120
+    timeout = max(1, int(base_timeout))
+    return _enforce_function_timeout_cap(
+        timeout,
+        context="sweep retry recovered candidate decompile timeout",
+    )
+
 
 def _emit_function_result(
     item: FunctionWorkItem,
@@ -3181,25 +3293,9 @@ def _emit_function_result(
     fallback_tail_validation_by_index: dict[int, dict[str, object]],
 ) -> tuple[int, int]:
     def _impl():
-        raw_tail_validation = getattr(result, "tail_validation", None)
-        if isinstance(raw_tail_validation, Mapping) and (
-            "structuring" in raw_tail_validation or "postprocess" in raw_tail_validation
-        ):
-            result_tail_validation = dict(raw_tail_validation)
-        else:
-            result_tail_validation = _extract_x86_16_tail_validation_snapshot(raw_tail_validation)
-        if (
-            result.status == "ok"
-            and not result_tail_validation
-            and not bool(getattr(project, "_inertia_uncapped_seeded_recovery", False))
-        ):
-            # Compatibility fallback for orchestration/unit tests that synthesize
-            # successful FunctionWorkResult objects without attaching validation
-            # snapshots. Real decompilation runs attach structured snapshots.
-            result_tail_validation = {
-                "structuring": {"status": "stable", "changed": False},
-                "postprocess": {"status": "stable", "changed": False},
-            }
+        result_tail_validation = _tail_validation_snapshot_from_result_8616(
+            getattr(result, "tail_validation", None)
+        )
         decompiled_local = 0
         failed_local = 0
         attempt_status_printed = False
@@ -3230,18 +3326,27 @@ def _emit_function_result(
             artifact_path=f"{function.addr:#x}:{function.name}",
         )
         print(f"/* failure family: {failure_family_snapshot.label()} */")
+        retry_item = item
+        if result.function is not None and result.function_cfg is not None:
+            retry_item = FunctionWorkItem(
+                index=item.index,
+                function_cfg=result.function_cfg,
+                function=result.function,
+            )
         if (
             result.status != "ok"
             and args.addr is None
             and getattr(project.arch, "name", "") == "86_16"
             and getattr(result, "failure_stage", None) != "sweep_budget"
             and _try_emit_retry_recovered_candidate_8616(
-                item=item,
+                item=retry_item,
                 function=function,
+                project=project,
                 args=args,
                 lst_metadata=lst_metadata,
                 cod_metadata=cod_metadata,
                 synthetic_globals=synthetic_globals,
+                retry_timeout=_retry_timeout_for_failed_result_8616(result, args),
             )
         ):
             decompiled_local += 1
@@ -3251,7 +3356,10 @@ def _emit_function_result(
             print(_format_first_block_asm(project, function.addr))
         emitted_problem = False
         if result.status == "ok":
-            if x86_16_tail_validation_snapshot_passed(result_tail_validation):
+            if (
+                not _tail_validation_runtime_enabled(project)
+                or x86_16_tail_validation_snapshot_passed(result_tail_validation)
+            ):
                 decompiled_local += 1
                 _print_function_attempt_status(
                     function,
@@ -3291,12 +3399,14 @@ def _emit_function_result(
                 and getattr(project.arch, "name", "") == "86_16"
                 and getattr(result, "failure_stage", None) != "sweep_budget"
                 and _try_emit_retry_recovered_candidate_8616(
-                    item=item,
+                    item=retry_item,
                     function=function,
+                    project=project,
                     args=args,
                     lst_metadata=lst_metadata,
                     cod_metadata=cod_metadata,
                     synthetic_globals=synthetic_globals,
+                    retry_timeout=_retry_timeout_for_failed_result_8616(result, args),
                 )
             ):
                 decompiled_local += 1
@@ -3341,26 +3451,57 @@ def _try_emit_retry_recovered_candidate_8616(
     *,
     item: FunctionWorkItem,
     function,
+    project: angr.Project,
     args: Any,
     lst_metadata: Any,
     cod_metadata: Any,
     synthetic_globals: Any,
+    retry_timeout: int | None = None,
 ) -> bool:
     try:
-        retry_timeout = max(1, int(args.timeout)) if isinstance(getattr(args, "timeout", None), int) else 120
-        retry_result = _run_function_work_item(
-            item,
-            timeout=retry_timeout,
-            api_style=args.api_style,
-            binary_path=args.binary,
-            lst_metadata=lst_metadata,
-            cod_metadata=cod_metadata,
-            synthetic_globals=synthetic_globals,
-            enable_structured_simplify=True,
-            enable_postprocess=True,
-            allow_isolated_retry=True,
+        if retry_timeout is None:
+            retry_timeout = max(1, int(args.timeout)) if isinstance(args.timeout, int) else 120
+
+        def _run_retry_candidate() -> FunctionWorkResult:
+            retry_item = _fresh_sidecar_retry_work_item_8616(
+                item=item,
+                project=project,
+                args=args,
+                lst_metadata=lst_metadata,
+            )
+            if retry_item is None:
+                retry_item = item
+            return _run_function_work_item(
+                retry_item,
+                timeout=retry_timeout,
+                api_style=args.api_style,
+                binary_path=args.binary,
+                lst_metadata=lst_metadata,
+                cod_metadata=cod_metadata,
+                synthetic_globals=synthetic_globals,
+                enable_structured_simplify=True,
+                enable_postprocess=True,
+                allow_isolated_retry=False,
+            )
+
+        retry_worker_timeout = _enforce_function_timeout_cap(
+            max(1, retry_timeout + 2),
+            context="sweep retry recovered candidate timeout",
         )
-        retry_tv = _extract_x86_16_tail_validation_snapshot(getattr(retry_result, "tail_validation", None))
+        if _direct_addr_use_fork_lane_8616(
+            tail_validation_enabled=_tail_validation_runtime_enabled(project),
+        ):
+            retry_result = _run_with_timeout_in_fork(
+                lambda: _function_work_result_for_fork_ipc(_run_retry_candidate()),
+                timeout=retry_worker_timeout,
+            )
+        else:
+            retry_result = _run_with_timeout_in_daemon_thread(
+                _run_retry_candidate,
+                timeout=retry_worker_timeout,
+                thread_name_prefix="retry-recovered-candidate",
+            )
+        retry_tv = _tail_validation_snapshot_from_result_8616(getattr(retry_result, "tail_validation", None))
         if (
             getattr(retry_result, "status", None) != "ok"
             or not x86_16_tail_validation_snapshot_passed(retry_tv)
@@ -3382,6 +3523,8 @@ def _try_emit_retry_recovered_candidate_8616(
             c_header="/* -- c -- */",
         )
         return True
+    except (FuturesTimeoutError, TimeoutError):
+        return False
     except Exception:
         return False
 
@@ -4941,12 +5084,12 @@ def main(argv: list[str] | None = None) -> int:
                 acceptance: CAcceptanceResult8616,
                 result: FunctionWorkResult,
             ) -> str | None:
-                checked_payload = getattr(acceptance, "gcc_checked_payload", None)
-                if isinstance(checked_payload, str) and checked_payload.strip():
-                    return checked_payload
-                validated_payload = getattr(acceptance, "validated_payload", None)
-                if isinstance(validated_payload, str) and validated_payload.strip():
-                    return validated_payload
+                if acceptance.status == "ok" and acceptance.blocker is None:
+                    checked_payload = acceptance.gcc_checked_payload
+                    if checked_payload.strip():
+                        return checked_payload
+                    if acceptance.validated_payload.strip():
+                        return acceptance.validated_payload
                 return _preserve_best_failure_candidate(result)
 
             if direct_status != direct_result.status or direct_blocker is not None:
@@ -5154,6 +5297,19 @@ def main(argv: list[str] | None = None) -> int:
             if direct_result.status == "error":
                 _print_stop_on_first_failure_8616(func, direct_result)
                 return 6
+            if (
+                direct_result.status == "validation_failed"
+                and _is_source_backed_quality_blocker_8616(getattr(direct_result, "payload", None))
+            ):
+                _emit_tail_validation_snapshot_or_uncollected(
+                    cfg,
+                    func,
+                    direct_result.tail_validation,
+                    binary_path=args.binary,
+                )
+                print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
+                print("/* Source-backed quality blocker is terminal; skipping fallback lanes. */")
+                return 4
             if direct_result.status != "ok":
                 def _candidate_text_for_missing_call_score(result: FunctionWorkResult) -> str:
                     payload_text = result.payload if isinstance(result.payload, str) and result.payload.strip() else ""
@@ -5336,11 +5492,12 @@ def main(argv: list[str] | None = None) -> int:
                     payload_text: str,
                     *,
                     tail_validation_snapshot: dict[str, object] | None = None,
-                ) -> bool:
+                ) -> str | None:
+                    payload_for_acceptance = payload_text
                     payload_for_validation = _with_source_evidence_comments_8616(
                         args.binary,
                         func.name,
-                        payload_text,
+                        payload_for_acceptance,
                         enabled=bool(args.alternate_source_c),
                     )
                     snapshot = dict(tail_validation_snapshot) if isinstance(tail_validation_snapshot, dict) else None
@@ -5366,14 +5523,14 @@ def main(argv: list[str] | None = None) -> int:
                     checked_status = checked_acceptance.status
                     checked_blocker = checked_acceptance.blocker
                     if checked_status == "ok":
-                        return True
+                        return checked_acceptance.gcc_checked_payload or payload_for_acceptance
                     print(
                         f"[dbg] rejected direct fallback payload: {checked_status} "
                         f"detail={checked_blocker or 'n/a'}",
                         file=sys.stderr,
                         flush=True,
                     )
-                    return False
+                    return None
 
                 exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
                 if direct_result.status == "empty":
@@ -5448,6 +5605,7 @@ def main(argv: list[str] | None = None) -> int:
                                 name=code_name,
                                 timeout=max(2, min(args.timeout, 8)),
                             ):
+                                side_tail_from_decompile = None
                                 side_status, side_payload, *_ = _decompile_function_with_stats(
                                     project,
                                     side_cfg,
@@ -5461,17 +5619,29 @@ def main(argv: list[str] | None = None) -> int:
                                     allow_isolated_retry=False,
                                     failure_family_state=direct_failure_family_state,
                                 )
+                                side_tail_candidate = getattr(
+                                    project,
+                                    "_inertia_last_validated_function_payload_snapshot",
+                                    None,
+                                )
+                                if not isinstance(side_tail_candidate, dict):
+                                    side_tail_candidate = getattr(project, "_inertia_last_tail_validation_snapshot", None)
+                                if isinstance(side_tail_candidate, dict):
+                                    side_tail_from_decompile = dict(side_tail_candidate)
                                 annotate_current_span(status=side_status)
                             direct_sidecar_verdict = side_status
                             if side_status == "ok":
-                                _emit_tail_validation_for_function_run_or_uncollected(
-                                    project,
+                                side_tail = (
+                                    side_tail_from_decompile
+                                    if isinstance(side_tail_from_decompile, dict)
+                                    else _tail_validation_snapshot_for_function_run(project, side_func)
+                                )
+                                _emit_tail_validation_snapshot_or_uncollected(
                                     side_cfg,
                                     side_func,
-                                    allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
+                                    side_tail,
                                     binary_path=args.binary,
                                 )
-                                side_tail = _tail_validation_snapshot_for_function_run(project, side_func)
                                 side_acceptance = _validated_generated_c_acceptance_8616(
                                     status=side_status,
                                     payload=side_payload,
@@ -5490,17 +5660,17 @@ def main(argv: list[str] | None = None) -> int:
                                 if side_status_checked != "ok":
                                     side_status = side_status_checked
                             if side_status == "ok":
+                                accepted_side_payload = (
+                                    side_payload_checked if isinstance(side_payload_checked, str) else side_payload
+                                )
                                 _emit_optional_source_sidecar_c_block(
                                     args.binary,
                                     side_func.name,
-                                    side_payload_checked if isinstance(side_payload_checked, str) else side_payload,
+                                    accepted_side_payload,
                                     alternate_source_c=bool(args.alternate_source_c),
                                     c_header="\n/* == c (sidecar slice fallback) == */",
                                 )
-                                if _accept_direct_fallback_payload(
-                                    side_payload_checked if isinstance(side_payload_checked, str) else side_payload
-                                ):
-                                    return 0
+                                return 0
                         except Exception:
                             direct_sidecar_verdict = "error"
                             pass
@@ -5524,11 +5694,15 @@ def main(argv: list[str] | None = None) -> int:
                             allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
                             binary_path=args.binary,
                         )
-                        if _accept_direct_fallback_payload(_early_slice.payload):
+                        accepted_payload = _accept_direct_fallback_payload(
+                            _early_slice.payload,
+                            tail_validation_snapshot=_early_slice.snapshot,
+                        )
+                        if accepted_payload is not None:
                             _emit_optional_source_sidecar_c_block(
                                 args.binary,
                                 func.name,
-                                _early_slice.payload,
+                                accepted_payload,
                                 alternate_source_c=bool(args.alternate_source_c),
                                 c_header="\n/* == c (sidecar slice fallback) == */",
                             )
@@ -5578,13 +5752,17 @@ def main(argv: list[str] | None = None) -> int:
                         fallback_snapshot,
                         binary_path=args.binary,
                     )
-                    if _accept_direct_fallback_payload(known_nonopt_c, tail_validation_snapshot=fallback_snapshot):
+                    accepted_payload = _accept_direct_fallback_payload(
+                        known_nonopt_c,
+                        tail_validation_snapshot=fallback_snapshot,
+                    )
+                    if accepted_payload is not None:
                         print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                         print("/* Falling back to known-function non-optimized decompilation. */")
                         _emit_optional_source_sidecar_c_block(
                             args.binary,
                             func.name,
-                            known_nonopt_c,
+                            accepted_payload,
                             alternate_source_c=bool(args.alternate_source_c),
                             c_header="\n/* == c (non-optimized fallback) == */",
                         )
@@ -5624,13 +5802,17 @@ def main(argv: list[str] | None = None) -> int:
                         fallback_snapshot,
                         binary_path=args.binary,
                     )
-                    if _accept_direct_fallback_payload(generic_nonopt_c, tail_validation_snapshot=fallback_snapshot):
+                    accepted_payload = _accept_direct_fallback_payload(
+                        generic_nonopt_c,
+                        tail_validation_snapshot=fallback_snapshot,
+                    )
+                    if accepted_payload is not None:
                         print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                         print("/* Falling back to non-optimized slice decompilation. */")
                         _emit_optional_source_sidecar_c_block(
                             args.binary,
                             func.name,
-                            generic_nonopt_c,
+                            accepted_payload,
                             alternate_source_c=bool(args.alternate_source_c),
                             c_header="\n/* == c (non-optimized fallback) == */",
                         )
@@ -5684,11 +5866,15 @@ def main(argv: list[str] | None = None) -> int:
                             allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
                             binary_path=args.binary,
                         )
-                        if _accept_direct_fallback_payload(slice_result.payload):
+                        accepted_payload = _accept_direct_fallback_payload(
+                            slice_result.payload,
+                            tail_validation_snapshot=slice_result.snapshot,
+                        )
+                        if accepted_payload is not None:
                             _emit_optional_source_sidecar_c_block(
                                 args.binary,
                                 func.name,
-                                slice_result.payload,
+                                accepted_payload,
                                 alternate_source_c=bool(args.alternate_source_c),
                                 c_header="\n/* == c (sidecar slice fallback) == */",
                             )
@@ -5746,13 +5932,17 @@ def main(argv: list[str] | None = None) -> int:
                         fallback_snapshot,
                         binary_path=args.binary,
                     )
-                    if _accept_direct_fallback_payload(nonopt_c, tail_validation_snapshot=fallback_snapshot):
+                    accepted_payload = _accept_direct_fallback_payload(
+                        nonopt_c,
+                        tail_validation_snapshot=fallback_snapshot,
+                    )
+                    if accepted_payload is not None:
                         print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                         print("/* Falling back to non-optimized slice decompilation. */")
                         _emit_optional_source_sidecar_c_block(
                             args.binary,
                             func.name,
-                            nonopt_c,
+                            accepted_payload,
                             alternate_source_c=bool(args.alternate_source_c),
                             c_header="\n/* == c (non-optimized fallback) == */",
                         )
@@ -6650,6 +6840,20 @@ def main(argv: list[str] | None = None) -> int:
             # proven region and can re-enter a slower broad recovery lane.
             return function_project is project
 
+        def _configure_recovered_work_item_project_8616(work_item: FunctionWorkItem) -> None:
+            try:
+                function_project = work_item.function.project
+            except AttributeError:
+                return
+            if function_project is None:
+                return
+            function_project._inertia_c_target = args.c_target
+            function_project._inertia_trace_c_stages = bool(args.trace_c_stages)
+            function_project._inertia_dump_layers = bool(args.dump_layers)
+            function_project._inertia_dump_layer_root = args.dump_layer_dir
+            function_project._inertia_dump_layer_filter = args.dump_layer_filter
+            _inherit_tail_validation_runtime_policy(function_project, project)
+
         allow_heavy_fallbacks = allows_heavy_fallbacks_for_run(
             interactive_stdout=interactive_stdout,
             max_functions=args.max_functions,
@@ -6905,6 +7109,7 @@ def main(argv: list[str] | None = None) -> int:
                                     function_cfg=function_cfg,
                                     function=function,
                                 )
+                                _configure_recovered_work_item_project_8616(active_item)
                                 _preserve_source_label_for_recovered_function_8616(item.function, active_item.function)
                         except (FuturesTimeoutError, TimeoutError):
                             payload = (
@@ -6933,6 +7138,7 @@ def main(argv: list[str] | None = None) -> int:
                                 failure_stage=f"recovery:{recovery_mode}",
                             )
                     if result is None:
+                        _configure_recovered_work_item_project_8616(active_item)
                         if active_item.function_cfg is None:
                             result_map[item.index] = FunctionWorkResult(
                                 index=item.index,

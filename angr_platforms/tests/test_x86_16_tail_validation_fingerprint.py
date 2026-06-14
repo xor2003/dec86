@@ -292,6 +292,21 @@ def test_project_segmented_lowering_evidence_matches_ds_deref_to_global():
     assert _location_fingerprint(raw, project) == "global:0x1234"
 
 
+def test_location_fingerprint_matches_constant_indexed_global_to_direct_addr():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    project._inertia_segmented_memory_lowering = {
+        "DS": {"allow_linear_lowering": True},
+    }
+    base = CVariable(SimMemoryVariable(0x44, 2, name="g_work"), codegen=codegen)
+    indexed = CIndexedVariable(base, _const(5, codegen), codegen=codegen)
+    raw = _ds_linear_deref(project, 0x4E, codegen)
+
+    assert _location_fingerprint(indexed, project) == "global:0x4e"
+    assert _location_fingerprint(indexed, project) == _location_fingerprint(raw, project)
+    assert _expr_fingerprint(indexed, project) == _expr_fingerprint(raw, project)
+
+
 def test_expr_fingerprint_normalizes_global_word_pair_with_shifted_high_byte():
     codegen = _DummyCodegen()
     project = codegen.project

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 import copy
 from dataclasses import dataclass
 import hashlib
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.dosunit.ir_edges import _load_lifter_project
-from tools.dosunit.model import DosUnitError, normalize_hex, parse_int, stable_id
+from tools.dosunit.model import DosUnitError, canonical_json_bytes, normalize_hex, parse_int, stable_id
 
 
 REG_BY_OFFSET = {
@@ -84,6 +84,17 @@ CONTROL_MNEMONICS = {
     "loopnz",
 }
 CONDITIONAL_JUMP_MNEMONICS = CONTROL_MNEMONICS - {"call", "lcall", "int", "jmp", "ljmp"}
+CONNECTIVITY_IMPLICIT_STATE = {
+    "cs",
+    "ds",
+    "es",
+    "ss",
+    "flags",
+    "memory",
+}
+CONNECTIVITY_OPTIONALLY_IMPLICIT_STATE = {
+    "bp",
+}
 SUPPORTED_BINOPS = {
     "Add": "add",
     "Sub": "sub",
@@ -145,11 +156,12 @@ def lower_straightline_ssa_document(
     functions_catalog: dict[str, Any],
     output_regs: tuple[str, ...] = DEFAULT_OUTPUT_REGS,
     source_ir: str = "vex",
-    max_blocks_per_function: int = 8,
-    max_insns_per_function: int = 24,
+    max_blocks_per_function: int = 64,
+    max_insns_per_function: int = 64,
     max_assignments_per_function: int = 512,
     scan_limit: int = 0x100,
     cache_dir: Path | None = None,
+    follow_call_fallthrough: bool = True,
 ) -> dict[str, Any]:
     if source_ir not in SUPPORTED_SOURCE_IRS:
         raise DosUnitError(f"unsupported SSA source IR: {source_ir}")
@@ -193,6 +205,7 @@ def lower_straightline_ssa_document(
             max_insns_per_function=max_insns_per_function,
             max_assignments_per_function=max_assignments_per_function,
             scan_limit=scan_limit,
+            follow_call_fallthrough=follow_call_fallthrough,
         )
         counters["lifter_blocks_lifted"] += blocks_lifted
         if not results:
@@ -234,6 +247,7 @@ def lower_straightline_ssa_document(
             "max_assignments_per_function": max_assignments_per_function,
             "scan_limit": scan_limit,
             "cache_dir": None if cache_dir is None else str(cache_dir),
+            "follow_call_fallthrough": follow_call_fallthrough,
         },
         "functions": lowered,
         "refusals": refusals,
@@ -251,11 +265,16 @@ def compare_ssa_documents(
     mapping_document: dict[str, Any] | None = None,
     include_unmapped: bool = True,
     timeout_ms: int = 60000,
-    max_solver_assignments: int = 128,
+    max_solver_assignments: int = 256,
     max_solver_inputs: int = 16,
-    max_solver_memory_stores: int = 15,
+    max_solver_memory_stores: int = 32,
     skip_binary_equal: bool = True,
     allow_aliased_call_targets: bool = True,
+    enable_callee_lemmas: bool = True,
+    semantic_proof_passes: int = 4,
+    enable_region_equality: bool = True,
+    enable_connectivity: bool = True,
+    max_region_loop_unroll: int = 0,
 ) -> dict[str, Any]:
     oracle_functions = list(oracle.get("functions", []) or [])
     candidate_functions = list(candidate.get("functions", []) or [])
@@ -268,6 +287,8 @@ def compare_ssa_documents(
     candidate_index = _ssa_function_index(candidate_functions)
     ordinals: dict[str, int] = defaultdict(int)
     results: list[dict[str, Any]] = []
+    pending_callee_proofs: list[tuple[int, dict[str, Any]]] = []
+    proof_cache = _SemanticEqualityCache() if enable_callee_lemmas else None
     solver_time_ms = 0
     skipped_unmapped = 0
     for oracle_function in oracle_functions:
@@ -330,89 +351,108 @@ def compare_ssa_documents(
                 }
             )
             continue
-        call_compare = _compare_call_targets(
-            oracle_function,
-            candidate_function,
+        item = {
+            "oracle_function": oracle_function,
+            "candidate_function": candidate_function,
+            "mapped": mapped,
+            "function_id": function_id,
+            "function_name": function_name,
+        }
+        result, elapsed = _compare_ssa_pair(
+            item,
             mapping_document=mapping_document,
             oracle_index=oracle_index,
             candidate_index=candidate_index,
             allow_aliased_call_targets=allow_aliased_call_targets,
-        )
-        oracle_for_z3, candidate_for_z3, call_compare = _prepare_call_normalized_functions(
-            oracle_function,
-            candidate_function,
-            call_compare=call_compare,
-        )
-        oracle_for_z3, candidate_for_z3, layout_normalization = _prepare_layout_normalized_functions(
-            oracle_for_z3,
-            candidate_for_z3,
-        )
-        quick = _quick_compare_functions(oracle_for_z3, candidate_for_z3, skip_binary_equal=skip_binary_equal)
-        if quick is not None:
-            results.append(
-                {
-                    "status": quick["status"],
-                    "reason": quick.get("reason"),
-                    "function": {"id": function_id, "name": function_name},
-                    "oracle_function": oracle_function.get("id"),
-                    "candidate_function": candidate_function.get("id"),
-                    "mapped_candidate": _mapped_candidate_detail(mapped),
-                    "oracle_detail": _ssa_function_report_detail(oracle_function),
-                    "candidate_detail": _ssa_function_report_detail(candidate_function),
-                    "call_compare": call_compare,
-                    "layout_normalization": layout_normalization,
-                    "mismatches": quick.get("mismatches", []),
-                }
-            )
-            continue
-        gate = _ssa_solver_gate(
-            oracle_for_z3,
-            candidate_for_z3,
+            proof_cache=proof_cache,
+            timeout_ms=timeout_ms,
             max_solver_assignments=max_solver_assignments,
             max_solver_inputs=max_solver_inputs,
             max_solver_memory_stores=max_solver_memory_stores,
+            skip_binary_equal=skip_binary_equal,
         )
-        if gate is not None:
-            results.append(
-                {
-                    "status": "refused",
-                    "reason": gate["reason"],
-                    "function": {"id": function_id, "name": function_name},
-                    "oracle_function": oracle_function.get("id"),
-                    "candidate_function": candidate_function.get("id"),
-                    "mapped_candidate": _mapped_candidate_detail(mapped),
-                    "oracle_detail": _ssa_function_report_detail(oracle_function),
-                    "candidate_detail": _ssa_function_report_detail(candidate_function),
-                    "call_compare": call_compare,
-                    "layout_normalization": layout_normalization,
-                    "mismatches": [gate],
-                }
-            )
+        solver_time_ms += elapsed
+        result_index = len(results)
+        results.append(result)
+        if result.get("reason") == "callee_not_proven":
+            pending_callee_proofs.append((result_index, item))
             continue
-        comparison = _compare_functions(oracle_for_z3, candidate_for_z3, timeout_ms=timeout_ms)
-        solver_time_ms += int(comparison.pop("solver_time_ms", 0))
-        results.append(
-            {
-                "status": comparison["status"],
-                "reason": comparison.get("reason"),
-                "function": {"id": function_id, "name": function_name},
-                "oracle_function": oracle_function.get("id"),
-                "candidate_function": candidate_function.get("id"),
-                "mapped_candidate": _mapped_candidate_detail(mapped),
-                "oracle_detail": _ssa_function_report_detail(oracle_function),
-                "candidate_detail": _ssa_function_report_detail(candidate_function),
-                "call_compare": call_compare,
-                "layout_normalization": layout_normalization,
-                "mismatches": comparison.get("mismatches", []),
-            }
-        )
+        if result.get("status") == "passed" and proof_cache is not None:
+            proof_cache.record(oracle_function, candidate_function, proof=str(result.get("reason") or "z3_equal"))
 
+    region_equality = _empty_region_equality_report(enabled=False)
+    if enable_region_equality:
+        region_equality = _compare_ssa_region_equality(
+            oracle=oracle,
+            candidate=candidate,
+            mapping_document=mapping_document,
+            current_results=results,
+            timeout_ms=timeout_ms,
+            max_solver_assignments=max_solver_assignments,
+            max_solver_inputs=max_solver_inputs,
+            max_solver_memory_stores=max_solver_memory_stores,
+            max_loop_unroll=max_region_loop_unroll,
+            skip_binary_equal=skip_binary_equal,
+            oracle_index=oracle_index,
+            candidate_index=candidate_index,
+            allow_aliased_call_targets=allow_aliased_call_targets,
+            proof_cache=proof_cache,
+        )
+        solver_time_ms += int(region_equality.get("solver_time_ms", 0))
+        _apply_region_equality_gate(results, region_equality)
+
+    for _pass_index in range(max(0, int(semantic_proof_passes) - 1)):
+        if not pending_callee_proofs:
+            break
+        changed = False
+        still_pending: list[tuple[int, dict[str, Any]]] = []
+        for result_index, item in pending_callee_proofs:
+            result, elapsed = _compare_ssa_pair(
+                item,
+                mapping_document=mapping_document,
+                oracle_index=oracle_index,
+                candidate_index=candidate_index,
+                allow_aliased_call_targets=allow_aliased_call_targets,
+                proof_cache=proof_cache,
+                timeout_ms=timeout_ms,
+                max_solver_assignments=max_solver_assignments,
+                max_solver_inputs=max_solver_inputs,
+                max_solver_memory_stores=max_solver_memory_stores,
+                skip_binary_equal=skip_binary_equal,
+            )
+            solver_time_ms += elapsed
+            results[result_index] = result
+            if result.get("reason") == "callee_not_proven":
+                still_pending.append((result_index, item))
+                continue
+            changed = True
+            if result.get("status") == "passed" and proof_cache is not None:
+                proof_cache.record(item["oracle_function"], item["candidate_function"], proof=str(result.get("reason") or "z3_equal"))
+        pending_callee_proofs = still_pending
+        if not changed:
+            break
+
+    if enable_region_equality:
+        _apply_region_equality_gate(results, region_equality)
+    connectivity = _empty_connectivity_report(enabled=False)
+    if enable_connectivity:
+        connectivity = _apply_ssa_connectivity_gate(
+            results,
+            region_exempt_functions=_region_passed_function_keys(region_equality),
+            oracle_functions=oracle_functions,
+            candidate_functions=candidate_functions,
+            timeout_ms=timeout_ms,
+        )
+    loop_scc = _apply_loop_scc_gate(results, region_exempt_functions=_region_passed_function_keys(region_equality))
+    call_scc = _apply_call_scc_gate(results)
     summary = {
         "total": len(results),
         "passed": sum(1 for result in results if result.get("status") == "passed"),
         "failed": sum(1 for result in results if result.get("status") == "failed"),
         "refused": sum(1 for result in results if result.get("status") == "refused"),
         "skipped_unmapped": skipped_unmapped,
+        "semantic_proof_facts": 0 if proof_cache is None else proof_cache.count,
+        "pending_callee_proofs": len(pending_callee_proofs),
         "solver_time_ms": solver_time_ms,
     }
     document_without_id = {
@@ -422,11 +462,20 @@ def compare_ssa_documents(
         "mapping": None if mapping_document is None else mapping_document.get("id"),
         "include_unmapped": include_unmapped,
         "alias_call_targets": allow_aliased_call_targets,
+        "callee_lemmas": enable_callee_lemmas,
+        "semantic_proof_passes": semantic_proof_passes,
+        "region_equality_enabled": enable_region_equality,
+        "connectivity_enabled": enable_connectivity,
         "solver_gates": {
             "max_solver_assignments": max_solver_assignments,
             "max_solver_inputs": max_solver_inputs,
             "max_solver_memory_stores": max_solver_memory_stores,
+            "max_region_loop_unroll": max_region_loop_unroll,
         },
+        "region_equality": region_equality,
+        "connectivity": connectivity,
+        "loop_scc": loop_scc,
+        "call_scc": call_scc,
         "skip_binary_equal": skip_binary_equal,
         "summary": summary,
         "results": results,
@@ -434,6 +483,20 @@ def compare_ssa_documents(
     document = dict(document_without_id)
     document["id"] = stable_id("ssa-compare", document_without_id)
     return document
+
+
+def _empty_connectivity_report(*, enabled: bool) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "status": "disabled" if not enabled else "not_applicable",
+        "edges_checked": 0,
+        "state_edges_checked": 0,
+        "state_inputs_checked": 0,
+        "state_solver_time_ms": 0,
+        "region_exempt_functions": [],
+        "failures": [],
+        "refusals": [],
+    }
 
 
 def compare_ssa_abi_documents(
@@ -446,6 +509,7 @@ def compare_ssa_abi_documents(
     max_solver_assignments: int = 512,
     max_solver_inputs: int = 32,
     max_solver_memory_stores: int = 32,
+    max_loop_unroll: int = 0,
 ) -> dict[str, Any]:
     oracle_groups = _ssa_function_groups(list(oracle.get("functions", []) or []))
     candidate_groups = _ssa_function_groups(list(candidate.get("functions", []) or []))
@@ -460,6 +524,7 @@ def compare_ssa_abi_documents(
         mapped = mapped_candidates.get(str(abi_function.get("id") or "")) or mapped_candidates.get(function_name)
         candidate_group = _ssa_group_for_abi_function(candidate_groups, abi_function, side="candidate", mapped=mapped)
         observables = _abi_observables(abi_function)
+        input_constraints = _abi_input_constraints(abi_function)
         base_result = {
             "function": {
                 "name": function_name,
@@ -474,6 +539,7 @@ def compare_ssa_abi_documents(
             },
             "mapped_candidate": _mapped_candidate_detail(mapped),
             "observables": observables,
+            "input_constraints": input_constraints,
         }
         if not oracle_group or not candidate_group:
             missing = "oracle" if not oracle_group else "candidate"
@@ -496,11 +562,24 @@ def compare_ssa_abi_documents(
                 }
             )
             continue
-        oracle_summary = _summarize_abi_function(oracle_group, abi_function=abi_function, observables=observables, data_segment_para=data_segment_para)
-        candidate_summary = _summarize_abi_function(candidate_group, abi_function=abi_function, observables=observables, data_segment_para=data_segment_para)
+        oracle_summary = _summarize_abi_function(
+            oracle_group,
+            abi_function=abi_function,
+            observables=observables,
+            data_segment_para=data_segment_para,
+            max_loop_unroll=max_loop_unroll,
+        )
+        candidate_summary = _summarize_abi_function(
+            candidate_group,
+            abi_function=abi_function,
+            observables=observables,
+            data_segment_para=data_segment_para,
+            max_loop_unroll=max_loop_unroll,
+        )
         if oracle_summary.get("status") != "passed" or candidate_summary.get("status") != "passed":
             side = "oracle" if oracle_summary.get("status") != "passed" else "candidate"
             summary = oracle_summary if side == "oracle" else candidate_summary
+            mismatches = [item for item in (summary.get("mismatches") or []) if isinstance(item, dict)]
             results.append(
                 {
                     **base_result,
@@ -509,7 +588,7 @@ def compare_ssa_abi_documents(
                     "side": side,
                     "oracle_summary": _summary_detail(oracle_summary),
                     "candidate_summary": _summary_detail(candidate_summary),
-                    "mismatches": summary.get("mismatches", []),
+                    "mismatches": mismatches,
                 }
             )
             continue
@@ -532,7 +611,24 @@ def compare_ssa_abi_documents(
                 }
             )
             continue
-        comparison = _compare_functions(oracle_summary["function"], candidate_summary["function"], timeout_ms=timeout_ms)
+        if _semantic_ssa_payload(oracle_summary["function"]) == _semantic_ssa_payload(candidate_summary["function"]):
+            results.append(
+                {
+                    **base_result,
+                    "status": "passed",
+                    "reason": "ssa_equal",
+                    "oracle_summary": _summary_detail(oracle_summary),
+                    "candidate_summary": _summary_detail(candidate_summary),
+                    "mismatches": [],
+                }
+            )
+            continue
+        comparison = _compare_functions(
+            oracle_summary["function"],
+            candidate_summary["function"],
+            timeout_ms=timeout_ms,
+            input_constraints=input_constraints,
+        )
         solver_time_ms += int(comparison.pop("solver_time_ms", 0))
         results.append(
             {
@@ -563,6 +659,7 @@ def compare_ssa_abi_documents(
             "max_solver_assignments": max_solver_assignments,
             "max_solver_inputs": max_solver_inputs,
             "max_solver_memory_stores": max_solver_memory_stores,
+            "max_loop_unroll": max_loop_unroll,
         },
         "summary": summary,
         "results": results,
@@ -587,6 +684,7 @@ def _lower_function(
     max_insns_per_function: int,
     max_assignments_per_function: int,
     scan_limit: int,
+    follow_call_fallthrough: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     function_id = str(function.get("id", "<unknown>"))
     names = function.get("names", []) if isinstance(function.get("names"), list) else []
@@ -646,15 +744,17 @@ def _lower_function(
             refusals.append(_refusal(function, "incomplete_block", f"lifter stopped before a control transfer at {last.get('address', {}).get('linear')}: {last.get('disassembly')}"))
             continue
 
+        transfer = _transfer_info(irsb, instructions)
+        block_output_regs = _with_control_output_regs(output_regs, transfer)
         if source_ir == "vex":
-            lowered = _lower_irsb(irsb, output_regs=output_regs, max_assignments_per_function=max_assignments_per_function)
+            lowered = _lower_irsb(irsb, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function)
         elif source_ir == "ail":
             try:
                 ail_block = _vex_irsb_to_ail_block(project=project, irsb=irsb)
             except Exception as ex:  # noqa: BLE001
                 refusals.append(_refusal(function, "unsupported_ir", f"AIL conversion failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}"))
                 continue
-            lowered = _lower_ail_block(ail_block, output_regs=output_regs, max_assignments_per_function=max_assignments_per_function)
+            lowered = _lower_ail_block(ail_block, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function)
         else:
             refusals.append(_refusal(function, "unsupported_ir", f"unsupported SSA source IR: {source_ir}"))
             continue
@@ -689,7 +789,7 @@ def _lower_function(
                 "function_machine_code_size": len(function_machine_code) if function_machine_code is not None else None,
                 "machine_code_sha256": _machine_code_sha256(instructions),
                 "machine_code_size": _machine_code_size(instructions),
-                "transfer": _transfer_info(irsb, instructions),
+                "transfer": transfer,
             },
             **lowered,
         }
@@ -697,7 +797,7 @@ def _lower_function(
         body["id"] = stable_id("ssa-function", body_without_id)
         lowered_parts.append(body)
 
-        for successor in _ssa_block_successors(irsb, instructions):
+        for successor in _ssa_block_successors(irsb, instructions, follow_call_fallthrough=follow_call_fallthrough):
             if start <= successor < end and successor not in seen and successor not in pending:
                 pending.append(successor)
 
@@ -706,6 +806,14 @@ def _lower_function(
     if not lowered_parts and not refusals:
         refusals.append(_refusal(function, "unsupported_ir", "no SSA blocks lowered"))
     return lowered_parts, refusals, blocks_lifted
+
+
+def _with_control_output_regs(output_regs: tuple[str, ...], transfer: dict[str, Any] | None) -> tuple[str, ...]:
+    if not isinstance(transfer, dict) or transfer.get("kind") != "direct_successors":
+        return output_regs
+    if "ip" in output_regs:
+        return output_regs
+    return (*output_regs, "ip")
 
 
 def _lower_irsb(irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int) -> dict[str, Any] | LowerFailure:
@@ -1427,7 +1535,1517 @@ def _ssa_store_count(function: dict[str, Any]) -> int:
     return sum(1 for item in function.get("assignments", []) or [] if isinstance(item, dict) and item.get("op") in {"storele", "storebe"})
 
 
-def _compare_functions(oracle: dict[str, Any], candidate: dict[str, Any], *, timeout_ms: int) -> dict[str, Any]:
+def _compare_ssa_pair(
+    item: dict[str, Any],
+    *,
+    mapping_document: dict[str, Any] | None,
+    oracle_index: dict[str, dict[Any, dict[str, Any]]],
+    candidate_index: dict[str, dict[Any, dict[str, Any]]],
+    allow_aliased_call_targets: bool,
+    proof_cache: "_SemanticEqualityCache | None",
+    timeout_ms: int,
+    max_solver_assignments: int,
+    max_solver_inputs: int,
+    max_solver_memory_stores: int,
+    skip_binary_equal: bool,
+) -> tuple[dict[str, Any], int]:
+    oracle_function = item["oracle_function"]
+    candidate_function = item["candidate_function"]
+    mapped = item.get("mapped")
+    function_id = str(item.get("function_id") or "")
+    function_name = str(item.get("function_name") or function_id)
+    call_compare = _compare_call_targets(
+        oracle_function,
+        candidate_function,
+        mapping_document=mapping_document,
+        oracle_index=oracle_index,
+        candidate_index=candidate_index,
+        allow_aliased_call_targets=allow_aliased_call_targets,
+        proof_cache=proof_cache,
+        require_proven_call_targets=proof_cache is not None,
+    )
+    base = {
+        "function": {"id": function_id, "name": function_name},
+        "oracle_function": oracle_function.get("id"),
+        "candidate_function": candidate_function.get("id"),
+        "mapped_candidate": _mapped_candidate_detail(mapped),
+        "oracle_detail": _ssa_function_report_detail(oracle_function),
+        "candidate_detail": _ssa_function_report_detail(candidate_function),
+        "call_compare": call_compare,
+    }
+    if isinstance(call_compare, dict) and call_compare.get("reason") == "callee_not_proven":
+        return (
+            {
+                **base,
+                "status": "refused",
+                "reason": "callee_not_proven",
+                "layout_normalization": None,
+                "mismatches": [
+                    {
+                        "kind": "callee_not_proven",
+                        "detail": "direct call targets are only mapped/name-equivalent; caller proof waits for a callee equality fact",
+                        "unproven_reason": call_compare.get("unproven_reason"),
+                    }
+                ],
+            },
+            0,
+        )
+    oracle_for_z3, candidate_for_z3, call_compare = _prepare_call_normalized_functions(
+        oracle_function,
+        candidate_function,
+        call_compare=call_compare,
+    )
+    base["call_compare"] = call_compare
+    oracle_for_z3, candidate_for_z3, layout_normalization = _prepare_layout_normalized_functions(
+        oracle_for_z3,
+        candidate_for_z3,
+    )
+    quick = _quick_compare_functions(oracle_for_z3, candidate_for_z3, skip_binary_equal=skip_binary_equal)
+    if quick is not None:
+        return (
+            {
+                **base,
+                "status": quick["status"],
+                "reason": quick.get("reason"),
+                "layout_normalization": layout_normalization,
+                "mismatches": quick.get("mismatches", []),
+            },
+            0,
+        )
+    gate = _ssa_solver_gate(
+        oracle_for_z3,
+        candidate_for_z3,
+        max_solver_assignments=max_solver_assignments,
+        max_solver_inputs=max_solver_inputs,
+        max_solver_memory_stores=max_solver_memory_stores,
+    )
+    if gate is not None:
+        return (
+            {
+                **base,
+                "status": "refused",
+                "reason": gate["reason"],
+                "layout_normalization": layout_normalization,
+                "mismatches": [gate],
+            },
+            0,
+        )
+    comparison = _compare_functions(oracle_for_z3, candidate_for_z3, timeout_ms=timeout_ms)
+    elapsed = int(comparison.pop("solver_time_ms", 0))
+    return (
+        {
+            **base,
+            "status": comparison["status"],
+            "reason": comparison.get("reason"),
+            "layout_normalization": layout_normalization,
+            "mismatches": comparison.get("mismatches", []),
+        },
+        elapsed,
+    )
+
+
+def _empty_region_equality_report(*, enabled: bool) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "status": "disabled" if not enabled else "not_applicable",
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "refused": 0,
+        "covered_results": 0,
+        "solver_time_ms": 0,
+        "results": [],
+    }
+
+
+def _compare_ssa_region_equality(
+    *,
+    oracle: dict[str, Any],
+    candidate: dict[str, Any],
+    mapping_document: dict[str, Any] | None,
+    current_results: list[dict[str, Any]],
+    timeout_ms: int,
+    max_solver_assignments: int,
+    max_solver_inputs: int,
+    max_solver_memory_stores: int,
+    oracle_index: dict[str, dict[Any, dict[str, Any]]],
+    candidate_index: dict[str, dict[Any, dict[str, Any]]],
+    allow_aliased_call_targets: bool,
+    max_loop_unroll: int,
+    skip_binary_equal: bool,
+    proof_cache: "_SemanticEqualityCache | None",
+) -> dict[str, Any]:
+    oracle_groups = _unique_ssa_function_groups(list(oracle.get("functions", []) or []))
+    candidate_groups = _ssa_function_groups(list(candidate.get("functions", []) or []))
+    mapped_candidates = _ssa_candidate_mapping(mapping_document) if mapping_document is not None else {}
+    status_by_function = _raw_result_status_by_function(current_results)
+    results: list[dict[str, Any]] = []
+    solver_time_ms = 0
+
+    for oracle_id, oracle_name, oracle_group in oracle_groups:
+        mapped = mapped_candidates.get(oracle_id) or mapped_candidates.get(oracle_name)
+        candidate_group = _candidate_group_for_region(
+            candidate_groups,
+            oracle_id=oracle_id,
+            oracle_name=oracle_name,
+            mapped=mapped,
+        )
+        if not _should_attempt_region_equality(oracle_id, oracle_name, oracle_group, candidate_group, status_by_function):
+            continue
+        base_result = {
+            "function": {"id": oracle_id, "name": oracle_name},
+            "mapped_candidate": _mapped_candidate_detail(mapped),
+            "oracle_region_detail": _ssa_region_report_detail(oracle_group),
+            "candidate_region_detail": _ssa_region_report_detail(candidate_group),
+        }
+        if not candidate_group:
+            results.append(
+                {
+                    **base_result,
+                    "status": "refused",
+                    "reason": "function_missing",
+                    "mismatches": [{"kind": "function_missing", "side": "candidate"}],
+                }
+            )
+            continue
+        contract = _synthetic_region_contract(oracle_id, oracle_name, oracle_group, candidate_group)
+        observables = contract["observables"]
+        base_result["observables"] = observables
+        base_result["input_constraints"] = contract["input_constraints"]
+        if not observables["regs"] and not observables.get("whole_memory"):
+            results.append(
+                {
+                    **base_result,
+                    "status": "refused",
+                    "reason": "no_declared_observables",
+                    "mismatches": [{"kind": "no_declared_observables"}],
+                }
+            )
+            continue
+        oracle_group_for_compare, candidate_group_for_compare, call_normalizations = _prepare_region_call_normalized_groups(
+            oracle_group,
+            candidate_group,
+            mapping_document=mapping_document,
+            oracle_index=oracle_index,
+            candidate_index=candidate_index,
+            allow_aliased_call_targets=allow_aliased_call_targets,
+        )
+        if call_normalizations:
+            base_result["call_normalizations"] = call_normalizations
+        incomplete = _region_incomplete_successors(oracle_group_for_compare, candidate_group_for_compare)
+        if incomplete is not None:
+            results.append(
+                {
+                    **base_result,
+                    "status": "refused",
+                    "reason": "region_incomplete",
+                    "mismatches": [incomplete],
+                }
+            )
+            continue
+        if _region_has_direct_cycle(oracle_group_for_compare) or _region_has_direct_cycle(candidate_group_for_compare):
+            transition_result = _compare_region_transition_system(
+                oracle_group_for_compare,
+                candidate_group_for_compare,
+                timeout_ms=timeout_ms,
+                max_solver_assignments=max_solver_assignments,
+                max_solver_inputs=max_solver_inputs,
+                max_solver_memory_stores=max_solver_memory_stores,
+                skip_binary_equal=skip_binary_equal,
+            )
+            if transition_result is not None:
+                solver_time_ms += int(transition_result.get("solver_time_ms", 0))
+                result = {
+                    **base_result,
+                    "status": "passed",
+                    "reason": "transition_system_equal",
+                    "oracle_summary": transition_result["oracle_summary"],
+                    "candidate_summary": transition_result["candidate_summary"],
+                    "mismatches": [],
+                    "transition_system": transition_result["transition_system"],
+                }
+                results.append(result)
+                if proof_cache is not None:
+                    proof_cache.record(oracle_group_for_compare[0], candidate_group_for_compare[0], proof="transition_system_equal", scope="function")
+                continue
+        require_complete_paths = True
+        oracle_summary = _summarize_abi_function(
+            oracle_group_for_compare,
+            abi_function=contract["abi_function"],
+            observables=observables,
+            data_segment_para=0x0100,
+            max_loop_unroll=max_loop_unroll,
+            require_complete_paths=require_complete_paths,
+            enable_constant_branch_pruning=True,
+        )
+        candidate_summary = _summarize_abi_function(
+            candidate_group_for_compare,
+            abi_function=contract["abi_function"],
+            observables=observables,
+            data_segment_para=0x0100,
+            max_loop_unroll=max_loop_unroll,
+            require_complete_paths=require_complete_paths,
+            enable_constant_branch_pruning=True,
+        )
+        if oracle_summary.get("status") != "passed" or candidate_summary.get("status") != "passed":
+            side = "oracle" if oracle_summary.get("status") != "passed" else "candidate"
+            summary = oracle_summary if side == "oracle" else candidate_summary
+            mismatches = _attach_region_call_compare(
+                summary=summary,
+                oracle_group=oracle_group_for_compare,
+                candidate_group=candidate_group_for_compare,
+                mapping_document=mapping_document,
+                oracle_index=oracle_index,
+                candidate_index=candidate_index,
+                allow_aliased_call_targets=allow_aliased_call_targets,
+            )
+            results.append(
+                {
+                    **base_result,
+                    "status": "refused",
+                    "reason": summary.get("reason", "unsupported_ir"),
+                    "side": side,
+                    "oracle_summary": _summary_detail(oracle_summary),
+                    "candidate_summary": _summary_detail(candidate_summary),
+                    "mismatches": mismatches,
+                }
+            )
+            continue
+        oracle_function = oracle_summary["function"]
+        candidate_function = candidate_summary["function"]
+        quick = _quick_compare_functions(oracle_function, candidate_function, skip_binary_equal=skip_binary_equal)
+        if quick is not None:
+            mismatches = _attach_region_call_compare(
+                summary=quick,
+                oracle_group=oracle_group_for_compare,
+                candidate_group=candidate_group_for_compare,
+                mapping_document=mapping_document,
+                oracle_index=oracle_index,
+                candidate_index=candidate_index,
+                allow_aliased_call_targets=allow_aliased_call_targets,
+            )
+            result = {
+                **base_result,
+                "status": quick["status"],
+                "reason": _region_reason(quick.get("reason")),
+                "oracle_summary": _summary_detail(oracle_summary),
+                "candidate_summary": _summary_detail(candidate_summary),
+                "mismatches": mismatches,
+            }
+            results.append(result)
+            if result["status"] == "passed" and proof_cache is not None:
+                proof_cache.record(oracle_group_for_compare[0], candidate_group_for_compare[0], proof=str(result.get("reason") or "region_equal"), scope="function")
+            continue
+        gate = _ssa_solver_gate(
+            oracle_function,
+            candidate_function,
+            max_solver_assignments=max_solver_assignments,
+            max_solver_inputs=max_solver_inputs,
+            max_solver_memory_stores=max_solver_memory_stores,
+        )
+        if gate is not None:
+            mismatches = _attach_region_call_compare(
+                summary={"mismatches": [gate]},
+                oracle_group=oracle_group_for_compare,
+                candidate_group=candidate_group_for_compare,
+                mapping_document=mapping_document,
+                oracle_index=oracle_index,
+                candidate_index=candidate_index,
+                allow_aliased_call_targets=allow_aliased_call_targets,
+            )
+            results.append(
+                {
+                    **base_result,
+                    "status": "refused",
+                    "reason": gate["reason"],
+                    "oracle_summary": _summary_detail(oracle_summary),
+                    "candidate_summary": _summary_detail(candidate_summary),
+                    "mismatches": mismatches,
+                }
+            )
+            continue
+        comparison = _compare_functions(
+            oracle_function,
+            candidate_function,
+            timeout_ms=timeout_ms,
+            input_constraints=contract["input_constraints"],
+        )
+        solver_time_ms += int(comparison.pop("solver_time_ms", 0))
+        mismatches = _attach_region_call_compare(
+            summary=comparison,
+            oracle_group=oracle_group_for_compare,
+            candidate_group=candidate_group_for_compare,
+            mapping_document=mapping_document,
+            oracle_index=oracle_index,
+            candidate_index=candidate_index,
+            allow_aliased_call_targets=allow_aliased_call_targets,
+        )
+        result = {
+            **base_result,
+            "status": comparison["status"],
+            "reason": _region_reason(comparison.get("reason")),
+            "oracle_summary": _summary_detail(oracle_summary),
+            "candidate_summary": _summary_detail(candidate_summary),
+            "mismatches": mismatches,
+        }
+        results.append(result)
+        if result["status"] == "passed" and proof_cache is not None:
+            proof_cache.record(oracle_group_for_compare[0], candidate_group_for_compare[0], proof=str(result.get("reason") or "region_equal"), scope="function")
+
+    status = "not_applicable"
+    if any(result.get("status") == "failed" for result in results):
+        status = "failed"
+    elif any(result.get("status") == "refused" for result in results):
+        status = "refused"
+    elif any(result.get("status") == "passed" for result in results):
+        status = "passed"
+    return {
+        "enabled": True,
+        "status": status,
+        "total": len(results),
+        "passed": sum(1 for result in results if result.get("status") == "passed"),
+        "failed": sum(1 for result in results if result.get("status") == "failed"),
+        "refused": sum(1 for result in results if result.get("status") == "refused"),
+        "covered_results": 0,
+        "solver_time_ms": solver_time_ms,
+        "results": results,
+    }
+
+
+def _region_reason(reason: Any) -> str:
+    if not reason:
+        return "region_equal"
+    if reason == "ssa_equal":
+        return "region_ssa_equal"
+    if reason in {"binary_equal", "block_binary_equal"}:
+        return "region_binary_equal"
+    return str(reason)
+
+
+def _prepare_region_call_normalized_groups(
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+    *,
+    mapping_document: dict[str, Any] | None,
+    oracle_index: dict[str, dict[Any, dict[str, Any]]],
+    candidate_index: dict[str, dict[Any, dict[str, Any]]],
+    allow_aliased_call_targets: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    candidate_by_delta = {_ssa_detail_entry_delta(part): part for part in candidate_group}
+    normalized_oracle: list[dict[str, Any]] = []
+    normalized_candidate_by_delta = dict(candidate_by_delta)
+    normalizations: list[dict[str, Any]] = []
+    for oracle_part in oracle_group:
+        delta = _ssa_detail_entry_delta(oracle_part)
+        candidate_part = candidate_by_delta.get(delta)
+        if (
+            delta is None
+            or candidate_part is None
+            or _ssa_source_jumpkind(oracle_part) != "Ijk_Call"
+            or _ssa_source_jumpkind(candidate_part) != "Ijk_Call"
+        ):
+            normalized_oracle.append(oracle_part)
+            continue
+        call_compare = _compare_call_targets(
+            oracle_part,
+            candidate_part,
+            mapping_document=mapping_document,
+            oracle_index=oracle_index,
+            candidate_index=candidate_index,
+            allow_aliased_call_targets=allow_aliased_call_targets,
+            proof_cache=None,
+            require_proven_call_targets=False,
+        )
+        oracle_normalized, candidate_normalized, normalized_compare = _prepare_call_normalized_functions(
+            oracle_part,
+            candidate_part,
+            call_compare=call_compare,
+        )
+        normalized_oracle.append(oracle_normalized)
+        normalized_candidate_by_delta[delta] = candidate_normalized
+        if isinstance(normalized_compare, dict) and normalized_compare.get("normalizations"):
+            normalizations.append(
+                {
+                    "delta": _format_ssa_delta(delta),
+                    "call_compare": normalized_compare,
+                }
+            )
+    normalized_candidate: list[dict[str, Any]] = []
+    for candidate_part in candidate_group:
+        delta = _ssa_detail_entry_delta(candidate_part)
+        normalized_candidate.append(normalized_candidate_by_delta.get(delta, candidate_part))
+    return normalized_oracle, normalized_candidate, normalizations
+
+
+def _region_incomplete_successors(
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    oracle_missing = _missing_region_successors(oracle_group)
+    candidate_missing = _missing_region_successors(candidate_group)
+    if not oracle_missing and not candidate_missing:
+        return None
+    return {
+        "kind": "region_incomplete",
+        "reason": "missing_successor_blocks",
+        "detail": "SSA region has direct successors that were not lowered; regenerate SSA with a larger block/scan limit or inspect the listed transfer",
+        "oracle_missing_successors": oracle_missing,
+        "candidate_missing_successors": candidate_missing,
+    }
+
+
+def _missing_region_successors(group: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    blocks = _region_blocks_by_delta(group)
+    if not blocks:
+        return []
+    missing: list[dict[str, Any]] = []
+    for delta, block in sorted(blocks.items()):
+        source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
+        transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
+        if transfer.get("kind") != "direct_successors":
+            continue
+        for successor in sorted(_direct_successor_delta_set(block)):
+            if successor in blocks:
+                continue
+            missing.append(
+                {
+                    "from_delta": _format_ssa_delta(delta),
+                    "missing_successor_delta": _format_ssa_delta(successor),
+                    "jumpkind": _ssa_source_jumpkind(block),
+                    "entry": block.get("entry") if isinstance(block.get("entry"), dict) else None,
+                    "last_instruction": _last_instruction_detail(block),
+                }
+            )
+    return missing
+
+
+def _last_instruction_detail(function: dict[str, Any]) -> dict[str, Any] | None:
+    instructions = _ssa_instructions(function)
+    if not instructions:
+        return None
+    instruction = instructions[-1]
+    return {
+        "address": instruction.get("address") if isinstance(instruction.get("address"), dict) else None,
+        "disassembly": instruction.get("disassembly"),
+        "bytes": instruction.get("bytes"),
+    }
+
+
+def _compare_region_transition_system(
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+    *,
+    timeout_ms: int,
+    max_solver_assignments: int,
+    max_solver_inputs: int,
+    max_solver_memory_stores: int,
+    skip_binary_equal: bool,
+) -> dict[str, Any] | None:
+    oracle_by_delta = _region_blocks_by_delta(oracle_group)
+    candidate_by_delta = _region_blocks_by_delta(candidate_group)
+    if not oracle_by_delta or set(oracle_by_delta) != set(candidate_by_delta):
+        return None
+    if not all(_ssa_has_machine_code(block) for block in [*oracle_group, *candidate_group]):
+        return None
+
+    deltas = set(oracle_by_delta)
+    solver_time_ms = 0
+    block_results: list[dict[str, Any]] = []
+    for delta in sorted(deltas):
+        oracle_block = oracle_by_delta[delta]
+        candidate_block = candidate_by_delta[delta]
+        if _ssa_source_jumpkind(oracle_block) != _ssa_source_jumpkind(candidate_block):
+            return None
+        oracle_successors = _direct_successor_delta_set(oracle_block)
+        candidate_successors = _direct_successor_delta_set(candidate_block)
+        if oracle_successors != candidate_successors:
+            return None
+        if not oracle_successors <= deltas or not candidate_successors <= deltas:
+            return None
+        if (len(oracle_successors) > 1 or len(candidate_successors) > 1) and (
+            "ip" not in _ssa_output_names(oracle_block) or "ip" not in _ssa_output_names(candidate_block)
+        ):
+            return None
+
+        oracle_for_z3, candidate_for_z3, layout_normalization = _prepare_layout_normalized_functions(
+            oracle_block,
+            candidate_block,
+        )
+        quick = _quick_compare_functions(oracle_for_z3, candidate_for_z3, skip_binary_equal=skip_binary_equal)
+        if quick is not None:
+            if quick.get("status") != "passed":
+                return None
+            block_results.append(
+                {
+                    "delta": _format_ssa_delta(delta),
+                    "reason": quick.get("reason"),
+                    "layout_normalization": layout_normalization,
+                }
+            )
+            continue
+        gate = _ssa_solver_gate(
+            oracle_for_z3,
+            candidate_for_z3,
+            max_solver_assignments=max_solver_assignments,
+            max_solver_inputs=max_solver_inputs,
+            max_solver_memory_stores=max_solver_memory_stores,
+        )
+        if gate is not None:
+            return None
+        comparison = _compare_functions(oracle_for_z3, candidate_for_z3, timeout_ms=timeout_ms)
+        solver_time_ms += int(comparison.pop("solver_time_ms", 0) or 0)
+        if comparison.get("status") != "passed":
+            return None
+        block_results.append(
+            {
+                "delta": _format_ssa_delta(delta),
+                "reason": comparison.get("reason"),
+                "layout_normalization": layout_normalization,
+            }
+        )
+
+    summary = {
+        "status": "passed",
+        "reason": "transition_system_equal",
+        "part_count": len(deltas),
+        "terminal_count": sum(1 for block in oracle_group if _ssa_source_jumpkind(block).startswith(("Ijk_Ret", "Ijk_Sig"))),
+        "blocks_composed": len(deltas),
+        "branches": sum(1 for block in oracle_group if _direct_successor_delta_set(block)),
+        "branch_prunes": 0,
+        "branch_merges": 0,
+        "loop_cuts": 0,
+    }
+    return {
+        "oracle_summary": dict(summary),
+        "candidate_summary": dict(summary),
+        "solver_time_ms": solver_time_ms,
+        "transition_system": {
+            "kind": "block_graph_equal",
+            "block_count": len(deltas),
+            "block_results": block_results,
+        },
+    }
+
+
+def _region_has_direct_cycle(parts: list[dict[str, Any]]) -> bool:
+    blocks = _region_blocks_by_delta(parts)
+    graph = {delta: {successor for successor in _direct_successor_delta_set(block) if successor in blocks} for delta, block in blocks.items()}
+    for component in _strongly_connected_components(graph):
+        if len(component) > 1:
+            return True
+        if component and component[0] in graph.get(component[0], set()):
+            return True
+    return False
+
+
+def _region_blocks_by_delta(parts: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    blocks: dict[int, dict[str, Any]] = {}
+    for part in parts:
+        delta = _ssa_detail_entry_delta({"part": part.get("part"), "entry": part.get("entry"), "function_entry": part.get("function_entry")})
+        if delta is not None:
+            blocks[delta & 0xFFFF] = part
+    return blocks
+
+
+def _direct_successor_delta_set(function: dict[str, Any]) -> set[int]:
+    source = function.get("source", {}) if isinstance(function.get("source"), dict) else {}
+    transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
+    function_entry = function.get("function_entry", {}) if isinstance(function.get("function_entry"), dict) else {}
+    function_linear = _optional_int(function_entry.get("linear"))
+    if function_linear is None:
+        return set()
+    if transfer.get("kind") == "direct_call":
+        fallthrough = transfer.get("fallthrough") if isinstance(transfer.get("fallthrough"), dict) else {}
+        linear = _optional_int(fallthrough.get("linear"))
+        return set() if linear is None else {(linear - function_linear) & 0xFFFF}
+    if transfer.get("kind") != "direct_successors":
+        return set()
+    deltas: set[int] = set()
+    for successor in transfer.get("successors", []) or []:
+        if not isinstance(successor, dict):
+            continue
+        linear = _optional_int(successor.get("linear"))
+        if linear is not None:
+            deltas.add((linear - function_linear) & 0xFFFF)
+    return deltas
+
+
+def _attach_region_call_compare(
+    *,
+    summary: dict[str, Any],
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+    mapping_document: dict[str, Any] | None,
+    oracle_index: dict[str, dict[Any, dict[str, Any]]],
+    candidate_index: dict[str, dict[Any, dict[str, Any]]],
+    allow_aliased_call_targets: bool,
+) -> list[dict[str, Any]]:
+    mismatches = [dict(item) for item in (summary.get("mismatches") or []) if isinstance(item, dict)]
+    if not mismatches or mapping_document is None:
+        return mismatches
+    call_compare = _region_call_compare(
+        oracle_group=oracle_group,
+        candidate_group=candidate_group,
+        mapping_document=mapping_document,
+        oracle_index=oracle_index,
+        candidate_index=candidate_index,
+        allow_aliased_call_targets=allow_aliased_call_targets,
+    )
+    if call_compare is None:
+        return mismatches
+    # Only add target analysis once unless it is already present in all entries.
+    for mismatch in mismatches:
+        if "call_compare" in mismatch:
+            break
+    else:
+        for mismatch in mismatches:
+            mismatch["call_compare"] = call_compare
+    return mismatches
+
+
+def _region_call_compare(
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+    mapping_document: dict[str, Any] | None,
+    oracle_index: dict[str, dict[Any, dict[str, Any]]],
+    candidate_index: dict[str, dict[Any, dict[str, Any]]],
+    allow_aliased_call_targets: bool,
+) -> dict[str, Any] | None:
+    oracle_calls: dict[int, dict[str, Any]] = {}
+    for part in oracle_group:
+        if part and _ssa_source_jumpkind(part) == "Ijk_Call":
+            delta = _ssa_detail_entry_delta(part)
+            if delta is not None:
+                oracle_calls[delta & 0xFFFF] = part
+    candidate_calls: dict[int, dict[str, Any]] = {}
+    for part in candidate_group:
+        if part and _ssa_source_jumpkind(part) == "Ijk_Call":
+            delta = _ssa_detail_entry_delta(part)
+            if delta is not None:
+                candidate_calls[delta & 0xFFFF] = part
+    deltas = sorted(set(oracle_calls.keys()) & set(candidate_calls.keys()))
+    for delta in deltas:
+        oracle_part = oracle_calls.get(delta)
+        candidate_part = candidate_calls.get(delta)
+        if not oracle_part or not candidate_part:
+            continue
+        call_compare = _compare_call_targets(
+            oracle_part,
+            candidate_part,
+            mapping_document=mapping_document,
+            oracle_index=oracle_index,
+            candidate_index=candidate_index,
+            allow_aliased_call_targets=allow_aliased_call_targets,
+            proof_cache=None,
+            require_proven_call_targets=False,
+        )
+        if call_compare is not None:
+            return call_compare
+    return None
+
+
+def _ssa_source_jumpkind(function: dict[str, Any]) -> str:
+    source = function.get("source", {}) if isinstance(function.get("source"), dict) else {}
+    return str(source.get("jumpkind") or "")
+
+
+def _ssa_output_names(function: dict[str, Any]) -> set[str]:
+    outputs = function.get("outputs", {}) if isinstance(function.get("outputs"), dict) else {}
+    return {str(name) for name in outputs}
+
+
+def _ssa_has_machine_code(function: dict[str, Any]) -> bool:
+    source = function.get("source", {}) if isinstance(function.get("source"), dict) else {}
+    size = source.get("machine_code_size")
+    digest = source.get("machine_code_sha256")
+    return isinstance(size, int) and size > 0 and isinstance(digest, str) and bool(digest)
+
+
+def _unique_ssa_function_groups(functions: list[dict[str, Any]]) -> list[tuple[str, str, list[dict[str, Any]]]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for function in functions:
+        if not isinstance(function, dict):
+            continue
+        info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
+        function_id = str(info.get("id") or "")
+        function_name = str(info.get("name") or function_id)
+        key = (function_id, function_name)
+        grouped.setdefault(key, []).append(function)
+    return [
+        (function_id, function_name, sorted(group, key=_ssa_part_index))
+        for (function_id, function_name), group in sorted(grouped.items(), key=lambda item: (item[0][1], item[0][0]))
+    ]
+
+
+def _candidate_group_for_region(
+    groups: dict[str, list[dict[str, Any]]],
+    *,
+    oracle_id: str,
+    oracle_name: str,
+    mapped: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if isinstance(mapped, dict):
+        for key in (str(mapped.get("candidate_id") or ""), str(mapped.get("candidate_name") or "")):
+            if key and key in groups:
+                return sorted(groups[key], key=_ssa_part_index)
+    for key in (oracle_id, oracle_name):
+        if key and key in groups:
+            return sorted(groups[key], key=_ssa_part_index)
+    return []
+
+
+def _raw_result_status_by_function(results: list[dict[str, Any]]) -> dict[str, list[str]]:
+    statuses: dict[str, list[str]] = defaultdict(list)
+    for result in results:
+        function = result.get("function") if isinstance(result.get("function"), dict) else {}
+        for key in (str(function.get("id") or ""), str(function.get("name") or "")):
+            if key:
+                statuses[key].append(str(result.get("status") or ""))
+    return statuses
+
+
+def _should_attempt_region_equality(
+    oracle_id: str,
+    oracle_name: str,
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+    status_by_function: dict[str, list[str]],
+) -> bool:
+    del oracle_id, oracle_name, status_by_function
+    return len(oracle_group) > 1 or len(candidate_group) > 1
+
+
+def _synthetic_region_contract(
+    oracle_id: str,
+    oracle_name: str,
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+) -> dict[str, Any]:
+    reg_widths = {name: width for _offset, (name, width) in REG_BY_OFFSET.items()}
+    output_regs: set[str] = set()
+    whole_memory = False
+    for part in [*oracle_group, *candidate_group]:
+        outputs = part.get("outputs", {}) if isinstance(part.get("outputs"), dict) else {}
+        for name in outputs:
+            key = str(name).lower()
+            if key == "memory":
+                whole_memory = True
+                continue
+            if key in {"ip", "call_target"}:
+                continue
+            if key in reg_widths:
+                output_regs.add(key)
+
+    input_regs: set[str] = set()
+    for part in [*oracle_group, *candidate_group]:
+        for item in part.get("inputs", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("kind") == "memory":
+                continue
+            name = str(item.get("name") or "").lower()
+            if name in reg_widths:
+                input_regs.add(name)
+    abi_function = {
+        "id": oracle_id,
+        "name": oracle_name,
+        "kind": "near",
+        "calling_convention": "region-ssa",
+        "ssa_call_policy": "ignore_balanced",
+        "inputs": [{"location": name, "width": reg_widths[name]} for name in sorted(input_regs)],
+        "returns": [{"location": name, "width": reg_widths[name]} for name in sorted(output_regs)],
+        "preserved": [],
+        "clobbers": [],
+        "effects": [],
+    }
+    observables = {"regs": sorted(output_regs), "memory": [], "whole_memory": whole_memory}
+    return {"abi_function": abi_function, "observables": observables, "input_constraints": []}
+
+
+def _region_passed_function_keys(region_equality: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for result in region_equality.get("results", []) or []:
+        if not isinstance(result, dict) or result.get("status") != "passed":
+            continue
+        function = result.get("function") if isinstance(result.get("function"), dict) else {}
+        for key in (str(function.get("id") or ""), str(function.get("name") or "")):
+            if key:
+                keys.add(key)
+    return keys
+
+
+def _apply_region_equality_gate(results: list[dict[str, Any]], region_equality: dict[str, Any]) -> None:
+    passed_by_key: dict[str, dict[str, Any]] = {}
+    for region_result in region_equality.get("results", []) or []:
+        if not isinstance(region_result, dict) or region_result.get("status") != "passed":
+            continue
+        function = region_result.get("function") if isinstance(region_result.get("function"), dict) else {}
+        for key in (str(function.get("id") or ""), str(function.get("name") or "")):
+            if key:
+                passed_by_key[key] = region_result
+    if not passed_by_key:
+        return
+    covered = 0
+    for result in results:
+        function = result.get("function") if isinstance(result.get("function"), dict) else {}
+        region_result = passed_by_key.get(str(function.get("id") or "")) or passed_by_key.get(str(function.get("name") or ""))
+        if region_result is None:
+            continue
+        if result.get("status") == "passed" and result.get("reason") == "covered_by_region_equal":
+            continue
+        if result.get("status") != "passed":
+            previous = {
+                "status": result.get("status"),
+                "reason": result.get("reason"),
+                "mismatches": result.get("mismatches", []),
+            }
+            result["status"] = "passed"
+            result["reason"] = "covered_by_region_equal"
+            result["region_equality"] = {
+                "status": "passed",
+                "reason": region_result.get("reason"),
+                "oracle_summary": region_result.get("oracle_summary"),
+                "candidate_summary": region_result.get("candidate_summary"),
+                "previous": previous,
+            }
+            result["mismatches"] = []
+            covered += 1
+    region_equality["covered_results"] = max(int(region_equality.get("covered_results", 0) or 0), covered)
+
+
+def _apply_ssa_connectivity_gate(
+    results: list[dict[str, Any]],
+    *,
+    region_exempt_functions: set[str] | None = None,
+    oracle_functions: list[dict[str, Any]] | None = None,
+    candidate_functions: list[dict[str, Any]] | None = None,
+    timeout_ms: int = 60000,
+) -> dict[str, Any]:
+    region_exempt_functions = region_exempt_functions or set()
+    oracle_body_by_id = _ssa_body_by_id(oracle_functions or [])
+    candidate_body_by_id = _ssa_body_by_id(candidate_functions or [])
+    block_pairs: dict[tuple[str, int], tuple[int, int]] = {}
+    inverse_pairs: dict[tuple[str, int], int] = {}
+    candidate_deltas_by_function: dict[str, set[int]] = defaultdict(set)
+    for index, result in enumerate(results):
+        if result.get("status") != "passed":
+            continue
+        function = result.get("function") if isinstance(result.get("function"), dict) else {}
+        function_id = str(function.get("id") or function.get("name") or "")
+        if not function_id:
+            continue
+        if function_id in region_exempt_functions or str(function.get("name") or "") in region_exempt_functions:
+            continue
+        oracle_delta = _ssa_detail_entry_delta(result.get("oracle_detail"))
+        candidate_delta = _ssa_detail_entry_delta(result.get("candidate_detail"))
+        if oracle_delta is None or candidate_delta is None:
+            continue
+        block_pairs[(function_id, oracle_delta)] = (index, candidate_delta)
+        inverse_pairs[(function_id, candidate_delta)] = oracle_delta
+        candidate_deltas_by_function[function_id].add(candidate_delta)
+
+    checked_edges = 0
+    state_edges_checked = 0
+    state_inputs_checked = 0
+    state_solver_time_ms = 0
+    failures: list[dict[str, Any]] = []
+    refusals: list[dict[str, Any]] = []
+    failed_result_indexes: set[int] = set()
+    refused_result_indexes: set[int] = set()
+
+    for index, result in enumerate(results):
+        if result.get("status") != "passed":
+            continue
+        function = result.get("function") if isinstance(result.get("function"), dict) else {}
+        function_id = str(function.get("id") or function.get("name") or "")
+        if not function_id:
+            continue
+        if function_id in region_exempt_functions or str(function.get("name") or "") in region_exempt_functions:
+            continue
+        oracle_delta = _ssa_detail_entry_delta(result.get("oracle_detail"))
+        candidate_delta = _ssa_detail_entry_delta(result.get("candidate_detail"))
+        oracle_successors = _ssa_detail_direct_successor_deltas(result.get("oracle_detail"))
+        candidate_successors = _ssa_detail_direct_successor_deltas(result.get("candidate_detail"))
+        if oracle_delta is None or candidate_delta is None:
+            if oracle_successors or candidate_successors:
+                refusals.append(
+                    {
+                        "kind": "connectivity_refused",
+                        "reason": "missing_block_delta",
+                        "function": function_id,
+                        "result_index": index,
+                    }
+                )
+            continue
+        if not oracle_successors and not candidate_successors:
+            continue
+        if (len(oracle_successors) > 1 or len(candidate_successors) > 1) and (
+            "ip" not in _ssa_detail_outputs(result.get("oracle_detail"))
+            or "ip" not in _ssa_detail_outputs(result.get("candidate_detail"))
+        ):
+            refusal = {
+                "kind": "branch_predicate_unobserved",
+                "detail": "conditional direct-successor block does not expose ip, so branch predicate equivalence was not proved",
+                "function": function_id,
+                "oracle_from_delta": _format_ssa_delta(oracle_delta),
+                "candidate_from_delta": _format_ssa_delta(candidate_delta),
+                "result_index": index,
+            }
+            refusals.append(refusal)
+            refused_result_indexes.add(index)
+            continue
+
+        candidate_successor_set = set(candidate_successors)
+        oracle_successor_set = set(oracle_successors)
+        for successor_delta in oracle_successors:
+            mapped = block_pairs.get((function_id, successor_delta))
+            if mapped is None:
+                refusals.append(
+                    {
+                        "kind": "connectivity_refused",
+                        "reason": "oracle_successor_not_paired",
+                        "function": function_id,
+                        "from_delta": _format_ssa_delta(oracle_delta),
+                        "successor_delta": _format_ssa_delta(successor_delta),
+                        "result_index": index,
+                    }
+                )
+                continue
+            checked_edges += 1
+            successor_index, expected_candidate_delta = mapped
+            if expected_candidate_delta not in candidate_successor_set:
+                failure = {
+                    "kind": "connectivity_successor_mismatch",
+                    "detail": "oracle direct successor maps to a candidate block that is not a direct successor",
+                    "function": function_id,
+                    "oracle_from_delta": _format_ssa_delta(oracle_delta),
+                    "oracle_successor_delta": _format_ssa_delta(successor_delta),
+                    "candidate_from_delta": _format_ssa_delta(candidate_delta),
+                    "expected_candidate_successor_delta": _format_ssa_delta(expected_candidate_delta),
+                    "candidate_successor_deltas": [_format_ssa_delta(value) for value in sorted(candidate_successor_set)],
+                    "result_index": index,
+                }
+                failures.append(failure)
+                failed_result_indexes.add(index)
+                continue
+            oracle_predecessor = _ssa_body_for_result(result, oracle_body_by_id, side="oracle")
+            oracle_successor = _ssa_body_for_result(results[successor_index], oracle_body_by_id, side="oracle")
+            candidate_predecessor = _ssa_body_for_result(result, candidate_body_by_id, side="candidate")
+            candidate_successor = _ssa_body_for_result(results[successor_index], candidate_body_by_id, side="candidate")
+            if oracle_predecessor is not None and oracle_successor is not None and candidate_predecessor is not None and candidate_successor is not None:
+                # Keep control-flow layout constants aligned for successor-state checks (e.g. IP offsets).
+                oracle_predecessor, candidate_predecessor, _ = _prepare_layout_normalized_functions(
+                    oracle_predecessor,
+                    candidate_predecessor,
+                )
+                oracle_successor, candidate_successor, _ = _prepare_layout_normalized_functions(
+                    oracle_successor,
+                    candidate_successor,
+                )
+
+            state_check = _connectivity_state_check(
+                predecessor=result,
+                successor=results[successor_index],
+                oracle_predecessor=oracle_predecessor,
+                oracle_successor=oracle_successor,
+                candidate_predecessor=candidate_predecessor,
+                candidate_successor=candidate_successor,
+                function_id=function_id,
+                oracle_from_delta=oracle_delta,
+                candidate_from_delta=candidate_delta,
+                oracle_successor_delta=successor_delta,
+                candidate_successor_delta=expected_candidate_delta,
+                result_index=index,
+                timeout_ms=timeout_ms,
+            )
+            state_edges_checked += int(state_check.get("edges_checked", 0) or 0)
+            state_inputs_checked += int(state_check.get("inputs_checked", 0) or 0)
+            state_solver_time_ms += int(state_check.get("solver_time_ms", 0) or 0)
+            if state_check.get("status") == "failed":
+                failures.append(state_check["mismatch"])
+                failed_result_indexes.add(index)
+            elif state_check.get("status") == "refused":
+                refusals.append(state_check["mismatch"])
+                refused_result_indexes.add(index)
+
+        for successor_delta in candidate_successors:
+            oracle_successor_delta = inverse_pairs.get((function_id, successor_delta))
+            if oracle_successor_delta is None:
+                if successor_delta in candidate_deltas_by_function.get(function_id, set()):
+                    failure = {
+                        "kind": "connectivity_successor_mismatch",
+                        "detail": "candidate has a direct successor to a paired block with no oracle successor",
+                        "function": function_id,
+                        "oracle_from_delta": _format_ssa_delta(oracle_delta),
+                        "candidate_from_delta": _format_ssa_delta(candidate_delta),
+                        "candidate_successor_delta": _format_ssa_delta(successor_delta),
+                        "oracle_successor_deltas": [_format_ssa_delta(value) for value in sorted(oracle_successor_set)],
+                        "result_index": index,
+                    }
+                    failures.append(failure)
+                    failed_result_indexes.add(index)
+                continue
+            if oracle_successor_delta not in oracle_successor_set:
+                checked_edges += 1
+                failure = {
+                    "kind": "connectivity_successor_mismatch",
+                    "detail": "candidate direct successor maps back to a block that is not an oracle direct successor",
+                    "function": function_id,
+                    "oracle_from_delta": _format_ssa_delta(oracle_delta),
+                    "candidate_from_delta": _format_ssa_delta(candidate_delta),
+                    "candidate_successor_delta": _format_ssa_delta(successor_delta),
+                    "mapped_oracle_successor_delta": _format_ssa_delta(oracle_successor_delta),
+                    "oracle_successor_deltas": [_format_ssa_delta(value) for value in sorted(oracle_successor_set)],
+                    "result_index": index,
+                }
+                failures.append(failure)
+                failed_result_indexes.add(index)
+
+    for index in failed_result_indexes:
+        result = results[index]
+        result["status"] = "failed"
+        result["reason"] = "connectivity_mismatch"
+        mismatches = list(result.get("mismatches", []) or [])
+        mismatches.extend(failure for failure in failures if failure.get("result_index") == index)
+        result["mismatches"] = mismatches
+    for index in refused_result_indexes:
+        if index in failed_result_indexes:
+            continue
+        result = results[index]
+        result["status"] = "refused"
+        mismatches = list(result.get("mismatches", []) or [])
+        result_refusals = [refusal for refusal in refusals if refusal.get("result_index") == index]
+        result["reason"] = _connectivity_refusal_reason(result_refusals)
+        mismatches.extend(result_refusals)
+        result["mismatches"] = mismatches
+
+    status = "not_applicable"
+    if failures:
+        status = "failed"
+    elif refusals:
+        status = "refused"
+    elif checked_edges:
+        status = "passed"
+    return {
+        "status": status,
+        "edges_checked": checked_edges,
+        "state_edges_checked": state_edges_checked,
+        "state_inputs_checked": state_inputs_checked,
+        "state_solver_time_ms": state_solver_time_ms,
+        "region_exempt_functions": sorted(region_exempt_functions),
+        "failures": failures,
+        "refusals": refusals,
+    }
+
+
+def _ssa_body_by_id(functions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(function.get("id")): function for function in functions if isinstance(function, dict) and function.get("id")}
+
+
+def _ssa_body_for_result(result: dict[str, Any], body_by_id: dict[str, dict[str, Any]], *, side: str) -> dict[str, Any] | None:
+    key = result.get(f"{side}_function")
+    if key is None:
+        return None
+    return body_by_id.get(str(key))
+
+
+def _connectivity_state_check(
+    *,
+    predecessor: dict[str, Any],
+    successor: dict[str, Any],
+    oracle_predecessor: dict[str, Any] | None,
+    oracle_successor: dict[str, Any] | None,
+    candidate_predecessor: dict[str, Any] | None,
+    candidate_successor: dict[str, Any] | None,
+    function_id: str,
+    oracle_from_delta: int,
+    candidate_from_delta: int,
+    oracle_successor_delta: int,
+    candidate_successor_delta: int,
+    result_index: int,
+    timeout_ms: int,
+) -> dict[str, Any]:
+    oracle_missing = _ssa_missing_successor_inputs(
+        predecessor.get("oracle_detail"),
+        successor.get("oracle_detail"),
+    )
+    candidate_missing = _ssa_missing_successor_inputs(
+        predecessor.get("candidate_detail"),
+        successor.get("candidate_detail"),
+    )
+    oracle_ignored_missing = sorted(
+        name
+        for name in oracle_missing
+        if name in CONNECTIVITY_IMPLICIT_STATE or name in CONNECTIVITY_OPTIONALLY_IMPLICIT_STATE
+    )
+    candidate_ignored_missing = sorted(
+        name
+        for name in candidate_missing
+        if name in CONNECTIVITY_IMPLICIT_STATE or name in CONNECTIVITY_OPTIONALLY_IMPLICIT_STATE
+    )
+    ignored = {name for name in oracle_ignored_missing + candidate_ignored_missing}
+    oracle_missing = sorted(name for name in oracle_missing if name not in ignored)
+    candidate_missing = sorted(name for name in candidate_missing if name not in ignored)
+    if not oracle_missing and not candidate_missing:
+        oracle_inputs = _ssa_detail_inputs(successor.get("oracle_detail"))
+        candidate_inputs = _ssa_detail_inputs(successor.get("candidate_detail"))
+        ignored_inputs = CONNECTIVITY_IMPLICIT_STATE | CONNECTIVITY_OPTIONALLY_IMPLICIT_STATE
+        checked = sorted((oracle_inputs - ignored_inputs) & (candidate_inputs - ignored_inputs))
+        if not checked:
+            return {"status": "passed", "edges_checked": 1, "inputs_checked": 0, "solver_time_ms": 0}
+        if (
+            oracle_predecessor is None
+            or candidate_predecessor is None
+            or oracle_successor is None
+            or candidate_successor is None
+        ):
+            return {
+                "status": "refused",
+                "edges_checked": 1,
+                "inputs_checked": 0,
+                "solver_time_ms": 0,
+                "mismatch": {
+                    "kind": "connectivity_state_refused",
+                    "reason": "edge_state_body_missing",
+                    "detail": "direct successor state proof needs predecessor and successor SSA bodies",
+                    "function": function_id,
+                    "oracle_from_delta": _format_ssa_delta(oracle_from_delta),
+                    "oracle_successor_delta": _format_ssa_delta(oracle_successor_delta),
+                    "candidate_from_delta": _format_ssa_delta(candidate_from_delta),
+                    "candidate_successor_delta": _format_ssa_delta(candidate_successor_delta),
+                    "checked_inputs": checked,
+                    "result_index": result_index,
+                },
+            }
+        oracle_projection = _project_ssa_outputs(oracle_predecessor, checked)
+        candidate_projection = _project_ssa_outputs(candidate_predecessor, checked)
+        comparison = _compare_functions(oracle_projection, candidate_projection, timeout_ms=timeout_ms)
+        solver_time_ms = int(comparison.pop("solver_time_ms", 0) or 0)
+        if comparison.get("status") == "passed":
+            return {
+                "status": "passed",
+                "edges_checked": 1,
+                "inputs_checked": len(checked),
+                "solver_time_ms": solver_time_ms,
+            }
+        mismatch_kind = "connectivity_state_mismatch" if comparison.get("status") == "failed" else "connectivity_state_refused"
+        status = "failed" if comparison.get("status") == "failed" else "refused"
+        reason = "edge_state_mismatch" if status == "failed" else f"edge_state_{comparison.get('reason', 'refused')}"
+        return {
+            "status": status,
+            "edges_checked": 1,
+            "inputs_checked": len(checked),
+            "solver_time_ms": solver_time_ms,
+            "mismatch": {
+                "kind": mismatch_kind,
+                "reason": reason,
+                "detail": "direct successor required state is not equivalent at the paired edge",
+                "function": function_id,
+                "oracle_from_delta": _format_ssa_delta(oracle_from_delta),
+                "oracle_successor_delta": _format_ssa_delta(oracle_successor_delta),
+                "candidate_from_delta": _format_ssa_delta(candidate_from_delta),
+                "candidate_successor_delta": _format_ssa_delta(candidate_successor_delta),
+                "checked_inputs": checked,
+                "edge_mismatches": comparison.get("mismatches", []),
+                "result_index": result_index,
+            },
+        }
+    return {
+        "status": "refused",
+        "edges_checked": 1,
+        "inputs_checked": 0,
+        "solver_time_ms": 0,
+        "mismatch": {
+            "kind": "connectivity_state_unobserved",
+            "reason": "successor_state_unobserved",
+            "detail": "direct successor reads state that the predecessor block did not expose as an output",
+            "function": function_id,
+            "oracle_from_delta": _format_ssa_delta(oracle_from_delta),
+            "oracle_successor_delta": _format_ssa_delta(oracle_successor_delta),
+            "candidate_from_delta": _format_ssa_delta(candidate_from_delta),
+            "candidate_successor_delta": _format_ssa_delta(candidate_successor_delta),
+            "oracle_missing_inputs": oracle_missing,
+            "candidate_missing_inputs": candidate_missing,
+            "oracle_ignored_inputs": oracle_ignored_missing,
+            "candidate_ignored_inputs": candidate_ignored_missing,
+            "result_index": result_index,
+        },
+    }
+
+
+def _project_ssa_outputs(function: dict[str, Any], names: list[str]) -> dict[str, Any]:
+    outputs = function.get("outputs", {}) if isinstance(function.get("outputs"), dict) else {}
+    source_assignments = {str(item["id"]): item for item in function.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
+    assignments: list[dict[str, Any]] = []
+    memo: dict[str, str] = {}
+    term_cache: dict[int, dict[str, Any]] = {}
+    projected_outputs: dict[str, dict[str, Any]] = {}
+    inline_cache: dict[str, dict[str, Any]] = {}
+    for name in names:
+        if name not in outputs:
+            continue
+        inlined = _inline_ssa_json_term(outputs[name], assignments=source_assignments, cache=inline_cache)
+        projected_outputs[name] = _materialize_json_term(
+            inlined,
+            assignments=assignments,
+            memo=memo,
+            term_cache=term_cache,
+        )
+    projected = dict(function)
+    projected["outputs"] = projected_outputs
+    projected["assignments"] = assignments
+    projected["inputs"] = _term_input_items(projected_outputs.values(), assignments)
+    projected["id"] = f"{function.get('id', 'ssa-function')}:edge-state:{','.join(names)}"
+    return projected
+
+
+def _ssa_missing_successor_inputs(predecessor_detail: Any, successor_detail: Any) -> set[str]:
+    predecessor_outputs = _ssa_detail_outputs(predecessor_detail)
+    successor_inputs = _ssa_detail_inputs(successor_detail)
+    return {name for name in successor_inputs if name not in predecessor_outputs}
+
+
+def _connectivity_refusal_reason(refusals: list[dict[str, Any]]) -> str:
+    if any(refusal.get("kind") == "branch_predicate_unobserved" for refusal in refusals):
+        return "branch_predicate_unobserved"
+    for refusal in refusals:
+        reason = str(refusal.get("reason") or refusal.get("kind") or "")
+        if reason:
+            return reason
+    return "connectivity_refused"
+
+
+def _ssa_detail_entry_delta(detail: Any) -> int | None:
+    if not isinstance(detail, dict):
+        return None
+    part = detail.get("part") if isinstance(detail.get("part"), dict) else {}
+    delta = _optional_int(part.get("entry_delta"))
+    if delta is not None:
+        return delta
+    entry = detail.get("entry") if isinstance(detail.get("entry"), dict) else {}
+    function_entry = detail.get("function_entry") if isinstance(detail.get("function_entry"), dict) else {}
+    entry_linear = _optional_int(entry.get("linear"))
+    function_linear = _optional_int(function_entry.get("linear"))
+    if entry_linear is None or function_linear is None:
+        return None
+    return entry_linear - function_linear
+
+
+def _ssa_detail_direct_successor_deltas(detail: Any) -> list[int]:
+    if not isinstance(detail, dict):
+        return []
+    transfer = detail.get("transfer") if isinstance(detail.get("transfer"), dict) else {}
+    if transfer.get("kind") != "direct_successors":
+        return []
+    function_entry = detail.get("function_entry") if isinstance(detail.get("function_entry"), dict) else {}
+    function_linear = _optional_int(function_entry.get("linear"))
+    if function_linear is None:
+        return []
+    deltas: list[int] = []
+    for successor in transfer.get("successors", []) or []:
+        if not isinstance(successor, dict):
+            continue
+        linear = _optional_int(successor.get("linear"))
+        if linear is None:
+            continue
+        deltas.append(linear - function_linear)
+    return _unique_ints(deltas)
+
+
+def _format_ssa_delta(delta: int) -> str:
+    if delta < 0:
+        return f"-0x{-delta:04x}"
+    return normalize_hex(delta, width=4)
+
+
+def _ssa_detail_outputs(detail: Any) -> set[str]:
+    if not isinstance(detail, dict):
+        return set()
+    return {str(name) for name in detail.get("outputs", []) or []}
+
+
+def _ssa_detail_inputs(detail: Any) -> set[str]:
+    if not isinstance(detail, dict):
+        return set()
+    return {str(name) for name in detail.get("inputs", []) or []}
+
+
+def _apply_loop_scc_gate(results: list[dict[str, Any]], *, region_exempt_functions: set[str] | None = None) -> dict[str, Any]:
+    region_exempt_functions = region_exempt_functions or set()
+    by_function: dict[str, dict[int, tuple[int, dict[str, Any]]]] = defaultdict(dict)
+    for index, result in enumerate(results):
+        function = result.get("function") if isinstance(result.get("function"), dict) else {}
+        function_id = str(function.get("id") or function.get("name") or "")
+        if not function_id:
+            continue
+        if function_id in region_exempt_functions or str(function.get("name") or "") in region_exempt_functions:
+            continue
+        delta = _ssa_detail_entry_delta(result.get("oracle_detail"))
+        if delta is None:
+            continue
+        by_function[function_id][delta] = (index, result)
+
+    loop_results: list[dict[str, Any]] = []
+    for function_id, nodes in sorted(by_function.items()):
+        graph: dict[int, set[int]] = {delta: set() for delta in nodes}
+        for delta, (_index, result) in nodes.items():
+            for successor in _ssa_detail_direct_successor_deltas(result.get("oracle_detail")):
+                if successor in nodes:
+                    graph[delta].add(successor)
+        for component in _strongly_connected_components(graph):
+            has_self_loop = len(component) == 1 and component[0] in graph.get(component[0], set())
+            if len(component) <= 1 and not has_self_loop:
+                continue
+            member_results = [nodes[delta][1] for delta in component]
+            statuses = Counter(str(result.get("status") or "unknown") for result in member_results)
+            status = "passed"
+            if statuses.get("failed"):
+                status = "failed"
+            elif statuses.get("refused") or statuses.get("unknown"):
+                status = "refused"
+            loop_results.append(
+                {
+                    "function": function_id,
+                    "status": status,
+                    "block_deltas": [_format_ssa_delta(delta) for delta in component],
+                    "block_count": len(component),
+                    "edge_count": sum(1 for source in component for target in graph.get(source, set()) if target in component),
+                    "member_statuses": dict(sorted(statuses.items())),
+                }
+            )
+
+    status = "not_applicable"
+    if any(result["status"] == "failed" for result in loop_results):
+        status = "failed"
+    elif any(result["status"] == "refused" for result in loop_results):
+        status = "refused"
+    elif loop_results:
+        status = "passed"
+    return {
+        "status": status,
+        "total": len(loop_results),
+        "passed": sum(1 for result in loop_results if result.get("status") == "passed"),
+        "failed": sum(1 for result in loop_results if result.get("status") == "failed"),
+        "refused": sum(1 for result in loop_results if result.get("status") == "refused"),
+        "results": loop_results,
+    }
+
+
+def _apply_call_scc_gate(results: list[dict[str, Any]]) -> dict[str, Any]:
+    graph: dict[str, set[str]] = defaultdict(set)
+    statuses_by_function: dict[str, Counter[str]] = defaultdict(Counter)
+    names_by_function: dict[str, str] = {}
+    for result in results:
+        function = result.get("function") if isinstance(result.get("function"), dict) else {}
+        function_id = str(function.get("id") or function.get("name") or "")
+        if not function_id:
+            continue
+        names_by_function[function_id] = str(function.get("name") or function_id)
+        graph.setdefault(function_id, set())
+        statuses_by_function[function_id][str(result.get("status") or "unknown")] += 1
+        target_id = _call_compare_oracle_target_id(result.get("call_compare"))
+        if target_id:
+            graph[function_id].add(target_id)
+            graph.setdefault(target_id, set())
+
+    call_results: list[dict[str, Any]] = []
+    for component in _strongly_connected_components({key: {target for target in value if target in graph} for key, value in graph.items()}):
+        has_self_call = len(component) == 1 and component[0] in graph.get(component[0], set())
+        if len(component) <= 1 and not has_self_call:
+            continue
+        status_counts: Counter[str] = Counter()
+        for function_id in component:
+            status_counts.update(statuses_by_function.get(function_id, Counter({"unknown": 1})))
+        status = "passed"
+        reason = "call_cycle_proven_by_member_results"
+        if status_counts.get("failed"):
+            status = "failed"
+            reason = "call_cycle_member_failed"
+        elif status_counts.get("refused") or status_counts.get("unknown"):
+            status = "refused"
+            reason = "call_cycle_unproven"
+        call_results.append(
+            {
+                "status": status,
+                "reason": reason,
+                "functions": [{"id": function_id, "name": names_by_function.get(function_id, function_id)} for function_id in component],
+                "function_count": len(component),
+                "edge_count": sum(1 for source in component for target in graph.get(source, set()) if target in component),
+                "member_statuses": dict(sorted(status_counts.items())),
+            }
+        )
+
+    status = "not_applicable"
+    if any(result["status"] == "failed" for result in call_results):
+        status = "failed"
+    elif any(result["status"] == "refused" for result in call_results):
+        status = "refused"
+    elif call_results:
+        status = "passed"
+    return {
+        "status": status,
+        "total": len(call_results),
+        "passed": sum(1 for result in call_results if result.get("status") == "passed"),
+        "failed": sum(1 for result in call_results if result.get("status") == "failed"),
+        "refused": sum(1 for result in call_results if result.get("status") == "refused"),
+        "results": call_results,
+    }
+
+
+def _call_compare_oracle_target_id(call_compare: Any) -> str | None:
+    if not isinstance(call_compare, dict):
+        return None
+    oracle = call_compare.get("oracle") if isinstance(call_compare.get("oracle"), dict) else {}
+    resolved = oracle.get("resolved") if isinstance(oracle.get("resolved"), dict) else {}
+    target_id = str(resolved.get("id") or "")
+    return target_id or None
+
+
+def _strongly_connected_components(graph: dict[Any, set[Any]]) -> list[list[Any]]:
+    index = 0
+    stack: list[Any] = []
+    on_stack: set[Any] = set()
+    indexes: dict[Any, int] = {}
+    lowlinks: dict[Any, int] = {}
+    components: list[list[Any]] = []
+
+    def visit(node: Any) -> None:
+        nonlocal index
+        indexes[node] = index
+        lowlinks[node] = index
+        index += 1
+        stack.append(node)
+        on_stack.add(node)
+        for successor in sorted(graph.get(node, set())):
+            if successor not in indexes:
+                visit(successor)
+                lowlinks[node] = min(lowlinks[node], lowlinks[successor])
+            elif successor in on_stack:
+                lowlinks[node] = min(lowlinks[node], indexes[successor])
+        if lowlinks[node] != indexes[node]:
+            return
+        component: list[Any] = []
+        while stack:
+            item = stack.pop()
+            on_stack.discard(item)
+            component.append(item)
+            if item == node:
+                break
+        components.append(sorted(component))
+
+    for node in sorted(graph):
+        if node not in indexes:
+            visit(node)
+    return components
+
+
+def _compare_functions(
+    oracle: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    timeout_ms: int,
+    input_constraints: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     try:
         import z3  # type: ignore
     except Exception:  # noqa: BLE001
@@ -1460,13 +3078,34 @@ def _compare_functions(oracle: dict[str, Any], candidate: dict[str, Any], *, tim
     inputs = _z3_inputs(oracle, candidate, z3)
     solver = z3.Solver()
     solver.set("timeout", timeout_ms)
+    _add_z3_input_constraints(solver, inputs, input_constraints or [], z3)
     differing: list[Any] = []
     pairs: list[tuple[str, Any, Any]] = []
+    oracle_assignments = {item["id"]: item for item in oracle.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
+    candidate_assignments = {item["id"]: item for item in candidate.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
+    oracle_cache: dict[str, Any] = {}
+    candidate_cache: dict[str, Any] = {}
     for reg in output_regs:
-        oracle_expr = _z3_term(oracle_outputs[reg], document=oracle, inputs=inputs, z3=z3)
-        candidate_expr = _z3_term(candidate_outputs[reg], document=candidate, inputs=inputs, z3=z3)
+        oracle_expr = _z3_term(
+            oracle_outputs[reg],
+            document=oracle,
+            inputs=inputs,
+            z3=z3,
+            assignments=oracle_assignments,
+            cache=oracle_cache,
+        )
+        candidate_expr = _z3_term(
+            candidate_outputs[reg],
+            document=candidate,
+            inputs=inputs,
+            z3=z3,
+            assignments=candidate_assignments,
+            cache=candidate_cache,
+        )
         if not (_is_z3_array(oracle_expr, z3) or _is_z3_array(candidate_expr, z3)):
             oracle_expr, candidate_expr = _align_z3_widths(oracle_expr, candidate_expr, z3)
+            oracle_expr = z3.simplify(oracle_expr)
+            candidate_expr = z3.simplify(candidate_expr)
         pairs.append((reg, oracle_expr, candidate_expr))
         differing.append(oracle_expr != candidate_expr)
     solver.add(z3.Or(*differing))
@@ -1532,6 +3171,7 @@ def _ssa_function_report_detail(function: dict[str, Any] | None) -> dict[str, An
     inputs = function.get("inputs", []) if isinstance(function.get("inputs"), list) else []
     return {
         "part": function.get("part") if isinstance(function.get("part"), dict) else None,
+        "function_entry": function.get("function_entry") if isinstance(function.get("function_entry"), dict) else None,
         "entry": function.get("entry"),
         "jumpkind": source.get("jumpkind"),
         "transfer": source.get("transfer") if isinstance(source.get("transfer"), dict) else _transfer_info_from_instructions(source),
@@ -1542,10 +3182,59 @@ def _ssa_function_report_detail(function: dict[str, Any] | None) -> dict[str, An
         "function_machine_code_size": source.get("function_machine_code_size"),
         "machine_code_sha256": source.get("machine_code_sha256"),
         "machine_code_size": source.get("machine_code_size"),
+        "inputs": _ssa_input_names(inputs),
         "outputs": sorted(str(name) for name in outputs),
         "input_count": len(inputs),
         "assignment_count": len(function.get("assignments", []) or []),
     }
+
+
+def _ssa_region_report_detail(group: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    if not group:
+        return None
+    ordered = sorted(
+        [part for part in group if isinstance(part, dict)],
+        key=lambda part: int((part.get("part", {}) if isinstance(part.get("part"), dict) else {}).get("index", 0)),
+    )
+    if not ordered:
+        return None
+    first = _ssa_function_report_detail(ordered[0])
+    if first is None:
+        return None
+    instructions: list[dict[str, Any]] = []
+    for part in ordered:
+        source = part.get("source", {}) if isinstance(part.get("source"), dict) else {}
+        for instruction in source.get("instructions", []) or []:
+            if isinstance(instruction, dict):
+                instructions.append(instruction)
+            if len(instructions) >= 8:
+                break
+        if len(instructions) >= 8:
+            break
+    return {
+        "part_count": len(ordered),
+        "entry": first.get("entry"),
+        "function_entry": first.get("function_entry"),
+        "jumpkind": first.get("jumpkind"),
+        "instructions": instructions,
+        "instructions_truncated": max(0, sum(len((part.get("source", {}) if isinstance(part.get("source"), dict) else {}).get("instructions", []) or []) for part in ordered) - len(instructions)),
+    }
+
+
+def _ssa_input_names(inputs: list[Any]) -> list[str]:
+    names: set[str] = set()
+    for item in inputs:
+        if isinstance(item, dict):
+            kind = str(item.get("kind") or "").lower()
+            name = str(item.get("name") or "").lower()
+            if kind == "memory" or name in {"mem", "memory"}:
+                names.add("memory")
+            elif name:
+                names.add(name)
+        elif isinstance(item, str):
+            name = item.lower()
+            names.add("memory" if name in {"mem", "memory"} else name)
+    return sorted(names)
 
 
 def _summary_detail(summary: dict[str, Any]) -> dict[str, Any]:
@@ -1556,6 +3245,11 @@ def _summary_detail(summary: dict[str, Any]) -> dict[str, Any]:
         "status": summary.get("status"),
         "part_count": summary.get("part_count"),
         "terminal_count": summary.get("terminal_count"),
+        "loop_unroll_bound": summary.get("loop_unroll_bound"),
+        "blocks_composed": summary.get("blocks_composed"),
+        "branch_merges": summary.get("branch_merges"),
+        "branch_prunes": summary.get("branch_prunes"),
+        "loop_cuts": summary.get("loop_cuts"),
         "outputs": sorted((function.get("outputs", {}) if isinstance(function.get("outputs"), dict) else {}).keys()),
         "input_count": len(function.get("inputs", []) or []),
         "assignment_count": len(function.get("assignments", []) or []),
@@ -1593,6 +3287,15 @@ def _abi_observables(abi_function: dict[str, Any]) -> dict[str, Any]:
         regs = {"sp"} | return_regs | preserved_regs
     memory = [item for item in abi_function.get("effects", []) or [] if isinstance(item, dict)]
     return {"regs": sorted(regs), "memory": memory}
+
+
+def _abi_input_constraints(abi_function: dict[str, Any]) -> list[dict[str, Any]]:
+    constraints = [item for item in abi_function.get("input_constraints", []) or [] if isinstance(item, dict)]
+    convention = str(abi_function.get("calling_convention") or "").lower()
+    has_sp_constraint = any(str(item.get("name") or "").lower() == "sp" for item in constraints)
+    if convention.startswith("msc16") and not has_sp_constraint:
+        constraints.append({"name": "sp", "kind": "unsigned_range", "min": "0x0100", "max": "0xfffe"})
+    return constraints
 
 
 def _ssa_function_groups(functions: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -1634,6 +3337,9 @@ def _summarize_abi_function(
     abi_function: dict[str, Any],
     observables: dict[str, Any],
     data_segment_para: int,
+    max_loop_unroll: int = 0,
+    require_complete_paths: bool = False,
+    enable_constant_branch_pruning: bool = False,
 ) -> dict[str, Any]:
     if not parts:
         return {"status": "refused", "reason": "function_missing", "mismatches": [{"kind": "function_missing"}]}
@@ -1643,13 +3349,31 @@ def _summarize_abi_function(
         for value in (_optional_int(entry.get("linear")), _optional_int(entry.get("ip"))):
             if value is not None:
                 block_by_key[value & 0xFFFF] = part
+    callsite_ordinals = _abi_callsite_ordinals(parts)
     start = min(parts, key=lambda item: int((item.get("part", {}) if isinstance(item.get("part"), dict) else {}).get("index", 0)))
     state = _initial_abi_state(abi_function, observables=observables, data_segment_para=data_segment_para)
+    compose_stats = {"blocks_composed": 0, "branch_merges": 0, "branch_prunes": 0, "loop_cuts": 0}
     try:
-        final_state, terminal_count = _compose_abi_state(start, state, block_by_key=block_by_key, path=[])
+        final_state, terminal_count = _compose_abi_state(
+            start,
+            state,
+            abi_function=abi_function,
+            block_by_key=block_by_key,
+            path=[],
+            max_loop_unroll=max_loop_unroll,
+            data_segment_para=data_segment_para,
+            callsite_ordinals=callsite_ordinals,
+            compose_stats=compose_stats,
+            enable_constant_branch_pruning=enable_constant_branch_pruning,
+        )
+        if terminal_count <= 0:
+            raise LowerFailure("loop_bound_no_terminal", "bounded loop summary did not reach a return path")
+        if require_complete_paths and compose_stats["loop_cuts"] > 0:
+            raise LowerFailure("loop_bound_incomplete", f"bounded loop summary cut {compose_stats['loop_cuts']} path(s)")
         summary_function = _materialize_abi_summary(
             start,
             final_state,
+            abi_function=abi_function,
             observables=observables,
             data_segment_para=data_segment_para,
         )
@@ -1659,6 +3383,11 @@ def _summarize_abi_function(
         "status": "passed",
         "part_count": len(parts),
         "terminal_count": terminal_count,
+        "loop_unroll_bound": max_loop_unroll,
+        "blocks_composed": compose_stats["blocks_composed"],
+        "branch_merges": compose_stats["branch_merges"],
+        "branch_prunes": compose_stats["branch_prunes"],
+        "loop_cuts": compose_stats["loop_cuts"],
         "function": summary_function,
     }
 
@@ -1763,24 +3492,52 @@ def _compose_abi_state(
     block: dict[str, Any],
     incoming_state: dict[str, dict[str, Any]],
     *,
+    abi_function: dict[str, Any],
     block_by_key: dict[int, dict[str, Any]],
     path: list[int],
+    max_loop_unroll: int = 0,
+    data_segment_para: int = 0x0100,
+    callsite_ordinals: dict[int, dict[str, int]] | None = None,
+    compose_stats: dict[str, int] | None = None,
+    enable_constant_branch_pruning: bool = False,
 ) -> tuple[dict[str, dict[str, Any]], int]:
     entry = block.get("entry", {}) if isinstance(block.get("entry"), dict) else {}
     key = (_optional_int(entry.get("linear")) or _optional_int(entry.get("ip")) or 0) & 0xFFFF
-    if key in path:
+    if compose_stats is not None:
+        compose_stats["blocks_composed"] = compose_stats.get("blocks_composed", 0) + 1
+    visits = path.count(key)
+    if visits:
+        if max_loop_unroll <= 0:
+            raise LowerFailure("unsupported_ir", f"loop or repeated block reached at {normalize_hex(key, width=4)}")
+        if visits > max_loop_unroll:
+            if compose_stats is not None:
+                compose_stats["loop_cuts"] = compose_stats.get("loop_cuts", 0) + 1
+            return incoming_state, 0
+    if key in path and max_loop_unroll <= 0:
         raise LowerFailure("unsupported_ir", f"loop or repeated block reached at {normalize_hex(key, width=4)}")
     source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
-    if source.get("jumpkind") == "Ijk_Call":
-        raise LowerFailure("call_boundary", "function summary stops at a call; callee summaries are required")
     assignments = {str(item["id"]): item for item in block.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
     state = dict(incoming_state)
     block_outputs = block.get("outputs", {}) if isinstance(block.get("outputs"), dict) else {}
+    inline_cache: dict[str, dict[str, Any]] = {}
     for name, term in block_outputs.items():
         if not isinstance(term, dict):
             continue
-        inlined = _inline_ssa_json_term(term, assignments=assignments, cache={})
+        inlined = _inline_ssa_json_term(term, assignments=assignments, cache=inline_cache)
         state[str(name)] = _substitute_abi_inputs(inlined, incoming_state)
+    if source.get("jumpkind") == "Ijk_Call":
+        state = _compose_abi_call(
+            block,
+            state,
+            abi_function=abi_function,
+            data_segment_para=data_segment_para,
+            callsite_ordinals=callsite_ordinals or {},
+        )
+    if str(source.get("jumpkind") or "").startswith(("Ijk_Ret", "Ijk_Sig")):
+        return state, 1
+    transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
+    if transfer.get("kind") == "direct_successors" and "ip" not in block_outputs:
+        raise LowerFailure("branch_predicate_unobserved", "direct-successor block requires `ip` in SSA outputs for function-level composition")
     ip_term = state.get("ip")
     if ip_term is None:
         raise LowerFailure("unsupported_ir", "function-level ABI summary requires `ip` in SSA outputs")
@@ -1788,26 +3545,709 @@ def _compose_abi_state(
     next_path = [*path, key]
     if branch is not None:
         cond, true_target, false_target = branch
-        true_state, true_terminals = _compose_or_terminal(true_target, state, block_by_key=block_by_key, path=next_path)
-        false_state, false_terminals = _compose_or_terminal(false_target, state, block_by_key=block_by_key, path=next_path)
+        cond_value = _const_json_term_value(cond) if enable_constant_branch_pruning else None
+        if cond_value is not None:
+            if compose_stats is not None:
+                compose_stats["branch_prunes"] = compose_stats.get("branch_prunes", 0) + 1
+            return _compose_or_terminal(
+                true_target if cond_value else false_target,
+                state,
+                abi_function=abi_function,
+                block_by_key=block_by_key,
+                path=next_path,
+                max_loop_unroll=max_loop_unroll,
+                data_segment_para=data_segment_para,
+                callsite_ordinals=callsite_ordinals,
+                compose_stats=compose_stats,
+                enable_constant_branch_pruning=enable_constant_branch_pruning,
+            )
+        if compose_stats is not None:
+            compose_stats["branch_merges"] = compose_stats.get("branch_merges", 0) + 1
+        true_state, true_terminals = _compose_or_terminal(
+            true_target,
+            state,
+            abi_function=abi_function,
+            block_by_key=block_by_key,
+            path=next_path,
+            max_loop_unroll=max_loop_unroll,
+            data_segment_para=data_segment_para,
+            callsite_ordinals=callsite_ordinals,
+            compose_stats=compose_stats,
+            enable_constant_branch_pruning=enable_constant_branch_pruning,
+        )
+        false_state, false_terminals = _compose_or_terminal(
+            false_target,
+            state,
+            abi_function=abi_function,
+            block_by_key=block_by_key,
+            path=next_path,
+            max_loop_unroll=max_loop_unroll,
+            data_segment_para=data_segment_para,
+            callsite_ordinals=callsite_ordinals,
+            compose_stats=compose_stats,
+            enable_constant_branch_pruning=enable_constant_branch_pruning,
+        )
+        if true_terminals <= 0 and false_terminals <= 0:
+            return state, 0
+        if true_terminals <= 0:
+            return false_state, false_terminals
+        if false_terminals <= 0:
+            return true_state, true_terminals
         return _merge_abi_states(cond, true_state, false_state), true_terminals + false_terminals
     direct = _direct_successor_target(ip_term, block_by_key)
     if direct is not None:
-        return _compose_abi_state(direct, state, block_by_key=block_by_key, path=next_path)
+        return _compose_abi_state(
+            direct,
+            state,
+            abi_function=abi_function,
+            block_by_key=block_by_key,
+            path=next_path,
+            max_loop_unroll=max_loop_unroll,
+            data_segment_para=data_segment_para,
+            callsite_ordinals=callsite_ordinals,
+            compose_stats=compose_stats,
+            enable_constant_branch_pruning=enable_constant_branch_pruning,
+        )
     return state, 1
+
+
+def _compose_abi_call(
+    block: dict[str, Any],
+    state: dict[str, dict[str, Any]],
+    *,
+    abi_function: dict[str, Any],
+    data_segment_para: int,
+    callsite_ordinals: dict[int, dict[str, int]],
+) -> dict[str, dict[str, Any]]:
+    policy = str(abi_function.get("ssa_call_policy") or "ignore_balanced").strip().lower()
+    if policy in {"summary", "summaries", "callee_summary", "call_summary"}:
+        return _compose_abi_summary_call(
+            block,
+            state,
+            abi_function=abi_function,
+            data_segment_para=data_segment_para,
+            callsite_ordinals=callsite_ordinals,
+        )
+    return _compose_abi_balanced_ignored_call(block, state, abi_function=abi_function)
+
+
+def _compose_abi_summary_call(
+    block: dict[str, Any],
+    state: dict[str, dict[str, Any]],
+    *,
+    abi_function: dict[str, Any],
+    data_segment_para: int,
+    callsite_ordinals: dict[int, dict[str, int]],
+) -> dict[str, dict[str, Any]]:
+    summary = _abi_call_summary_for_block(block, abi_function, callsite_ordinals=callsite_ordinals)
+    if summary is None:
+        context = _callsite_error_context(block, label="no matching callee summary")
+        raise LowerFailure("callee_summary_missing", f"function summary stops at a call with no matching callee summary; {context}")
+    source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
+    transfer = source.get("transfer", {}) if isinstance(source.get("transfer"), dict) else {}
+    fallthrough = transfer.get("fallthrough", {}) if isinstance(transfer.get("fallthrough"), dict) else {}
+    fallthrough_ip = _optional_int(fallthrough.get("low16") or fallthrough.get("linear"))
+    if fallthrough_ip is None:
+        context = _callsite_error_context(block, label="missing fallthrough")
+        raise LowerFailure("call_boundary", f"callee summary requires a concrete fallthrough address; {context}")
+
+    call_state = dict(state)
+    call_key = _abi_call_summary_key(summary, block)
+    return_bytes = _abi_call_return_bytes(summary)
+    post_call_sp = call_state.get("sp")
+    if not isinstance(post_call_sp, dict):
+        context = _callsite_error_context(block, label="missing post-call sp")
+        raise LowerFailure("call_boundary", f"callee summary requires `sp` in SSA outputs; {context}")
+
+    _record_abi_call_arguments(call_state, summary, call_key=call_key, post_call_sp=post_call_sp, return_bytes=return_bytes)
+    _apply_abi_call_returns_and_clobbers(call_state, summary, call_key=call_key)
+    _apply_abi_call_memory_effects(call_state, summary, call_key=call_key, data_segment_para=data_segment_para)
+
+    cleanup = _optional_int(summary.get("callee_stack_cleanup")) or _optional_int(summary.get("stack_cleanup")) or 0
+    call_state["sp"] = {
+        "op": "add",
+        "width": 16,
+        "args": [
+            copy.deepcopy(post_call_sp),
+            {"op": "const", "value": normalize_hex((return_bytes + cleanup) & 0xFFFF, width=4), "width": 16},
+        ],
+    }
+    call_state["ip"] = {"op": "const", "value": normalize_hex(fallthrough_ip & 0xFFFF, width=4), "width": 16}
+    return call_state
+
+
+def _compose_abi_balanced_ignored_call(
+    block: dict[str, Any],
+    state: dict[str, dict[str, Any]],
+    *,
+    abi_function: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    policy = str(abi_function.get("ssa_call_policy") or "ignore_balanced").strip().lower()
+    if policy not in {"ignore", "ignore_balanced", "ignore-call", "balanced_ignore", "msc_prologue_stack_check"}:
+        context = _callsite_error_context(block, label="no callee summary policy")
+        raise LowerFailure("call_boundary", f"function summary stops at a call; callee summaries are required; {context}")
+    if policy == "msc_prologue_stack_check" and not _is_msc_stack_check_prologue_call(block):
+        context = _callsite_error_context(block, label="msc stack check policy mismatch")
+        raise LowerFailure("call_boundary", f"msc_prologue_stack_check only applies to the entry prologue helper call; {context}")
+    source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
+    transfer = source.get("transfer", {}) if isinstance(source.get("transfer"), dict) else {}
+    fallthrough = transfer.get("fallthrough", {}) if isinstance(transfer.get("fallthrough"), dict) else {}
+    fallthrough_ip = _optional_int(fallthrough.get("low16") or fallthrough.get("linear"))
+    if fallthrough_ip is None:
+        context = _callsite_error_context(block, label="missing fallthrough")
+        raise LowerFailure("call_boundary", f"balanced ignored call requires a concrete fallthrough address; {context}")
+    call_state = dict(state)
+    sp_term = call_state.get("sp")
+    if not isinstance(sp_term, dict):
+        context = _callsite_error_context(block, label="missing pre-call sp")
+        raise LowerFailure("call_boundary", f"balanced ignored call requires `sp` in SSA outputs; {context}")
+    call_state["sp"] = {
+        "op": "add",
+        "width": 16,
+        "args": [copy.deepcopy(sp_term), {"op": "const", "value": "0x0002", "width": 16}],
+    }
+    call_state["ip"] = {"op": "const", "value": normalize_hex(fallthrough_ip & 0xFFFF, width=4), "width": 16}
+    return call_state
+
+
+def _callsite_error_context(block: dict[str, Any], *, label: str) -> str:
+    source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
+    entry = block.get("entry", {}) if isinstance(block.get("entry"), dict) else {}
+    transfer = source.get("transfer", {}) if isinstance(source.get("transfer"), dict) else {}
+    target = transfer.get("target", {}) if isinstance(transfer.get("target"), dict) else {}
+    fallthrough = transfer.get("fallthrough", {}) if isinstance(transfer.get("fallthrough"), dict) else {}
+    target_low16 = _optional_int(target.get("low16") or target.get("raw"))
+    target_linear = _optional_int(target.get("linear"))
+    fallthrough_low16 = _optional_int(fallthrough.get("low16") or fallthrough.get("linear"))
+    cs = entry.get("cs")
+    ip = entry.get("ip")
+    linear = entry.get("linear")
+    if cs is not None or ip is not None or linear is not None:
+        parts = []
+        if cs is not None or ip is not None:
+            parts.append(f"{cs if cs is not None else '????'}:{ip if ip is not None else '????'}")
+        if linear is not None:
+            parts.append(f"{linear}")
+        callsite_ip = " / ".join(parts)
+    else:
+        callsite_ip = "<unknown>"
+    target_text = (
+        f"target=0x{target_low16:04x}"
+        if target_low16 is not None
+        else "target=<unknown>"
+    )
+    if target_linear is not None:
+        target_text = f"{target_text} linear=0x{target_linear:04x}"
+    if fallthrough_low16 is not None:
+        target_text += f", fallthrough=0x{fallthrough_low16:04x}"
+    return f"{label} at {callsite_ip} ({target_text})"
+
+
+def _abi_callsite_ordinals(parts: list[dict[str, Any]]) -> dict[int, dict[str, int]]:
+    result: dict[int, dict[str, int]] = {}
+    per_target: dict[int, int] = defaultdict(int)
+    global_ordinal = 0
+    sorted_parts = sorted(
+        parts,
+        key=lambda part: (
+            int((part.get("part", {}) if isinstance(part.get("part"), dict) else {}).get("index", 0)),
+            _optional_int((part.get("entry", {}) if isinstance(part.get("entry"), dict) else {}).get("linear")) or 0,
+        ),
+    )
+    for part in sorted_parts:
+        source = part.get("source", {}) if isinstance(part.get("source"), dict) else {}
+        if source.get("jumpkind") != "Ijk_Call":
+            continue
+        transfer = source.get("transfer", {}) if isinstance(source.get("transfer"), dict) else {}
+        target = transfer.get("target") if isinstance(transfer.get("target"), dict) else {}
+        target_low16 = _optional_int(target.get("low16") or target.get("raw"))
+        if target_low16 is None:
+            continue
+        entry = part.get("entry", {}) if isinstance(part.get("entry"), dict) else {}
+        key = (_optional_int(entry.get("linear")) or _optional_int(entry.get("ip")) or 0) & 0xFFFF
+        target_key = target_low16 & 0xFFFF
+        result[key] = {
+            "global_ordinal": global_ordinal,
+            "target_ordinal": per_target[target_key],
+            "target_low16": target_key,
+        }
+        per_target[target_key] += 1
+        global_ordinal += 1
+    return result
+
+
+def _abi_call_summaries(abi_function: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("call_summaries", "callee_summaries", "calls", "callees"):
+        values = abi_function.get(key)
+        if isinstance(values, list):
+            return [item for item in values if isinstance(item, dict)]
+    return []
+
+
+def _abi_call_summary_for_block(
+    block: dict[str, Any],
+    abi_function: dict[str, Any],
+    *,
+    callsite_ordinals: dict[int, dict[str, int]],
+) -> dict[str, Any] | None:
+    summaries = _abi_call_summaries(abi_function)
+    if not summaries:
+        return None
+    source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
+    transfer = source.get("transfer", {}) if isinstance(source.get("transfer"), dict) else {}
+    target_values = _abi_call_target_values_for_block(transfer)
+    callsite_info = _abi_callsite_info(block, callsite_ordinals)
+    matching_target = [
+        summary
+        for summary in summaries
+        if any(_abi_call_summary_matches_target(summary, raw=raw, low16=low16) for raw, low16 in target_values)
+        or not _abi_call_summary_has_target(summary)
+    ]
+    explicit_matches = [
+        summary
+        for summary in matching_target
+        if _abi_call_summary_matches_callsite(summary, block=block, callsite_info=callsite_info)
+    ]
+    if len(explicit_matches) == 1:
+        return explicit_matches[0]
+    ordinal_matches = [
+        summary
+        for summary in matching_target
+        if _abi_call_summary_matches_ordinal(summary, callsite_info)
+    ]
+    if len(ordinal_matches) == 1:
+        return ordinal_matches[0]
+    if len(matching_target) == 1 and not _abi_call_summary_has_callsite_selector(matching_target[0]):
+        return matching_target[0]
+    if len(summaries) == 1 and not _abi_call_summary_has_target(summaries[0]):
+        return summaries[0]
+    return None
+
+
+def _abi_callsite_info(block: dict[str, Any], callsite_ordinals: dict[int, dict[str, int]]) -> dict[str, int]:
+    entry = block.get("entry", {}) if isinstance(block.get("entry"), dict) else {}
+    key = (_optional_int(entry.get("linear")) or _optional_int(entry.get("ip")) or 0) & 0xFFFF
+    return callsite_ordinals.get(key, {})
+
+
+def _abi_call_summary_has_target(summary: dict[str, Any]) -> bool:
+    return any(
+        key in summary
+        for key in (
+            "target",
+            "targets",
+            "target_set",
+            "target_candidates",
+            "target_raw",
+            "target_raws",
+            "target_linear",
+            "target_linears",
+            "target_low16",
+            "target_low16s",
+            "raw",
+            "linear",
+            "ip",
+            "ips",
+            "offset",
+            "offsets",
+        )
+    )
+
+
+def _abi_call_summary_has_callsite_selector(summary: dict[str, Any]) -> bool:
+    return any(
+        key in summary
+        for key in (
+            "callsite",
+            "callsite_linear",
+            "callsite_low16",
+            "callsite_ip",
+            "callsite_delta",
+            "callsite_entry_delta",
+            "block_delta",
+            "entry_delta",
+            "callsite_ordinal",
+            "call_ordinal",
+            "global_ordinal",
+            "target_ordinal",
+            "ordinal",
+        )
+    )
+
+
+def _abi_call_summary_matches_callsite(
+    summary: dict[str, Any],
+    *,
+    block: dict[str, Any],
+    callsite_info: dict[str, int],
+) -> bool:
+    entry = block.get("entry", {}) if isinstance(block.get("entry"), dict) else {}
+    part = block.get("part", {}) if isinstance(block.get("part"), dict) else {}
+    linear = _optional_int(entry.get("linear"))
+    ip = _optional_int(entry.get("ip"))
+    delta = _optional_int(part.get("entry_delta"))
+    saw_selector = False
+    for key in ("callsite", "callsite_linear"):
+        expected = _optional_int(summary.get(key))
+        if expected is not None:
+            saw_selector = True
+            if linear != expected:
+                return False
+    for key in ("callsite_low16", "callsite_ip"):
+        expected = _optional_int(summary.get(key))
+        if expected is not None:
+            saw_selector = True
+            if ip is None or (ip & 0xFFFF) != (expected & 0xFFFF):
+                return False
+    for key in ("callsite_delta", "callsite_entry_delta", "block_delta", "entry_delta"):
+        expected = _optional_int(summary.get(key))
+        if expected is not None:
+            saw_selector = True
+            if delta is None or (delta & 0xFFFF) != (expected & 0xFFFF):
+                return False
+    if _abi_call_summary_matches_ordinal(summary, callsite_info):
+        saw_selector = True
+    return saw_selector
+
+
+def _abi_call_summary_matches_ordinal(summary: dict[str, Any], callsite_info: dict[str, int]) -> bool:
+    for key in ("callsite_ordinal", "call_ordinal", "global_ordinal"):
+        expected = _optional_int(summary.get(key))
+        if expected is not None:
+            return callsite_info.get("global_ordinal") == expected
+    for key in ("target_ordinal", "ordinal"):
+        expected = _optional_int(summary.get(key))
+        if expected is not None:
+            return callsite_info.get("target_ordinal") == expected
+    return False
+
+
+def _abi_call_summary_matches_target(summary: dict[str, Any], *, raw: int | None, low16: int | None) -> bool:
+    for key in ("target", "target_raw", "target_linear", "raw", "linear"):
+        expected = _optional_int(summary.get(key))
+        if expected is not None and raw is not None and expected == raw:
+            return True
+        if expected is not None and low16 is not None and (expected & 0xFFFF) == low16:
+            return True
+    for key in ("target_low16", "ip", "offset"):
+        expected = _optional_int(summary.get(key))
+        if expected is not None and low16 is not None and (expected & 0xFFFF) == low16:
+            return True
+    for key in ("target_raws", "target_linears"):
+        for expected in _iter_optional_ints(summary.get(key)):
+            if raw is not None and expected == raw:
+                return True
+            if low16 is not None and (expected & 0xFFFF) == low16:
+                return True
+    for key in ("target_low16s", "ips", "offsets"):
+        for expected in _iter_optional_ints(summary.get(key)):
+            if low16 is not None and (expected & 0xFFFF) == low16:
+                return True
+    for key in ("targets", "target_set", "target_candidates"):
+        for item in summary.get(key, []) or []:
+            item_raw, item_low16 = _abi_target_value_pair(item)
+            if item_raw is not None and raw is not None and item_raw == raw:
+                return True
+            if item_low16 is not None and low16 is not None and (item_low16 & 0xFFFF) == (low16 & 0xFFFF):
+                return True
+            if item_raw is not None and low16 is not None and (item_raw & 0xFFFF) == (low16 & 0xFFFF):
+                return True
+    return False
+
+
+def _abi_call_target_values_for_block(transfer: dict[str, Any]) -> list[tuple[int | None, int | None]]:
+    values: list[tuple[int | None, int | None]] = []
+    target = transfer.get("target") if isinstance(transfer.get("target"), dict) else None
+    if target is not None:
+        values.append(_abi_target_value_pair(target))
+    for key in ("target_candidates", "targets", "candidate_targets", "recovered_targets"):
+        for item in transfer.get(key, []) or []:
+            values.append(_abi_target_value_pair(item))
+    unique: list[tuple[int | None, int | None]] = []
+    seen: set[tuple[int | None, int | None]] = set()
+    for raw, low16 in values:
+        if raw is None and low16 is None:
+            continue
+        key = (raw, None if low16 is None else low16 & 0xFFFF)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(key)
+    return unique
+
+
+def _abi_target_value_pair(item: Any) -> tuple[int | None, int | None]:
+    if isinstance(item, dict):
+        raw = None
+        for key in ("target", "target_raw", "raw", "linear", "target_linear"):
+            raw = _optional_int(item.get(key))
+            if raw is not None:
+                break
+        low16 = None
+        for key in ("target_low16", "low16", "ip", "offset"):
+            low16 = _optional_int(item.get(key))
+            if low16 is not None:
+                break
+        if low16 is None and raw is not None:
+            low16 = raw & 0xFFFF
+        return raw, low16
+    value = _optional_int(item)
+    if value is None:
+        return None, None
+    return value, value & 0xFFFF
+
+
+def _iter_optional_ints(value: Any) -> list[int]:
+    if isinstance(value, list):
+        values = value
+    else:
+        values = [value]
+    result: list[int] = []
+    for item in values:
+        parsed = _optional_int(item)
+        if parsed is not None:
+            result.append(parsed)
+    return result
+
+
+def _abi_call_summary_key(summary: dict[str, Any], block: dict[str, Any]) -> str:
+    for key in ("id", "name", "target_name", "callee", "callee_name"):
+        value = str(summary.get(key) or "")
+        if value:
+            return re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_") or "call"
+    source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
+    transfer = source.get("transfer", {}) if isinstance(source.get("transfer"), dict) else {}
+    target = transfer.get("target") if isinstance(transfer.get("target"), dict) else {}
+    low16 = _optional_int(target.get("low16") or target.get("raw"))
+    if low16 is not None:
+        return f"target_{low16 & 0xFFFF:04x}"
+    part = block.get("part", {}) if isinstance(block.get("part"), dict) else {}
+    delta = _optional_int(part.get("entry_delta")) or 0
+    return f"call_{delta & 0xFFFF:04x}"
+
+
+def _abi_call_return_bytes(summary: dict[str, Any]) -> int:
+    explicit = _optional_int(summary.get("return_bytes"))
+    if explicit is not None:
+        return max(0, explicit)
+    return 4 if str(summary.get("kind") or "").lower() == "far" else 2
+
+
+def _record_abi_call_arguments(
+    state: dict[str, dict[str, Any]],
+    summary: dict[str, Any],
+    *,
+    call_key: str,
+    post_call_sp: dict[str, Any],
+    return_bytes: int,
+) -> None:
+    ss_term = state.get("ss")
+    memory = state.get("memory")
+    if not isinstance(ss_term, dict) or not isinstance(memory, dict):
+        raise LowerFailure("callee_summary_missing", "callee summary argument capture requires `ss` and memory in SSA state")
+    next_stack_offset = return_bytes
+    for index, arg in enumerate(_abi_call_argument_descriptors(summary)):
+        name = _abi_call_argument_name(arg, index)
+        width = int(_optional_int(arg.get("width")) or 16)
+        location = str(arg.get("location") or arg.get("reg") or "").lower()
+        if location:
+            value = state.get(location)
+            if not isinstance(value, dict):
+                raise LowerFailure("callee_summary_missing", f"callee summary register argument `{location}` is unavailable")
+        else:
+            offset = _optional_int(arg.get("entry_sp_offset") or arg.get("sp_offset") or arg.get("offset"))
+            if offset is None:
+                offset = next_stack_offset
+            size = max(1, (width + 7) // 8)
+            next_stack_offset = int(offset) + size
+            value = {
+                "op": "loadle",
+                "width": width,
+                "args": [
+                    memory,
+                    _stack_address_term(ss_term, post_call_sp, int(offset)),
+                ],
+            }
+        state[f"callarg:{call_key}:{name}"] = value
+
+
+def _abi_call_argument_descriptors(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for key in ("arguments", "args", "stack_args"):
+        for item in summary.get(key, []) or []:
+            if isinstance(item, dict):
+                copied = dict(item)
+                if key == "stack_args" and not any(name in copied for name in ("location", "reg")):
+                    copied.setdefault("stack", True)
+                items.append(copied)
+    return items
+
+
+def _abi_call_argument_name(arg: dict[str, Any], index: int) -> str:
+    raw = str(arg.get("name") or arg.get("id") or arg.get("location") or arg.get("reg") or f"arg{index}")
+    return re.sub(r"[^A-Za-z0-9_]+", "_", raw).strip("_") or f"arg{index}"
+
+
+def _apply_abi_call_returns_and_clobbers(state: dict[str, dict[str, Any]], summary: dict[str, Any], *, call_key: str) -> None:
+    reg_widths = {name: width for _offset, (name, width) in REG_BY_OFFSET.items()}
+    returns = {_abi_location_name(item) for item in summary.get("returns", []) or []}
+    returns.discard("")
+    preserved = {_abi_location_name(item) for item in summary.get("preserved", []) or []}
+    preserved.discard("")
+    clobbers = {_abi_location_name(item) for item in summary.get("clobbers", []) or []}
+    clobbers.discard("")
+    for reg in sorted(returns):
+        width = reg_widths.get(reg)
+        if width is not None:
+            state[reg] = {"op": "input", "name": f"callret_{call_key}_{reg}", "width": width}
+    for reg in sorted(clobbers - returns - preserved):
+        width = reg_widths.get(reg)
+        if width is not None:
+            state[reg] = {"op": "input", "name": f"callclobber_{call_key}_{reg}", "width": width}
+
+
+def _abi_location_name(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("location") or item.get("reg") or item.get("name") or "").lower()
+    return str(item or "").lower()
+
+
+def _apply_abi_call_memory_effects(
+    state: dict[str, dict[str, Any]],
+    summary: dict[str, Any],
+    *,
+    call_key: str,
+    data_segment_para: int,
+) -> None:
+    memory = state.get("memory")
+    if not isinstance(memory, dict):
+        return
+    for index, effect in enumerate(summary.get("effects", []) or []):
+        if not isinstance(effect, dict):
+            continue
+        if _abi_call_effect_is_broad_memory(effect):
+            name = re.sub(r"[^A-Za-z0-9_]+", "_", str(effect.get("name") or f"memory{index}")).strip("_") or f"memory{index}"
+            memory = {
+                "op": "mem_input",
+                "name": f"calleffect_{call_key}_{name}_memory",
+                "addr_width": 32,
+                "value_width": 8,
+            }
+            continue
+        offset = _optional_int(effect.get("offset"))
+        size = _optional_int(effect.get("size"))
+        if offset is None or size is None or size <= 0:
+            raise LowerFailure("callee_summary_missing", f"invalid callee memory effect descriptor: {effect}")
+        value = _abi_call_effect_value(effect, state, call_key=call_key, index=index, width=size * 8)
+        memory = {
+            "op": "storele",
+            "width": 0,
+            "args": [
+                memory,
+                _effect_address_term(effect, data_segment_para, offset, state=state),
+                value,
+            ],
+        }
+    state["memory"] = memory
+
+
+def _abi_call_effect_is_broad_memory(effect: dict[str, Any]) -> bool:
+    kind = str(effect.get("kind") or effect.get("type") or "").lower()
+    scope = str(effect.get("scope") or effect.get("range") or "").lower()
+    offset = str(effect.get("offset") or "").strip().lower()
+    if scope in {
+        "broad",
+        "all",
+        "unknown",
+    } or offset in {"*", "any", "unknown"}:
+        return True
+    if kind in {"broad_memory", "unknown_memory", "clobber_all"}:
+        return True
+    if kind in {"memory_clobber", "memory"}:
+        return not _abi_call_effect_has_concrete_range(effect)
+    return False
+
+
+def _abi_call_effect_has_concrete_range(effect: dict[str, Any]) -> bool:
+    offset = _optional_int(effect.get("offset"))
+    size = _optional_int(effect.get("size"))
+    return offset is not None and size is not None and size > 0
+
+
+def _abi_call_effect_value(effect: dict[str, Any], state: dict[str, dict[str, Any]], *, call_key: str, index: int, width: int) -> dict[str, Any]:
+    if "value" in effect:
+        value = _optional_int(effect.get("value"))
+        if value is None:
+            raise LowerFailure("callee_summary_missing", f"invalid callee memory effect value: {effect.get('value')}")
+        return {"op": "const", "value": normalize_hex(value & _mask(width), width=max(1, width // 4)), "width": width}
+    arg_name = str(effect.get("arg") or effect.get("argument") or "")
+    if arg_name:
+        matches = [value for key, value in state.items() if key.startswith(f"callarg:{call_key}:") and key.rsplit(":", 1)[-1] == arg_name]
+        if len(matches) == 1:
+            return _coerce_json_width(matches[0], width)
+        raise LowerFailure("callee_summary_missing", f"callee memory effect references unknown argument `{arg_name}`")
+    reg = str(effect.get("reg") or effect.get("location") or "").lower()
+    if reg:
+        value = state.get(reg)
+        if isinstance(value, dict):
+            return _coerce_json_width(value, width)
+        raise LowerFailure("callee_summary_missing", f"callee memory effect references unavailable register `{reg}`")
+    name = re.sub(r"[^A-Za-z0-9_]+", "_", str(effect.get("name") or f"effect{index}")).strip("_") or f"effect{index}"
+    return {"op": "input", "name": f"calleffect_{call_key}_{name}", "width": width}
+
+
+def _coerce_json_width(term: dict[str, Any], width: int) -> dict[str, Any]:
+    current = _term_width(term)
+    if current == width:
+        return term
+    op = "zext" if current < width else "trunc"
+    return {"op": op, "width": width, "args": [term]}
+
+
+def _is_msc_stack_check_prologue_call(block: dict[str, Any]) -> bool:
+    part = block.get("part", {}) if isinstance(block.get("part"), dict) else {}
+    if _optional_int(part.get("entry_delta")) != 0:
+        return False
+    source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
+    instructions = source.get("instructions", []) if isinstance(source.get("instructions"), list) else []
+    if len(instructions) < 4:
+        return False
+    first_four = [item for item in instructions[:4] if isinstance(item, dict)]
+    mnemonics = [str(item.get("mnemonic") or "").lower() for item in first_four]
+    if mnemonics != ["push", "mov", "mov", "call"]:
+        return False
+    third = first_four[2]
+    return str(third.get("op_str") or "").lower().replace(" ", "").startswith("ax,")
 
 
 def _compose_or_terminal(
     target: dict[str, Any],
     state: dict[str, dict[str, Any]],
     *,
+    abi_function: dict[str, Any],
     block_by_key: dict[int, dict[str, Any]],
     path: list[int],
+    max_loop_unroll: int = 0,
+    data_segment_para: int = 0x0100,
+    callsite_ordinals: dict[int, dict[str, int]] | None = None,
+    compose_stats: dict[str, int] | None = None,
+    enable_constant_branch_pruning: bool = False,
 ) -> tuple[dict[str, dict[str, Any]], int]:
     successor = _successor_for_target(target, block_by_key)
     if successor is None:
         return state, 1
-    return _compose_abi_state(successor, state, block_by_key=block_by_key, path=path)
+    return _compose_abi_state(
+        successor,
+        state,
+        abi_function=abi_function,
+        block_by_key=block_by_key,
+        path=path,
+        max_loop_unroll=max_loop_unroll,
+        data_segment_para=data_segment_para,
+        callsite_ordinals=callsite_ordinals,
+        compose_stats=compose_stats,
+        enable_constant_branch_pruning=enable_constant_branch_pruning,
+    )
 
 
 def _direct_branch_targets(term: dict[str, Any], block_by_key: dict[int, dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
@@ -1853,15 +4293,15 @@ def _merge_abi_states(
         left = true_state.get(key)
         right = false_state.get(key)
         if left is None:
-            merged[key] = copy.deepcopy(right)
+            merged[key] = right
             continue
         if right is None:
-            merged[key] = copy.deepcopy(left)
+            merged[key] = left
             continue
-        if _term_identity(left) == _term_identity(right):
-            merged[key] = copy.deepcopy(left)
+        if left is right or left == right:
+            merged[key] = left
             continue
-        merged[key] = {"op": "ite", "width": _term_width(left), "args": [copy.deepcopy(condition), copy.deepcopy(left), copy.deepcopy(right)]}
+        merged[key] = {"op": "ite", "width": _term_width(left), "args": [condition, left, right]}
     return merged
 
 
@@ -1869,15 +4309,23 @@ def _materialize_abi_summary(
     start: dict[str, Any],
     final_state: dict[str, dict[str, Any]],
     *,
+    abi_function: dict[str, Any],
     observables: dict[str, Any],
     data_segment_para: int,
 ) -> dict[str, Any]:
     outputs: dict[str, dict[str, Any]] = {}
     for reg in observables.get("regs", []) or []:
+        if reg == "sp":
+            canonical_sp = _abi_canonical_return_sp(abi_function)
+            if canonical_sp is not None:
+                outputs[reg] = canonical_sp
+                continue
         if reg not in final_state:
             raise LowerFailure("unsupported_ir", f"observable register {reg} is not available in the SSA summary")
         outputs[reg] = final_state[reg]
     memory_term = final_state.get("memory", {"op": "mem_input", "name": "mem", "addr_width": 32, "value_width": 8})
+    if observables.get("whole_memory"):
+        outputs["memory"] = memory_term
     for effect in observables.get("memory", []) or []:
         offset = _optional_int(effect.get("offset"))
         size = _optional_int(effect.get("size"))
@@ -1887,12 +4335,15 @@ def _materialize_abi_summary(
         outputs[f"memory:{offset:04x}:{size}:{name}"] = {
             "op": "loadle",
             "width": size * 8,
-            "args": [memory_term, _effect_address_term(effect, data_segment_para, offset)],
+            "args": [memory_term, _effect_address_term(effect, data_segment_para, offset, state=final_state)],
         }
+    for name in sorted(key for key in final_state if key.startswith("callarg:")):
+        outputs[name] = final_state[name]
     assignments: list[dict[str, Any]] = []
     memo: dict[str, str] = {}
+    term_cache: dict[int, dict[str, Any]] = {}
     materialized_outputs = {
-        name: _materialize_json_term(term, assignments=assignments, memo=memo)
+        name: _materialize_json_term(term, assignments=assignments, memo=memo, term_cache=term_cache)
         for name, term in outputs.items()
     }
     body_without_id = {
@@ -1914,8 +4365,24 @@ def _materialize_abi_summary(
         "assignments": assignments,
     }
     body = dict(body_without_id)
-    body["id"] = stable_id("ssa-function-abi", body_without_id)
+    body["id"] = _stable_abi_summary_id(body_without_id)
     return body
+
+
+def _abi_canonical_return_sp(abi_function: dict[str, Any]) -> dict[str, Any] | None:
+    convention = str(abi_function.get("calling_convention") or "").lower()
+    if not (abi_function.get("canonicalize_return_sp") or convention.startswith("far_stack")):
+        return None
+    return_bytes = 4 if str(abi_function.get("kind") or "").lower() == "far" else 2
+    cleanup = _optional_int(abi_function.get("callee_stack_cleanup")) or 0
+    return {
+        "op": "add",
+        "width": 16,
+        "args": [
+            {"op": "input", "name": "sp", "width": 16},
+            {"op": "const", "value": normalize_hex((return_bytes + cleanup) & 0xFFFF, width=4), "width": 16},
+        ],
+    }
 
 
 def _data_address_term(data_segment_para: int, offset: int) -> dict[str, Any]:
@@ -1936,14 +4403,28 @@ def _data_address_term(data_segment_para: int, offset: int) -> dict[str, Any]:
     }
 
 
-def _effect_address_term(effect: dict[str, Any], data_segment_para: int, offset: int) -> dict[str, Any]:
+def _effect_address_term(
+    effect: dict[str, Any],
+    data_segment_para: int,
+    offset: int,
+    *,
+    state: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     segment = str(effect.get("segment") or effect.get("segment_reg") or "").lower()
-    if segment in {"ds", "input_ds"}:
-        segment_term: dict[str, Any] = {"op": "zext", "width": 32, "args": [{"op": "input", "name": "ds", "width": 16}]}
-    elif segment in {"ss", "input_ss"}:
-        segment_term = {"op": "zext", "width": 32, "args": [{"op": "input", "name": "ss", "width": 16}]}
+    if segment == "ds":
+        segment_term = _effect_segment_term(state, "ds", fallback={"op": "input", "name": "ds", "width": 16})
+    elif segment == "ss":
+        segment_term = _effect_segment_term(state, "ss", fallback={"op": "input", "name": "ss", "width": 16})
+    elif segment == "input_ds":
+        segment_term = {"op": "input", "name": "ds", "width": 16}
+    elif segment == "input_ss":
+        segment_term = {"op": "input", "name": "ss", "width": 16}
     else:
-        segment_term = {"op": "const", "value": normalize_hex(data_segment_para, width=4), "width": 32}
+        segment_value = _optional_int(segment)
+        if segment_value is None:
+            segment_value = data_segment_para
+        segment_term = {"op": "const", "value": normalize_hex(segment_value & 0xFFFF, width=4), "width": 16}
+    segment_term = _coerce_json_width(segment_term, 32)
     return {
         "op": "add",
         "width": 32,
@@ -1961,11 +4442,24 @@ def _effect_address_term(effect: dict[str, Any], data_segment_para: int, offset:
     }
 
 
+def _effect_segment_term(
+    state: dict[str, dict[str, Any]] | None,
+    name: str,
+    *,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    if state is not None:
+        term = state.get(name)
+        if isinstance(term, dict):
+            return copy.deepcopy(term)
+    return copy.deepcopy(fallback)
+
+
 def _inline_ssa_json_term(term: dict[str, Any], *, assignments: dict[str, dict[str, Any]], cache: dict[str, dict[str, Any]]) -> dict[str, Any]:
     if "ref" in term:
         ident = str(term["ref"])
         if ident in cache:
-            return copy.deepcopy(cache[ident])
+            return cache[ident]
         item = assignments.get(ident)
         if item is None:
             raise LowerFailure("unsupported_ir", f"SSA ref {ident} was not found")
@@ -1979,56 +4473,147 @@ def _inline_ssa_json_term(term: dict[str, Any], *, assignments: dict[str, dict[s
             ],
         }
         cache[ident] = inlined
-        return copy.deepcopy(inlined)
-    copied = copy.deepcopy(term)
-    if isinstance(copied.get("args"), list):
+        return inlined
+    copied = dict(term)
+    if isinstance(term.get("args"), list):
         copied["args"] = [
             _inline_ssa_json_term(arg, assignments=assignments, cache=cache)
-            for arg in copied.get("args", []) or []
+            for arg in term.get("args", []) or []
             if isinstance(arg, dict)
         ]
     return copied
 
 
-def _substitute_abi_inputs(term: dict[str, Any], state: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _substitute_abi_inputs(
+    term: dict[str, Any],
+    state: dict[str, dict[str, Any]],
+    *,
+    cache: dict[int, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if cache is None:
+        cache = {}
+    key = id(term)
+    if key in cache:
+        return cache[key]
     op = term.get("op")
     if op == "input" and str(term.get("name")) in state:
-        return copy.deepcopy(state[str(term["name"])])
+        result = state[str(term["name"])]
+        cache[key] = result
+        return result
     if op == "mem_input":
-        return copy.deepcopy(state.get("memory", term))
-    copied = copy.deepcopy(term)
-    if isinstance(copied.get("args"), list):
-        copied["args"] = [_substitute_abi_inputs(arg, state) for arg in copied["args"] if isinstance(arg, dict)]
+        result = state.get("memory", term)
+        cache[key] = result
+        return result
+    copied = dict(term)
+    cache[key] = copied
+    if isinstance(term.get("args"), list):
+        copied["args"] = [
+            _substitute_abi_inputs(arg, state, cache=cache)
+            for arg in term["args"]
+            if isinstance(arg, dict)
+        ]
     return copied
 
 
-def _materialize_json_term(term: dict[str, Any], *, assignments: list[dict[str, Any]], memo: dict[str, str]) -> dict[str, Any]:
+def _materialize_json_term(
+    term: dict[str, Any],
+    *,
+    assignments: list[dict[str, Any]],
+    memo: dict[str, str],
+    term_cache: dict[int, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if term_cache is None:
+        term_cache = {}
+    cache_key = id(term)
+    cached = term_cache.get(cache_key)
+    if cached is not None:
+        return cached
     op = term.get("op")
     if op in {"input", "mem_input", "const"}:
-        return copy.deepcopy(term)
-    key = _term_identity(term)
+        result = copy.deepcopy(term)
+        term_cache[cache_key] = result
+        return result
+    args = [
+        _materialize_json_term(arg, assignments=assignments, memo=memo, term_cache=term_cache)
+        for arg in term.get("args", []) or []
+        if isinstance(arg, dict)
+    ]
+    shallow = {"op": str(op), "width": _term_width(term), "args": args}
+    key = _materialized_term_key(shallow)
     if key in memo:
-        return {"ref": memo[key]}
-    args = [_materialize_json_term(arg, assignments=assignments, memo=memo) for arg in term.get("args", []) or [] if isinstance(arg, dict)]
+        result = {"ref": memo[key]}
+        term_cache[cache_key] = result
+        return result
     ident = f"v{len(assignments)}"
     memo[key] = ident
-    assignments.append({"id": ident, "op": str(op), "width": _term_width(term), "args": args})
-    return {"ref": ident}
+    assignments.append({"id": ident, **shallow})
+    result = {"ref": ident}
+    term_cache[cache_key] = result
+    return result
+
+
+def _materialized_term_key(term: dict[str, Any]) -> str:
+    parts: list[tuple[Any, ...]] = []
+    for arg in term.get("args", []) or []:
+        if not isinstance(arg, dict):
+            continue
+        if "ref" in arg:
+            parts.append(("ref", str(arg["ref"])))
+            continue
+        op = str(arg.get("op"))
+        if op == "input":
+            parts.append(("input", str(arg.get("name")), int(arg.get("width", 16))))
+        elif op == "mem_input":
+            parts.append(("mem_input", str(arg.get("name")), int(arg.get("addr_width", 32)), int(arg.get("value_width", 8))))
+        elif op == "const":
+            parts.append(("const", str(arg.get("value")), int(arg.get("width", 16))))
+        else:
+            parts.append(("term", _term_identity(arg)))
+    return repr((str(term.get("op")), _term_width(term), tuple(parts)))
+
+
+def _stable_abi_summary_id(body_without_id: dict[str, Any]) -> str:
+    digest = hashlib.sha256()
+    shallow = {
+        "function": body_without_id.get("function"),
+        "part": body_without_id.get("part"),
+        "function_entry": body_without_id.get("function_entry"),
+        "entry": body_without_id.get("entry"),
+        "source": body_without_id.get("source"),
+        "inputs": body_without_id.get("inputs"),
+        "outputs": body_without_id.get("outputs"),
+    }
+    digest.update(canonical_json_bytes(shallow))
+    for assignment in body_without_id.get("assignments", []) or []:
+        digest.update(b"\n")
+        digest.update(canonical_json_bytes(assignment))
+    return f"ssa-function-abi:{digest.hexdigest()}"
 
 
 def _term_input_items(terms: Any, assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     widths: dict[str, int] = {}
     memory_inputs: set[str] = set()
+    assignment_by_id = {str(item.get("id")): item for item in assignments if isinstance(item, dict) and item.get("id") is not None}
+    seen_terms: set[int] = set()
+    seen_refs: set[str] = set()
 
     def visit(term: dict[str, Any]) -> None:
+        term_key = id(term)
+        if term_key in seen_terms:
+            return
+        seen_terms.add(term_key)
         if "ref" in term:
             ref = str(term["ref"])
-            for assignment in assignments:
-                if assignment.get("id") == ref:
-                    for arg in assignment.get("args", []) or []:
-                        if isinstance(arg, dict):
-                            visit(arg)
-                    return
+            if ref in seen_refs:
+                return
+            seen_refs.add(ref)
+            assignment = assignment_by_id.get(ref)
+            if assignment is None:
+                return
+            for arg in assignment.get("args", []) or []:
+                if isinstance(arg, dict):
+                    visit(arg)
+            return
         op = term.get("op")
         if op == "input" and term.get("name"):
             name = str(term["name"])
@@ -2108,6 +4693,64 @@ def _set_unique_index(table: dict[Any, dict[str, Any] | None], key: Any, functio
         table[key] = None
 
 
+class _SemanticEqualityCache:
+    def __init__(self) -> None:
+        self._facts: dict[tuple[str, str], dict[str, Any]] = {}
+
+    @property
+    def count(self) -> int:
+        return len({id(fact) for fact in self._facts.values()})
+
+    def record(self, oracle_function: dict[str, Any], candidate_function: dict[str, Any], *, proof: str, scope: str = "block") -> None:
+        fact_without_id = {
+            "kind": "semantic_equality_fact",
+            "scope": scope,
+            "proof": proof,
+            "oracle": _ssa_function_brief(oracle_function),
+            "candidate": _ssa_function_brief(candidate_function),
+        }
+        fact = dict(fact_without_id)
+        fact["id"] = stable_id("semantic-equality-fact", fact_without_id)
+        oracle_keys = _semantic_cache_keys(_ssa_function_brief(oracle_function))
+        candidate_keys = _semantic_cache_keys(_ssa_function_brief(candidate_function))
+        for oracle_key in oracle_keys:
+            for candidate_key in candidate_keys:
+                self._facts[(oracle_key, candidate_key)] = fact
+
+    def lookup_call_targets(self, oracle_targets: list[dict[str, Any]], candidate_targets: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for oracle_target in oracle_targets:
+            for candidate_target in candidate_targets:
+                for oracle_key in _semantic_cache_keys(oracle_target):
+                    for candidate_key in _semantic_cache_keys(candidate_target):
+                        fact = self._facts.get((oracle_key, candidate_key))
+                        if fact is not None:
+                            return fact
+        return None
+
+
+def _semantic_cache_keys(function_brief: dict[str, Any] | None) -> list[str]:
+    if not isinstance(function_brief, dict):
+        return []
+    keys: list[str] = []
+    for field in ("id", "name"):
+        value = str(function_brief.get(field) or "")
+        if value:
+            keys.append(f"{field}:{value}")
+            if field == "name":
+                normalized = _normalized_symbol_name(value)
+                if normalized and normalized != value:
+                    keys.append(f"normalized_name:{normalized}")
+    entry = function_brief.get("entry") if isinstance(function_brief.get("entry"), dict) else {}
+    linear = _optional_int(entry.get("linear"))
+    ip = _optional_int(entry.get("ip"))
+    if linear is not None:
+        keys.append(f"linear:{linear & 0xFFFFFFFF:08x}")
+        keys.append(f"low16:{linear & 0xFFFF:04x}")
+    if ip is not None:
+        keys.append(f"ip:{ip & 0xFFFF:04x}")
+    return sorted(set(keys))
+
+
 def _compare_call_targets(
     oracle_function: dict[str, Any],
     candidate_function: dict[str, Any],
@@ -2116,18 +4759,28 @@ def _compare_call_targets(
     oracle_index: dict[str, dict[Any, dict[str, Any]]],
     candidate_index: dict[str, dict[Any, dict[str, Any]]],
     allow_aliased_call_targets: bool,
+    proof_cache: _SemanticEqualityCache | None = None,
+    require_proven_call_targets: bool = False,
 ) -> dict[str, Any] | None:
     oracle_call = _resolve_call_target(oracle_function, oracle_index, allow_aliased_call_targets=allow_aliased_call_targets)
     candidate_call = _resolve_call_target(candidate_function, candidate_index, allow_aliased_call_targets=allow_aliased_call_targets)
     if oracle_call is None and candidate_call is None:
         return None
-    equivalent, reason = _call_targets_equivalent(oracle_call, candidate_call, mapping_document=mapping_document)
+    equivalent, reason, proof_fact, unproven_reason = _call_targets_equivalent(
+        oracle_call,
+        candidate_call,
+        mapping_document=mapping_document,
+        proof_cache=proof_cache,
+        require_proven_call_targets=require_proven_call_targets,
+    )
     return {
         "kind": "direct_call",
         "oracle": oracle_call,
         "candidate": candidate_call,
         "equivalent": equivalent,
         "reason": reason,
+        "proof_fact": proof_fact,
+        "unproven_reason": unproven_reason,
         "allow_aliased_call_targets": allow_aliased_call_targets,
         "normalizations": [],
     }
@@ -2265,11 +4918,13 @@ def _call_targets_equivalent(
     candidate_call: dict[str, Any] | None,
     *,
     mapping_document: dict[str, Any] | None,
-) -> tuple[bool, str]:
+    proof_cache: _SemanticEqualityCache | None = None,
+    require_proven_call_targets: bool = False,
+) -> tuple[bool, str, dict[str, Any] | None, str | None]:
     if oracle_call is None and candidate_call is None:
-        return True, "neither block ends in a direct call"
+        return True, "neither block ends in a direct call", None, None
     if oracle_call is None or candidate_call is None:
-        return False, "only one block ends in a direct call"
+        return False, "only one block ends in a direct call", None, None
     oracle_target = oracle_call.get("resolved") if isinstance(oracle_call.get("resolved"), dict) else None
     candidate_target = candidate_call.get("resolved") if isinstance(candidate_call.get("resolved"), dict) else None
     if oracle_target is None or candidate_target is None:
@@ -2279,11 +4934,18 @@ def _call_targets_equivalent(
             and oracle_call.get("reason") == "call target is not a direct constant"
             and candidate_call.get("reason") == "call target is not a direct constant"
         ):
-            return True, "both call targets are indirect expressions"
-        return False, "one or both direct call targets did not resolve to SSA functions"
+            return True, "both call targets are indirect expressions", None, None
+        return False, "one or both direct call targets did not resolve to SSA functions", None, None
 
     oracle_targets = _call_target_briefs(oracle_call)
     candidate_targets = _call_target_briefs(candidate_call)
+    if proof_cache is not None:
+        fact = proof_cache.lookup_call_targets(oracle_targets, candidate_targets)
+        if fact is not None:
+            return True, "direct call targets are equivalent through proven callee equality", fact, None
+    semantic_reason = _call_target_semantic_equivalence_reason(oracle_targets, candidate_targets)
+
+    unproven_reason: str | None = None
     for oracle_target in oracle_targets:
         oracle_id = str(oracle_target.get("id") or "")
         oracle_name = str(oracle_target.get("name") or "")
@@ -2294,25 +4956,44 @@ def _call_targets_equivalent(
                 or str(mapped.get("candidate_name") or "") == str(candidate_target.get("name") or "")
                 for candidate_target in candidate_targets
             ):
-                return True, "direct call targets are equivalent through function mapping"
-            return False, "direct call targets resolve to different mapped functions"
+                unproven_reason = "direct call targets are equivalent through function mapping"
+                if semantic_reason is not None:
+                    return True, unproven_reason, None, None
+                if require_proven_call_targets:
+                    return False, "callee_not_proven", None, unproven_reason
+                return True, unproven_reason, None, None
+            return False, "direct call targets resolve to different mapped functions", None, None
     for oracle_target in oracle_targets:
         oracle_id = str(oracle_target.get("id") or "")
         oracle_name = str(oracle_target.get("name") or "")
         if any(oracle_id and oracle_id == str(candidate_target.get("id") or "") for candidate_target in candidate_targets):
-            return True, "direct call targets have the same function id"
+            unproven_reason = "direct call targets have the same function id"
+            if semantic_reason is not None:
+                return True, unproven_reason, None, None
+            if require_proven_call_targets:
+                return False, "callee_not_proven", None, unproven_reason
+            return True, unproven_reason, None, None
         if any(oracle_name and oracle_name == str(candidate_target.get("name") or "") for candidate_target in candidate_targets):
-            return True, "direct call targets have the same function name"
+            unproven_reason = "direct call targets have the same function name"
+            if semantic_reason is not None:
+                return True, unproven_reason, None, None
+            if require_proven_call_targets:
+                return False, "callee_not_proven", None, unproven_reason
+            return True, unproven_reason, None, None
         oracle_normalized_name = _normalized_symbol_name(oracle_name)
         if oracle_normalized_name and any(
             oracle_normalized_name == _normalized_symbol_name(str(candidate_target.get("name") or ""))
             for candidate_target in candidate_targets
         ):
-            return True, "direct call targets have equivalent normalized symbol names"
-    semantic_reason = _call_target_semantic_equivalence_reason(oracle_targets, candidate_targets)
+            unproven_reason = "direct call targets have equivalent normalized symbol names"
+            if semantic_reason is not None:
+                return True, unproven_reason, None, None
+            if require_proven_call_targets:
+                return False, "callee_not_proven", None, unproven_reason
+            return True, unproven_reason, None, None
     if semantic_reason is not None:
-        return True, semantic_reason
-    return False, "no mapping proves direct call target equivalence"
+        return True, semantic_reason, None, None
+    return False, "no mapping proves direct call target equivalence", None, None
 
 
 def _call_target_briefs(call: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2371,18 +5052,26 @@ def _prepare_call_normalized_functions(
     candidate_call = call_compare.get("candidate") if isinstance(call_compare.get("candidate"), dict) else None
     oracle_raw = _optional_int(oracle_call.get("raw")) if oracle_call is not None else None
     candidate_raw = _optional_int(candidate_call.get("raw")) if candidate_call is not None else None
-    if oracle_raw is None or candidate_raw is None:
-        return oracle_function, candidate_function, call_compare
 
     normalized = copy.deepcopy(call_compare)
     equivalent = bool(normalized.get("equivalent"))
     if equivalent:
-        target_value = _canonical_call_target_value(normalized)
+        target_token = _canonical_call_target_token(normalized)
+        target_value = _semantic_token_value(target_token)
+        normalized["semantic_target"] = {
+            "token": target_token,
+            "value": normalize_hex(target_value & 0xFFFFFFFF, width=8),
+            "source": "proof_fact" if isinstance(normalized.get("proof_fact"), dict) else "resolved_target",
+        }
     else:
         target_value = None
 
-    oracle_copy = _with_call_target_output(oracle_function, target_value if target_value is not None else oracle_raw)
-    candidate_copy = _with_call_target_output(candidate_function, target_value if target_value is not None else candidate_raw)
+    if oracle_raw is not None and candidate_raw is not None:
+        oracle_copy = _with_call_target_output(oracle_function, target_value if target_value is not None else oracle_raw)
+        candidate_copy = _with_call_target_output(candidate_function, target_value if target_value is not None else candidate_raw)
+    else:
+        oracle_copy = copy.deepcopy(oracle_function)
+        candidate_copy = copy.deepcopy(candidate_function)
     if equivalent:
         oracle_copy, oracle_return = _normalize_call_return_store(oracle_copy)
         candidate_copy, candidate_return = _normalize_call_return_store(candidate_copy)
@@ -2476,7 +5165,47 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
             pair = dict(pair)
             pair["reason"] = "same_delta_constant_set"
             pairs.append(pair)
+    pairs.extend(_control_transfer_layout_constant_pairs(oracle_function, candidate_function))
     return _unique_layout_pairs(pairs)
+
+
+def _control_transfer_layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: dict[str, Any]) -> list[dict[str, Any]]:
+    oracle_successors = _successor_low16_by_delta(oracle_function)
+    candidate_successors = _successor_low16_by_delta(candidate_function)
+    pairs: list[dict[str, Any]] = []
+    for delta in sorted(set(oracle_successors) & set(candidate_successors)):
+        oracle_value = oracle_successors[delta]
+        candidate_value = candidate_successors[delta]
+        if oracle_value == candidate_value:
+            continue
+        pairs.append({"oracle": oracle_value, "candidate": candidate_value, "reason": "control_target"})
+    return pairs
+
+
+def _successor_low16_by_delta(function: dict[str, Any]) -> dict[int, int]:
+    source = function.get("source", {}) if isinstance(function.get("source"), dict) else {}
+    transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
+    function_entry = function.get("function_entry", {}) if isinstance(function.get("function_entry"), dict) else {}
+    function_linear = _optional_int(function_entry.get("linear"))
+    if function_linear is None:
+        return {}
+    result: dict[int, int] = {}
+    if transfer.get("kind") == "direct_call":
+        fallthrough = transfer.get("fallthrough") if isinstance(transfer.get("fallthrough"), dict) else {}
+        linear = _optional_int(fallthrough.get("linear"))
+        if linear is None:
+            return {}
+        result[(linear - function_linear) & 0xFFFF] = linear & 0xFFFF
+        return result
+    if transfer.get("kind") == "direct_successors":
+        for successor in transfer.get("successors", []) or []:
+            if not isinstance(successor, dict):
+                continue
+            linear = _optional_int(successor.get("linear"))
+            if linear is None:
+                continue
+            result[(linear - function_linear) & 0xFFFF] = linear & 0xFFFF
+    return result
 
 
 def _ssa_instructions(function: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2779,10 +5508,28 @@ def _with_call_target_output(function: dict[str, Any], target_value: int) -> dic
 
 
 def _canonical_call_target_value(call_compare: dict[str, Any]) -> int:
+    return _semantic_token_value(_canonical_call_target_token(call_compare))
+
+
+def _canonical_call_target_token(call_compare: dict[str, Any]) -> str:
+    proof_fact = call_compare.get("proof_fact") if isinstance(call_compare.get("proof_fact"), dict) else None
+    if proof_fact is not None:
+        proof_id = str(proof_fact.get("id") or "")
+        oracle = proof_fact.get("oracle") if isinstance(proof_fact.get("oracle"), dict) else {}
+        candidate = proof_fact.get("candidate") if isinstance(proof_fact.get("candidate"), dict) else {}
+        oracle_key = str(oracle.get("semantic_ssa_id") or oracle.get("id") or oracle.get("name") or "unknown-oracle")
+        candidate_key = str(candidate.get("semantic_ssa_id") or candidate.get("id") or candidate.get("name") or "unknown-candidate")
+        if proof_id:
+            return f"callee-proof:{proof_id}"
+        return f"callee-proof:{proof_fact.get('proof')}:{oracle_key}:{candidate_key}"
     oracle = call_compare.get("oracle") if isinstance(call_compare.get("oracle"), dict) else {}
     resolved = oracle.get("resolved") if isinstance(oracle.get("resolved"), dict) else {}
     key = str(resolved.get("id") or resolved.get("name") or oracle.get("raw") or "unknown-call-target")
-    return int(hashlib.sha256(f"call-target:{key}".encode("utf-8")).hexdigest()[:8], 16)
+    return f"call-target:{key}"
+
+
+def _semantic_token_value(token: str) -> int:
+    return int(hashlib.sha256(token.encode("utf-8")).hexdigest()[:8], 16)
 
 
 def _normalize_call_return_store(function: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -2804,15 +5551,34 @@ def _normalize_call_return_store(function: dict[str, Any]) -> tuple[dict[str, An
     value = _term_const_int(args[2])
     fallthrough = _call_fallthrough_linear(function)
     if value is None or fallthrough is None:
+        if fallthrough is not None:
+            chain_normalized, chain_result = _normalize_call_return_store_chain(function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough)
+            if chain_result.get("applied"):
+                return chain_normalized, chain_result
         return function, {"applied": False, "reason": "final store value or call fall-through was not constant"}
     width = int(args[2].get("width", 16)) if isinstance(args[2], dict) else 16
+    if width <= 8:
+        chain_normalized, chain_result = _normalize_call_return_store_chain(function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough)
+        if chain_result.get("applied"):
+            return chain_normalized, chain_result
+        return function, {
+            "applied": False,
+            "reason": "single-byte final store did not match a far-call return byte chain",
+            "stored": normalize_hex(value, width=2),
+            "fallthrough": normalize_hex(fallthrough),
+            "chain_reason": chain_result.get("reason"),
+        }
     mask = _mask(width)
     if (value & mask) != (fallthrough & mask):
+        chain_normalized, chain_result = _normalize_call_return_store_chain(function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough)
+        if chain_result.get("applied"):
+            return chain_normalized, chain_result
         return function, {
             "applied": False,
             "reason": "final store constant did not match the call fall-through address",
             "stored": normalize_hex(value),
             "fallthrough": normalize_hex(fallthrough),
+            "chain_reason": chain_result.get("reason"),
         }
     normalized_store = dict(store)
     args[2] = {"op": "const", "value": normalize_hex(0, width=max(1, width // 4)), "width": width}
@@ -2826,6 +5592,128 @@ def _normalize_call_return_store(function: dict[str, Any]) -> tuple[dict[str, An
         "stored": normalize_hex(value),
         "fallthrough": normalize_hex(fallthrough),
     }
+
+
+def _normalize_call_return_store_chain(
+    function: dict[str, Any],
+    *,
+    assignments: list[dict[str, Any]],
+    memory_ref: str,
+    fallthrough: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    by_id = {str(item["id"]): item for item in assignments if isinstance(item, dict) and "id" in item}
+    current_ref: str | None = memory_ref
+    normalized_assignments = list(assignments)
+    normalized_indexes: list[int] = []
+    normalized_values: list[str] = []
+    expected_words = {fallthrough & 0xFFFF}
+    call_return_ip = _call_return_ip_from_instruction(function)
+    if call_return_ip is not None:
+        expected_words.add(call_return_ip & 0xFFFF)
+    expected_bytes = {(word >> shift) & 0xFF for word in expected_words for shift in (0, 8)}
+    while current_ref:
+        index = next((idx for idx, item in enumerate(normalized_assignments) if isinstance(item, dict) and item.get("id") == current_ref), None)
+        if index is None:
+            break
+        store = normalized_assignments[index]
+        if store.get("op") not in {"storele", "storebe"}:
+            break
+        args = list(store.get("args", []) or [])
+        if len(args) < 3:
+            break
+        stored_value = _call_return_store_byte_value(args[2], assignments=by_id, function=function) if isinstance(args[2], dict) else None
+        if stored_value is None or stored_value < 0 or stored_value > 0xFF or (stored_value & 0xFF) not in expected_bytes:
+            if normalized_indexes:
+                break
+            return function, {"applied": False, "reason": "final store chain does not start with call return-address bytes"}
+        normalized_store = dict(store)
+        args[2] = {"op": "const", "value": "0x00", "width": 8}
+        normalized_store["args"] = args
+        normalized_assignments[index] = normalized_store
+        normalized_indexes.append(index)
+        normalized_values.append(normalize_hex(stored_value & 0xFF, width=2))
+        previous = args[0]
+        current_ref = previous.get("ref") if isinstance(previous, dict) else None
+    if not normalized_indexes:
+        return function, {"applied": False, "reason": "no call return-address byte stores found"}
+    normalized = dict(function)
+    normalized["assignments"] = normalized_assignments
+    return normalized, {
+        "applied": True,
+        "reason": "normalized layout-dependent far-call return address byte stores",
+        "stored_bytes": normalized_values,
+        "fallthrough": normalize_hex(fallthrough),
+        "return_ip": None if call_return_ip is None else normalize_hex(call_return_ip & 0xFFFF, width=4),
+        "store_count": len(normalized_indexes),
+    }
+
+
+def _call_return_ip_from_instruction(function: dict[str, Any]) -> int | None:
+    instructions = _ssa_instructions(function)
+    if not instructions:
+        return None
+    instruction = instructions[-1]
+    address = instruction.get("address") if isinstance(instruction.get("address"), dict) else {}
+    ip = _optional_int(address.get("ip"))
+    size = _optional_int(instruction.get("size"))
+    if ip is None or size is None:
+        return None
+    return (ip + size) & 0xFFFF
+
+
+def _call_return_store_byte_value(
+    term: dict[str, Any],
+    *,
+    assignments: dict[str, dict[str, Any]],
+    function: dict[str, Any],
+) -> int | None:
+    instructions = _ssa_instructions(function)
+    last_instruction = instructions[-1] if instructions else {}
+    last_address = last_instruction.get("address") if isinstance(last_instruction.get("address"), dict) else {}
+    ip_value = _optional_int(last_address.get("ip"))
+    entry = function.get("entry") if isinstance(function.get("entry"), dict) else {}
+    cs_value = _optional_int(entry.get("cs"))
+    constants = {"ip": ip_value, "cs": cs_value}
+    return _eval_call_return_term(term, assignments=assignments, input_constants=constants)
+
+
+def _eval_call_return_term(
+    term: dict[str, Any] | None,
+    *,
+    assignments: dict[str, dict[str, Any]],
+    input_constants: dict[str, int | None],
+) -> int | None:
+    if not isinstance(term, dict):
+        return None
+    width = max(1, _term_width(term))
+    mask = _mask(width)
+    if "ref" in term:
+        return _eval_call_return_term(assignments.get(str(term.get("ref"))), assignments=assignments, input_constants=input_constants)
+    op = str(term.get("op") or "")
+    if op == "const":
+        value = _optional_int(term.get("value"))
+        return None if value is None else value & mask
+    if op == "input":
+        value = input_constants.get(str(term.get("name") or "").lower())
+        return None if value is None else value & mask
+    args = [arg for arg in term.get("args", []) or [] if isinstance(arg, dict)]
+    values = [_eval_call_return_term(arg, assignments=assignments, input_constants=input_constants) for arg in args]
+    if any(value is None for value in values):
+        return None
+    concrete = [int(value) for value in values if value is not None]
+    if op in {"trunc", "zext"} and len(concrete) == 1:
+        return concrete[0] & mask
+    if op == "lshr" and len(concrete) == 2:
+        return (concrete[0] >> concrete[1]) & mask
+    if op == "add" and len(concrete) == 2:
+        return (concrete[0] + concrete[1]) & mask
+    if op == "sub" and len(concrete) == 2:
+        return (concrete[0] - concrete[1]) & mask
+    if op == "or" and len(concrete) == 2:
+        return (concrete[0] | concrete[1]) & mask
+    if op == "and" and len(concrete) == 2:
+        return (concrete[0] & concrete[1]) & mask
+    return None
 
 
 def _call_fallthrough_linear(function: dict[str, Any]) -> int | None:
@@ -2852,6 +5740,107 @@ def _term_const_int(term: dict[str, Any] | None) -> int | None:
     if not isinstance(term, dict) or term.get("op") != "const":
         return None
     return _optional_int(term.get("value"))
+
+
+def _const_json_term_value(term: dict[str, Any] | None) -> int | None:
+    if not isinstance(term, dict):
+        return None
+    op = str(term.get("op") or "")
+    width = max(1, _term_width(term))
+    mask = _mask(width)
+    if op == "const":
+        value = _optional_int(term.get("value"))
+        return None if value is None else value & mask
+    if op in {"input", "mem_input", "loadle", "loadbe", "storele", "storebe"}:
+        return None
+    args = [arg for arg in term.get("args", []) or [] if isinstance(arg, dict)]
+    values = [_const_json_term_value(arg) for arg in args]
+    if any(value is None for value in values):
+        return None
+    concrete = [int(value) for value in values if value is not None]
+    try:
+        if op == "add" and len(concrete) == 2:
+            return (concrete[0] + concrete[1]) & mask
+        if op == "sub" and len(concrete) == 2:
+            return (concrete[0] - concrete[1]) & mask
+        if op == "mul" and len(concrete) == 2:
+            return (concrete[0] * concrete[1]) & mask
+        if op == "and" and len(concrete) == 2:
+            return (concrete[0] & concrete[1]) & mask
+        if op == "or" and len(concrete) == 2:
+            return (concrete[0] | concrete[1]) & mask
+        if op == "xor" and len(concrete) == 2:
+            return (concrete[0] ^ concrete[1]) & mask
+        if op == "not" and len(concrete) == 1:
+            return (~concrete[0]) & mask
+        if op == "shl" and len(concrete) == 2:
+            return (concrete[0] << concrete[1]) & mask
+        if op == "lshr" and len(concrete) == 2:
+            return (concrete[0] >> concrete[1]) & mask
+        if op == "ashr" and len(concrete) == 2:
+            shift = concrete[1]
+            sign_bit = 1 << (width - 1)
+            signed = concrete[0] - (1 << width) if concrete[0] & sign_bit else concrete[0]
+            return (signed >> shift) & mask
+        if op == "trunc" and len(concrete) == 1:
+            return concrete[0] & mask
+        if op == "zext" and len(concrete) == 1:
+            return concrete[0] & mask
+        if op == "sext" and len(concrete) == 1 and args:
+            from_width = max(1, _term_width(args[0]))
+            from_mask = _mask(from_width)
+            raw = concrete[0] & from_mask
+            sign_bit = 1 << (from_width - 1)
+            signed = raw - (1 << from_width) if raw & sign_bit else raw
+            return signed & mask
+        if op == "concat" and concrete:
+            value = 0
+            for arg, arg_value in zip(args, concrete):
+                arg_width = max(1, _term_width(arg))
+                value = (value << arg_width) | (arg_value & _mask(arg_width))
+            return value & mask
+        if op == "ite" and len(concrete) == 3:
+            return concrete[1] & mask if concrete[0] != 0 else concrete[2] & mask
+        if op in {"eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge"} and len(concrete) == 2:
+            left_width = max(1, _term_width(args[0]))
+            right_width = max(1, _term_width(args[1]))
+            cmp_width = max(left_width, right_width)
+            cmp_mask = _mask(cmp_width)
+            left = concrete[0] & cmp_mask
+            right = concrete[1] & cmp_mask
+            if op == "eq":
+                result = left == right
+            elif op == "ne":
+                result = left != right
+            elif op == "ult":
+                result = left < right
+            elif op == "ule":
+                result = left <= right
+            elif op == "ugt":
+                result = left > right
+            elif op == "uge":
+                result = left >= right
+            else:
+                signed_left = _signed_value(left, cmp_width)
+                signed_right = _signed_value(right, cmp_width)
+                if op == "slt":
+                    result = signed_left < signed_right
+                elif op == "sle":
+                    result = signed_left <= signed_right
+                elif op == "sgt":
+                    result = signed_left > signed_right
+                else:
+                    result = signed_left >= signed_right
+            return 1 if result else 0
+    except (ArithmeticError, ValueError, OverflowError):
+        return None
+    return None
+
+
+def _signed_value(value: int, width: int) -> int:
+    sign_bit = 1 << (width - 1)
+    value &= _mask(width)
+    return value - (1 << width) if value & sign_bit else value
 
 
 def _optional_int(value: Any) -> int | None:
@@ -2882,10 +5871,45 @@ def _z3_inputs(oracle: dict[str, Any], candidate: dict[str, Any], z3: Any) -> di
     return inputs
 
 
-def _z3_term(term: dict[str, Any], *, document: dict[str, Any], inputs: dict[str, tuple[Any, int]], z3: Any) -> Any:
+def _add_z3_input_constraints(solver: Any, inputs: dict[str, tuple[Any, int]], constraints: list[dict[str, Any]], z3: Any) -> None:
+    for item in constraints:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").lower()
+        if name not in inputs:
+            continue
+        value, width = inputs[name]
+        if width <= 0:
+            continue
+        kind = str(item.get("kind") or "unsigned_range").lower()
+        if kind in {"unsigned_range", "range"}:
+            minimum = _optional_int(item.get("min"))
+            maximum = _optional_int(item.get("max"))
+            if minimum is not None:
+                solver.add(z3.UGE(value, z3.BitVecVal(minimum & ((1 << width) - 1), width)))
+            if maximum is not None:
+                solver.add(z3.ULE(value, z3.BitVecVal(maximum & ((1 << width) - 1), width)))
+        elif kind == "eq":
+            expected = _optional_int(item.get("value"))
+            if expected is not None:
+                solver.add(value == z3.BitVecVal(expected & ((1 << width) - 1), width))
+
+
+def _z3_term(
+    term: dict[str, Any],
+    *,
+    document: dict[str, Any],
+    inputs: dict[str, tuple[Any, int]],
+    z3: Any,
+    assignments: dict[str, dict[str, Any]] | None = None,
+    cache: dict[str, Any] | None = None,
+) -> Any:
     if "ref" in term:
-        assignments = {item["id"]: item for item in document.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
-        return _z3_assignment(str(term["ref"]), assignments=assignments, document=document, inputs=inputs, z3=z3, cache={})
+        if assignments is None:
+            assignments = {item["id"]: item for item in document.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
+        if cache is None:
+            cache = {}
+        return _z3_assignment(str(term["ref"]), assignments=assignments, document=document, inputs=inputs, z3=z3, cache=cache)
     op = term.get("op")
     width = int(term.get("width", 16))
     if op == "input":
@@ -2913,7 +5937,17 @@ def _z3_assignment(
     item = assignments[ident]
     op = str(item.get("op"))
     width = int(item.get("width", 16))
-    args = [_z3_term(arg, document={**document, "assignments": list(assignments.values())}, inputs=inputs, z3=z3) for arg in item.get("args", []) or []]
+    args = [
+        _z3_term(
+            arg,
+            document=document,
+            inputs=inputs,
+            z3=z3,
+            assignments=assignments,
+            cache=cache,
+        )
+        for arg in item.get("args", []) or []
+    ]
     result = _z3_apply(op, width, args, z3)
     cache[ident] = result
     return result
@@ -2921,29 +5955,39 @@ def _z3_assignment(
 
 def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
     if op == "add":
-        return _resize_z3(args[0] + args[1], args[0].size(), width, signed=False, z3=z3)
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
+        return _resize_z3(left + right, op_width, width, signed=False, z3=z3)
     if op == "sub":
-        return _resize_z3(args[0] - args[1], args[0].size(), width, signed=False, z3=z3)
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
+        return _resize_z3(left - right, op_width, width, signed=False, z3=z3)
     if op == "mul":
-        return _resize_z3(args[0] * args[1], args[0].size(), width, signed=False, z3=z3)
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
+        return _resize_z3(left * right, op_width, width, signed=False, z3=z3)
     if op == "umull":
         return _resize_z3(args[0], args[0].size(), width, signed=False, z3=z3) * _resize_z3(args[1], args[1].size(), width, signed=False, z3=z3)
     if op == "smull":
         return _resize_z3(args[0], args[0].size(), width, signed=True, z3=z3) * _resize_z3(args[1], args[1].size(), width, signed=True, z3=z3)
     if op == "udiv":
-        return z3.UDiv(args[0], args[1])
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
+        return _resize_z3(z3.UDiv(left, right), op_width, width, signed=False, z3=z3)
     if op == "sdiv":
-        return args[0] / args[1]
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=True, z3=z3)
+        return _resize_z3(left / right, op_width, width, signed=True, z3=z3)
     if op == "urem":
-        return z3.URem(args[0], args[1])
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
+        return _resize_z3(z3.URem(left, right), op_width, width, signed=False, z3=z3)
     if op == "srem":
-        return z3.SRem(args[0], args[1])
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=True, z3=z3)
+        return _resize_z3(z3.SRem(left, right), op_width, width, signed=True, z3=z3)
     if op == "and":
-        return args[0] & args[1]
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
+        return _resize_z3(left & right, op_width, width, signed=False, z3=z3)
     if op == "or":
-        return args[0] | args[1]
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
+        return _resize_z3(left | right, op_width, width, signed=False, z3=z3)
     if op == "xor":
-        return args[0] ^ args[1]
+        left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
+        return _resize_z3(left ^ right, op_width, width, signed=False, z3=z3)
     if op == "not":
         return ~args[0]
     if op == "concat":
@@ -2955,25 +5999,35 @@ def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
     if op == "ashr":
         return args[0] >> _resize_z3(args[1], args[1].size(), args[0].size(), signed=False, z3=z3)
     if op == "eq":
-        return z3.If(args[0] == args[1], z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        return z3.If(left == right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "ne":
-        return z3.If(args[0] != args[1], z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        return z3.If(left != right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "ult":
-        return z3.If(z3.ULT(args[0], args[1]), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        return z3.If(z3.ULT(left, right), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "ule":
-        return z3.If(z3.ULE(args[0], args[1]), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        return z3.If(z3.ULE(left, right), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "ugt":
-        return z3.If(z3.UGT(args[0], args[1]), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        return z3.If(z3.UGT(left, right), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "uge":
-        return z3.If(z3.UGE(args[0], args[1]), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        return z3.If(z3.UGE(left, right), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "slt":
-        return z3.If(args[0] < args[1], z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3)
+        return z3.If(left < right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "sle":
-        return z3.If(args[0] <= args[1], z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3)
+        return z3.If(left <= right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "sgt":
-        return z3.If(args[0] > args[1], z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3)
+        return z3.If(left > right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "sge":
-        return z3.If(args[0] >= args[1], z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
+        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3)
+        return z3.If(left >= right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "zext":
         return _resize_z3(args[0], args[0].size(), width, signed=False, z3=z3)
     if op == "sext":
@@ -2991,6 +6045,15 @@ def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
     if op == "storebe":
         return _z3_store(args[0], args[1], args[2], little_endian=False, z3=z3)
     raise DosUnitError(f"unsupported SSA op: {op}")
+
+
+def _align_z3_pair(left: Any, right: Any, width: int, *, signed: bool, z3: Any) -> tuple[Any, Any, int]:
+    target_width = max(1, int(width), int(left.size()), int(right.size()))
+    return (
+        _resize_z3(left, left.size(), target_width, signed=signed, z3=z3),
+        _resize_z3(right, right.size(), target_width, signed=signed, z3=z3),
+        target_width,
+    )
 
 
 def _z3_load(memory: Any, address: Any, *, width: int, little_endian: bool, z3: Any) -> Any:
@@ -3360,6 +6423,7 @@ def _instruction_text_from_record(record: dict[str, Any], *, function_base: int)
     linear = parse_int(record.get("linear", 0), field="instruction.linear")
     mnemonic = str(record.get("mnemonic", "")).lower()
     op_str = str(record.get("op_str", "")).lower()
+    display_op_str = _display_op_str(mnemonic, op_str, linear=linear, function_base=function_base)
     return {
         "address": {
             "ip": normalize_hex((linear - function_base) & 0xFFFF, width=4),
@@ -3368,7 +6432,7 @@ def _instruction_text_from_record(record: dict[str, Any], *, function_base: int)
         "size": parse_int(record.get("size", 0), field="instruction.size"),
         "mnemonic": mnemonic,
         "op_str": op_str,
-        "disassembly": mnemonic if not op_str else f"{mnemonic} {op_str}",
+        "disassembly": mnemonic if not display_op_str else f"{mnemonic} {display_op_str}",
         "bytes": str(record.get("bytes", "")),
     }
 
@@ -3376,6 +6440,7 @@ def _instruction_text_from_record(record: dict[str, Any], *, function_base: int)
 def _instruction_text(insn: Any, *, function_base: int) -> dict[str, Any]:
     mnemonic = str(insn.mnemonic).lower()
     op_str = str(insn.op_str).lower()
+    display_op_str = _display_op_str(mnemonic, op_str, linear=int(insn.address), function_base=function_base)
     return {
         "address": {
             "ip": normalize_hex((int(insn.address) - function_base) & 0xFFFF, width=4),
@@ -3384,30 +6449,44 @@ def _instruction_text(insn: Any, *, function_base: int) -> dict[str, Any]:
         "size": int(insn.size),
         "mnemonic": mnemonic,
         "op_str": op_str,
-        "disassembly": mnemonic if not op_str else f"{mnemonic} {op_str}",
+        "disassembly": mnemonic if not display_op_str else f"{mnemonic} {display_op_str}",
     }
 
 
 def _transfer_info(irsb: Any, instructions: list[dict[str, Any]]) -> dict[str, Any] | None:
     jumpkind = str(getattr(irsb, "jumpkind", ""))
-    if jumpkind != "Ijk_Call":
-        return None
-    info: dict[str, Any] = {"kind": "direct_call", "jumpkind": jumpkind}
-    target = _const_expr_value(getattr(irsb, "next", None))
-    if target is None:
-        target = _direct_call_target_from_instructions({"instructions": instructions})
-    if target is not None:
-        info["target"] = {
-            "raw": normalize_hex(target),
-            "low16": normalize_hex(target & 0xFFFF, width=4),
-        }
-    fallthrough = _call_fallthrough_linear_from_instructions(instructions)
-    if fallthrough is not None:
-        info["fallthrough"] = {
-            "linear": normalize_hex(fallthrough),
-            "low16": normalize_hex(fallthrough & 0xFFFF, width=4),
-        }
-    return info
+    if jumpkind == "Ijk_Call":
+        info: dict[str, Any] = {"kind": "direct_call", "jumpkind": jumpkind}
+        target = _const_expr_value(getattr(irsb, "next", None))
+        if target is None:
+            target = _direct_call_target_from_instructions({"instructions": instructions})
+        if target is not None:
+            info["target"] = {
+                "raw": normalize_hex(target),
+                "low16": normalize_hex(target & 0xFFFF, width=4),
+            }
+        fallthrough = _call_fallthrough_linear_from_instructions(instructions)
+        if fallthrough is not None:
+            info["fallthrough"] = {
+                "linear": normalize_hex(fallthrough),
+                "low16": normalize_hex(fallthrough & 0xFFFF, width=4),
+            }
+        return info
+    if jumpkind == "Ijk_Boring":
+        successors = _ssa_block_successors(irsb, instructions)
+        if successors:
+            return {
+                "kind": "direct_successors",
+                "jumpkind": jumpkind,
+                "successors": [
+                    {
+                        "linear": normalize_hex(successor),
+                        "low16": normalize_hex(successor & 0xFFFF, width=4),
+                    }
+                    for successor in successors
+                ],
+            }
+    return None
 
 
 def _transfer_info_from_instructions(source: dict[str, Any]) -> dict[str, Any] | None:
@@ -3444,14 +6523,55 @@ def _call_fallthrough_linear_from_instructions(instructions: list[dict[str, Any]
     return linear + size
 
 
-def _ssa_block_successors(irsb: Any, instructions: list[dict[str, Any]]) -> list[int]:
+def _reference_linear_from_instructions(instructions: list[dict[str, Any]]) -> int | None:
+    if not instructions:
+        return None
+    address = instructions[-1].get("address", {}) if isinstance(instructions[-1].get("address"), dict) else {}
+    return _optional_int(address.get("linear"))
+
+
+def _canonical_near_linear_target(target: int, *, reference_linear: int | None) -> int:
+    if target < 0 or target > 0xFFFF or reference_linear is None:
+        return target
+    page = reference_linear & ~0xFFFF
+    candidates = [page + target, page + 0x10000 + target]
+    if page >= 0x10000:
+        candidates.append(page - 0x10000 + target)
+    return min(candidates, key=lambda candidate: (abs(candidate - reference_linear), candidate))
+
+
+def _display_op_str(mnemonic: str, op_str: str, *, linear: int, function_base: int) -> str:
+    if mnemonic not in CONTROL_MNEMONICS or mnemonic in {"call", "lcall", "int"}:
+        return op_str
+    target = _direct_control_target_from_operand(op_str)
+    if target is None:
+        return op_str
+    target_linear = _canonical_near_linear_target(target, reference_linear=linear)
+    target_ip = (target_linear - function_base) & 0xFFFF
+    linear_text = normalize_hex(target_linear)
+    ip_text = normalize_hex(target_ip, width=4)
+    return ip_text if linear_text == ip_text else f"{ip_text} ({linear_text})"
+
+
+def _ssa_block_successors(
+    irsb: Any,
+    instructions: list[dict[str, Any]],
+    *,
+    follow_call_fallthrough: bool = False,
+) -> list[int]:
     jumpkind = str(getattr(irsb, "jumpkind", ""))
-    if jumpkind == "Ijk_Call" or jumpkind.startswith("Ijk_Ret") or jumpkind.startswith("Ijk_Sig"):
+    if jumpkind == "Ijk_Call":
+        if not follow_call_fallthrough:
+            return []
+        fallthrough = _call_fallthrough_linear_from_instructions(instructions)
+        return [] if fallthrough is None else [fallthrough]
+    if jumpkind.startswith("Ijk_Ret") or jumpkind.startswith("Ijk_Sig"):
         return []
     if jumpkind != "Ijk_Boring":
         return []
     if not _last_instruction_is_control(instructions):
         return []
+    reference_linear = _reference_linear_from_instructions(instructions)
     successors: list[int] = []
     successors.extend(_direct_instruction_successors(instructions))
     for statement in getattr(irsb, "statements", []) or []:
@@ -3459,10 +6579,10 @@ def _ssa_block_successors(irsb: Any, instructions: list[dict[str, Any]]) -> list
             continue
         target = _const_expr_value(getattr(statement, "dst", None))
         if target is not None:
-            successors.append(target)
+            successors.append(_canonical_near_linear_target(target, reference_linear=reference_linear))
     next_target = _const_expr_value(getattr(irsb, "next", None))
     if next_target is not None:
-        successors.append(next_target)
+        successors.append(_canonical_near_linear_target(next_target, reference_linear=reference_linear))
     return _unique_ints(successors)
 
 
@@ -3491,6 +6611,8 @@ def _direct_instruction_successors(instructions: list[dict[str, Any]]) -> list[i
     linear = _optional_int(address.get("linear"))
     size = _optional_int(instruction.get("size"))
     target = _direct_control_target_from_instruction(instruction)
+    if target is not None:
+        target = _canonical_near_linear_target(target, reference_linear=linear)
     if mnemonic in {"jmp", "ljmp"}:
         return [] if target is None else [target]
     if mnemonic in CONDITIONAL_JUMP_MNEMONICS:
@@ -3505,15 +6627,38 @@ def _direct_instruction_successors(instructions: list[dict[str, Any]]) -> list[i
 
 def _direct_control_target_from_instruction(instruction: dict[str, Any]) -> int | None:
     operand = str(instruction.get("op_str") or _operand_from_disassembly(instruction)).strip().lower()
-    if not operand or any(token in operand for token in ("[", "]", ",", ":")):
+    return _direct_control_target_from_operand(operand)
+
+
+def _direct_control_target_from_operand(operand: str) -> int | None:
+    if not operand or any(token in operand for token in ("[", "]")):
         return None
-    if operand.startswith("short "):
-        operand = operand[6:].strip()
-    if operand.startswith("near "):
-        operand = operand[5:].strip()
-    if operand.startswith("far "):
-        operand = operand[4:].strip()
-    return _optional_int(operand)
+    normalized = operand.strip().lower()
+    if normalized.startswith("short "):
+        normalized = normalized[6:].strip()
+    if normalized.startswith("near "):
+        normalized = normalized[5:].strip()
+    if normalized.startswith("far "):
+        normalized = normalized[4:].strip()
+    if not normalized:
+        return None
+    if ":" in normalized:
+        parts = [part.strip() for part in normalized.split(":", 1)]
+        if len(parts) != 2:
+            return None
+        target = _optional_int(parts[1]) if _optional_int(parts[1]) is not None else _optional_int(parts[0])
+        if target is not None:
+            return target & 0xFFFF
+        return None
+    if "," in normalized:
+        parts = [part.strip() for part in normalized.split(",", 1)]
+        if len(parts) != 2:
+            return None
+        target = _optional_int(parts[1]) if _optional_int(parts[1]) is not None else _optional_int(parts[0])
+        if target is not None:
+            return target & 0xFFFF
+        return None
+    return _optional_int(normalized)
 
 
 def _machine_code_bytes(instructions: list[dict[str, Any]]) -> bytes | None:

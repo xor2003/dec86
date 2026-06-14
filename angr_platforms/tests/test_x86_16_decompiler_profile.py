@@ -489,6 +489,39 @@ def test_materialize_missing_register_local_declarations_recovers_unified_locals
     assert len(codegen.cfunc.unified_local_vars[register]) == 1
 
 
+def test_materialize_missing_register_local_declarations_keeps_distinct_register_names():
+    raw_ax = SimRegisterVariable(0, 2, name="ax", region=0x1000)
+    temp_ax = SimRegisterVariable(0, 2, name="v19", region=0x1000)
+
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.cstyle_null_cmp = False
+            self.project = SimpleNamespace(arch=Arch86_16())
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    cnode_codegen = _FakeCodegen()
+    raw_cvar = structured_c.CVariable(raw_ax, variable_type=SimTypeShort(False), codegen=cnode_codegen)
+    temp_cvar = structured_c.CVariable(temp_ax, variable_type=SimTypeShort(False), codegen=cnode_codegen)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            arg_list=(),
+            statements=structured_c.CStatements([raw_cvar], codegen=cnode_codegen),
+            unified_local_vars={temp_ax: {(temp_cvar, SimTypeShort(False))}},
+            variables_in_use={temp_ax: temp_cvar},
+        )
+    )
+
+    changed = _decompile._materialize_missing_register_local_declarations(codegen)
+
+    assert changed is True
+    assert raw_cvar.unified_variable is temp_ax
+    assert temp_ax in codegen.cfunc.unified_local_vars
+
+
 def test_dedupe_codegen_variable_names_prefers_meaningful_name_and_uniquifies():
     stack_a = SimStackVariable(4, 2, base="bp", name="count", region=0x1000)
     stack_b = SimStackVariable(6, 2, base="bp", name="count", region=0x1000)

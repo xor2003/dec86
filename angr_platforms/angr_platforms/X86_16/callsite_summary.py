@@ -887,6 +887,9 @@ def _return_register_push_source_from_context_8616(function, insns: tuple, idx: 
         insn = insns[call_idx]
         if _mnemonic(insn).startswith("call"):
             break
+        if _transparent_return_arg_carrier_insn_8616(insn):
+            call_idx -= 1
+            continue
         if not _mnemonic(insn).startswith("push"):
             return None
         operands = _instruction_operands(insn)
@@ -927,6 +930,16 @@ def _return_register_push_source_from_context_8616(function, insns: tuple, idx: 
     if {"ax", "dx"} <= observed_regs and pushed_reg in observed_regs:
         return (CallsitePushSourceKind8616.RETURN_REGISTER.value, callsite_addr, pushed_reg)
     return None
+
+
+def _transparent_return_arg_carrier_insn_8616(insn) -> bool:
+    mnemonic = _mnemonic(insn)
+    operands = _instruction_operands(insn)
+    if mnemonic == "nop":
+        return True
+    if mnemonic == "add" and len(operands) == 2 and _operand_is_reg(insn, operands[0], {"sp", "esp"}):
+        return _operand_imm_value(operands[1]) is not None
+    return False
 
 
 def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | None:
