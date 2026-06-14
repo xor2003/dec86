@@ -22,6 +22,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.decompiler_postprocess_stage import _is_direct_stack_update_materialization_delta_8616
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackMoveExpressionOp8616,
@@ -39,7 +40,6 @@ from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
     lower_runtime_segment_address_8616,
 )
 from angr_platforms.X86_16.pipeline.architecture_guard import assert_final_c_quality_8616
-from angr_platforms.X86_16.decompiler_postprocess_stage import _is_direct_stack_update_materialization_delta_8616
 from capstone.x86_const import (
     X86_INS_ADC,
     X86_INS_ADD,

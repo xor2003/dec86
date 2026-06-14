@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import angr_platforms.X86_16.decompiler_postprocess_stage as post_stage
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
@@ -15,24 +16,23 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-import angr_platforms.X86_16.decompiler_postprocess_stage as post_stage
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _classify_postprocess_validation_delta_8616,
     _direct_stack_move_validation_delta_kind_8616,
     _is_callsite_stack_argument_materialization_delta_8616,
     _is_direct_global_update_materialization_delta_8616,
-    _is_direct_stack_move_materialization_delta_8616,
     _is_direct_stack_move_idiv_remainder_materialization_delta_8616,
+    _is_direct_stack_move_materialization_delta_8616,
     _is_direct_stack_update_materialization_delta_8616,
     _is_jcc_call_return_condition_rebinding_delta_8616,
     _is_jcc_condition_materialization_validation_delta_8616,
     _postprocess_run_bootstrap_steps_8616,
-    _try_accept_failed_postprocess_validation_8616,
     _PostprocessValidationDeltaKind8616,
     _repair_missing_cnode_codegen_metadata_8616,
     _restore_codegen_inertia_metadata_8616,
     _snapshot_codegen_cfunc,
     _snapshot_codegen_inertia_metadata_8616,
+    _try_accept_failed_postprocess_validation_8616,
 )
 from angr_platforms.X86_16.lowering.real_mode_linear import DirectStackMoveSourceKind8616
 

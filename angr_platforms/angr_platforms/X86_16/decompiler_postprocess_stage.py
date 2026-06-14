@@ -20,8 +20,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBreak,
     CConstant,
     CContinue,
-    CDoWhileLoop,
     CDirtyExpression,
+    CDoWhileLoop,
     CForLoop,
     CFunctionCall,
     CGoto,
@@ -66,6 +66,7 @@ from .ir.condition_ir import (
 )
 from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+from .lowering.global_declarations import ctype_for_global_width_8616, record_global_declaration_spec_8616
 from .lowering.real_mode_linear import (
     DirectStackMoveSourceKind8616,
     _direct_global_update_name_8616,
@@ -74,7 +75,6 @@ from .lowering.real_mode_linear import (
     materialize_direct_stack_incdec_instructions_8616,
     materialize_direct_stack_mov_instructions_8616,
 )
-from .lowering.global_declarations import ctype_for_global_width_8616, record_global_declaration_spec_8616
 from .lowering.segmented_memory_lowering import lower_runtime_ss_segment_helpers_to_stack_8616
 from .lowering.ss_bp_substitution import (
     apply_stack_variable_bindings_to_c_text,
@@ -2024,7 +2024,6 @@ def _ordered_conditional_return_values_8616(project, codegen) -> list[int]:
 
 def _decoded_cmp_condition_expr_8616(project, codegen, decoded):
     """Build a decoded JCC condition only when its operand types are usable."""
-
     expr = getattr(decoded, "expr", None)
     if expr is not None:
         return expr
@@ -6837,7 +6836,6 @@ def _materialize_direct_stack_mov_instructions_postprocess_8616(project, codegen
 
 def _current_postprocess_function_for_codegen_8616(project, codegen):
     """Return the active function object carrying exact-region instruction evidence."""
-
     for candidate in (
         getattr(codegen, "_inertia_current_function_8616", None),
         getattr(codegen, "_func", None),

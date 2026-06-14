@@ -5,10 +5,10 @@ import logging
 import os
 import re
 import sys
-from pathlib import Path
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (

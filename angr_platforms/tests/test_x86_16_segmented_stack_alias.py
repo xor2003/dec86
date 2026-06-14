@@ -11,9 +11,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFakeVariable,
     CForLoop,
     CFunctionCall,
-    CReturn,
     CIfElse,
     CIndexedVariable,
+    CReturn,
     CStatements,
     CTypeCast,
     CUnaryOp,
@@ -21,8 +21,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
-from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
 from angr_platforms.X86_16 import decompiler_postprocess_stage as _postprocess_stage
+from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -31,14 +31,14 @@ from angr_platforms.X86_16.decompiler_postprocess_utils import (
     _stack_bp_displacement_8616,
 )
 from angr_platforms.X86_16.lowering.real_mode_linear import (
+    DirectStackMoveFallbackDecision8616,
     _build_assignment_maps_8616,
-    _direct_stack_move_materialized_ins_addrs_8616,
     _direct_stack_move_fallback_decision_8616,
+    _direct_stack_move_materialized_ins_addrs_8616,
     _dirty_reg_offset_8616,
     _replace_precontrol_stack_assignment_8616,
     _replace_tagged_assignment_8616,
     _resolve_direct_stack_update_cvar_8616,
-    DirectStackMoveFallbackDecision8616,
     lower_stable_ds_es_linear_global_addresses_8616,
     lower_stable_ds_es_linear_global_dereferences_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
