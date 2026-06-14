@@ -70,7 +70,19 @@ def _prune_dead_local_assignments(
                             keys.add(("dirty_name", name))
                 return
 
-            for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "else_node", "retval"):
+            for attr in (
+                "lhs",
+                "rhs",
+                "expr",
+                "operand",
+                "condition",
+                "cond",
+                "body",
+                "iffalse",
+                "iftrue",
+                "else_node",
+                "retval",
+            ):
                 if not hasattr(node, attr):
                     continue
                 try:
@@ -150,7 +162,12 @@ def _prune_dead_local_assignments(
             if isinstance(variable, SimRegisterVariable):
                 return ("reg", getattr(variable, "reg", None), getattr(variable, "size", None))
             if isinstance(variable, SimStackVariable):
-                return ("stack", getattr(variable, "base", None), getattr(variable, "offset", None), getattr(variable, "size", None))
+                return (
+                    "stack",
+                    getattr(variable, "base", None),
+                    getattr(variable, "offset", None),
+                    getattr(variable, "size", None),
+                )
             if isinstance(variable, SimMemoryVariable):
                 return ("mem", getattr(variable, "addr", None), getattr(variable, "size", None))
             return ("var", id(variable))
@@ -159,7 +176,11 @@ def _prune_dead_local_assignments(
         if isinstance(expr, structured_c.CBinaryOp):
             return ("binary", expr.op, normalized_call_arg_key(expr.lhs), normalized_call_arg_key(expr.rhs))
         if isinstance(expr, structured_c.CFunctionCall):
-            return ("call", call_callee_key(expr), tuple(normalized_call_arg_key(arg) for arg in getattr(expr, "args", ()) or ()))
+            return (
+                "call",
+                call_callee_key(expr),
+                tuple(normalized_call_arg_key(arg) for arg in getattr(expr, "args", ()) or ()),
+            )
         return ("expr", type(expr).__name__)
 
     def same_call_signature(lhs, rhs) -> bool:
@@ -252,7 +273,9 @@ def _prune_dead_local_assignments(
                     storage_key = describe_alias_storage(stmt.lhs).identity
                     if storage_key is not None:
                         lhs_keys.add(("storage", storage_key))
-                    unread_register_local = isinstance(lhs_variable, SimRegisterVariable) and lhs_exact_keys.isdisjoint(reads)
+                    unread_register_local = isinstance(lhs_variable, SimRegisterVariable) and lhs_exact_keys.isdisjoint(
+                        reads
+                    )
                     self_referential_rhs = bool(lhs_keys) and not lhs_keys.isdisjoint(rhs_reads)
                     if unread_register_local or (lhs_keys.isdisjoint(reads) and not self_referential_rhs):
                         dropped_unread_only = True
@@ -291,7 +314,19 @@ def _prune_dead_local_assignments(
                     changed = True
             return
 
-        for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "else_node", "retval"):
+        for attr in (
+            "lhs",
+            "rhs",
+            "expr",
+            "operand",
+            "condition",
+            "cond",
+            "body",
+            "iffalse",
+            "iftrue",
+            "else_node",
+            "retval",
+        ):
             if not hasattr(node, attr):
                 continue
             try:

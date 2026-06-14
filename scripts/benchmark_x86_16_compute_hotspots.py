@@ -13,7 +13,7 @@ import time
 from angr_platforms.X86_16.instr16 import Instr16
 from angr_platforms.X86_16.instr32 import Instr32
 from angr_platforms.X86_16.instr_base import InstrBase
-from angr_platforms.X86_16.instruction import CHK_MODRM, InstrData, MAX_OPCODE, ModRM, SIB
+from angr_platforms.X86_16.instruction import CHK_MODRM, MAX_OPCODE, SIB, InstrData, ModRM
 
 
 class _DummyEmu:

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
-import re
-
 
 _COMMENT_PREFIXES = ("/*", "*", "*/", "//")
 
@@ -51,9 +50,7 @@ def _looks_like_function_header(line: str, function_name: str) -> bool:
         return False
     if not re.search(rf"\b{re.escape(function_name)}\s*\(", stripped):
         return False
-    return bool(
-        re.match(rf"^\s*(?:[A-Za-z_][\w\s\*\[\]]+\s+)?{re.escape(function_name)}\s*\(", stripped)
-    )
+    return bool(re.match(rf"^\s*(?:[A-Za-z_][\w\s\*\[\]]+\s+)?{re.escape(function_name)}\s*\(", stripped))
 
 
 def _extract_function_from_lines(lines: tuple[str, ...], function_name: str) -> str | None:

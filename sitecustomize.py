@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import types
 import sys
+import types
 
 try:
     import resource

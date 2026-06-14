@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
+
 from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
 from omf_pat import parse_pat_file
 from signature_catalog import match_signature_catalog

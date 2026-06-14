@@ -185,7 +185,9 @@ def normalize_vector(vector: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def compare_observations(expected: dict[str, Any], candidate: dict[str, Any], *, ignore_fields: set[str] | None = None) -> tuple[bool, list[str]]:
+def compare_observations(
+    expected: dict[str, Any], candidate: dict[str, Any], *, ignore_fields: set[str] | None = None
+) -> tuple[bool, list[str]]:
     changed: list[str] = []
     ignored = ignore_fields or set()
     for field in ("status", "regs", "sregs", "flags", "memory", "return", "calls"):

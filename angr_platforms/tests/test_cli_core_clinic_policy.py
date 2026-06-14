@@ -7,8 +7,8 @@ from inertia_decompiler.cli_core import (
     DirectClinicPolicy8616,
     _call_order_gate_violations_8616,
     _clinic_policy_needs_callsite_count_8616,
-    _direct_clinic_policy_8616,
     _direct_addr_wall_clock_budget,
+    _direct_clinic_policy_8616,
     _enforce_function_timeout_cap,
     _missing_expected_return_values_from_embedded_evidence_8616,
     _safe_function_callsite_count_8616,
@@ -339,7 +339,8 @@ void menu(int key)
     }
 }
 """
-    source_evidence_payload = """
+    source_evidence_payload = (
+        """
 /// void menu(int key)
 /// {
 ///     switch (key) {
@@ -355,7 +356,9 @@ void menu(int key)
 ///         break;
 ///     }
 /// }
-""" + payload
+"""
+        + payload
+    )
     snapshot = {
         "structuring": {"status": "stable", "changed": False, "mode": "live_out"},
         "postprocess": {"status": "stable", "changed": False, "mode": "live_out"},

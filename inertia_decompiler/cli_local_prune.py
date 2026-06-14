@@ -5,7 +5,6 @@ import re
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
-
 _LINEAR_TEMP_NAME_RE = re.compile(r"(?:v\d+|vvar_\d+)")
 
 
@@ -104,7 +103,10 @@ def _prune_unused_local_declarations(codegen, *, iter_c_nodes_deep, describe_ali
                 if id(variable) in used_variables:
                     continue
                 entries = unified_locals[variable]
-                if any(describe_alias_storage(cvariable).identity in used_storage_identities for cvariable, _vartype in entries):
+                if any(
+                    describe_alias_storage(cvariable).identity in used_storage_identities
+                    for cvariable, _vartype in entries
+                ):
                     continue
                 del unified_locals[variable]
                 changed = True

@@ -1,43 +1,25 @@
-from __future__ import annotations
-
 # AUTO-GENERATED split from cli_runtime_shared.py
-
 from __future__ import annotations
-
-import argparse
-
-import atexit
 
 import contextlib
-
 import copy
-
 import logging
-
-import os
-
 import re
-
-import sys
-
-import threading
-
-import time
-
-from collections.abc import Mapping, Sequence
-
-from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
-
-from dataclasses import dataclass, replace
-
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-
-from types import SimpleNamespace
 
 import angr
 from angr.analyses.decompiler import structured_codegen
-from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from angr_platforms.X86_16.alias.alias_model_impl import (
+    _CopyAliasState,
+    _stack_slot_identity_for_variable,
+    _StackPointerAliasState,
+)
+from angr_platforms.X86_16.alias.state import AliasState
+from angr_platforms.X86_16.alias_domains import DomainKey, register_pair_name
 from angr_platforms.X86_16.analysis_helpers import (
     collect_dos_int21_calls,
     collect_interrupt_service_calls,
@@ -49,234 +31,204 @@ from angr_platforms.X86_16.analysis_helpers import (
     render_interrupt_call,
 )
 from angr_platforms.X86_16.annotations import _normalize_bp_disp, annotate_function
-from angr_platforms.X86_16.alias.alias_model_impl import (
-    _CopyAliasState,
-    _StackPointerAliasState,
-    _stack_slot_identity_for_variable,
-)
-from angr_platforms.X86_16.alias.state import AliasState
-from angr_platforms.X86_16.alias_domains import DomainKey, register_pair_name
 from angr_platforms.X86_16.cod_extract import CODProcMetadata
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
 from angr_platforms.X86_16.cod_source_rewrites import rewrite_cod_proc_from_source as _rewrite_cod_proc_from_source
 from angr_platforms.X86_16.lowering.segmented_lowering import _SegmentedAccess
 from angr_platforms.X86_16.lst_extract import LSTMetadata
+from angr_platforms.X86_16.semantics.alias_query import (
+    _storage_domain_for_expr,
+    describe_alias_storage,
+)
 from angr_platforms.X86_16.widening.register_widening import (
     can_join_adjacent_register_slices,
     join_adjacent_register_slices,
 )
 from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
-from angr_platforms.X86_16.semantics.alias_query import _storage_domain_for_expr, _storage_domain_for_variable, describe_alias_storage
 
 structured_c = structured_codegen.c
 
-from inertia_decompiler.cache import (
-    _function_decompilation_cache_key,
-    _load_cache_json,
-    _recovery_cache_key,
-    _store_cache_json,
-)
 
-from inertia_decompiler.project_loading import (
-    _build_project,
-    _build_project_cached,
-    _build_project_from_bytes,
-    _describe_exception,
-    _is_blob_only_input,
-)
-
-from inertia_decompiler.sidecar_metadata import (
-    _load_lst_metadata,
-    _lst_code_label,
-    _lst_code_region,
-    _lst_data_label,
-    _recovery_code_labels,
-    _signature_matched_code_addrs,
-    _visible_code_labels,
-)
-
-from inertia_decompiler.sidecar_parsers import _parse_ida_map_metadata
-
-from inertia_decompiler.disassembly_helpers import (
-    _format_asm_range,
-    _format_first_block_asm,
-    _infer_linear_disassembly_window,
-    _probe_lift_break,
-)
-
-from inertia_decompiler.cli_output import (
-    _RAW_PRINT,
-    _asm_fallback_pattern_note,
-    _emit_exit_marker,
-    _print_asm_fallback_text,
-    _print_diagnostic_text,
-    _timestamp_prefix,
-    _timestamped_print,
-)
-
-from inertia_decompiler.cli_timeout import (
-    _AdaptivePerByteTimeoutModel,
-    _default_recovery_timeout,
-    _stdout_is_interactive,
-)
-
-from inertia_decompiler import cli_access_traits as _cli_access_traits
 
 from inertia_decompiler import cli_access_object_hints as _cli_access_object_hints
-
 from inertia_decompiler import cli_access_profiles as _cli_access_profiles
-
 from inertia_decompiler import cli_access_rewrite_artifact as _cli_access_rewrite_artifact
-
 from inertia_decompiler import cli_access_trait_rewrite as _cli_access_trait_rewrite
-
-from inertia_decompiler import cli_memory_prune as _cli_memory_prune
-
-from inertia_decompiler import cli_dead_local_prune as _cli_dead_local_prune
-
-from inertia_decompiler import cli_local_prune as _cli_local_prune
-
-from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
-
-from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
-
-from inertia_decompiler import cli_cod_globals as _cli_cod_globals
-
+from inertia_decompiler import cli_access_traits as _cli_access_traits
 from inertia_decompiler import cli_cod_global_statements as _cli_cod_global_statements
-
-from inertia_decompiler import cli_helper_modeling as _cli_helper_modeling
-
-from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
-
+from inertia_decompiler import cli_cod_globals as _cli_cod_globals
+from inertia_decompiler import cli_dead_local_prune as _cli_dead_local_prune
 from inertia_decompiler import cli_far_pointer_stack as _cli_far_pointer_stack
-
+from inertia_decompiler import cli_helper_modeling as _cli_helper_modeling
 from inertia_decompiler import cli_linear_aliases as _cli_linear_aliases
-
 from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
-
 from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
-
-from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
-
-from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
-
-from inertia_decompiler import cli_stack_byte_offsets as _cli_stack_byte_offsets
-
-from inertia_decompiler import cli_stack_locals as _cli_stack_locals
-
-from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
-
+from inertia_decompiler import cli_local_prune as _cli_local_prune
+from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
+from inertia_decompiler import cli_memory_prune as _cli_memory_prune
+from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
 from inertia_decompiler import cli_segmented as _cli_segmented
-
-from inertia_decompiler import cli_segmented_elision as _cli_segmented_elision
-
 from inertia_decompiler import cli_segmented_compare as _cli_segmented_compare
-
-from inertia_decompiler import cli_segmented_lowering as _cli_segmented_lowering
-
+from inertia_decompiler import cli_segmented_elision as _cli_segmented_elision
 from inertia_decompiler import cli_segmented_load_coalesce as _cli_segmented_load_coalesce
-
+from inertia_decompiler import cli_segmented_lowering as _cli_segmented_lowering
 from inertia_decompiler import cli_segmented_store_coalesce as _cli_segmented_store_coalesce
-
+from inertia_decompiler import cli_stack_byte_offsets as _cli_stack_byte_offsets
+from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
+from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
+from inertia_decompiler import cli_stack_locals as _cli_stack_locals
+from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
 from inertia_decompiler import cli_word_loads as _cli_word_loads
-from inertia_decompiler.cli_linear_recurrence_state import LinearRecurrenceState as _LinearRecurrenceState
+from inertia_decompiler.cli_output import (
+    _timestamped_print,
+)
+from inertia_decompiler.sidecar_metadata import (
+    _lst_data_label,
+)
 
 _AccessTraitEvidenceProfile = _cli_access_profiles.AccessTraitEvidenceProfile
 _AccessTraitStrideEvidence = _cli_access_profiles.AccessTraitStrideEvidence
 
-from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
 
-from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
 
-from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
 
-from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
 
-from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
 
-from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
 
-from inertia_decompiler.x86_16_exact_slice import (
-    function_original_addr,
-    mark_function_original_addr,
-    non_optimized_slice_codegen_policy,
-    plan_x86_16_exact_slice,
-)
 
-from inertia_decompiler.tail_validation import (
-    TAIL_VALIDATION_ENABLE_ENV as _TAIL_VALIDATION_ENABLE_ENV,
-    emit_tail_validation_console_summary as _emit_tail_validation_console_summary,
-    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
-    parse_env_bool as _parse_env_bool,
-    set_tail_validation_runtime_enabled as _set_tail_validation_runtime_enabled,
-    tail_validation_console_cache_path as _tail_validation_console_cache_path,
-    tail_validation_detail_cache_path as _tail_validation_detail_cache_path,
-    tail_validation_enabled_for_run as _tail_validation_enabled_for_run,
-    tail_validation_fallback_allows_project_snapshot as _tail_validation_fallback_allows_project_snapshot,
-    tail_validation_runtime_enabled as _tail_validation_runtime_enabled,
-    tail_validation_snapshot_for_fallback as _tail_validation_snapshot_for_fallback,
-    tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
-)
 
-from inertia_decompiler.runtime_support import (
-    AnalysisTimeout as _AnalysisTimeout,
-    DaemonThreadPoolExecutor,
-    DECOMPILATION_PREP_LOCK,
-    FORCE_SERIAL_FUNCTION_DECOMP_ENV as _FORCE_SERIAL_FUNCTION_DECOMP_ENV,
-    JumpkindLoggingHandler,
-    apply_memory_limit as _apply_memory_limit,
-    analysis_timeout as _analysis_timeout,
-    capture_thread_output as _capture_thread_output,
-    choose_function_parallelism as _choose_function_parallelism,
-    default_exe_showcase_cap as _default_exe_showcase_cap,
-    emit_timeout_and_exit as _emit_timeout_and_exit,
-    format_address as _format_address,
-    guard_angr_ail_narrowing as _guard_angr_ail_narrowing,
-    guard_angr_clinic_stage_markers as _guard_angr_clinic_stage_markers,
-    guard_angr_peephole_expr_bitwidth_assertion as _guard_angr_peephole_expr_bitwidth_assertion,
-    guard_angr_variable_recovery_binop_sub_size_mismatch as _guard_angr_variable_recovery_binop_sub_size_mismatch,
-    install_angr_peephole_expr_bitwidth_guard as _install_angr_peephole_expr_bitwidth_guard,
-    install_angr_variable_recovery_binop_sub_size_guard as _install_angr_variable_recovery_binop_sub_size_guard,
-    log_step,
-    lower_process_priority as _lower_process_priority,
-    memory_available_mb as _memory_available_mb,
-    PreforkJobPool,
-    prefer_low_memory_path as _prefer_low_memory_path,
-    run_with_timeout_in_fork as _run_with_timeout_in_fork,
-    run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
-    raise_timeout as _raise_timeout,
-    should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
-)
 
-from inertia_decompiler.work_items import (
-    FunctionDecompileResult,
-    FunctionDecompileTask,
-    FunctionWorkItem,
-    FunctionWorkResult,
-    emit_tail_validation_for_function_run_or_uncollected as _emit_tail_validation_for_function_run_or_uncollected,
-    emit_tail_validation_snapshot_or_uncollected as _emit_tail_validation_snapshot_or_uncollected,
-    function_attempt_display_status as _function_attempt_display_status,
-    print_function_attempt_status as _print_function_attempt_status,
-    recovery_evidence_line as _recovery_evidence_line,
-    tail_validation_display_status as _tail_validation_display_status,
-)
 
-from inertia_decompiler.slice_recovery import (
-    BoundedSliceVerdict,
-    SliceRecoveryAttemptOutcome,
-    build_default_slice_recovery_attempts,
-    run_bounded_slice_recovery,
-)
 
-from inertia_decompiler.non_optimized_fallback import (
-    allows_heavy_fallbacks_for_run,
-    bounded_non_optimized_attempt_timeout,
-    describe_non_optimized_unavailable,
-    sidecar_verdict_closes_non_optimized_lane,
-)
 
 print = _timestamped_print
-__all__ = ['_attach_cod_callee_names', '_build_cod_positive_bp_alias_map', '_cod_stack_alias_for_disp', '_attach_cod_variable_names', '_synthetic_global_entry', '_sanitize_cod_identifier', '_get_or_seed_inertia_alias_state', '_make_unique_identifier', '_structured_codegen_node', '_c_constant_value', '_normalize_16bit_signed_offset', '_project_rewrite_cache', '_CODSourceRewriteSpec', '_segment_reg_name', '_classify_segmented_addr_expr', '_classify_segmented_dereference', '_match_real_mode_linear_expr', '_match_segmented_dereference', '_match_segment_register_based_dereference', '_strip_segment_scale_from_addr_expr', '_match_ss_stack_reference', '_flatten_c_add_terms', '_resolve_dirty_virtual_expr_8616', '_match_stack_cvar_and_offset', '_match_ss_local_plus_const', '_replace_c_children', '_iter_c_nodes_deep', '_same_c_expression', '_same_c_storage', '_same_stack_slot_identity', '_stack_slot_identity_can_join', '_is_c_constant_int', '_cite_is_negation', '_invert_comparison_op', '_make_inverted_comparison', '_invert_interval_guard_if_safe', '_extract_same_zero_compare_expr', '_extract_zero_flag_source_expr', '_simplify_zero_flag_comparison', '_match_high_byte_projection_base', '_match_adjacent_register_pair_var_expr', '_match_high_byte_projection_expr', '_match_high_byte_projection_constant', '_simplify_boolean_expr', '_simplify_zero_mul_or_expr', '_simplify_basic_algebraic_identities', '_simplify_structured_c_expressions', '_unwrap_c_casts', '_match_shift_right_8_expr', '_match_duplicate_word_increment_shift_expr', '_match_duplicate_word_base_expr', '_attach_cod_global_names', '_attach_cod_global_declaration_names', '_attach_cod_global_declaration_types', '_access_trait_field_name', '_stack_object_name', '_access_trait_variable_key', '_access_trait_profile_for_key', '_WideningMatch', '_AccessTraitRewriteDecision', '_build_access_trait_evidence_profiles', '_analyze_widening_expr', '_access_trait_member_candidates', '_should_attach_access_trait_names', '_attach_access_trait_field_names', '_attach_pointer_member_names', '_attach_lst_data_names', '_normalize_scalar_byte_register_types', '_attach_segment_register_names', '_attach_register_names', '_elide_redundant_segment_pointer_dereferences', '_collect_access_traits', '_prune_unused_unnamed_memory_declarations', '_prune_unused_linear_register_declarations', '_prune_unused_local_declarations', '_prune_dead_local_assignments', '_materialize_missing_stack_local_declarations', '_dedupe_codegen_variable_names_8616', '_materialize_missing_register_local_declarations', '_prune_void_function_return_values', '_coalesce_far_pointer_stack_expressions', '_simplify_nested_mk_fp_calls', '_attach_ss_stack_variables', '_rewrite_ss_stack_byte_offsets', '_promote_direct_stack_cvariable', '_stack_type_for_size', '_resolve_stack_cvar_at_offset', '_materialize_stack_cvar_at_offset', '_canonicalize_stack_cvar_expr', '_canonicalize_stack_cvars', '_resolve_stack_cvar_from_addr_expr', '_coalesce_direct_ss_local_word_statements', '_seed_adjacent_byte_pair_aliases', '_coalesce_linear_recurrence_statements', '_coalesce_segmented_word_store_statements', '_run_typed_widening_pass', '_global_memory_addr', '_global_load_addr', '_match_scaled_high_byte', '_extract_dereference_addr_expr', '_match_byte_load_addr_expr', '_match_byte_store_addr_expr', '_match_shifted_high_byte_addr_expr', '_match_word_pair_low_addr_expr', '_split_expr_const_offset', '_same_expression_list', '_addr_exprs_are_same', '_addr_exprs_are_byte_pair', '_make_word_dereference_from_addr_expr', '_match_word_dereference_addr_expr', '_match_word_rhs_from_byte_pair', '_high_byte_store_addr', '_synthetic_word_global_variable', '_coalesce_cod_word_global_loads', '_coalesce_segmented_word_load_expressions', '_coalesce_cod_word_global_statements', '_int21_call_replacements', '_interrupt_call_replacement_map', '_dos_helper_declarations', '_interrupt_helper_declarations', '_known_helper_declarations', '_is_staging_local_name', '_clone_structured_c_value', '_prune_tiny_wrapper_staging_locals']
+__all__ = [
+    "_attach_cod_callee_names",
+    "_build_cod_positive_bp_alias_map",
+    "_cod_stack_alias_for_disp",
+    "_attach_cod_variable_names",
+    "_synthetic_global_entry",
+    "_sanitize_cod_identifier",
+    "_get_or_seed_inertia_alias_state",
+    "_make_unique_identifier",
+    "_structured_codegen_node",
+    "_c_constant_value",
+    "_normalize_16bit_signed_offset",
+    "_project_rewrite_cache",
+    "_CODSourceRewriteSpec",
+    "_segment_reg_name",
+    "_classify_segmented_addr_expr",
+    "_classify_segmented_dereference",
+    "_match_real_mode_linear_expr",
+    "_match_segmented_dereference",
+    "_match_segment_register_based_dereference",
+    "_strip_segment_scale_from_addr_expr",
+    "_match_ss_stack_reference",
+    "_flatten_c_add_terms",
+    "_resolve_dirty_virtual_expr_8616",
+    "_match_stack_cvar_and_offset",
+    "_match_ss_local_plus_const",
+    "_replace_c_children",
+    "_iter_c_nodes_deep",
+    "_same_c_expression",
+    "_same_c_storage",
+    "_same_stack_slot_identity",
+    "_stack_slot_identity_can_join",
+    "_is_c_constant_int",
+    "_cite_is_negation",
+    "_invert_comparison_op",
+    "_make_inverted_comparison",
+    "_invert_interval_guard_if_safe",
+    "_extract_same_zero_compare_expr",
+    "_extract_zero_flag_source_expr",
+    "_simplify_zero_flag_comparison",
+    "_match_high_byte_projection_base",
+    "_match_adjacent_register_pair_var_expr",
+    "_match_high_byte_projection_expr",
+    "_match_high_byte_projection_constant",
+    "_simplify_boolean_expr",
+    "_simplify_zero_mul_or_expr",
+    "_simplify_basic_algebraic_identities",
+    "_simplify_structured_c_expressions",
+    "_unwrap_c_casts",
+    "_match_shift_right_8_expr",
+    "_match_duplicate_word_increment_shift_expr",
+    "_match_duplicate_word_base_expr",
+    "_attach_cod_global_names",
+    "_attach_cod_global_declaration_names",
+    "_attach_cod_global_declaration_types",
+    "_access_trait_field_name",
+    "_stack_object_name",
+    "_access_trait_variable_key",
+    "_access_trait_profile_for_key",
+    "_WideningMatch",
+    "_AccessTraitRewriteDecision",
+    "_build_access_trait_evidence_profiles",
+    "_analyze_widening_expr",
+    "_access_trait_member_candidates",
+    "_should_attach_access_trait_names",
+    "_attach_access_trait_field_names",
+    "_attach_pointer_member_names",
+    "_attach_lst_data_names",
+    "_normalize_scalar_byte_register_types",
+    "_attach_segment_register_names",
+    "_attach_register_names",
+    "_elide_redundant_segment_pointer_dereferences",
+    "_collect_access_traits",
+    "_prune_unused_unnamed_memory_declarations",
+    "_prune_unused_linear_register_declarations",
+    "_prune_unused_local_declarations",
+    "_prune_dead_local_assignments",
+    "_materialize_missing_stack_local_declarations",
+    "_dedupe_codegen_variable_names_8616",
+    "_materialize_missing_register_local_declarations",
+    "_prune_void_function_return_values",
+    "_coalesce_far_pointer_stack_expressions",
+    "_simplify_nested_mk_fp_calls",
+    "_attach_ss_stack_variables",
+    "_rewrite_ss_stack_byte_offsets",
+    "_promote_direct_stack_cvariable",
+    "_stack_type_for_size",
+    "_resolve_stack_cvar_at_offset",
+    "_materialize_stack_cvar_at_offset",
+    "_canonicalize_stack_cvar_expr",
+    "_canonicalize_stack_cvars",
+    "_resolve_stack_cvar_from_addr_expr",
+    "_coalesce_direct_ss_local_word_statements",
+    "_seed_adjacent_byte_pair_aliases",
+    "_coalesce_linear_recurrence_statements",
+    "_coalesce_segmented_word_store_statements",
+    "_run_typed_widening_pass",
+    "_global_memory_addr",
+    "_global_load_addr",
+    "_match_scaled_high_byte",
+    "_extract_dereference_addr_expr",
+    "_match_byte_load_addr_expr",
+    "_match_byte_store_addr_expr",
+    "_match_shifted_high_byte_addr_expr",
+    "_match_word_pair_low_addr_expr",
+    "_split_expr_const_offset",
+    "_same_expression_list",
+    "_addr_exprs_are_same",
+    "_addr_exprs_are_byte_pair",
+    "_make_word_dereference_from_addr_expr",
+    "_match_word_dereference_addr_expr",
+    "_match_word_rhs_from_byte_pair",
+    "_high_byte_store_addr",
+    "_synthetic_word_global_variable",
+    "_coalesce_cod_word_global_loads",
+    "_coalesce_segmented_word_load_expressions",
+    "_coalesce_cod_word_global_statements",
+    "_int21_call_replacements",
+    "_interrupt_call_replacement_map",
+    "_dos_helper_declarations",
+    "_interrupt_helper_declarations",
+    "_known_helper_declarations",
+    "_is_staging_local_name",
+    "_clone_structured_c_value",
+    "_prune_tiny_wrapper_staging_locals",
+]
+
 
 def _helper_name(project, addr: int) -> str | None:
     proc = project.hooked_by(addr)
@@ -289,6 +241,7 @@ def _helper_name(project, addr: int) -> str | None:
     if isinstance(name, str) and name:
         return name
     return proc.__class__.__name__
+
 
 def _attach_cod_callee_names(project: angr.Project, codegen, cod_metadata: CODProcMetadata | None) -> bool:
     def _impl():
@@ -333,9 +286,8 @@ def _attach_cod_callee_names(project: angr.Project, codegen, cod_metadata: CODPr
 
     return _impl()
 
-def _build_cod_positive_bp_alias_map(
-    bp_disps: list[int], cod_metadata: CODProcMetadata | None
-) -> dict[int, str]:
+
+def _build_cod_positive_bp_alias_map(bp_disps: list[int], cod_metadata: CODProcMetadata | None) -> dict[int, str]:
     def _impl():
         if cod_metadata is None:
             return {}
@@ -363,6 +315,7 @@ def _build_cod_positive_bp_alias_map(
         return alias_map
 
     return _impl()
+
 
 def _cod_stack_alias_for_disp(
     disp: int,
@@ -457,11 +410,13 @@ def _ordered_stack_identity_nodes(codegen) -> list[tuple[object, object]]:
     for variable, cvar in variables_in_use.items():
         if _stack_slot_identity_for_variable(variable) is None:
             continue
-        nodes[(
-            getattr(variable, "offset", None),
-            getattr(variable, "size", None),
-            getattr(variable, "base", None),
-        )] = (variable, cvar)
+        nodes[
+            (
+                getattr(variable, "offset", None),
+                getattr(variable, "size", None),
+                getattr(variable, "base", None),
+            )
+        ] = (variable, cvar)
 
     root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
     for node in _iter_c_nodes_deep(root):
@@ -542,6 +497,7 @@ def _resolve_alias_collision_name(
     name_owner_offsets[alias] = disp if isinstance(disp, int) else 0
     return alias
 
+
 def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) -> bool:
     def _impl():
         if cod_metadata is None or not cod_metadata.stack_aliases or getattr(codegen, "cfunc", None) is None:
@@ -605,9 +561,8 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
 
     return _impl()
 
-def _synthetic_global_entry(
-    synthetic_globals: dict[int, tuple[str, int]] | None, addr: int
-) -> tuple[str, int] | None:
+
+def _synthetic_global_entry(synthetic_globals: dict[int, tuple[str, int]] | None, addr: int) -> tuple[str, int] | None:
     if not synthetic_globals:
         return None
     entry = synthetic_globals.get(addr)
@@ -616,6 +571,7 @@ def _synthetic_global_entry(
     if isinstance(entry, tuple):
         return entry
     return entry, 1
+
 
 def _sanitize_cod_identifier(name: str) -> str:
     name = name.lstrip("_")
@@ -627,6 +583,7 @@ def _sanitize_cod_identifier(name: str) -> str:
     if name[0].isdigit():
         return f"g_{name}"
     return name
+
 
 def _get_or_seed_inertia_alias_state(codegen):
     def _impl():
@@ -668,6 +625,7 @@ def _get_or_seed_inertia_alias_state(codegen):
 
     return _impl()
 
+
 def _make_unique_identifier(base: str, used: set[str]) -> str:
     candidate = base
     suffix = 2
@@ -676,6 +634,7 @@ def _make_unique_identifier(base: str, used: set[str]) -> str:
         suffix += 1
     used.add(candidate)
     return candidate
+
 
 def _structured_codegen_node(value) -> bool:
     return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
@@ -772,11 +731,13 @@ def _c_constant_value(node) -> int | None:
         return node.value
     return None
 
+
 def _normalize_16bit_signed_offset(offset: int) -> int:
     wrapped = offset & 0xFFFF
     if wrapped >= 0x8000:
         return wrapped - 0x10000
     return wrapped
+
 
 def _project_rewrite_cache(project: angr.Project) -> dict[str, dict[int, object]]:
     cache = getattr(project, "_inertia_rewrite_cache", None)
@@ -784,6 +745,7 @@ def _project_rewrite_cache(project: angr.Project) -> dict[str, dict[int, object]
         cache = {}
         setattr(project, "_inertia_rewrite_cache", cache)
     return cache
+
 
 class _CODSourceRewriteSpec:
     name: str
@@ -800,8 +762,10 @@ class _CODSourceRewriteSpec:
             required_lines=self.required_lines,
         )
 
+
 def _segment_reg_name(node, project: angr.Project) -> str | None:
     return _cli_segmented._segment_reg_name(node, project, project_rewrite_cache=_project_rewrite_cache)
+
 
 def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAccess | None:
     return _cli_segmented._classify_segmented_addr_expr(
@@ -816,6 +780,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
         stack_slot_identity_for_variable=_stack_slot_identity_for_variable,
     )
 
+
 def _classify_segmented_dereference(node, project: angr.Project) -> _SegmentedAccess | None:
     return _cli_segmented._classify_segmented_dereference(
         node,
@@ -823,6 +788,7 @@ def _classify_segmented_dereference(node, project: angr.Project) -> _SegmentedAc
         project_rewrite_cache=_project_rewrite_cache,
         classify_segmented_addr_expr=_classify_segmented_addr_expr,
     )
+
 
 def _match_real_mode_linear_expr(node, project: angr.Project) -> tuple[str | None, int | None]:
     return _cli_segmented._match_real_mode_linear_expr(
@@ -832,6 +798,7 @@ def _match_real_mode_linear_expr(node, project: angr.Project) -> tuple[str | Non
         classify_segmented_addr_expr=_classify_segmented_addr_expr,
     )
 
+
 def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | None, int | None]:
     return _cli_segmented._match_segmented_dereference(
         node,
@@ -839,6 +806,7 @@ def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | Non
         project_rewrite_cache=_project_rewrite_cache,
         classify_segmented_dereference=_classify_segmented_dereference,
     )
+
 
 def _match_segment_register_based_dereference(node, project: angr.Project):
     return _cli_segmented_lowering._match_segment_register_based_dereference(
@@ -851,6 +819,7 @@ def _match_segment_register_based_dereference(node, project: angr.Project):
         segment_reg_name=_segment_reg_name,
     )
 
+
 def _strip_segment_scale_from_addr_expr(addr_expr, project: angr.Project):
     return _cli_segmented_lowering._strip_segment_scale_from_addr_expr(
         addr_expr,
@@ -861,6 +830,7 @@ def _strip_segment_scale_from_addr_expr(addr_expr, project: angr.Project):
         segment_reg_name=_segment_reg_name,
     )
 
+
 def _match_ss_stack_reference(node, project: angr.Project):
     return _cli_segmented_lowering._match_ss_stack_reference(
         node,
@@ -868,6 +838,7 @@ def _match_ss_stack_reference(node, project: angr.Project):
         project_rewrite_cache=_project_rewrite_cache,
         classify_segmented_dereference=_classify_segmented_dereference,
     )
+
 
 def _flatten_c_add_terms(node, seen: set[int] | None = None):
     if seen is None:
@@ -881,6 +852,7 @@ def _flatten_c_add_terms(node, seen: set[int] | None = None):
     if isinstance(node, structured_c.CBinaryOp) and node.op == "Add":
         return _flatten_c_add_terms(node.lhs, seen) + _flatten_c_add_terms(node.rhs, seen)
     return [node]
+
 
 def _resolve_dirty_virtual_expr_8616(node):
     def _impl():
@@ -912,6 +884,7 @@ def _resolve_dirty_virtual_expr_8616(node):
         return matches[0] if len(matches) == 1 else None
 
     return _impl()
+
 
 def _match_stack_cvar_and_offset(node, _seen: set[int] | None = None):
     def _impl():
@@ -967,6 +940,7 @@ def _match_stack_cvar_and_offset(node, _seen: set[int] | None = None):
         return None
 
     return _impl()
+
 
 def _match_ss_local_plus_const(node, project: angr.Project):
     cache = _project_rewrite_cache(project).setdefault("ss_local_plus_const", {})
@@ -1173,6 +1147,7 @@ def _replace_c_children(
 
     return changed
 
+
 def _iter_c_nodes_deep(node, seen: set[int] | None = None):
     if seen is None:
         seen = set()
@@ -1197,6 +1172,7 @@ def _iter_c_nodes_deep(node, seen: set[int] | None = None):
             for item in _iter_c_node_children_8616(value, set()):
                 if _structured_codegen_node(item):
                     node_stack.append(item)
+
 
 def _same_c_expression(lhs, rhs, seen_pairs: set[tuple[int, int]] | None = None) -> bool:
     def _impl():
@@ -1262,15 +1238,15 @@ def _same_c_expression(lhs, rhs, seen_pairs: set[tuple[int, int]] | None = None)
                     and getattr(lvar, "size", None) == getattr(rvar, "size", None)
                 )
             if isinstance(lvar, SimMemoryVariable):
-                return (
-                    getattr(lvar, "addr", None) == getattr(rvar, "addr", None)
-                    and getattr(lvar, "size", None) == getattr(rvar, "size", None)
-                )
+                return getattr(lvar, "addr", None) == getattr(rvar, "addr", None) and getattr(
+                    lvar, "size", None
+                ) == getattr(rvar, "size", None)
             return lvar == rvar
 
         return lhs is rhs
 
     return _impl()
+
 
 def _same_c_storage(lhs, rhs) -> bool:
     if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
@@ -1284,18 +1260,19 @@ def _same_c_storage(lhs, rhs) -> bool:
     if isinstance(lvar, SimRegisterVariable):
         return getattr(lvar, "reg", None) == getattr(rvar, "reg", None)
     if isinstance(lvar, SimStackVariable):
-        return (
-            getattr(lvar, "base", None) == getattr(rvar, "base", None)
-            and getattr(lvar, "offset", None) == getattr(rvar, "offset", None)
+        return getattr(lvar, "base", None) == getattr(rvar, "base", None) and getattr(lvar, "offset", None) == getattr(
+            rvar, "offset", None
         )
     if isinstance(lvar, SimMemoryVariable):
         return getattr(lvar, "addr", None) == getattr(rvar, "addr", None)
     return lvar == rvar
 
+
 def _same_stack_slot_identity_var(lhs_var, rhs_var) -> bool:
     lhs_identity = _stack_slot_identity_for_variable(lhs_var)
     rhs_identity = _stack_slot_identity_for_variable(rhs_var)
     return lhs_identity is not None and rhs_identity is not None and lhs_identity == rhs_identity
+
 
 def _stack_slot_identity_can_join_var(lhs_var, rhs_var) -> bool:
     lhs_identity = _stack_slot_identity_for_variable(lhs_var)
@@ -1304,12 +1281,14 @@ def _stack_slot_identity_can_join_var(lhs_var, rhs_var) -> bool:
         return False
     return lhs_identity.can_join(rhs_identity)
 
+
 def _same_stack_slot_identity(lhs, rhs) -> bool:
     if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
         return False
     lvar = getattr(lhs, "variable", None)
     rvar = getattr(rhs, "variable", None)
     return _same_stack_slot_identity_var(lvar, rvar)
+
 
 def _stack_slot_identity_can_join(lhs, rhs) -> bool:
     if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
@@ -1318,11 +1297,14 @@ def _stack_slot_identity_can_join(lhs, rhs) -> bool:
     rvar = getattr(rhs, "variable", None)
     return _stack_slot_identity_can_join_var(lvar, rvar)
 
+
 def _is_c_constant_int(node, value: int) -> bool:
     return isinstance(node, structured_c.CConstant) and isinstance(node.value, int) and node.value == value
 
+
 def _cite_is_negation(node) -> bool:
     return type(node).__name__ == "CITE" and _is_c_constant_int(node.iftrue, 0) and _is_c_constant_int(node.iffalse, 1)
+
 
 def _invert_comparison_op(op: str) -> str | None:
     return {
@@ -1333,6 +1315,7 @@ def _invert_comparison_op(op: str) -> str | None:
         ">=": "<",
         "<=": ">",
     }.get(op)
+
 
 def _make_inverted_comparison(node, codegen):
     if not isinstance(node, structured_c.CBinaryOp):
@@ -1348,6 +1331,7 @@ def _make_inverted_comparison(node, codegen):
         codegen=codegen,
         tags=getattr(node, "tags", None),
     )
+
 
 def _invert_interval_guard_if_safe(node, codegen):
     if not isinstance(node, structured_c.CBinaryOp) or node.op != "LogicalAnd":
@@ -1377,6 +1361,7 @@ def _invert_interval_guard_if_safe(node, codegen):
         tags=getattr(node, "tags", None),
     )
 
+
 def _extract_same_zero_compare_expr(node):
     if not isinstance(node, structured_c.CBinaryOp) or node.op != "CmpEQ":
         return None
@@ -1386,6 +1371,7 @@ def _extract_same_zero_compare_expr(node):
     if _is_c_constant_int(node.lhs, 0):
         return node.rhs
     return None
+
 
 def _extract_zero_flag_source_expr(node):
     def _impl():
@@ -1426,6 +1412,7 @@ def _extract_zero_flag_source_expr(node):
 
     return _impl()
 
+
 def _simplify_zero_flag_comparison(node, codegen):
     if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"CmpEQ", "CmpNE"}:
         return node
@@ -1445,6 +1432,7 @@ def _simplify_zero_flag_comparison(node, codegen):
         return source_expr
 
     return structured_c.CUnaryOp("Not", source_expr, codegen=codegen)
+
 
 def _match_high_byte_projection_base(expr):
     def _impl():
@@ -1470,6 +1458,7 @@ def _match_high_byte_projection_base(expr):
         return None
 
     return _impl()
+
 
 def _match_adjacent_register_pair_var_expr(low_expr, high_expr, codegen):
     def _impl():
@@ -1510,6 +1499,7 @@ def _match_adjacent_register_pair_var_expr(low_expr, high_expr, codegen):
 
     return _impl()
 
+
 def _match_high_byte_projection_expr(expr):
     expr = _unwrap_c_casts(expr)
     if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
@@ -1524,6 +1514,7 @@ def _match_high_byte_projection_expr(expr):
     if lhs_mask == 0xFF00 or rhs_mask == 0xFF00:
         return expr
     return None
+
 
 def _match_high_byte_projection_constant(node):
     def _impl():
@@ -1554,6 +1545,7 @@ def _match_high_byte_projection_constant(node):
         return None
 
     return _impl()
+
 
 def _simplify_boolean_expr(node, codegen):
     def _impl():
@@ -1627,6 +1619,7 @@ def _simplify_boolean_expr(node, codegen):
 
     return _impl()
 
+
 def _simplify_zero_mul_or_expr(node, codegen):
     if not isinstance(node, structured_c.CBinaryOp) or node.op != "Or":
         return node
@@ -1649,6 +1642,7 @@ def _simplify_zero_mul_or_expr(node, codegen):
         return node.lhs
     return node
 
+
 def _simplify_basic_algebraic_identities(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
@@ -1663,7 +1657,12 @@ def _simplify_basic_algebraic_identities(codegen) -> bool:
         rhs = _unwrap_c_casts(node.rhs)
 
         if node.op == "Xor" and _same_c_expression(lhs, rhs):
-            type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+            type_ = (
+                getattr(node, "type", None)
+                or getattr(node.lhs, "type", None)
+                or getattr(node.rhs, "type", None)
+                or SimTypeShort(False)
+            )
             return structured_c.CConstant(0, type_, codegen=codegen)
 
         if node.op == "Sub" and _c_constant_value(rhs) == 0:
@@ -1702,7 +1701,12 @@ def _simplify_basic_algebraic_identities(codegen) -> bool:
 
         high_byte_constant = _match_high_byte_projection_constant(node)
         if high_byte_constant is not None:
-            type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeChar()
+            type_ = (
+                getattr(node, "type", None)
+                or getattr(node.lhs, "type", None)
+                or getattr(node.rhs, "type", None)
+                or SimTypeChar()
+            )
             return structured_c.CConstant(high_byte_constant, type_, codegen=codegen)
 
         return node
@@ -1753,10 +1757,16 @@ def _collect_protected_deref_expr_ids(root) -> set[int]:
 
 
 def _is_linear_register_temp_var(cvar) -> bool:
-    return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(
-        r"(?:v\d+|vvar_\d+|ir_\d+)",
-        getattr(cvar, "name", ""),
-    ) is not None
+    return (
+        isinstance(cvar, structured_c.CVariable)
+        and isinstance(getattr(cvar, "name", None), str)
+        and re.fullmatch(
+            r"(?:v\d+|vvar_\d+|ir_\d+)",
+            getattr(cvar, "name", ""),
+        )
+        is not None
+    )
+
 
 def _simplify_structured_c_expressions(codegen) -> bool:
     def _impl():
@@ -1769,7 +1779,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         def _collect_high_byte_temp_constants(node):
             aliases: dict[int, int] = {}
             for walk_node in _iter_c_nodes_deep(node):
-                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                    walk_node.lhs, structured_c.CVariable
+                ):
                     continue
                 if not _is_linear_register_temp_var(walk_node.lhs):
                     continue
@@ -1787,7 +1799,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         def _collect_shift_extract_aliases(node):
             aliases: dict[int, tuple[object, int]] = {}
             for walk_node in _iter_c_nodes_deep(node):
-                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                    walk_node.lhs, structured_c.CVariable
+                ):
                     continue
                 if not _is_linear_register_temp_var(walk_node.lhs):
                     continue
@@ -1817,7 +1831,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             for _ in range(4):
                 changed = False
                 for walk_node in _iter_c_nodes_deep(node):
-                    if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                    if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                        walk_node.lhs, structured_c.CVariable
+                    ):
                         continue
                     if not _is_linear_register_temp_var(walk_node.lhs):
                         continue
@@ -1859,7 +1875,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             for _ in range(3):
                 changed = False
                 for walk_node in _iter_c_nodes_deep(node):
-                    if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                    if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                        walk_node.lhs, structured_c.CVariable
+                    ):
                         continue
                     if not _is_linear_register_temp_var(walk_node.lhs):
                         continue
@@ -1875,7 +1893,11 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     if rhs_domain.is_mixed():
                         continue
                     parent_state = aliases.get(id(rhs_var))
-                    rhs_state = _CopyAliasState(rhs_domain, parent_state.expr if parent_state is not None else rhs, needs_synthesis=parent_state.needs_synthesis if parent_state is not None else False)
+                    rhs_state = _CopyAliasState(
+                        rhs_domain,
+                        parent_state.expr if parent_state is not None else rhs,
+                        needs_synthesis=parent_state.needs_synthesis if parent_state is not None else False,
+                    )
                     current = aliases.get(key)
                     if current is None:
                         aliases[key] = rhs_state
@@ -2110,7 +2132,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             for _ in range(4):
                 changed = False
                 for walk_node in _iter_c_nodes_deep(node):
-                    if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                    if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                        walk_node.lhs, structured_c.CVariable
+                    ):
                         continue
                     if not _is_linear_register_temp_var(walk_node.lhs):
                         continue
@@ -2140,7 +2164,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             for _ in range(4):
                 changed = False
                 for walk_node in _iter_c_nodes_deep(node):
-                    if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                    if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                        walk_node.lhs, structured_c.CVariable
+                    ):
                         continue
                     if not _is_linear_register_temp_var(walk_node.lhs):
                         continue
@@ -2221,7 +2247,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 return False
 
             for walk_node in _iter_c_nodes_deep(node):
-                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                    walk_node.lhs, structured_c.CVariable
+                ):
                     continue
                 lhs_var = getattr(walk_node.lhs, "variable", None)
                 if not isinstance(lhs_var, SimStackVariable):
@@ -2379,16 +2407,25 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                         structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
                         codegen=codegen,
                     )
-                if _c_constant_value(_unwrap_c_casts(low_expr)) is None and _c_constant_value(_unwrap_c_casts(const_expr)) is None:
+                if (
+                    _c_constant_value(_unwrap_c_casts(low_expr)) is None
+                    and _c_constant_value(_unwrap_c_casts(const_expr)) is None
+                ):
                     continue
-                if _same_c_expression(_strip_byte_cast(low_expr), base_expr) and _c_constant_value(_unwrap_c_casts(const_expr)) == 1:
+                if (
+                    _same_c_expression(_strip_byte_cast(low_expr), base_expr)
+                    and _c_constant_value(_unwrap_c_casts(const_expr)) == 1
+                ):
                     return structured_c.CBinaryOp(
                         "Add" if delta_expr.op == "Add" else "Sub",
                         base_expr,
                         structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
                         codegen=codegen,
                     )
-                if _same_c_expression(_strip_byte_cast(const_expr), base_expr) and _c_constant_value(_unwrap_c_casts(low_expr)) == 1:
+                if (
+                    _same_c_expression(_strip_byte_cast(const_expr), base_expr)
+                    and _c_constant_value(_unwrap_c_casts(low_expr)) == 1
+                ):
                     return structured_c.CBinaryOp(
                         "Add" if delta_expr.op == "Add" else "Sub",
                         base_expr,
@@ -2432,7 +2469,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         for _ in range(3):
             changed = False
             for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
-                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                    walk_node.lhs, structured_c.CVariable
+                ):
                     continue
                 if not _is_linear_register_temp_var(walk_node.lhs):
                     continue
@@ -2471,7 +2510,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             if analysis is None:
                 return False
             base_expr = _resolve_copy_alias_expr(_unwrap_c_casts(analysis.base_expr))
-            if isinstance(base_expr, structured_c.CVariable) and isinstance(getattr(base_expr, "variable", None), SimMemoryVariable):
+            if isinstance(base_expr, structured_c.CVariable) and isinstance(
+                getattr(base_expr, "variable", None), SimMemoryVariable
+            ):
                 return True
             return isinstance(base_expr, structured_c.CUnaryOp) and base_expr.op == "Dereference"
 
@@ -2584,12 +2625,16 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                         if widened is not None:
                             return widened
                     if node.op == "Add":
-                        if isinstance(lhs, structured_c.CVariable) and isinstance(getattr(lhs, "variable", None), SimStackVariable):
+                        if isinstance(lhs, structured_c.CVariable) and isinstance(
+                            getattr(lhs, "variable", None), SimStackVariable
+                        ):
                             if _c_constant_value(rhs) is not None:
                                 alias_expr = far_pointer_aliases.get(id(getattr(lhs, "variable", None)))
                                 if alias_expr is not None:
                                     return _make_mk_fp(alias_expr, rhs)
-                        if isinstance(rhs, structured_c.CVariable) and isinstance(getattr(rhs, "variable", None), SimStackVariable):
+                        if isinstance(rhs, structured_c.CVariable) and isinstance(
+                            getattr(rhs, "variable", None), SimStackVariable
+                        ):
                             if _c_constant_value(lhs) is not None:
                                 alias_expr = far_pointer_aliases.get(id(getattr(rhs, "variable", None)))
                                 if alias_expr is not None:
@@ -2631,7 +2676,12 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                         elif node.op == "Shr":
                             result = lhs.value >> rhs.value
                         if result is not None:
-                            type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+                            type_ = (
+                                getattr(node, "type", None)
+                                or getattr(node.lhs, "type", None)
+                                or getattr(node.rhs, "type", None)
+                                or SimTypeShort(False)
+                            )
                             return structured_c.CConstant(result, type_, codegen=codegen)
                 rewritten_and = _rewrite_and_over_or(node)
                 if rewritten_and is not None:
@@ -2665,8 +2715,15 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                                     )
                                 )
                         if not rebuilt_terms:
-                            type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
-                            return structured_c.CConstant(const_value if const_value is not None else 0, type_, codegen=codegen)
+                            type_ = (
+                                getattr(node, "type", None)
+                                or getattr(node.lhs, "type", None)
+                                or getattr(node.rhs, "type", None)
+                                or SimTypeShort(False)
+                            )
+                            return structured_c.CConstant(
+                                const_value if const_value is not None else 0, type_, codegen=codegen
+                            )
                         result = rebuilt_terms[0]
                         for term in rebuilt_terms[1:]:
                             result = structured_c.CBinaryOp(node.op, result, term, codegen=codegen)
@@ -2692,7 +2749,11 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 if node.op in {"And", "Or"} and _same_c_expression(lhs, rhs):
                     return lhs
                 if node.op == "Xor" and _same_c_expression(lhs, rhs):
-                    type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                    type_ = (
+                        getattr(node, "type", None)
+                        or getattr(node.lhs, "type", None)
+                        or getattr(node.rhs, "type", None)
+                    )
                     if type_ is not None:
                         return structured_c.CConstant(0, type_, codegen=codegen)
                 if node.op == "Mul":
@@ -2714,7 +2775,11 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                             codegen=codegen,
                         )
                     if _c_constant_value(lhs) == 0 or _c_constant_value(rhs) == 0:
-                        type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                        type_ = (
+                            getattr(node, "type", None)
+                            or getattr(node.lhs, "type", None)
+                            or getattr(node.rhs, "type", None)
+                        )
                         if type_ is not None:
                             return structured_c.CConstant(0, type_, codegen=codegen)
                     if _c_constant_value(lhs) == 1:
@@ -2723,7 +2788,11 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                         return node.lhs
                 if node.op == "And":
                     if _c_constant_value(lhs) == 0 or _c_constant_value(rhs) == 0:
-                        type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                        type_ = (
+                            getattr(node, "type", None)
+                            or getattr(node.lhs, "type", None)
+                            or getattr(node.rhs, "type", None)
+                        )
                         if type_ is not None:
                             return structured_c.CConstant(0, type_, codegen=codegen)
                     for maybe_inner, maybe_mask in ((lhs, rhs), (rhs, lhs)):
@@ -2753,7 +2822,12 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                             return projection
                         const_high = _match_high_byte_projection_constant(maybe_inner)
                         if const_high is not None:
-                            type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+                            type_ = (
+                                getattr(node, "type", None)
+                                or getattr(node.lhs, "type", None)
+                                or getattr(node.rhs, "type", None)
+                                or SimTypeShort(False)
+                            )
                             return structured_c.CConstant(const_high, type_, codegen=codegen)
                         if isinstance(maybe_inner, structured_c.CVariable):
                             alias = mask_shift_aliases.get(id(getattr(maybe_inner, "variable", None)))
@@ -2816,7 +2890,12 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     if _is_c_constant_int(rhs, 8) and isinstance(lhs, structured_c.CVariable):
                         alias = high_byte_aliases.get(id(getattr(lhs, "variable", None)))
                         if alias is not None:
-                            type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+                            type_ = (
+                                getattr(node, "type", None)
+                                or getattr(node.lhs, "type", None)
+                                or getattr(node.rhs, "type", None)
+                                or SimTypeShort(False)
+                            )
                             return structured_c.CConstant(alias, type_, codegen=codegen)
                 if lhs is not node.lhs or rhs is not node.rhs:
                     return resolved
@@ -2829,7 +2908,11 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     if type_ is not None:
                         return structured_c.CConstant(0, type_, codegen=codegen)
             if isinstance(node, structured_c.CAssignment) and _is_redundant_self_copy(node):
-                return structured_c.CConstant(0, getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None), codegen=codegen)
+                return structured_c.CConstant(
+                    0,
+                    getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None),
+                    codegen=codegen,
+                )
             return node
 
         def prune_dead_stack_address_inits(node) -> bool:
@@ -2883,10 +2966,12 @@ def _simplify_structured_c_expressions(codegen) -> bool:
 
     return _impl()
 
+
 def _unwrap_c_casts(node):
     while isinstance(node, structured_c.CTypeCast):
         node = node.expr
     return node
+
 
 def _match_shift_right_8_expr(node):
     def _impl():
@@ -2909,13 +2994,16 @@ def _match_shift_right_8_expr(node):
                         if not isinstance(const_value, int):
                             continue
                         if const_value & 0xFF00 == const_value and const_value & 0xFF == 0:
-                            return structured_c.CConstant((const_value >> 8) & 0xFF, SimTypeChar(), codegen=getattr(node, "codegen", None))
+                            return structured_c.CConstant(
+                                (const_value >> 8) & 0xFF, SimTypeChar(), codegen=getattr(node, "codegen", None)
+                            )
             return lhs
         if _is_c_constant_int(lhs, 8):
             return rhs
         return None
 
     return _impl()
+
 
 def _match_duplicate_word_increment_shift_expr(node, resolve_copy_alias_expr, codegen):
     node = _unwrap_c_casts(node)
@@ -2959,6 +3047,7 @@ def _match_duplicate_word_increment_shift_expr(node, resolve_copy_alias_expr, co
 
     return None
 
+
 def _match_duplicate_word_base_expr(node, resolve_copy_alias_expr):
     node = _unwrap_c_casts(node)
     if not isinstance(node, structured_c.CBinaryOp) or node.op != "Or":
@@ -2977,7 +3066,10 @@ def _match_duplicate_word_base_expr(node, resolve_copy_alias_expr):
 
     return None
 
-def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None) -> bool:
+
+def _attach_cod_global_names(
+    project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None
+) -> bool:
     if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
         return False
 
@@ -3072,6 +3164,7 @@ def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: 
         changed = True
     return changed
 
+
 def _attach_cod_global_declaration_names(codegen, synthetic_globals: dict[int, tuple[str, int]] | None) -> bool:
     def _impl():
         if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
@@ -3121,6 +3214,7 @@ def _attach_cod_global_declaration_names(codegen, synthetic_globals: dict[int, t
         return changed
 
     return _impl()
+
 
 def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, tuple[str, int]] | None) -> bool:
     def _impl():
@@ -3215,13 +3309,16 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
 
     return _impl()
 
+
 def _access_trait_field_name(offset: int, size: int) -> str:
     return f"field_{offset:x}"
+
 
 def _stack_object_name(offset: int) -> str:
     if offset >= 0:
         return f"arg_{offset:x}"
     return f"local_{-offset:x}"
+
 
 def _access_trait_variable_key(variable) -> tuple[object, ...] | None:
     if isinstance(variable, SimRegisterVariable):
@@ -3235,17 +3332,20 @@ def _access_trait_variable_key(variable) -> tuple[object, ...] | None:
         return ("mem", getattr(variable, "addr", None))
     return None
 
+
 def _access_trait_profile_for_key(
     evidence_profiles: Mapping[tuple[object, ...], "_AccessTraitEvidenceProfile"],
     base_key: tuple[object, ...],
 ) -> "_AccessTraitEvidenceProfile | None":
     return _cli_access_profiles.access_trait_profile_for_key(evidence_profiles, base_key)
 
+
 @dataclass(frozen=True)
 class _WideningMatch:
     kind: str
     base_expr: object
     delta: int = 0
+
 
 @dataclass(frozen=True)
 class _AccessTraitRewriteDecision:
@@ -3264,10 +3364,12 @@ class _AccessTraitRewriteDecision:
     def candidate_field_names(self) -> tuple[str, ...]:
         return self._inner().candidate_field_names(_access_trait_field_name)
 
+
 def _build_access_trait_evidence_profiles(
-    traits: dict[str, dict[tuple[object, ...], object]]
+    traits: dict[str, dict[tuple[object, ...], object]],
 ) -> dict[tuple[object, ...], _AccessTraitEvidenceProfile]:
     return _cli_access_profiles.build_access_trait_evidence_profiles(traits)
+
 
 def _analyze_widening_expr(
     node,
@@ -3371,8 +3473,12 @@ def _analyze_widening_expr(
 
     return _impl()
 
-def _access_trait_member_candidates(traits: dict[str, dict[tuple[object, ...], int]]) -> dict[tuple[object, ...], list[tuple[int, int, int]]]:
+
+def _access_trait_member_candidates(
+    traits: dict[str, dict[tuple[object, ...], int]],
+) -> dict[tuple[object, ...], list[tuple[int, int, int]]]:
     return _cli_access_profiles.access_trait_member_candidates(traits)
+
 
 def _should_attach_access_trait_names(codegen) -> bool:
     return _cli_access_trait_rewrite._should_attach_access_trait_names(
@@ -3388,19 +3494,24 @@ def _should_attach_access_trait_names(codegen) -> bool:
         ),
     )
 
+
 def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
     return _cli_access_trait_rewrite._attach_access_trait_field_names(
         project,
         codegen,
         should_attach_access_trait_names=_should_attach_access_trait_names,
-        load_access_rewrite_artifact=lambda current_project, function_addr: _cli_access_rewrite_artifact.load_access_rewrite_artifact(
-            current_project,
-            function_addr,
-            build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
-            build_stable_access_object_hints=lambda traits: _cli_access_object_hints._build_stable_access_object_hints(
-                traits,
+        load_access_rewrite_artifact=lambda current_project, function_addr: (
+            _cli_access_rewrite_artifact.load_access_rewrite_artifact(
+                current_project,
+                function_addr,
                 build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
-            ),
+                build_stable_access_object_hints=lambda traits: (
+                    _cli_access_object_hints._build_stable_access_object_hints(
+                        traits,
+                        build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
+                    )
+                ),
+            )
         ),
         stable_access_object_hint_for_key=_cli_access_object_hints._stable_access_object_hint_for_key,
         access_trait_variable_key=_access_trait_variable_key,
@@ -3409,25 +3520,31 @@ def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
         replace_c_children=_replace_c_children,
     )
 
+
 def _attach_pointer_member_names(project: angr.Project, codegen) -> bool:
     return _cli_access_trait_rewrite._attach_pointer_member_names(
         project,
         codegen,
         should_attach_access_trait_names=_should_attach_access_trait_names,
-        load_access_rewrite_artifact=lambda current_project, function_addr: _cli_access_rewrite_artifact.load_access_rewrite_artifact(
-            current_project,
-            function_addr,
-            build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
-            build_stable_access_object_hints=lambda traits: _cli_access_object_hints._build_stable_access_object_hints(
-                traits,
+        load_access_rewrite_artifact=lambda current_project, function_addr: (
+            _cli_access_rewrite_artifact.load_access_rewrite_artifact(
+                current_project,
+                function_addr,
                 build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
-            ),
+                build_stable_access_object_hints=lambda traits: (
+                    _cli_access_object_hints._build_stable_access_object_hints(
+                        traits,
+                        build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
+                    )
+                ),
+            )
         ),
         stable_access_object_hint_for_key=_cli_access_object_hints._stable_access_object_hint_for_key,
         access_trait_variable_key=_access_trait_variable_key,
         access_trait_field_name=_access_trait_field_name,
         replace_c_children=_replace_c_children,
     )
+
 
 def _attach_lst_data_names(project: angr.Project, codegen, lst_metadata: LSTMetadata | None) -> bool:
     if lst_metadata is None or getattr(codegen, "cfunc", None) is None:
@@ -3448,7 +3565,9 @@ def _attach_lst_data_names(project: angr.Project, codegen, lst_metadata: LSTMeta
         for _ in range(3):
             changed = False
             for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
-                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                    walk_node.lhs, structured_c.CVariable
+                ):
                     continue
                 if not is_linear_temp(walk_node.lhs):
                     continue
@@ -3574,6 +3693,7 @@ def _attach_lst_data_names(project: angr.Project, codegen, lst_metadata: LSTMeta
         changed = True
     return changed
 
+
 def _normalize_scalar_byte_register_types(codegen) -> bool:
     def _impl():
         if getattr(codegen, "cfunc", None) is None:
@@ -3657,6 +3777,7 @@ def _normalize_scalar_byte_register_types(codegen) -> bool:
 
     return _impl()
 
+
 def _attach_segment_register_names(codegen, project: angr.Project | None = None) -> bool:
     def _impl():
         if getattr(codegen, "cfunc", None) is None:
@@ -3705,6 +3826,7 @@ def _attach_segment_register_names(codegen, project: angr.Project | None = None)
         return changed
 
     return _impl()
+
 
 def _attach_register_names(project: angr.Project, codegen) -> bool:
     def _impl():
@@ -3790,6 +3912,7 @@ def _attach_register_names(project: angr.Project, codegen) -> bool:
 
     return _impl()
 
+
 def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen) -> bool:
     return _cli_segmented_elision._elide_redundant_segment_pointer_dereferences(
         project,
@@ -3806,6 +3929,7 @@ def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen
         replace_c_children=_replace_c_children,
     )
 
+
 def _collect_access_traits(project: angr.Project, codegen) -> bool:
     return _cli_access_traits._collect_access_traits(
         project,
@@ -3819,11 +3943,13 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
         AccessTraitStrideEvidence=_AccessTraitStrideEvidence,
     )
 
+
 def _prune_unused_unnamed_memory_declarations(codegen) -> bool:
     return _cli_memory_prune._prune_unused_unnamed_memory_declarations(
         codegen,
         iter_c_nodes_deep=_iter_c_nodes_deep,
     )
+
 
 def _prune_unused_linear_register_declarations(codegen) -> bool:
     return _cli_local_prune._prune_unused_linear_register_declarations(
@@ -3831,12 +3957,14 @@ def _prune_unused_linear_register_declarations(codegen) -> bool:
         iter_c_nodes_deep=_iter_c_nodes_deep,
     )
 
+
 def _prune_unused_local_declarations(codegen) -> bool:
     return _cli_local_prune._prune_unused_local_declarations(
         codegen,
         iter_c_nodes_deep=_iter_c_nodes_deep,
         describe_alias_storage=describe_alias_storage,
     )
+
 
 def _prune_dead_local_assignments(codegen) -> bool:
     return _cli_dead_local_prune._prune_dead_local_assignments(
@@ -3847,6 +3975,7 @@ def _prune_dead_local_assignments(codegen) -> bool:
         describe_alias_storage=describe_alias_storage,
     )
 
+
 def _materialize_missing_stack_local_declarations(codegen) -> bool:
     return _cli_local_rewrites._materialize_missing_stack_local_declarations(
         codegen,
@@ -3856,11 +3985,13 @@ def _materialize_missing_stack_local_declarations(codegen) -> bool:
         iter_c_nodes_deep=_iter_c_nodes_deep,
     )
 
+
 def _dedupe_codegen_variable_names_8616(codegen) -> bool:
     return _cli_local_rewrites._dedupe_codegen_variable_names_8616(
         codegen,
         make_unique_identifier=_make_unique_identifier,
     )
+
 
 def _materialize_missing_register_local_declarations(codegen) -> bool:
     return _cli_local_rewrites._materialize_missing_register_local_declarations(
@@ -3871,11 +4002,13 @@ def _materialize_missing_register_local_declarations(codegen) -> bool:
         iter_c_nodes_deep=_iter_c_nodes_deep,
     )
 
+
 def _prune_void_function_return_values(codegen) -> bool:
     return _cli_local_rewrites._prune_void_function_return_values(
         codegen,
         iter_c_nodes_deep=_iter_c_nodes_deep,
     )
+
 
 def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> bool:
     return _cli_far_pointer_stack._coalesce_far_pointer_stack_expressions(
@@ -3895,6 +4028,7 @@ def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> b
         describe_alias_storage=describe_alias_storage,
     )
 
+
 def _simplify_nested_mk_fp_calls(codegen) -> bool:
     return _cli_mkfp_simplify._simplify_nested_mk_fp_calls(
         codegen,
@@ -3902,6 +4036,7 @@ def _simplify_nested_mk_fp_calls(codegen) -> bool:
         c_constant_value=_c_constant_value,
         replace_c_children=_replace_c_children,
     )
+
 
 def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
     return _cli_stack_locals._attach_ss_stack_variables(
@@ -3912,6 +4047,7 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
         replace_c_children=_replace_c_children,
         stack_slot_identity_for_variable=_stack_slot_identity_for_variable,
     )
+
 
 def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
     return _cli_stack_byte_offsets._rewrite_ss_stack_byte_offsets(
@@ -3932,11 +4068,14 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
         stack_pointer_alias_state=_StackPointerAliasState,
     )
 
+
 def _promote_direct_stack_cvariable(codegen, cvar, size: int, type_) -> bool:
     return _cli_stack_locals._promote_direct_stack_cvariable(codegen, cvar, size, type_)
 
+
 def _stack_type_for_size(size: int):
     return _cli_stack_locals._stack_type_for_size(size)
+
 
 def _resolve_stack_cvar_at_offset(codegen, offset: int, *, preferred_size: int | None = None):
     return _cli_stack_cvars._resolve_stack_cvar_at_offset(
@@ -3945,6 +4084,7 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int, *, preferred_size: int |
         stack_slot_identity_for_variable=_stack_slot_identity_for_variable,
         preferred_size=preferred_size,
     )
+
 
 def _materialize_stack_cvar_at_offset(codegen, offset: int, size: int = 2):
     return _cli_stack_cvars._materialize_stack_cvar_at_offset(
@@ -3955,6 +4095,7 @@ def _materialize_stack_cvar_at_offset(codegen, offset: int, size: int = 2):
         promote_direct_stack_cvariable=_promote_direct_stack_cvariable,
         stack_type_for_size=_stack_type_for_size,
     )
+
 
 def _canonicalize_stack_cvar_expr(
     expr,
@@ -3972,12 +4113,14 @@ def _canonicalize_stack_cvar_expr(
         analysis_context=analysis_context,
     )
 
+
 def _canonicalize_stack_cvars(codegen) -> bool:
     return _cli_stack_cvars._canonicalize_stack_cvars(
         codegen,
         replace_c_children=_replace_c_children,
         canonicalize_stack_cvar_expr=_canonicalize_stack_cvar_expr,
     )
+
 
 def _resolve_stack_cvar_from_addr_expr(project: angr.Project, codegen, addr_expr):
     return _cli_stack_cvars._resolve_stack_cvar_from_addr_expr(
@@ -3990,6 +4133,7 @@ def _resolve_stack_cvar_from_addr_expr(project: angr.Project, codegen, addr_expr
         materialize_stack_cvar_at_offset=_materialize_stack_cvar_at_offset,
         stack_type_for_size=_stack_type_for_size,
     )
+
 
 def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) -> bool:
     return _cli_stack_coalesce._coalesce_direct_ss_local_word_statements(
@@ -4008,6 +4152,7 @@ def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) ->
         canonicalize_stack_cvar_expr=_canonicalize_stack_cvar_expr,
     )
 
+
 def _seed_adjacent_byte_pair_aliases(project: angr.Project, codegen) -> dict[int, object]:
     return _cli_linear_aliases._seed_adjacent_byte_pair_aliases(
         project,
@@ -4019,6 +4164,7 @@ def _seed_adjacent_byte_pair_aliases(project: angr.Project, codegen) -> dict[int
         addr_exprs_are_byte_pair=_addr_exprs_are_byte_pair,
         make_word_dereference_from_addr_expr=_make_word_dereference_from_addr_expr,
     )
+
 
 def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bool:
     return _cli_linear_recurrence._coalesce_linear_recurrence_statements(
@@ -4039,6 +4185,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
         same_stack_slot_identity_var=_same_stack_slot_identity_var,
         rules=_cli_linear_recurrence_rules,
     )
+
 
 def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) -> bool:
     return _cli_segmented_store_coalesce._coalesce_segmented_word_store_statements(
@@ -4061,6 +4208,7 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
         same_c_expression=_same_c_expression,
     )
 
+
 def _run_typed_widening_pass(project: angr.Project, codegen) -> bool:
     return _cli_segmented_store_coalesce.run_typed_widening_pass_8616(
         project,
@@ -4078,11 +4226,14 @@ def _run_typed_widening_pass(project: angr.Project, codegen) -> bool:
         ),
     )
 
+
 def _global_memory_addr(node) -> int | None:
     return _cli_word_loads._global_memory_addr(node)
 
+
 def _global_load_addr(node, project: angr.Project) -> int | None:
     return _cli_word_loads._global_load_addr(node, project)
+
 
 def _match_scaled_high_byte(node, project: angr.Project) -> int | None:
     return _cli_word_loads._match_scaled_high_byte(
@@ -4092,8 +4243,10 @@ def _match_scaled_high_byte(node, project: angr.Project) -> int | None:
         global_load_addr=_global_load_addr,
     )
 
+
 def _extract_dereference_addr_expr(node):
     return _cli_word_loads._extract_dereference_addr_expr(node)
+
 
 def _match_byte_load_addr_expr(node):
     return _cli_word_loads._match_byte_load_addr_expr(
@@ -4101,8 +4254,10 @@ def _match_byte_load_addr_expr(node):
         unwrap_c_casts=_unwrap_c_casts,
     )
 
+
 def _match_byte_store_addr_expr(node):
     return _cli_word_loads._match_byte_store_addr_expr(node)
+
 
 def _match_shifted_high_byte_addr_expr(node):
     return _cli_word_loads._match_shifted_high_byte_addr_expr(
@@ -4111,6 +4266,7 @@ def _match_shifted_high_byte_addr_expr(node):
         c_constant_value=_c_constant_value,
         match_byte_load_addr_expr=_match_byte_load_addr_expr,
     )
+
 
 def _match_word_pair_low_addr_expr(node, project: angr.Project):
     return _cli_word_loads._match_word_pair_low_addr_expr(
@@ -4122,6 +4278,7 @@ def _match_word_pair_low_addr_expr(node, project: angr.Project):
         addr_exprs_are_byte_pair=_addr_exprs_are_byte_pair,
     )
 
+
 def _split_expr_const_offset(node):
     return _cli_segmented_compare._split_expr_const_offset(
         node,
@@ -4130,12 +4287,14 @@ def _split_expr_const_offset(node):
         c_constant_value=_c_constant_value,
     )
 
+
 def _same_expression_list(lhs_terms, rhs_terms) -> bool:
     return _cli_segmented_compare._same_expression_list(
         lhs_terms,
         rhs_terms,
         same_c_expression=_same_c_expression,
     )
+
 
 def _addr_exprs_are_same(low_addr_expr, high_addr_expr, project: angr.Project) -> bool:
     return _cli_segmented_compare._addr_exprs_are_same(
@@ -4148,6 +4307,7 @@ def _addr_exprs_are_same(low_addr_expr, high_addr_expr, project: angr.Project) -
         same_expression_list=_same_expression_list,
     )
 
+
 def _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project: angr.Project | None = None) -> bool:
     return _cli_segmented_compare._addr_exprs_are_byte_pair(
         low_addr_expr,
@@ -4159,8 +4319,10 @@ def _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project: angr.Proje
         same_expression_list=_same_expression_list,
     )
 
+
 def _make_word_dereference_from_addr_expr(codegen, project: angr.Project, addr_expr):
     return _cli_word_loads._make_word_dereference_from_addr_expr(codegen, project, addr_expr)
+
 
 def _match_word_dereference_addr_expr(node):
     return _cli_word_loads._match_word_dereference_addr_expr(node)
@@ -4227,14 +4389,17 @@ def _word_from_shifted_high_expr(low_rhs, high_rhs, low_unwrapped, codegen, proj
         return None
     shifted_source = _unwrap_c_casts(shifted_source)
     low_bits = _safe_type_size(low_unwrapped)
-    if (
-        _same_c_expression(_unwrap_c_casts(low_rhs), shifted_source)
-        and (isinstance(low_unwrapped, (structured_c.CVariable, structured_c.CConstant)) or low_bits == 16)
+    if _same_c_expression(_unwrap_c_casts(low_rhs), shifted_source) and (
+        isinstance(low_unwrapped, (structured_c.CVariable, structured_c.CConstant)) or low_bits == 16
     ):
         return _canonicalize_stack_cvar_expr(low_rhs, codegen)
     low_addr_expr = _match_byte_load_addr_expr(low_unwrapped)
     word_addr_expr = _match_word_dereference_addr_expr(shifted_source)
-    if low_addr_expr is not None and word_addr_expr is not None and _addr_exprs_are_same(low_addr_expr, word_addr_expr, project):
+    if (
+        low_addr_expr is not None
+        and word_addr_expr is not None
+        and _addr_exprs_are_same(low_addr_expr, word_addr_expr, project)
+    ):
         return _canonicalize_stack_cvar_expr(shifted_source, codegen)
     return None
 
@@ -4306,6 +4471,7 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
         return result
     return None
 
+
 def _high_byte_store_addr(node, project: angr.Project) -> int | None:
     return _cli_word_loads._high_byte_store_addr(
         node,
@@ -4313,8 +4479,12 @@ def _high_byte_store_addr(node, project: angr.Project) -> int | None:
         classify_segmented_dereference=_classify_segmented_dereference,
     )
 
+
 def _synthetic_word_global_variable(
-    codegen, synthetic_globals: dict[int, tuple[str, int]] | None, addr: int, created: dict[int, structured_c.CVariable] | None = None
+    codegen,
+    synthetic_globals: dict[int, tuple[str, int]] | None,
+    addr: int,
+    created: dict[int, structured_c.CVariable] | None = None,
 ):
     return _cli_word_global_helpers._synthetic_word_global_variable(
         codegen,
@@ -4324,6 +4494,7 @@ def _synthetic_word_global_variable(
         sanitize_cod_identifier=_sanitize_cod_identifier,
         created=created,
     )
+
 
 def _coalesce_cod_word_global_loads(
     project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None
@@ -4344,6 +4515,7 @@ def _coalesce_cod_word_global_loads(
         replace_c_children=_replace_c_children,
     )
 
+
 def _coalesce_segmented_word_load_expressions(project: angr.Project, codegen) -> bool:
     return _cli_segmented_load_coalesce._coalesce_segmented_word_load_expressions(
         project,
@@ -4361,6 +4533,7 @@ def _coalesce_segmented_word_load_expressions(project: angr.Project, codegen) ->
         describe_alias_storage=describe_alias_storage,
     )
 
+
 def _coalesce_cod_word_global_statements(
     project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None
 ) -> bool:
@@ -4373,6 +4546,7 @@ def _coalesce_cod_word_global_statements(
         synthetic_word_global_variable=_synthetic_word_global_variable,
     )
 
+
 def _int21_call_replacements(project: angr.Project, function, api_style: str, binary_path: Path | None) -> list[str]:
     return _cli_helper_modeling._int21_call_replacements(
         project,
@@ -4383,7 +4557,10 @@ def _int21_call_replacements(project: angr.Project, function, api_style: str, bi
         render_dos_int21_call=render_dos_int21_call,
     )
 
-def _interrupt_call_replacement_map(project: angr.Project, function, api_style: str, binary_path: Path | None) -> dict[str, str]:
+
+def _interrupt_call_replacement_map(
+    project: angr.Project, function, api_style: str, binary_path: Path | None
+) -> dict[str, str]:
     return _cli_helper_modeling._interrupt_call_replacement_map(
         project,
         function,
@@ -4395,6 +4572,7 @@ def _interrupt_call_replacement_map(project: angr.Project, function, api_style: 
         interrupt_service_addr=interrupt_service_addr,
     )
 
+
 def _dos_helper_declarations(function, api_style: str, binary_path: Path | None) -> list[str]:
     return _cli_helper_modeling._dos_helper_declarations(
         function,
@@ -4403,6 +4581,7 @@ def _dos_helper_declarations(function, api_style: str, binary_path: Path | None)
         collect_dos_int21_calls=collect_dos_int21_calls,
         dos_helper_declarations=dos_helper_declarations,
     )
+
 
 def _interrupt_helper_declarations(function, api_style: str, binary_path: Path | None) -> list[str]:
     return _cli_helper_modeling._interrupt_helper_declarations(
@@ -4413,14 +4592,17 @@ def _interrupt_helper_declarations(function, api_style: str, binary_path: Path |
         interrupt_service_declarations=interrupt_service_declarations,
     )
 
+
 def _known_helper_declarations(cod_metadata: CODProcMetadata | None) -> list[str]:
     return _cli_helper_modeling._known_helper_declarations(
         cod_metadata,
         preferred_known_helper_signature_decl=preferred_known_helper_signature_decl,
     )
 
+
 def _is_staging_local_name(name: str | None) -> bool:
     return isinstance(name, str) and re.fullmatch(r"s_[0-9a-fA-F]+", name) is not None
+
 
 def _clone_structured_c_value(value, memo: dict[int, object] | None = None):
     def _impl():
@@ -4480,7 +4662,9 @@ def _collect_staging_wrapper_summary(statements: list[object]) -> tuple[int, dic
         staging_variable_ids: set[int] = set()
         non_staging_logic = False
         for stmt in statements:
-            if isinstance(stmt, structured_c.CExpressionStatement) and isinstance(stmt.expr, structured_c.CFunctionCall):
+            if isinstance(stmt, structured_c.CExpressionStatement) and isinstance(
+                stmt.expr, structured_c.CFunctionCall
+            ):
                 call_count += 1
             elif isinstance(stmt, structured_c.CFunctionCall):
                 call_count += 1
@@ -4561,7 +4745,9 @@ def _prune_tiny_wrapper_staging_locals(codegen) -> bool:
         if any(isinstance(stmt, (structured_c.CIfElse, structured_c.CWhileLoop)) for stmt in statements):
             return False
 
-        call_count, staging_replacements, staging_variable_ids, non_staging_logic = _collect_staging_wrapper_summary(statements)
+        call_count, staging_replacements, staging_variable_ids, non_staging_logic = _collect_staging_wrapper_summary(
+            statements
+        )
 
         if call_count != 1 or not staging_replacements or non_staging_logic:
             return False
@@ -4586,6 +4772,7 @@ def _prune_tiny_wrapper_staging_locals(codegen) -> bool:
         return changed
 
     return _impl()
+
 
 # Missing symbols during split:
 # - _SegmentedAccess

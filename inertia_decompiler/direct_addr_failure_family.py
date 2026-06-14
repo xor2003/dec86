@@ -75,7 +75,6 @@ def build_failure_family_snapshot(
     artifact_path: object | None = None,
 ) -> FailureFamilySnapshot:
     """Build a deterministic family snapshot from one attempt."""
-
     return FailureFamilySnapshot(
         status=_token(status, default="not_set"),
         failure_stage=_token(failure_stage, default="not_set"),
@@ -92,7 +91,6 @@ def failure_family_repeat_reason(
     candidate: FailureFamilySnapshot,
 ) -> str | None:
     """Explain why a candidate attempt is a repeat, or return ``None``."""
-
     if previous is None:
         return None
     if previous.key != candidate.key:
@@ -107,7 +105,6 @@ def remember_failure_family_candidate(
     candidate: FailureFamilySnapshot,
 ) -> str | None:
     """Update one shared state holder with the latest candidate snapshot."""
-
     if state is None:
         return None
     previous = state.previous_snapshot
@@ -120,7 +117,6 @@ def remember_failure_family_candidate(
 
 def advance_failure_family_state(state: FailureFamilyState | None) -> None:
     """Promote the current candidate snapshot after one lane finishes."""
-
     if state is None or state.candidate_snapshot is None:
         return
     state.previous_snapshot = state.candidate_snapshot
@@ -131,7 +127,6 @@ def record_failure_family_retry_stop(
     candidate: FailureFamilySnapshot,
 ) -> None:
     """Record one emitted same-family retry stop for later summaries."""
-
     if state is None:
         return
     state.same_family_retry_stops += 1

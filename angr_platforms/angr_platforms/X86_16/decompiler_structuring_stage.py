@@ -405,14 +405,12 @@ def _try_accept_structuring_validation_delta_from_evidence_8616(
     ):
         return False
 
-    codegen._inertia_structuring_jcc_condition_validation_accepts_8616 = int(
-        getattr(codegen, "_inertia_structuring_jcc_condition_validation_accepts_8616", 0) or 0
-    ) + 1
+    codegen._inertia_structuring_jcc_condition_validation_accepts_8616 = (
+        int(getattr(codegen, "_inertia_structuring_jcc_condition_validation_accepts_8616", 0) or 0) + 1
+    )
     delta = validation.get("delta")
     if isinstance(delta, dict):
-        accepted_deltas = list(
-            getattr(codegen, "_inertia_structuring_jcc_condition_validation_deltas_8616", ()) or ()
-        )
+        accepted_deltas = list(getattr(codegen, "_inertia_structuring_jcc_condition_validation_deltas_8616", ()) or ())
         accepted_deltas.append(
             {
                 "conditions": delta.get("conditions"),
@@ -576,7 +574,9 @@ def _structuring_codegen_8616(project, codegen) -> bool:
                     alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
                     changed = False
                     if isinstance(alias_facts, list) and alias_facts:
-                        before_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
+                        before_materialized = int(
+                            getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0
+                        )
                         lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
                         after_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
                         changed = changed or after_materialized > before_materialized
@@ -699,9 +699,7 @@ def _decompile_structuring_8616(self):
                 return
             prototype = getattr(func, "prototype", None)
             needs_fallback = (
-                prototype is None
-                or not hasattr(prototype, "returnty")
-                or getattr(prototype, "returnty", None) is None
+                prototype is None or not hasattr(prototype, "returnty") or getattr(prototype, "returnty", None) is None
             )
             if not needs_fallback:
                 return
@@ -741,7 +739,9 @@ def _decompile_structuring_8616(self):
                     structuring_info["changed"] = bool(changed)
                     structuring_info["failed"] = bool(getattr(self.codegen, "_inertia_structuring_failed", False))
                     structuring_info["failure_pass"] = getattr(self.codegen, "_inertia_structuring_failure_pass", None)
-                    structuring_info["failure_error"] = getattr(self.codegen, "_inertia_structuring_failure_error", None)
+                    structuring_info["failure_error"] = getattr(
+                        self.codegen, "_inertia_structuring_failure_error", None
+                    )
                     structuring_info["validation_failed"] = bool(
                         getattr(self.codegen, "_inertia_structuring_validation_failed", False)
                     )
@@ -753,7 +753,9 @@ def _decompile_structuring_8616(self):
                     )
                     structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
                     structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
-                    structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
+                    structuring_info["struct_merging_stats"] = getattr(
+                        self.codegen, "_inertia_struct_merging_stats", None
+                    )
                     structuring_info["struct_merging_changed"] = bool(
                         getattr(self.codegen, "_inertia_struct_merging_changed", False)
                     )
@@ -766,7 +768,9 @@ def _decompile_structuring_8616(self):
         with span("x86_16.structuring.validation_prime", function=func_addr):
             _prime_structuring_validation_semantics_8616(self.project, self.codegen)
         with span("x86_16.structuring.validation.before_fingerprint", function=func_addr):
-            before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
+            before_fingerprint = fingerprint_x86_16_tail_validation_boundary(
+                self.project, self.codegen, mode=validation_mode
+            )
         before_collect_started = time.perf_counter()
         with span("x86_16.structuring.validation.before_summary", function=func_addr):
             before_summary = collect_x86_16_tail_validation_summary(
@@ -792,7 +796,9 @@ def _decompile_structuring_8616(self):
             _refresh_structuring_condition_semantics_8616(self.project, self.codegen)
             record_ast_condition_trace_8616(self.project, self.codegen, stage="structured")
         with span("x86_16.structuring.validation.after_fingerprint", function=func_addr):
-            after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
+            after_fingerprint = fingerprint_x86_16_tail_validation_boundary(
+                self.project, self.codegen, mode=validation_mode
+            )
         after_collect_started = time.perf_counter()
         with span("x86_16.structuring.validation.after_summary", function=func_addr):
             after_summary = collect_x86_16_tail_validation_summary(
@@ -834,7 +840,9 @@ def _decompile_structuring_8616(self):
             "collect_before_ms": round(before_collect_elapsed * 1000.0, 3),
             "collect_after_ms": round(after_collect_elapsed * 1000.0, 3),
             "compare_ms": round(validation_compare_elapsed * 1000.0, 3),
-            "total_ms": round((before_collect_elapsed + after_collect_elapsed + validation_compare_elapsed) * 1000.0, 3),
+            "total_ms": round(
+                (before_collect_elapsed + after_collect_elapsed + validation_compare_elapsed) * 1000.0, 3
+            ),
         }
         validation["timings"] = validation_timings
         validation["verdict"] = build_x86_16_tail_validation_verdict("structuring", validation)

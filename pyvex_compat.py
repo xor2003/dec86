@@ -11,8 +11,7 @@ _APPLIED = False
 
 
 class _InstructionWindow:
-    """
-    Zero-copy view over an instruction list slice.
+    """Zero-copy view over an instruction list slice.
     Used to avoid per-instruction list allocations in GymratLifter._lift.
     """
 
@@ -60,8 +59,7 @@ def apply_pyvex_runtime_compatibility() -> None:
 
         try:
             from pyvex import const as pyvex_const
-            from pyvex.lifting.util import lifter_helper
-            from pyvex.lifting.util import vex_helper
+            from pyvex.lifting.util import lifter_helper, vex_helper
         except Exception:
             return
 

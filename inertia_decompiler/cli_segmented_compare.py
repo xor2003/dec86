@@ -79,11 +79,7 @@ def _addr_exprs_are_byte_pair(
             kept = []
             for term in terms:
                 classified = classify_segmented_addr_expr(term, project)
-                if (
-                    classified is not None
-                    and classified.kind in {"segment_const", "extra"}
-                    and classified.linear == 0
-                ):
+                if classified is not None and classified.kind in {"segment_const", "extra"} and classified.linear == 0:
                     continue
                 kept.append(term)
             return kept
@@ -93,7 +89,11 @@ def _addr_exprs_are_byte_pair(
             high_class = classify_segmented_addr_expr(high_addr_expr, project)
             if low_class is not None and high_class is not None:
                 if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
-                    if low_class.kind == "stack" and low_class.stack_var is not None and high_class.stack_var is not None:
+                    if (
+                        low_class.kind == "stack"
+                        and low_class.stack_var is not None
+                        and high_class.stack_var is not None
+                    ):
                         if stack_slot_identity_can_join_var(low_class.stack_var, high_class.stack_var):
                             return high_class.extra_offset == low_class.extra_offset + 1
                     if low_class.kind in {"extra", "segment_const"}:

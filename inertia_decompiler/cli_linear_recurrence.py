@@ -166,7 +166,9 @@ def _match_byte_carrier_high_update(expr, state):
                     )
                 return low_expr, (1 if inner.op == "Add" else -1)
         if _linear_recurrence_debug_enabled():
-            log.warning("[linear-recurrence] high-carry reject: no variable low expr inner=%s", _node_summary_8616(inner))
+            log.warning(
+                "[linear-recurrence] high-carry reject: no variable low expr inner=%s", _node_summary_8616(inner)
+            )
         return None
 
     return _impl()
@@ -258,7 +260,11 @@ def _rebind_for_loop_byte_carrier_recurrence(loop, state, *, rules) -> bool:
                 return False
             if not isinstance(iteration_local, structured_c.CAssignment):
                 if _linear_recurrence_debug_enabled():
-                    log.warning("[linear-recurrence] reject loop: iteration attr=%s value=%r", iteration_attr_local, iteration_local)
+                    log.warning(
+                        "[linear-recurrence] reject loop: iteration attr=%s value=%r",
+                        iteration_attr_local,
+                        iteration_local,
+                    )
             if not isinstance(body_local, structured_c.CStatements) or not getattr(body_local, "statements", None):
                 _debug_reject("body=%r", body_local)
                 return False
@@ -283,7 +289,9 @@ def _rebind_for_loop_byte_carrier_recurrence(loop, state, *, rules) -> bool:
                 if candidate_base is None or candidate_delta_local not in {1, -1}:
                     state._record_recurrence_reason("ambiguous_delta")
                     return None, None, False
-                if not state.same_c_expression(state.unwrap_c_casts(candidate_base), state.unwrap_c_casts(iterator_local)):
+                if not state.same_c_expression(
+                    state.unwrap_c_casts(candidate_base), state.unwrap_c_casts(iterator_local)
+                ):
                     if _linear_recurrence_debug_enabled():
                         log.warning(
                             "[linear-recurrence] iterator candidate rejected: base=%s iterator=%s delta=%r",
@@ -293,15 +301,19 @@ def _rebind_for_loop_byte_carrier_recurrence(loop, state, *, rules) -> bool:
                         )
                     state._record_recurrence_reason("not_materialized_local")
                     return None, None, False
-                return iterator_local, candidate_delta_local, _find_low_delta_stmt_8616(
-                    body_assignments, state, iterator_local, candidate_delta_local
+                return (
+                    iterator_local,
+                    candidate_delta_local,
+                    _find_low_delta_stmt_8616(body_assignments, state, iterator_local, candidate_delta_local),
                 )
             reduced = _match_byte_carrier_high_update(iteration_local.rhs, state)
             if reduced is None:
                 return None, None, None
             low_carrier_local, candidate_delta_local = reduced
-            return low_carrier_local, candidate_delta_local, _find_low_delta_stmt_8616(
-                body_assignments, state, low_carrier_local, candidate_delta_local
+            return (
+                low_carrier_local,
+                candidate_delta_local,
+                _find_low_delta_stmt_8616(body_assignments, state, low_carrier_local, candidate_delta_local),
             )
 
         def _candidate_from_body_scan(body_assignments):
@@ -318,7 +330,9 @@ def _rebind_for_loop_byte_carrier_recurrence(loop, state, *, rules) -> bool:
                         _node_summary_8616(maybe_low_carrier),
                         maybe_delta,
                     )
-                maybe_low_stmt = _find_low_delta_stmt_8616(body_assignments[idx + 1 :], state, maybe_low_carrier, maybe_delta)
+                maybe_low_stmt = _find_low_delta_stmt_8616(
+                    body_assignments[idx + 1 :], state, maybe_low_carrier, maybe_delta
+                )
                 if maybe_low_stmt is None:
                     if _linear_recurrence_debug_enabled():
                         log.warning("[linear-recurrence] candidate[%d] rejected: no matching low-delta stmt", idx)
@@ -365,9 +379,9 @@ def _rebind_for_loop_byte_carrier_recurrence(loop, state, *, rules) -> bool:
             loop,
             iteration_attr,
             structured_c.CAssignment(
-            iterator_local,
-            state.build_linear_expr(iterator_local, candidate_delta),
-            codegen=state.codegen,
+                iterator_local,
+                state.build_linear_expr(iterator_local, candidate_delta),
+                codegen=state.codegen,
             ),
         )
         removed_low_stmt = _remove_statement_from_tree_8616(body, low_stmt)
@@ -434,7 +448,9 @@ def _coalesce_linear_recurrence_statements(
                         new_statements.append(stmt)
                         i += 1
                         continue
-                    carry_base = match_duplicate_word_increment_shift_expr(stmt.rhs, state.resolve_known_copy_alias_expr, codegen)
+                    carry_base = match_duplicate_word_increment_shift_expr(
+                        stmt.rhs, state.resolve_known_copy_alias_expr, codegen
+                    )
                     carry_rewrite = rules._carry_base_rewrite_plan(
                         carry_base,
                         expr_contains_dereference=state.expr_contains_dereference,
@@ -443,7 +459,9 @@ def _coalesce_linear_recurrence_statements(
                     if carry_rewrite is not None:
                         if stmt_var is not None and carry_rewrite["linear"] is not None:
                             state.linear_defs[id(stmt_var)] = carry_rewrite["linear"]
-                        new_statements.append(structured_c.CAssignment(stmt.lhs, carry_rewrite["replacement"], codegen=codegen))
+                        new_statements.append(
+                            structured_c.CAssignment(stmt.lhs, carry_rewrite["replacement"], codegen=codegen)
+                        )
                         state.changed = True
                         i += 1
                         continue
@@ -466,7 +484,11 @@ def _coalesce_linear_recurrence_statements(
                         new_statements.append(stmt)
                         i += 1
                         continue
-                    if temp_use_count >= 2 and state.is_linear_register_temp(stmt.lhs) and state.is_linear_register_temp(next_stmt.lhs):
+                    if (
+                        temp_use_count >= 2
+                        and state.is_linear_register_temp(stmt.lhs)
+                        and state.is_linear_register_temp(next_stmt.lhs)
+                    ):
                         stmt_base, stmt_delta = state.extract_linear_delta(stmt.rhs)
                         next_rhs = unwrap_c_casts(next_stmt.rhs)
                         if isinstance(next_rhs, structured_c.CBinaryOp) and next_rhs.op in {"Add", "Sub"}:
@@ -481,11 +503,19 @@ def _coalesce_linear_recurrence_statements(
                                 next_base = None
                             if next_base is not None and isinstance(next_delta, int):
                                 combined = stmt_delta + next_delta if next_rhs.op == "Add" else stmt_delta - next_delta
-                                new_statements.append(structured_c.CAssignment(next_stmt.lhs, state.build_linear_expr(next_base, combined), codegen=codegen))
+                                new_statements.append(
+                                    structured_c.CAssignment(
+                                        next_stmt.lhs, state.build_linear_expr(next_base, combined), codegen=codegen
+                                    )
+                                )
                                 state.changed = True
                                 i += 2
                                 continue
-                    if temp_use_count >= 2 and state.is_linear_register_temp(stmt.lhs) and state.is_linear_register_temp(next_stmt.lhs):
+                    if (
+                        temp_use_count >= 2
+                        and state.is_linear_register_temp(stmt.lhs)
+                        and state.is_linear_register_temp(next_stmt.lhs)
+                    ):
                         stmt_shift_base, stmt_shift_count = state.extract_shift_delta(stmt.rhs)
                         next_shift_rhs = unwrap_c_casts(next_stmt.rhs)
                         if isinstance(next_shift_rhs, structured_c.CBinaryOp) and next_shift_rhs.op == "Shr":
@@ -493,7 +523,11 @@ def _coalesce_linear_recurrence_statements(
                                 next_shift_count = c_constant_value(unwrap_c_casts(next_shift_rhs.rhs))
                                 if isinstance(next_shift_count, int) and stmt_shift_count >= 0:
                                     combined_shift = stmt_shift_count + next_shift_count
-                                    shift_repl = structured_c.CAssignment(next_stmt.lhs, state.build_shift_expr(stmt_shift_base, combined_shift), codegen=codegen)
+                                    shift_repl = structured_c.CAssignment(
+                                        next_stmt.lhs,
+                                        state.build_shift_expr(stmt_shift_base, combined_shift),
+                                        codegen=codegen,
+                                    )
                                     shift_var = getattr(next_stmt.lhs, "variable", None)
                                     if shift_var is not None:
                                         state.shift_defs[id(shift_var)] = (stmt_shift_base, combined_shift)
@@ -505,20 +539,31 @@ def _coalesce_linear_recurrence_statements(
                         stmt_base, stmt_delta = state.extract_linear_delta(stmt.rhs)
                         if stmt_base is not None:
                             resolved_stmt_base = state.resolve_known_copy_alias_expr(stmt_base)
-                            if state.expr_contains_dereference(stmt_base) or state.expr_contains_dereference(resolved_stmt_base):
+                            if state.expr_contains_dereference(stmt_base) or state.expr_contains_dereference(
+                                resolved_stmt_base
+                            ):
                                 visit(stmt)
                                 new_statements.append(stmt)
                                 i += 1
                                 continue
-                            base_var = getattr(stmt_base, "variable", None) if isinstance(stmt_base, structured_c.CVariable) else None
-                            if base_var is not None and (id(base_var) in state.dereferenced_variable_ids or id(base_var) in state.protected_linear_alias_ids):
+                            base_var = (
+                                getattr(stmt_base, "variable", None)
+                                if isinstance(stmt_base, structured_c.CVariable)
+                                else None
+                            )
+                            if base_var is not None and (
+                                id(base_var) in state.dereferenced_variable_ids
+                                or id(base_var) in state.protected_linear_alias_ids
+                            ):
                                 visit(stmt)
                                 new_statements.append(stmt)
                                 i += 1
                                 continue
                             state.linear_defs[id(temp_var)] = (stmt_base, stmt_delta)
                             resolved_base = state.resolve_known_copy_alias_expr(stmt_base)
-                            if isinstance(resolved_base, structured_c.CVariable) and isinstance(getattr(resolved_base, "variable", None), SimStackVariable):
+                            if isinstance(resolved_base, structured_c.CVariable) and isinstance(
+                                getattr(resolved_base, "variable", None), SimStackVariable
+                            ):
                                 state.protected_linear_defs.add(id(temp_var))
                             canonical_rhs = state.build_linear_expr(stmt_base, stmt_delta)
                             if not same_c_expression(stmt.rhs, canonical_rhs):
@@ -527,22 +572,36 @@ def _coalesce_linear_recurrence_statements(
                         rhs = state.inline_known_linear_defs(stmt.rhs)
                         inlined_base, inlined_delta = state.extract_linear_delta(rhs)
                         if inlined_base is not None and not same_c_expression(rhs, stmt.rhs):
-                            stmt = structured_c.CAssignment(stmt.lhs, state.build_linear_expr(inlined_base, inlined_delta), codegen=codegen)
+                            stmt = structured_c.CAssignment(
+                                stmt.lhs, state.build_linear_expr(inlined_base, inlined_delta), codegen=codegen
+                            )
                             rhs = stmt.rhs
                             state.changed = True
                         current_linear = state.linear_defs.get(id(temp_var)) if temp_var is not None else None
-                        if current_linear is not None and isinstance(rhs, structured_c.CBinaryOp) and rhs.op in {"Add", "Sub"}:
-                            if same_c_expression(unwrap_c_casts(rhs.lhs), stmt.lhs) or same_c_expression(unwrap_c_casts(rhs.rhs), stmt.lhs):
+                        if (
+                            current_linear is not None
+                            and isinstance(rhs, structured_c.CBinaryOp)
+                            and rhs.op in {"Add", "Sub"}
+                        ):
+                            if same_c_expression(unwrap_c_casts(rhs.lhs), stmt.lhs) or same_c_expression(
+                                unwrap_c_casts(rhs.rhs), stmt.lhs
+                            ):
                                 current_delta = c_constant_value(unwrap_c_casts(rhs.lhs))
                                 if current_delta is None:
                                     current_delta = c_constant_value(unwrap_c_casts(rhs.rhs))
                                 if isinstance(current_delta, int):
                                     base_expr, base_delta = current_linear
                                     resolved_base = state.resolve_known_copy_alias_expr(base_expr)
-                                    if isinstance(resolved_base, structured_c.CVariable) and isinstance(getattr(resolved_base, "variable", None), SimStackVariable):
+                                    if isinstance(resolved_base, structured_c.CVariable) and isinstance(
+                                        getattr(resolved_base, "variable", None), SimStackVariable
+                                    ):
                                         state.protected_linear_defs.add(id(temp_var))
-                                    combined = base_delta + current_delta if rhs.op == "Add" else base_delta - current_delta
-                                    stmt = structured_c.CAssignment(stmt.lhs, state.build_linear_expr(base_expr, combined), codegen=codegen)
+                                    combined = (
+                                        base_delta + current_delta if rhs.op == "Add" else base_delta - current_delta
+                                    )
+                                    stmt = structured_c.CAssignment(
+                                        stmt.lhs, state.build_linear_expr(base_expr, combined), codegen=codegen
+                                    )
                                     state.changed = True
                         if temp_var is not None and state.is_copy_alias_candidate(stmt.rhs):
                             alias = unwrap_c_casts(stmt.rhs)
@@ -555,7 +614,11 @@ def _coalesce_linear_recurrence_statements(
                         if isinstance(temp_var, SimStackVariable) and state.is_copy_alias_candidate(stmt.rhs):
                             alias = unwrap_c_casts(stmt.rhs)
                             alias_var = getattr(alias, "variable", None)
-                            if isinstance(alias_var, SimStackVariable) and alias_var is not temp_var and same_stack_slot_identity_var(temp_var, alias_var):
+                            if (
+                                isinstance(alias_var, SimStackVariable)
+                                and alias_var is not temp_var
+                                and same_stack_slot_identity_var(temp_var, alias_var)
+                            ):
                                 state.expr_aliases[id(temp_var)] = alias
                                 storage_key = state.alias_storage_key(stmt.lhs)
                                 if storage_key is not None:
@@ -573,7 +636,12 @@ def _coalesce_linear_recurrence_statements(
                 if structured_codegen_node(cond):
                     candidate_cond = state.resolve_known_copy_alias_expr(new_cond)
                     candidate_cond = state.inline_known_linear_defs(candidate_cond)
-                    if rules._should_commit_linear_rewrite(cond, candidate_cond, expr_contains_dereference=state.expr_contains_dereference, same_c_expression=same_c_expression):
+                    if rules._should_commit_linear_rewrite(
+                        cond,
+                        candidate_cond,
+                        expr_contains_dereference=state.expr_contains_dereference,
+                        same_c_expression=same_c_expression,
+                    ):
                         new_cond = candidate_cond
                 if new_cond is not cond:
                     pair_changed = True
@@ -586,25 +654,51 @@ def _coalesce_linear_recurrence_statements(
                 visit(node.else_node)
         elif isinstance(node, structured_c.CWhileLoop):
             if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
-                log.warning("[linear-recurrence] saw while-loop function=%#x", getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1)
-            _rewrite_linear_condition(node, state, structured_codegen_node=structured_codegen_node, same_c_expression=same_c_expression, rules=rules)
+                log.warning(
+                    "[linear-recurrence] saw while-loop function=%#x",
+                    getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
+                )
+            _rewrite_linear_condition(
+                node,
+                state,
+                structured_codegen_node=structured_codegen_node,
+                same_c_expression=same_c_expression,
+                rules=rules,
+            )
             visit(getattr(node, "condition", None))
             visit(getattr(node, "body", None))
         elif hasattr(structured_c, "CDoWhileLoop") and isinstance(node, getattr(structured_c, "CDoWhileLoop")):
             if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
-                log.warning("[linear-recurrence] saw do-while-loop function=%#x", getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1)
-            _rewrite_linear_condition(node, state, structured_codegen_node=structured_codegen_node, same_c_expression=same_c_expression, rules=rules)
+                log.warning(
+                    "[linear-recurrence] saw do-while-loop function=%#x",
+                    getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
+                )
+            _rewrite_linear_condition(
+                node,
+                state,
+                structured_codegen_node=structured_codegen_node,
+                same_c_expression=same_c_expression,
+                rules=rules,
+            )
             visit(getattr(node, "condition", None))
             visit(getattr(node, "body", None))
         elif hasattr(structured_c, "CForLoop") and isinstance(node, getattr(structured_c, "CForLoop")):
             if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
-                log.warning("[linear-recurrence] saw for-loop function=%#x", getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1)
+                log.warning(
+                    "[linear-recurrence] saw for-loop function=%#x",
+                    getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
+                )
             for attr in ("initializer", "init", "condition", "iteration", "iterator"):
                 current = getattr(node, attr, None)
                 if structured_codegen_node(current):
                     candidate = state.resolve_known_copy_alias_expr(current)
                     candidate = state.inline_known_linear_defs(candidate)
-                    if candidate is not current and rules._should_commit_linear_rewrite(current, candidate, expr_contains_dereference=state.expr_contains_dereference, same_c_expression=same_c_expression):
+                    if candidate is not current and rules._should_commit_linear_rewrite(
+                        current,
+                        candidate,
+                        expr_contains_dereference=state.expr_contains_dereference,
+                        same_c_expression=same_c_expression,
+                    ):
                         setattr(node, attr, candidate)
                         state.changed = True
             visit(getattr(node, "initializer", None))

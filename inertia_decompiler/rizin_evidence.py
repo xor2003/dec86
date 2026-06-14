@@ -204,9 +204,7 @@ def collect_rizin_evidence(binary_path: Path, *, timeout_sec: int = 8) -> RizinE
             vaddr = int(item.get("vaddr", 0) or 0)
             name = str(item.get("name", "") or "")
             if vaddr > 0 and name:
-                sym_facts.append(
-                    RizinSymbolFact(vaddr=vaddr, name=name, kind=str(item.get("type", "") or ""))
-                )
+                sym_facts.append(RizinSymbolFact(vaddr=vaddr, name=name, kind=str(item.get("type", "") or "")))
 
     stack_facts: list[RizinStackVarFact] = []
     if isinstance(stack_payload, list):

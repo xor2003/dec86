@@ -11,7 +11,6 @@ from typing import Any
 
 from tools.dosunit.model import DosUnitError, normalize_hex, parse_int
 
-
 PSP_PARA = 0x100
 IMAGE_PARA = PSP_PARA + 0x10
 DOS_MEM_LIMIT = 0xA0000

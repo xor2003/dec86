@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import os
+import sys
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-import os
 from pathlib import Path
-import sys
-import time
 
 from inertia_decompiler.tail_validation import (
     emit_tail_validation_console_summary,

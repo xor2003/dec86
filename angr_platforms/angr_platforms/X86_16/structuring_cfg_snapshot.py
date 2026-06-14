@@ -100,7 +100,9 @@ def build_cfg_snapshot(codegen: Any) -> CFGSnapshot | None:
             predecessor_ids = tuple(
                 sorted(pred.region_id for pred in graph.predecessors(region) if pred.region_id is not None)
             )
-            successor_ids = tuple(sorted(succ.region_id for succ in graph.successors(region) if succ.region_id is not None))
+            successor_ids = tuple(
+                sorted(succ.region_id for succ in graph.successors(region) if succ.region_id is not None)
+            )
             edge_count += len(successor_ids)
             ownership = "shared" if len(predecessor_ids) > 1 else "single"
             snapshot_nodes.append(

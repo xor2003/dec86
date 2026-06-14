@@ -385,7 +385,9 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
 
         # Evidence gate: never prune until callsite argument materialization is complete
         # when callsite statistics are available.
-        if hasattr(codegen, "_inertia_callsite_materialization_stats") and not _callsite_materialization_complete_8616(codegen):
+        if hasattr(codegen, "_inertia_callsite_materialization_stats") and not _callsite_materialization_complete_8616(
+            codegen
+        ):
             setattr(codegen, "dead_setup_refused", int(getattr(codegen, "dead_setup_refused", 0)) + 1)
             setattr(codegen, "dead_setup_live_call_arg", int(getattr(codegen, "dead_setup_live_call_arg", 0)) + 1)
             return False
@@ -476,7 +478,9 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
 
             if total_candidates:
                 setattr(
-                    codegen, "dead_setup_candidates", int(getattr(codegen, "dead_setup_candidates", 0)) + total_candidates
+                    codegen,
+                    "dead_setup_candidates",
+                    int(getattr(codegen, "dead_setup_candidates", 0)) + total_candidates,
                 )
             if total_refused:
                 setattr(codegen, "dead_setup_refused", int(getattr(codegen, "dead_setup_refused", 0)) + total_refused)
@@ -496,7 +500,9 @@ def _count_dead_setup_escaped_8616(codegen) -> int:
         mode = _resolve_dead_setup_mode_8616(codegen)
         if mode != DeadSetupMode8616.PRODUCTION:
             return 0
-        if hasattr(codegen, "_inertia_callsite_materialization_stats") and not _callsite_materialization_complete_8616(codegen):
+        if hasattr(codegen, "_inertia_callsite_materialization_stats") and not _callsite_materialization_complete_8616(
+            codegen
+        ):
             return 0
         cfunc = getattr(codegen, "cfunc", None)
         if cfunc is None:

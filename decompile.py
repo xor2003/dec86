@@ -8,11 +8,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-
 _ROOT = Path(__file__).resolve().parent
-_PROJECT_VENV_PYTHONS = (
-    _ROOT / ".venv" / "bin" / "python",
-)
+_PROJECT_VENV_PYTHONS = (_ROOT / ".venv" / "bin" / "python",)
 
 
 def _ensure_project_venv() -> None:
@@ -74,6 +71,7 @@ def _install_msgspec_shim_if_missing() -> None:
 
 _install_msgspec_shim_if_missing()
 
+
 def _configure_python_recursion_limit() -> None:
     raw = os.environ.get("INERTIA_PYTHON_RECURSION_LIMIT", "").strip()
     target = 12000
@@ -96,9 +94,8 @@ _install_early_log_levels()
 _enable_line_buffered_stdio()
 _configure_python_recursion_limit()
 
-from inertia_decompiler.telemetry import emit_compact_summary
-
 from inertia_decompiler import cli as _cli
+from inertia_decompiler.telemetry import emit_compact_summary
 
 _THIS_MODULE = sys.modules[__name__]
 

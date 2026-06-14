@@ -6,7 +6,6 @@ from types import ModuleType
 from angr.analyses.decompiler import structured_codegen
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-
 from angr_platforms.X86_16.semantics.alias_query import describe_alias_storage
 from angr_platforms.X86_16.widening_alias import (
     can_join_adjacent_register_slices,
@@ -14,9 +13,10 @@ from angr_platforms.X86_16.widening_alias import (
 )
 from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
 
-from .cli_core import main
 from . import cache as _cache
 from . import cli_access_profiles as _cli_access_profiles
+from . import cli_c_ast_rewrites as _cli_c_ast_rewrites
+from . import cli_c_text_postprocess as _cli_c_text_postprocess
 from . import cli_core as _cli_core
 from . import cli_decompilation as _cli_decompilation
 from . import cli_fallback_decompilation as _cli_fallback_decompilation
@@ -24,13 +24,15 @@ from . import cli_function_discovery as _cli_function_discovery
 from . import non_optimized_fallback as _non_optimized_fallback
 from . import project_loading as _project_loading
 from . import runtime_support as _runtime_support
-from . import sidecar_parsers as _sidecar_parsers
 from . import sidecar_metadata as _sidecar_metadata
+from . import sidecar_parsers as _sidecar_parsers
 from . import tail_validation as _tail_validation
 from . import work_items as _work_items
 from .cli_c_ast_rewrites import (
     _addr_exprs_are_byte_pair,
     _c_constant_value,
+    _canonicalize_stack_cvar_expr,
+    _canonicalize_stack_cvars,
     _classify_segmented_addr_expr,
     _coalesce_cod_word_global_loads,
     _coalesce_direct_ss_local_word_statements,
@@ -38,29 +40,26 @@ from .cli_c_ast_rewrites import (
     _coalesce_linear_recurrence_statements,
     _coalesce_segmented_word_load_expressions,
     _coalesce_segmented_word_store_statements,
-    _canonicalize_stack_cvar_expr,
-    _canonicalize_stack_cvars,
     _get_or_seed_inertia_alias_state,
     _make_word_dereference_from_addr_expr,
-    _materialize_missing_stack_local_declarations,
     _match_byte_load_addr_expr,
     _match_byte_store_addr_expr,
+    _match_duplicate_word_increment_shift_expr,
     _match_shift_right_8_expr,
     _match_shifted_high_byte_addr_expr,
     _match_ss_local_plus_const,
-    _match_duplicate_word_increment_shift_expr,
     _match_word_rhs_from_byte_pair,
+    _materialize_missing_stack_local_declarations,
+    _resolve_stack_cvar_from_addr_expr,
     _rewrite_ss_stack_byte_offsets,
     _same_c_expression,
-    _resolve_stack_cvar_from_addr_expr,
     _seed_adjacent_byte_pair_aliases,
     _stack_slot_identity_can_join,
     _unwrap_c_casts,
 )
 from .cli_c_text_postprocess import _simplify_x86_16_stack_byte_pointers
+from .cli_core import main
 from .disassembly_helpers import _infer_linear_disassembly_window, _linear_disassembly
-from . import cli_c_ast_rewrites as _cli_c_ast_rewrites
-from . import cli_c_text_postprocess as _cli_c_text_postprocess
 
 _PROXY_MODULES = (
     _cli_core,
@@ -126,7 +125,9 @@ def _probe_lift_break(project, addr: int, *, max_window: int = 0x80) -> str:
         except Exception as ex:
             window = insns[max(0, index - 3) : min(len(insns), index + 5)]
             lines = [f"{cur.address:#06x}: {cur.mnemonic} {cur.op_str}".rstrip() for cur in window]
-            return f"first lift failure at {insn.address:#x}: {_project_loading._describe_exception(ex)}\n" + "\n".join(lines)
+            return f"first lift failure at {insn.address:#x}: {_project_loading._describe_exception(ex)}\n" + "\n".join(
+                lines
+            )
     return "no per-instruction lift failure detected in linear probe window"
 
 

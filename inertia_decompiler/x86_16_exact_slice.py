@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
 SAFE_X86_16_SLICE_BASE = 0x1000
 _ORIGINAL_ADDR_BY_FUNCTION_ID: dict[int, int] = {}
 
@@ -40,8 +39,7 @@ def non_optimized_slice_codegen_policy(
     arch_name: str | None,
     slice_plan: X86ExactSlicePlan | None,
 ) -> tuple[bool, bool]:
-    """
-    Pick the bounded non-optimized codegen policy for one-function exact slices.
+    """Pick the bounded non-optimized codegen policy for one-function exact slices.
 
     Exact rebased x86-16 slices already carry original-address linkage and now
     depend on postprocess callsite repair to keep direct-call targets and push
@@ -49,7 +47,6 @@ def non_optimized_slice_codegen_policy(
     postprocess so the same typed callsite facts can survive across recovery
     paths.
     """
-
     if arch_name == "86_16" and slice_plan is not None:
         return False, True
     return False, False

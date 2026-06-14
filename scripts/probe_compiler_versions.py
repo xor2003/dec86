@@ -8,7 +8,6 @@ import re
 import subprocess
 from pathlib import Path
 
-
 KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
 DOS_COMPILERS = Path("/home/xor/inertia_player/dos_compilers")
 OUT_JSON = Path("/home/xor/vextest/signature_catalogs/compiler_aliases.json")
@@ -36,7 +35,9 @@ def _run_banner(root: Path, exe: Path) -> str:
         f"--prog={dos_prog}",
         dos_prog,
     ]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="latin1", errors="ignore")
+    proc = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="latin1", errors="ignore"
+    )
     return proc.stdout or ""
 
 

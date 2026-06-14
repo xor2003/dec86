@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from functools import lru_cache
 import gzip
 import json
 import struct
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BORROW_80286_ROOT = REPO_ROOT / "borrow" / "80286" / "v1_real_mode"
@@ -123,7 +122,9 @@ def load_borrow_80286_lifter_corpus() -> Borrow80286Corpus:
         if not source_path.exists():
             continue
 
-        for name, raw_instruction_bytes in _iter_test_names_and_bytes_from_moo(gzip.decompress(source_path.read_bytes())):
+        for name, raw_instruction_bytes in _iter_test_names_and_bytes_from_moo(
+            gzip.decompress(source_path.read_bytes())
+        ):
             total_cases += 1
             if name.startswith("(bad)"):
                 skipped_bad_cases += 1

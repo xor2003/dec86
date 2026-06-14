@@ -176,8 +176,6 @@ def test_normalize_call_target_names_rewrites_namespaced_callee_func_name():
     assert callee_func.name == "InitBars"
 
 
-
-
 def test_normalize_call_target_names_keeps_tail_validation_stable():
     project = _project()
     before_codegen = _empty_codegen(project)
@@ -645,9 +643,7 @@ def test_align_cod_call_names_uses_rebased_original_function_metadata(monkeypatc
     project.kb = SimpleNamespace(
         functions=SimpleNamespace(
             function=lambda addr=None, name=None, create=False: (
-                SimpleNamespace(addr=0x104D, name="InitMenu")
-                if addr == 0x104D or name == "InitMenu"
-                else None
+                SimpleNamespace(addr=0x104D, name="InitMenu") if addr == 0x104D or name == "InitMenu" else None
             )
         )
     )
@@ -738,7 +734,9 @@ def test_recover_expected_calls_prefers_cod_call_names_over_rebased_target_guess
         lambda _project, target: SimpleNamespace(name=wrong_names[target]),
     )
     summaries = {
-        callsite: CallsiteSummary8616(callsite, function.get_call_target(callsite), callsite + 3, "near", 0, (), 0, None, False)
+        callsite: CallsiteSummary8616(
+            callsite, function.get_call_target(callsite), callsite + 3, "near", 0, (), 0, None, False
+        )
         for callsite in function.get_call_sites()
     }
     monkeypatch.setattr(
@@ -5809,7 +5807,9 @@ def test_materialize_callsite_stack_arguments_uses_bp_index_address_source_prove
         (getattr(getattr(node, "variable", None), "name", None) or getattr(node, "name", None)) == "si"
         for node in (dst, *_iter_c_nodes_deep_8616(dst))
     )
-    assert any(isinstance(node, CFunctionCall) and node.callee_target == "SEG_U8" for node in _iter_c_nodes_deep_8616(dst))
+    assert any(
+        isinstance(node, CFunctionCall) and node.callee_target == "SEG_U8" for node in _iter_c_nodes_deep_8616(dst)
+    )
     assert getattr(final_call.args[1], "value", None) == 32
     assert getattr(getattr(final_call.args[2], "variable", None), "name", None) == "cSpace"
 

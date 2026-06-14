@@ -127,7 +127,9 @@ def _current_source_function_body_lines(metadata: CODProcMetadata | None) -> tup
                 continue
             if "(" not in stripped or ")" not in stripped or stripped.endswith(";"):
                 continue
-            if stripped.endswith("{") or (idx + 1 < len(source_lines) and source_lines[idx + 1].lstrip().startswith("{")):
+            if stripped.endswith("{") or (
+                idx + 1 < len(source_lines) and source_lines[idx + 1].lstrip().startswith("{")
+            ):
                 header_index = idx
                 break
 
@@ -505,7 +507,9 @@ def rewrite_missing_source_return_lines(c_text: str, metadata: CODProcMetadata |
         if metadata is None or not metadata.source_lines:
             return c_text
 
-        source_returns = [line.strip() for line in metadata.source_lines if re.match(r"^return\s+.+;\s*$", line.strip())]
+        source_returns = [
+            line.strip() for line in metadata.source_lines if re.match(r"^return\s+.+;\s*$", line.strip())
+        ]
         if not source_returns:
             return c_text
 
@@ -687,7 +691,9 @@ def rewrite_collapsed_source_bodies(c_text: str, metadata: CODProcMetadata | Non
                 return False
             return stripped.endswith(";")
 
-        current_statements = [line.strip() for line in lines[body_start + 1 : body_end] if _is_body_statement(line.strip())]
+        current_statements = [
+            line.strip() for line in lines[body_start + 1 : body_end] if _is_body_statement(line.strip())
+        ]
 
         macro_aliases = _macro_aliases_8616(metadata.source_lines)
 
@@ -711,7 +717,9 @@ def rewrite_collapsed_source_bodies(c_text: str, metadata: CODProcMetadata | Non
             return "\n".join(lines) if repaired_split_calls else c_text
 
         indent = "    "
-        existing_decls = {line.strip() for line in lines[body_start + 1 : body_end] if decl_re.match(line.strip() or "")}
+        existing_decls = {
+            line.strip() for line in lines[body_start + 1 : body_end] if decl_re.match(line.strip() or "")
+        }
         rebuilt_body = [f"{indent}{decl_line}" for decl_line in source_decl_lines if decl_line not in existing_decls]
         rebuilt_body.extend(f"{indent}{stmt}" for stmt in source_stmt_lines)
         if not rebuilt_body:
@@ -744,7 +752,9 @@ def _macro_aliases_8616(source_lines: list[str]) -> dict[str, str]:
     return aliases
 
 
-def _source_decl_and_stmt_lines_8616(*, function_body_lines: list[str], macro_aliases: dict[str, str], metadata) -> tuple[list[str], list[str]]:
+def _source_decl_and_stmt_lines_8616(
+    *, function_body_lines: list[str], macro_aliases: dict[str, str], metadata
+) -> tuple[list[str], list[str]]:
     def _impl():
         source_decl_lines: list[str] = []
         source_stmt_lines: list[str] = []
@@ -760,7 +770,9 @@ def _source_decl_and_stmt_lines_8616(*, function_body_lines: list[str], macro_al
                 return "char"
             return expanded
 
-        alias_offsets_by_name = {name: offset for offset, name in metadata.stack_aliases.items() if isinstance(name, str) and name}
+        alias_offsets_by_name = {
+            name: offset for offset, name in metadata.stack_aliases.items() if isinstance(name, str) and name
+        }
         preferred_source_calls = _preferred_source_call_lines(metadata)
 
         def bp_comment(name: str) -> str:
@@ -788,7 +800,9 @@ def _source_decl_and_stmt_lines_8616(*, function_body_lines: list[str], macro_al
                         source_decl_lines.append(decl_line)
                         seen_decls.add(decl_line)
                 continue
-            if not stripped.endswith(";") or stripped.startswith(("if ", "while ", "for ", "switch ", "case ", "default ")):
+            if not stripped.endswith(";") or stripped.startswith(
+                ("if ", "while ", "for ", "switch ", "case ", "default ")
+            ):
                 continue
             if stripped.startswith("return ") or "=" in stripped:
                 source_stmt_lines.append(stripped)
@@ -796,7 +810,11 @@ def _source_decl_and_stmt_lines_8616(*, function_body_lines: list[str], macro_al
             call_names = _source_call_names(stripped)
             if call_names:
                 preferred_line = next(
-                    (preferred_source_calls.get(name.lstrip("_")) for name in call_names if preferred_source_calls.get(name.lstrip("_"))),
+                    (
+                        preferred_source_calls.get(name.lstrip("_"))
+                        for name in call_names
+                        if preferred_source_calls.get(name.lstrip("_"))
+                    ),
                     None,
                 )
                 if preferred_line is not None:

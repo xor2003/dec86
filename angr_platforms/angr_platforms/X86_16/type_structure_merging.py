@@ -313,7 +313,9 @@ def apply_x86_16_structure_field_merging(codegen) -> bool:
             codegen._inertia_struct_merging_array_facts = {} if bridge is None else bridge.array_facts
             codegen._inertia_struct_merging_refusal_facts = {} if bridge is None else bridge.refusal_facts
             codegen._inertia_struct_merging_typed_ir_facts = typed_ir_facts
-            codegen._inertia_struct_merging_changed = bool((bridge is not None and bridge.facts_by_base) or typed_ir_facts)
+            codegen._inertia_struct_merging_changed = bool(
+                (bridge is not None and bridge.facts_by_base) or typed_ir_facts
+            )
             codegen._inertia_struct_merging_stats = {
                 "field_accesses": 0
                 if bridge is None

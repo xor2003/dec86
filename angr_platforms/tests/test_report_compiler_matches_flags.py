@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections import Counter
 import importlib.util
-from pathlib import Path
 import tempfile
+from collections import Counter
+from pathlib import Path
 
 
 def _load_module():

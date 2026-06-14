@@ -41,7 +41,10 @@ def test_planner_prompt_mentions_plan_and_remaining_steps(monkeypatch, tmp_path)
     assert "Verification commands must be concrete shell commands" in prompt
     assert "Do not emit vague planner language" in prompt
     assert "Do not emit phase headers, aspirational themes, or research bullets" in prompt
-    assert "If you cannot fill the required fields for an item, inspect the code and existing tests until you can" in prompt
+    assert (
+        "If you cannot fill the required fields for an item, inspect the code and existing tests until you can"
+        in prompt
+    )
     assert "Preserve unfinished strategic items" in prompt
     assert "Do not drop user-added unfinished goals" in prompt
     assert "Pause for minute" not in prompt

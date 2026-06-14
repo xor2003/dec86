@@ -6,7 +6,6 @@ from typing import Any
 
 from tools.dosunit.model import DosUnitError, normalize_hex, parse_int
 
-
 REG16 = ("ax", "cx", "dx", "bx", "sp", "bp", "si", "di")
 REG8 = ("al", "cl", "dl", "bl", "ah", "ch", "dh", "bh")
 SUPPORTED_BRANCH_OPS = {
@@ -200,8 +199,8 @@ def discover_branch_targets(
 def _load_lifter_project(exe_path: Path) -> Any:
     try:
         import angr
-        from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
         import angr_platforms.X86_16.simos_86_16  # noqa: F401
+        from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
 
         project = angr.Project(
             str(exe_path),
@@ -290,7 +289,11 @@ def _discover_lifter_function_targets(
     limit = int(size) if isinstance(size, int) and size > 0 else scan_limit
     limit = max(0, min(limit, scan_limit))
     if limit <= 0:
-        return [], [_refusal(function_id, "unsupported_ir", "function size/scan limit is empty", source=LIFTER_SOURCE)], 0
+        return (
+            [],
+            [_refusal(function_id, "unsupported_ir", "function size/scan limit is empty", source=LIFTER_SOURCE)],
+            0,
+        )
 
     targets: list[BranchTarget] = []
     refusals: list[dict[str, Any]] = []
@@ -303,7 +306,9 @@ def _discover_lifter_function_targets(
         if remaining_branches is not None and len(targets) >= remaining_branches:
             break
         if at in seen:
-            refusals.append(_refusal(function_id, "unsupported_ir", "lifter scan encountered a local cycle", source=LIFTER_SOURCE))
+            refusals.append(
+                _refusal(function_id, "unsupported_ir", "lifter scan encountered a local cycle", source=LIFTER_SOURCE)
+            )
             break
         seen.add(at)
 
@@ -324,19 +329,42 @@ def _discover_lifter_function_targets(
 
         lifted_insns = [item.insn for item in block.capstone.insns if item.insn.address < end]
         if not lifted_insns:
-            refusals.append(_refusal(function_id, "unsupported_ir", "lifter produced an empty block", source=LIFTER_SOURCE))
+            refusals.append(
+                _refusal(function_id, "unsupported_ir", "lifter produced an empty block", source=LIFTER_SOURCE)
+            )
             break
 
         advanced_to: int | None = None
         for insn in lifted_insns:
             decoded = _decode_lifted_control(insn)
             if decoded.refusal_reason is not None:
-                refusals.append(_refusal(function_id, decoded.refusal_reason, decoded.refusal_message or "unsupported control flow", source=LIFTER_SOURCE))
+                refusals.append(
+                    _refusal(
+                        function_id,
+                        decoded.refusal_reason,
+                        decoded.refusal_message or "unsupported control flow",
+                        source=LIFTER_SOURCE,
+                    )
+                )
             if decoded.branch_kind is not None:
                 if previous is None:
-                    refusals.append(_refusal(function_id, "unsupported_ir", "conditional branch has no supported flag producer", source=LIFTER_SOURCE))
+                    refusals.append(
+                        _refusal(
+                            function_id,
+                            "unsupported_ir",
+                            "conditional branch has no supported flag producer",
+                            source=LIFTER_SOURCE,
+                        )
+                    )
                 elif previous.reason is not None:
-                    refusals.append(_refusal(function_id, previous.reason, previous.message or "unsupported branch predicate", source=LIFTER_SOURCE))
+                    refusals.append(
+                        _refusal(
+                            function_id,
+                            previous.reason,
+                            previous.message or "unsupported branch predicate",
+                            source=LIFTER_SOURCE,
+                        )
+                    )
                 elif previous.condition is not None:
                     condition = _condition_for_branch(previous.condition, decoded.branch_kind)
                     targets.append(
@@ -346,7 +374,9 @@ def _discover_lifter_function_targets(
                             segment_para=segment_para,
                             branch_ip=(insn.address - function_base) & 0xFFFF,
                             fallthrough_ip=(decoded.branch_next - function_base) & 0xFFFF,
-                            taken_ip=(decoded.branch_target - function_base) & 0xFFFF if decoded.branch_target is not None else 0,
+                            taken_ip=(decoded.branch_target - function_base) & 0xFFFF
+                            if decoded.branch_target is not None
+                            else 0,
                             condition=condition,
                             discovery_source=LIFTER_SOURCE,
                         )
@@ -372,7 +402,9 @@ def _discover_lifter_function_targets(
         at = advanced_to
 
     if not targets and not refusals:
-        refusals.append(_refusal(function_id, "unsupported_ir", "no supported direct branch target found", source=LIFTER_SOURCE))
+        refusals.append(
+            _refusal(function_id, "unsupported_ir", "no supported direct branch target found", source=LIFTER_SOURCE)
+        )
     return targets, refusals, blocks_lifted
 
 
@@ -380,7 +412,11 @@ def _decode_lifted_control(insn: Any) -> _Decoded:
     mnemonic = str(insn.mnemonic).lower()
     if mnemonic in BRANCH_MNEMONICS:
         if len(insn.operands) != 1 or insn.operands[0].type != CAPSTONE_OP_IMM:
-            return _Decoded(length=int(insn.size), refusal_reason="unsupported_ir", refusal_message="conditional branch target is not a direct immediate")
+            return _Decoded(
+                length=int(insn.size),
+                refusal_reason="unsupported_ir",
+                refusal_message="conditional branch target is not a direct immediate",
+            )
         target = int(insn.operands[0].imm)
         return _Decoded(
             length=int(insn.size),
@@ -476,7 +512,9 @@ def _discover_function_targets(
     limit = int(size) if isinstance(size, int) and size > 0 else scan_limit
     limit = max(0, min(limit, scan_limit, len(image) - base))
     if base < 0 or base >= len(image) or limit <= 0:
-        return [], [_refusal(function_id, "unsupported_ir", "function entry is outside loaded image", source=discovery_source)]
+        return [], [
+            _refusal(function_id, "unsupported_ir", "function entry is outside loaded image", source=discovery_source)
+        ]
 
     targets: list[BranchTarget] = []
     refusals: list[dict[str, Any]] = []
@@ -488,12 +526,33 @@ def _discover_function_targets(
             break
         decoded = _decode_instruction(image, at, function_base=segment_para << 4)
         if decoded.refusal_reason is not None:
-            refusals.append(_refusal(function_id, decoded.refusal_reason, decoded.refusal_message or "unsupported instruction", source=discovery_source))
+            refusals.append(
+                _refusal(
+                    function_id,
+                    decoded.refusal_reason,
+                    decoded.refusal_message or "unsupported instruction",
+                    source=discovery_source,
+                )
+            )
         if decoded.branch_kind is not None:
             if previous is None:
-                refusals.append(_refusal(function_id, "unsupported_ir", "conditional branch has no supported flag producer", source=discovery_source))
+                refusals.append(
+                    _refusal(
+                        function_id,
+                        "unsupported_ir",
+                        "conditional branch has no supported flag producer",
+                        source=discovery_source,
+                    )
+                )
             elif previous.reason is not None:
-                refusals.append(_refusal(function_id, previous.reason, previous.message or "unsupported branch predicate", source=discovery_source))
+                refusals.append(
+                    _refusal(
+                        function_id,
+                        previous.reason,
+                        previous.message or "unsupported branch predicate",
+                        source=discovery_source,
+                    )
+                )
             elif previous.condition is not None:
                 condition = _condition_for_branch(previous.condition, decoded.branch_kind)
                 targets.append(
@@ -503,7 +562,9 @@ def _discover_function_targets(
                         segment_para=segment_para,
                         branch_ip=(at - (segment_para << 4)) & 0xFFFF,
                         fallthrough_ip=(decoded.branch_next - (segment_para << 4)) & 0xFFFF,
-                        taken_ip=(decoded.branch_target - (segment_para << 4)) & 0xFFFF if decoded.branch_target is not None else 0,
+                        taken_ip=(decoded.branch_target - (segment_para << 4)) & 0xFFFF
+                        if decoded.branch_target is not None
+                        else 0,
                         condition=condition,
                         discovery_source=discovery_source,
                     )
@@ -515,7 +576,9 @@ def _discover_function_targets(
             previous = None
         at += max(decoded.length, 1)
     if not targets and not refusals:
-        refusals.append(_refusal(function_id, "unsupported_ir", "no supported direct branch target found", source=discovery_source))
+        refusals.append(
+            _refusal(function_id, "unsupported_ir", "no supported direct branch target found", source=discovery_source)
+        )
     return targets, refusals
 
 
@@ -548,11 +611,21 @@ def _decode_instruction(image: bytes, at: int, *, function_base: int) -> _Decode
         return _Decoded(length=2, producer=_cmp(Operand("reg8", "al", width=8), Operand("imm", image[at + 1], width=8)))
     if op == 0xA9 and at + 3 <= len(image):
         imm = int.from_bytes(image[at + 1 : at + 3], "little")
-        return _Decoded(length=3, producer=_Producer(kind="test", condition=ConditionIR("test_nonzero", Operand("reg", "ax"), Operand("imm", imm))))
+        return _Decoded(
+            length=3,
+            producer=_Producer(
+                kind="test", condition=ConditionIR("test_nonzero", Operand("reg", "ax"), Operand("imm", imm))
+            ),
+        )
     if op == 0xA8 and at + 2 <= len(image):
         return _Decoded(
             length=2,
-            producer=_Producer(kind="test", condition=ConditionIR("test_nonzero", Operand("reg8", "al", width=8), Operand("imm", image[at + 1], width=8))),
+            producer=_Producer(
+                kind="test",
+                condition=ConditionIR(
+                    "test_nonzero", Operand("reg8", "al", width=8), Operand("imm", image[at + 1], width=8)
+                ),
+            ),
         )
     if op in {0x81, 0x83} and at + 3 <= len(image):
         modrm = image[at + 1]
@@ -575,8 +648,12 @@ def _decode_instruction(image: bytes, at: int, *, function_base: int) -> _Decode
         if reg == 7:
             if mod != 3:
                 length = 3 + _modrm_displacement_size(mod, rm)
-                return _Decoded(length=length, producer=_unsupported("unbounded_memory", "byte cmp predicate reads memory"))
-            return _Decoded(length=3, producer=_cmp(Operand("reg8", REG8[rm], width=8), Operand("imm", image[at + 2], width=8)))
+                return _Decoded(
+                    length=length, producer=_unsupported("unbounded_memory", "byte cmp predicate reads memory")
+                )
+            return _Decoded(
+                length=3, producer=_cmp(Operand("reg8", REG8[rm], width=8), Operand("imm", image[at + 2], width=8))
+            )
     if op == 0xF7 and at + 4 <= len(image):
         modrm = image[at + 1]
         mod, reg, rm = _modrm_parts(modrm)
@@ -585,45 +662,76 @@ def _decode_instruction(image: bytes, at: int, *, function_base: int) -> _Decode
                 length = 4 + _modrm_displacement_size(mod, rm)
                 return _Decoded(length=length, producer=_unsupported("unbounded_memory", "test predicate reads memory"))
             imm = int.from_bytes(image[at + 2 : at + 4], "little")
-            return _Decoded(length=4, producer=_Producer(kind="test", condition=ConditionIR("test_nonzero", Operand("reg", REG16[rm]), Operand("imm", imm))))
+            return _Decoded(
+                length=4,
+                producer=_Producer(
+                    kind="test", condition=ConditionIR("test_nonzero", Operand("reg", REG16[rm]), Operand("imm", imm))
+                ),
+            )
     if op == 0xF6 and at + 3 <= len(image):
         modrm = image[at + 1]
         mod, reg, rm = _modrm_parts(modrm)
         if reg == 0:
             if mod != 3:
                 length = 3 + _modrm_displacement_size(mod, rm)
-                return _Decoded(length=length, producer=_unsupported("unbounded_memory", "byte test predicate reads memory"))
+                return _Decoded(
+                    length=length, producer=_unsupported("unbounded_memory", "byte test predicate reads memory")
+                )
             return _Decoded(
                 length=3,
-                producer=_Producer(kind="test", condition=ConditionIR("test_nonzero", Operand("reg8", REG8[rm], width=8), Operand("imm", image[at + 2], width=8))),
+                producer=_Producer(
+                    kind="test",
+                    condition=ConditionIR(
+                        "test_nonzero", Operand("reg8", REG8[rm], width=8), Operand("imm", image[at + 2], width=8)
+                    ),
+                ),
             )
     if op in {0x39, 0x3B, 0x85} and at + 2 <= len(image):
         modrm = image[at + 1]
         mod, reg, rm = _modrm_parts(modrm)
         if mod != 3:
             reason = "test predicate reads memory" if op == 0x85 else "cmp predicate reads memory"
-            return _Decoded(length=2 + _modrm_displacement_size(mod, rm), producer=_unsupported("unbounded_memory", reason))
+            return _Decoded(
+                length=2 + _modrm_displacement_size(mod, rm), producer=_unsupported("unbounded_memory", reason)
+            )
         if op == 0x39:
             return _Decoded(length=2, producer=_cmp(Operand("reg", REG16[rm]), Operand("reg", REG16[reg])))
         if op == 0x3B:
             return _Decoded(length=2, producer=_cmp(Operand("reg", REG16[reg]), Operand("reg", REG16[rm])))
-        return _Decoded(length=2, producer=_Producer(kind="test", condition=ConditionIR("test_nonzero", Operand("reg", REG16[rm]), Operand("reg", REG16[reg]))))
+        return _Decoded(
+            length=2,
+            producer=_Producer(
+                kind="test",
+                condition=ConditionIR("test_nonzero", Operand("reg", REG16[rm]), Operand("reg", REG16[reg])),
+            ),
+        )
     if op in {0x09, 0x0B} and at + 2 <= len(image):
         modrm = image[at + 1]
         mod, reg, rm = _modrm_parts(modrm)
         if mod != 3:
-            return _Decoded(length=2 + _modrm_displacement_size(mod, rm), producer=_unsupported("unbounded_memory", "or predicate writes memory"))
+            return _Decoded(
+                length=2 + _modrm_displacement_size(mod, rm),
+                producer=_unsupported("unbounded_memory", "or predicate writes memory"),
+            )
         left = REG16[rm] if op == 0x09 else REG16[reg]
         right = REG16[reg] if op == 0x09 else REG16[rm]
         if left == right:
             operand = Operand("reg", left)
-            return _Decoded(length=2, producer=_Producer(kind="or", condition=ConditionIR("test_nonzero", operand, operand)))
-        return _Decoded(length=2, producer=_unsupported("unsupported_ir", "or predicate with distinct registers is not modeled"))
+            return _Decoded(
+                length=2, producer=_Producer(kind="or", condition=ConditionIR("test_nonzero", operand, operand))
+            )
+        return _Decoded(
+            length=2, producer=_unsupported("unsupported_ir", "or predicate with distinct registers is not modeled")
+        )
     if op == 0xFF and at + 2 <= len(image):
         modrm = image[at + 1]
         _, reg, _ = _modrm_parts(modrm)
         if reg in {4, 5}:
-            return _Decoded(length=2, refusal_reason="unbounded_indirect_control", refusal_message="indirect jump is unsupported for edge generation")
+            return _Decoded(
+                length=2,
+                refusal_reason="unbounded_indirect_control",
+                refusal_message="indirect jump is unsupported for edge generation",
+            )
     return _Decoded(length=_minimal_instruction_length(image, at))
 
 

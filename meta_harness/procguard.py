@@ -129,6 +129,7 @@ def install_child_cleanup_handler(state_dir: Path, root_dir: Path) -> None:
     atexit.register(_cleanup)
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         try:
+
             def _handler(_signum: int, _frame: object, _sig: signal.Signals = sig) -> None:
                 _cleanup()
                 raise SystemExit(128 + int(_sig))

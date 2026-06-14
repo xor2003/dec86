@@ -1,39 +1,12 @@
-from __future__ import annotations
-
 # AUTO-GENERATED split from cli_runtime_shared.py
-
 from __future__ import annotations
-
-import argparse
-
-import atexit
-
-import contextlib
-
-import copy
-
-import logging
 
 import os
-
 import re
-
-import sys
-
-import threading
-
-import time
-
 from collections.abc import Mapping, Sequence
-
-from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
-
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum, auto
-
 from pathlib import Path
-
-from types import SimpleNamespace
 
 import angr
 from angr.utils.library import convert_cproto_to_py
@@ -42,221 +15,63 @@ from angr_platforms.X86_16.annotations import _source_decl_from_cod_source_lines
 from angr_platforms.X86_16.cod_extract import CODProcMetadata
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
 
-from inertia_decompiler.cache import (
-    _function_decompilation_cache_key,
-    _load_cache_json,
-    _recovery_cache_key,
-    _store_cache_json,
-)
-
-from inertia_decompiler.project_loading import (
-    _build_project,
-    _build_project_cached,
-    _build_project_from_bytes,
-    _describe_exception,
-    _is_blob_only_input,
-)
-
-from inertia_decompiler.sidecar_metadata import (
-    _load_lst_metadata,
-    _lst_code_label,
-    _lst_code_region,
-    _lst_data_label,
-    _recovery_code_labels,
-    _signature_matched_code_addrs,
-    _visible_code_labels,
-)
-
-from inertia_decompiler.sidecar_parsers import _parse_ida_map_metadata
-
-from inertia_decompiler.disassembly_helpers import (
-    _format_asm_range,
-    _format_first_block_asm,
-    _infer_linear_disassembly_window,
-    _probe_lift_break,
-)
-
 from inertia_decompiler.cli_output import (
-    _RAW_PRINT,
-    _asm_fallback_pattern_note,
-    _emit_exit_marker,
-    _print_asm_fallback_text,
-    _print_diagnostic_text,
-    _timestamp_prefix,
     _timestamped_print,
 )
 
-from inertia_decompiler.cli_timeout import (
-    _AdaptivePerByteTimeoutModel,
-    _default_recovery_timeout,
-    _stdout_is_interactive,
-)
-
-from inertia_decompiler import cli_access_traits as _cli_access_traits
-
-from inertia_decompiler import cli_access_object_hints as _cli_access_object_hints
-
-from inertia_decompiler import cli_access_profiles as _cli_access_profiles
-
-from inertia_decompiler import cli_access_rewrite_artifact as _cli_access_rewrite_artifact
-
-from inertia_decompiler import cli_access_trait_rewrite as _cli_access_trait_rewrite
-
-from inertia_decompiler import cli_memory_prune as _cli_memory_prune
-
-from inertia_decompiler import cli_dead_local_prune as _cli_dead_local_prune
-
-from inertia_decompiler import cli_local_prune as _cli_local_prune
-
-from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
-
-from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
-
-from inertia_decompiler import cli_cod_globals as _cli_cod_globals
-
-from inertia_decompiler import cli_cod_global_statements as _cli_cod_global_statements
-
-from inertia_decompiler import cli_helper_modeling as _cli_helper_modeling
-
-from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
-
-from inertia_decompiler import cli_far_pointer_stack as _cli_far_pointer_stack
-
-from inertia_decompiler import cli_linear_aliases as _cli_linear_aliases
-
-from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
-
-from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
-
-from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
-
-from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
-
-from inertia_decompiler import cli_stack_byte_offsets as _cli_stack_byte_offsets
-
-from inertia_decompiler import cli_stack_locals as _cli_stack_locals
-
-from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
-
-from inertia_decompiler import cli_segmented as _cli_segmented
-
-from inertia_decompiler import cli_segmented_elision as _cli_segmented_elision
-
-from inertia_decompiler import cli_segmented_compare as _cli_segmented_compare
-
-from inertia_decompiler import cli_segmented_lowering as _cli_segmented_lowering
-
-from inertia_decompiler import cli_segmented_load_coalesce as _cli_segmented_load_coalesce
-
-from inertia_decompiler import cli_segmented_store_coalesce as _cli_segmented_store_coalesce
-
-from inertia_decompiler import cli_word_loads as _cli_word_loads
 from .cli_c_ast_rewrites import (
     _build_cod_positive_bp_alias_map,
     _cod_stack_alias_for_disp,
     _dos_helper_declarations,
+    _int21_call_replacements,
     _interrupt_call_replacement_map,
     _interrupt_helper_declarations,
-    _int21_call_replacements,
     _known_helper_declarations,
     _make_unique_identifier,
     _normalize_16bit_signed_offset,
 )
 from .cli_interrupt_modeling import _interrupt_wrapper_call_text
 
-from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
-
-from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
-
-from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
-
-from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
-
-from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
-
-from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
-
-from inertia_decompiler.x86_16_exact_slice import (
-    function_original_addr,
-    mark_function_original_addr,
-    non_optimized_slice_codegen_policy,
-    plan_x86_16_exact_slice,
-)
-
-from inertia_decompiler.tail_validation import (
-    TAIL_VALIDATION_ENABLE_ENV as _TAIL_VALIDATION_ENABLE_ENV,
-    emit_tail_validation_console_summary as _emit_tail_validation_console_summary,
-    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
-    parse_env_bool as _parse_env_bool,
-    set_tail_validation_runtime_enabled as _set_tail_validation_runtime_enabled,
-    tail_validation_console_cache_path as _tail_validation_console_cache_path,
-    tail_validation_detail_cache_path as _tail_validation_detail_cache_path,
-    tail_validation_enabled_for_run as _tail_validation_enabled_for_run,
-    tail_validation_fallback_allows_project_snapshot as _tail_validation_fallback_allows_project_snapshot,
-    tail_validation_runtime_enabled as _tail_validation_runtime_enabled,
-    tail_validation_snapshot_for_fallback as _tail_validation_snapshot_for_fallback,
-    tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
-)
-
-from inertia_decompiler.runtime_support import (
-    AnalysisTimeout as _AnalysisTimeout,
-    DaemonThreadPoolExecutor,
-    DECOMPILATION_PREP_LOCK,
-    FORCE_SERIAL_FUNCTION_DECOMP_ENV as _FORCE_SERIAL_FUNCTION_DECOMP_ENV,
-    JumpkindLoggingHandler,
-    apply_memory_limit as _apply_memory_limit,
-    analysis_timeout as _analysis_timeout,
-    capture_thread_output as _capture_thread_output,
-    choose_function_parallelism as _choose_function_parallelism,
-    default_exe_showcase_cap as _default_exe_showcase_cap,
-    emit_timeout_and_exit as _emit_timeout_and_exit,
-    format_address as _format_address,
-    guard_angr_ail_narrowing as _guard_angr_ail_narrowing,
-    guard_angr_clinic_stage_markers as _guard_angr_clinic_stage_markers,
-    guard_angr_peephole_expr_bitwidth_assertion as _guard_angr_peephole_expr_bitwidth_assertion,
-    guard_angr_variable_recovery_binop_sub_size_mismatch as _guard_angr_variable_recovery_binop_sub_size_mismatch,
-    install_angr_peephole_expr_bitwidth_guard as _install_angr_peephole_expr_bitwidth_guard,
-    install_angr_variable_recovery_binop_sub_size_guard as _install_angr_variable_recovery_binop_sub_size_guard,
-    log_step,
-    lower_process_priority as _lower_process_priority,
-    memory_available_mb as _memory_available_mb,
-    PreforkJobPool,
-    prefer_low_memory_path as _prefer_low_memory_path,
-    run_with_timeout_in_fork as _run_with_timeout_in_fork,
-    run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
-    raise_timeout as _raise_timeout,
-    should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
-)
-
-from inertia_decompiler.work_items import (
-    FunctionDecompileResult,
-    FunctionDecompileTask,
-    FunctionWorkItem,
-    FunctionWorkResult,
-    emit_tail_validation_for_function_run_or_uncollected as _emit_tail_validation_for_function_run_or_uncollected,
-    emit_tail_validation_snapshot_or_uncollected as _emit_tail_validation_snapshot_or_uncollected,
-    function_attempt_display_status as _function_attempt_display_status,
-    print_function_attempt_status as _print_function_attempt_status,
-    recovery_evidence_line as _recovery_evidence_line,
-    tail_validation_display_status as _tail_validation_display_status,
-)
-
-from inertia_decompiler.slice_recovery import (
-    BoundedSliceVerdict,
-    SliceRecoveryAttemptOutcome,
-    build_default_slice_recovery_attempts,
-    run_bounded_slice_recovery,
-)
-
-from inertia_decompiler.non_optimized_fallback import (
-    allows_heavy_fallbacks_for_run,
-    bounded_non_optimized_attempt_timeout,
-    describe_non_optimized_unavailable,
-    sidecar_verdict_closes_non_optimized_lane,
-)
-
 print = _timestamped_print
-__all__ = ['_normalize_anonymous_call_targets', '_prune_void_function_return_values_text', '_prune_void_call_assignments_text', '_contains_void_function_definition_text', '_normalize_function_signature_arg_names', '_materialize_missing_generic_local_declarations_text', '_hoist_c89_local_declarations_text', '_materialize_annotated_cod_declarations_text', '_materialize_opaque_pointer_typedefs_text', '_source_args_from_cod_source_lines', '_repair_missing_cod_function_header_text', '_render_cod_source_function_text', '_restore_collapsed_cod_source_function_text', '_dedupe_duplicate_local_declarations_text', '_normalize_spurious_duplicate_local_suffixes', '_collapse_duplicate_type_keywords_text', '_dedupe_adjacent_prototype_lines', '_sanitize_mangled_autonames_text', '_prune_trailing_generic_return_text', '_collapse_annotated_stack_aliases_text', '_split_top_level_binary', '_simplify_negated_condition', '_simplify_condition_line', '_simplify_x86_16_conditions', '_split_simple_assignment_conditions', '_simplify_x86_16_wrapped_stack_offsets', '_simplify_x86_16_stack_byte_pointers', '_format_bp_disp', '_annotate_cod_proc_output', '_prune_unused_staging_assignments', '_rewrite_known_helper_signature_text', '_prune_unused_local_declarations_text', '_format_known_helper_calls', '_repair_missing_fallthrough_returns', '_normalize_boolean_conditions', '_normalize_mk_fp_segment_names', '_simplify_x86_16_stack_references']
+__all__ = [
+    "_normalize_anonymous_call_targets",
+    "_prune_void_function_return_values_text",
+    "_prune_void_call_assignments_text",
+    "_contains_void_function_definition_text",
+    "_normalize_function_signature_arg_names",
+    "_materialize_missing_generic_local_declarations_text",
+    "_hoist_c89_local_declarations_text",
+    "_materialize_annotated_cod_declarations_text",
+    "_materialize_opaque_pointer_typedefs_text",
+    "_source_args_from_cod_source_lines",
+    "_repair_missing_cod_function_header_text",
+    "_render_cod_source_function_text",
+    "_restore_collapsed_cod_source_function_text",
+    "_dedupe_duplicate_local_declarations_text",
+    "_normalize_spurious_duplicate_local_suffixes",
+    "_collapse_duplicate_type_keywords_text",
+    "_dedupe_adjacent_prototype_lines",
+    "_sanitize_mangled_autonames_text",
+    "_prune_trailing_generic_return_text",
+    "_collapse_annotated_stack_aliases_text",
+    "_split_top_level_binary",
+    "_simplify_negated_condition",
+    "_simplify_condition_line",
+    "_simplify_x86_16_conditions",
+    "_split_simple_assignment_conditions",
+    "_simplify_x86_16_wrapped_stack_offsets",
+    "_simplify_x86_16_stack_byte_pointers",
+    "_format_bp_disp",
+    "_annotate_cod_proc_output",
+    "_prune_unused_staging_assignments",
+    "_rewrite_known_helper_signature_text",
+    "_prune_unused_local_declarations_text",
+    "_format_known_helper_calls",
+    "_repair_missing_fallthrough_returns",
+    "_normalize_boolean_conditions",
+    "_normalize_mk_fp_segment_names",
+    "_simplify_x86_16_stack_references",
+]
 
 
 def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
@@ -386,6 +201,7 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
 
     return _impl()
 
+
 def _helper_name(project, addr: int) -> str | None:
     proc = project.hooked_by(addr)
     if proc is None:
@@ -398,6 +214,7 @@ def _helper_name(project, addr: int) -> str | None:
         return name
     return proc.__class__.__name__
 
+
 def _normalize_anonymous_call_targets(c_text: str) -> str:
     pattern = re.compile(r"(?<![A-Za-z0-9_])(?P<target>0x[0-9a-fA-F]+|\d+)(?![A-Za-z0-9_])\s*\(\s*\)")
 
@@ -409,6 +226,7 @@ def _normalize_anonymous_call_targets(c_text: str) -> str:
         return f"sub_{target:x}()"
 
     return pattern.sub(_replace, c_text)
+
 
 def _prune_void_function_return_values_text(c_text: str) -> str:
     def _impl():
@@ -543,11 +361,10 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
 
     return _impl()
 
+
 def _collect_void_function_names_from_c_text_8616(c_text: str) -> set[str]:
     names: set[str] = set()
-    header_re = re.compile(
-        r"^\s*void\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:;|\{)?\s*$"
-    )
+    header_re = re.compile(r"^\s*void\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:;|\{)?\s*$")
     for line in c_text.splitlines():
         match = header_re.match(line)
         if match is not None:
@@ -610,6 +427,7 @@ def _contains_void_function_definition_text(c_text: str) -> bool:
         index += 1
 
     return False
+
 
 def _normalize_function_signature_arg_names(c_text: str) -> str:
     trailing_newline = c_text.endswith("\n")
@@ -733,6 +551,7 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
         normalized += "\n"
     return normalized
 
+
 def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
     # Text-layer rule:
     # This helper is compile hygiene only. It may add missing declarations for names
@@ -750,7 +569,9 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
             r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+|tmp_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)(?![A-Za-z_])"
         )
         arg_name_re = re.compile(r"\((?P<args>[^()]*)\)")
-        header_re = re.compile(r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[$A-Za-z_][$\w]*)\s*\((?P<args>[^()]*)\)")
+        header_re = re.compile(
+            r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[$A-Za-z_][$\w]*)\s*\((?P<args>[^()]*)\)"
+        )
 
         def _split_args(args_text: str) -> list[str]:
             if not args_text.strip():
@@ -861,11 +682,7 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
                     seen_used.add(name)
                     used_names.append(name)
 
-            missing_names = [
-                name
-                for name in used_names
-                if name not in declared_names and name not in arg_names
-            ]
+            missing_names = [name for name in used_names if name not in declared_names and name not in arg_names]
             if not missing_names:
                 index = body_end
                 continue
@@ -1076,7 +893,11 @@ def _materialize_annotated_cod_declarations_text(
                 return arg_text
             arg_name = split_match.group(1)
             if source_arg_text is not None:
-                source_prefix = source_arg_text[: source_arg_text.rfind(arg_name)].strip() if arg_name in source_arg_text else source_arg_text
+                source_prefix = (
+                    source_arg_text[: source_arg_text.rfind(arg_name)].strip()
+                    if arg_name in source_arg_text
+                    else source_arg_text
+                )
                 source_prefix_clean = re.sub(r"\b(?:const|volatile|register|struct|union|enum)\b", " ", source_prefix)
                 pointer_name = source_prefix_clean.rsplit("*", 1)
                 if len(pointer_name) > 1 and "*" in source_prefix_clean:
@@ -1085,7 +906,8 @@ def _materialize_annotated_cod_declarations_text(
                         base_type = base_tokens[-1]
                         if (
                             base_type not in {"char", "short", "int", "long", "float", "double", "void", "size_t"}
-                            and base_type and base_type[0].isupper()
+                            and base_type
+                            and base_type[0].isupper()
                         ):
                             return arg_text
             if not _arg_has_pointer_evidence_8616(pointer_evidence_text, arg_name, source_arg_text):
@@ -1247,7 +1069,10 @@ def _source_decl_has_custom_ptr_8616(source_args: list[str]) -> bool:
         if not base_tokens:
             continue
         base_type = base_tokens[-1]
-        if base_type not in {"char", "short", "int", "long", "float", "double", "void", "size_t", "FILE"} and base_type[0].isupper():
+        if (
+            base_type not in {"char", "short", "int", "long", "float", "double", "void", "size_t", "FILE"}
+            and base_type[0].isupper()
+        ):
             return True
     return False
 
@@ -1465,9 +1290,13 @@ def _collect_cod_materialized_decls_8616(
         seen_declared = set(declared_names)
         for proto_name, source_proto in source_prototypes.items():
             normalized_proto_name = proto_name.lstrip("_")
-            if normalized_proto_name != func_name and normalized_proto_name not in seen_declared and re.search(
-                rf"(?<![A-Za-z_]){re.escape(normalized_proto_name)}\s*\(",
-                body_text,
+            if (
+                normalized_proto_name != func_name
+                and normalized_proto_name not in seen_declared
+                and re.search(
+                    rf"(?<![A-Za-z_]){re.escape(normalized_proto_name)}\s*\(",
+                    body_text,
+                )
             ):
                 prototype_declarations.append(source_proto)
                 seen_declared.add(normalized_proto_name)
@@ -1525,21 +1354,23 @@ def _normalize_scalar_assigned_extern_arrays_text(c_text: str) -> str:
                 normalized_lines.append(line)
                 continue
             name = match.group("name")
-            usage_body = "\n".join(
-                candidate
-                for candidate in lines
-                if not decl_re.match(candidate)
-            )
+            usage_body = "\n".join(candidate for candidate in lines if not decl_re.match(candidate))
             direct_assign = re.search(rf"(?m)^\s*{re.escape(name)}\s*=", usage_body) is not None
-            scalar_arith = re.search(
-                rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+|-|\*|/|>>|<<|==|!=|<=|>=|<|>)",
-                usage_body,
-            ) is not None
-            unary_update = re.search(
-                rf"(?:\+\+|--)\s*(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])|"
-                rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+\+|--)",
-                usage_body,
-            ) is not None
+            scalar_arith = (
+                re.search(
+                    rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+|-|\*|/|>>|<<|==|!=|<=|>=|<|>)",
+                    usage_body,
+                )
+                is not None
+            )
+            unary_update = (
+                re.search(
+                    rf"(?:\+\+|--)\s*(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])|"
+                    rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+\+|--)",
+                    usage_body,
+                )
+                is not None
+            )
             indexed_use = re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*\[", usage_body) is not None
             if indexed_use or not (direct_assign or scalar_arith or unary_update):
                 normalized_lines.append(line)
@@ -1658,9 +1489,7 @@ def _dedupe_conflicting_extern_variable_declarations_text(c_text: str) -> str:
         lines = c_text.splitlines()
         if not lines:
             return c_text
-        decl_re = re.compile(
-            r"^(?P<indent>\s*)extern\s+(?P<type>[^;()]+?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*$"
-        )
+        decl_re = re.compile(r"^(?P<indent>\s*)extern\s+(?P<type>[^;()]+?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*$")
         type_rank = {
             "void": 0,
             "char": 1,
@@ -1875,7 +1704,9 @@ def _has_decl_or_def_in_text(c_text: str, declared: set[str], name: str) -> bool
     return name in declared
 
 
-def _collect_direct_calls_and_observed_arity(lines: list[str], c_text: str, declared: set[str]) -> tuple[list[str], dict[str, int]]:
+def _collect_direct_calls_and_observed_arity(
+    lines: list[str], c_text: str, declared: set[str]
+) -> tuple[list[str], dict[str, int]]:
     def _impl():
         keywords = {
             "auto",
@@ -1940,7 +1771,7 @@ def _collect_direct_calls_and_observed_arity(lines: list[str], c_text: str, decl
                 continue
             for match in re.finditer(r"(?<![A-Za-z_])(?P<name>[A-Za-z_]\w*)\s*\(", line):
                 name = match.group("name")
-                after = line[match.end():]
+                after = line[match.end() :]
                 close_idx = after.find(")")
                 if close_idx >= 0:
                     arg_expr = after[:close_idx].strip()
@@ -2014,7 +1845,9 @@ def _strip_comments_and_strings_8616(text: str) -> str:
 def _collect_declared_identifiers_8616(text_lines: list[str]) -> set[str]:
     def _impl():
         declared: set[str] = set()
-        function_sig_re = re.compile(r"^\s*[A-Za-z_][\w\s\*\[\]]*\s+(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^)]*)\)\s*\{?$")
+        function_sig_re = re.compile(
+            r"^\s*[A-Za-z_][\w\s\*\[\]]*\s+(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^)]*)\)\s*\{?$"
+        )
         decl_stmt_re = re.compile(
             r"^\s*(?:extern\s+|static\s+)?[A-Za-z_][\w\s\*\[\]<>]*\b(?P<name>[A-Za-z_][\w$?@]*)(?:\s*[\[,;=]|\s*\()"
         )
@@ -2059,7 +1892,9 @@ def _safe_finditer_8616(pattern: str, text_value: str):
 def _collect_global_usage_candidates_from_body_8616(text: str, declared: set[str]) -> list[str]:
     def _impl():
         work = _strip_comments_and_strings_8616(text)
-        function_like = {m.group("name") for m in _safe_finditer_8616(r"(?<![A-Za-z_])(?P<name>[A-Za-z_][\w$?@]*)(?=\s*\()", work)}
+        function_like = {
+            m.group("name") for m in _safe_finditer_8616(r"(?<![A-Za-z_])(?P<name>[A-Za-z_][\w$?@]*)(?=\s*\()", work)
+        }
         candidates: list[str] = []
         candidates.extend(
             m.group("name")
@@ -2089,7 +1924,21 @@ def _collect_global_usage_candidates_from_body_8616(text: str, declared: set[str
         )
         ordered: list[str] = []
         seen: set[str] = set()
-        banned = {"if", "for", "while", "switch", "return", "sizeof", "case", "else", "struct", "stdint", "stdbool", "time", "stddef"}
+        banned = {
+            "if",
+            "for",
+            "while",
+            "switch",
+            "return",
+            "sizeof",
+            "case",
+            "else",
+            "struct",
+            "stdint",
+            "stdbool",
+            "time",
+            "stddef",
+        }
         for name in candidates:
             if name in seen or name in declared or _is_known_compiler_temp_8616(name) or name in banned:
                 continue
@@ -2110,12 +1959,15 @@ def _synthetic_name_width_map_8616(synthetic_globals: dict[int, tuple[str, int]]
     return name_to_width
 
 
-def _used_global_names_8616(lines: list[str], body_text: str, declared: set[str], candidate_names: set[str]) -> list[str]:
+def _used_global_names_8616(
+    lines: list[str], body_text: str, declared: set[str], candidate_names: set[str]
+) -> list[str]:
     def _impl():
         missing_synthetic = sorted(
             name
             for name in candidate_names
-            if name not in declared and re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", body_text) is not None
+            if name not in declared
+            and re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", body_text) is not None
         )
         used: list[str] = []
         all_text = "\n".join(lines)
@@ -2128,10 +1980,17 @@ def _used_global_names_8616(lines: list[str], body_text: str, declared: set[str]
                 if name not in declared and name not in used:
                     used.append(name)
             for name in missing_synthetic:
-                if name not in used and re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", line) is not None:
+                if (
+                    name not in used
+                    and re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", line) is not None
+                ):
                     used.append(name)
         for name in list(candidate_names):
-            if name not in used and name not in declared and re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", all_text):
+            if (
+                name not in used
+                and name not in declared
+                and re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", all_text)
+            ):
                 used.append(name)
         if used:
             return used
@@ -2171,7 +2030,9 @@ def _infer_decl_for_global_8616(name: str, width: int | None, body_text: str) ->
     escaped = re.escape(name)
     members = {
         match.group("field")
-        for match in re.finditer(rf"(?<![A-Za-z_]){escaped}\s*\[[^\]]+\]\s*\.\s*(?P<field>[A-Za-z_][A-Za-z0-9_]*)", body_text)
+        for match in re.finditer(
+            rf"(?<![A-Za-z_]){escaped}\s*\[[^\]]+\]\s*\.\s*(?P<field>[A-Za-z_][A-Za-z0-9_]*)", body_text
+        )
     }
     has_indexed_use = re.search(rf"(?<![A-Za-z_]){escaped}\s*\[", body_text) is not None
     declared_type = "char" if width == 1 else "short" if width in {2, None} else "long"
@@ -2179,7 +2040,12 @@ def _infer_decl_for_global_8616(name: str, width: int | None, body_text: str) ->
     if members:
         struct_name = f"_inertia_global_{re.sub(r'[^A-Za-z0-9_]', '_', name)}"
         field_names = sorted(field for field in members if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field)) or ["value"]
-        return [f"    struct {struct_name} {{", *[f"        {c_decl_type} {field};" for field in field_names], f"    }};", f"    extern struct {struct_name} {name}[1];"]
+        return [
+            f"    struct {struct_name} {{",
+            *[f"        {c_decl_type} {field};" for field in field_names],
+            "    };",
+            f"    extern struct {struct_name} {name}[1];",
+        ]
     if has_indexed_use:
         return [f"    extern {c_decl_type} {name}[1];"]
     return [f"    extern {c_decl_type} {name};"]
@@ -2193,9 +2059,7 @@ def _source_function_designator_names_8616(
         return set()
 
     candidate_by_normalized = {
-        str(name).lstrip("_"): str(name)
-        for name in candidate_names
-        if isinstance(name, str) and name
+        str(name).lstrip("_"): str(name) for name in candidate_names if isinstance(name, str) and name
     }
     if not candidate_by_normalized:
         return set()
@@ -2256,11 +2120,7 @@ def _materialize_missing_synthetic_global_declarations_text(
             if match is not None
         }
 
-        global_names = {
-            name
-            for name in getattr(metadata, "global_names", ())
-            if isinstance(name, str) and name
-        }
+        global_names = {name for name in getattr(metadata, "global_names", ()) if isinstance(name, str) and name}
         synthetic_names = {
             global_name
             for _addr, (global_name, _width) in (synthetic_globals or {}).items()
@@ -2314,9 +2174,7 @@ def _normalize_scalar_gb_array_declarations_text(c_text: str) -> str:
         if not lines:
             return c_text
 
-        decl_re = re.compile(
-            r"^(?P<indent>\s*)extern\s+char\s+(?P<name>g_[0-9a-fA-F]+)\s*\[(?P<size>\d+)\]\s*;\s*$"
-        )
+        decl_re = re.compile(r"^(?P<indent>\s*)extern\s+char\s+(?P<name>g_[0-9a-fA-F]+)\s*\[(?P<size>\d+)\]\s*;\s*$")
         names: dict[str, tuple[int, int]] = {}
         for idx, line in enumerate(lines):
             match = decl_re.match(line)
@@ -2483,6 +2341,7 @@ def _ensure_main_returns_zero(lines: list[str], body_start: int, body_end: int) 
     return_indent = closing_indent + "    " if "}" in closing_line else "    "
     lines.insert(body_end - 1, f"{return_indent}return 0;")
 
+
 def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name: str | None) -> str | None:
     def _impl():
         if not isinstance(func_name, str) or not func_name:
@@ -2515,6 +2374,7 @@ def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name:
 
     return _impl()
 
+
 def _repair_missing_cod_function_header_text(c_text: str, function, metadata: CODProcMetadata | None) -> str:
     def _impl():
         if metadata is None or function is None:
@@ -2524,9 +2384,7 @@ def _repair_missing_cod_function_header_text(c_text: str, function, metadata: CO
         if not isinstance(func_name, str) or not func_name:
             return c_text
 
-        header_pattern = re.compile(
-            rf"(?m)^\s*[A-Za-z_][\w\s\*\[\]]*?\s+{re.escape(func_name)}\s*\([^)]*\)\s*\{{?\s*$"
-        )
+        header_pattern = re.compile(rf"(?m)^\s*[A-Za-z_][\w\s\*\[\]]*?\s+{re.escape(func_name)}\s*\([^)]*\)\s*\{{?\s*$")
         if header_pattern.search(c_text) is not None:
             return c_text
 
@@ -2570,7 +2428,11 @@ def _repair_missing_cod_function_header_text(c_text: str, function, metadata: CO
                 continue
             break
 
-        if insertion_index < len(lines) and lines[insertion_index].strip() in {f"{source_name}();", f"{func_name.lstrip('_')}();", f"{func_name}();"}:
+        if insertion_index < len(lines) and lines[insertion_index].strip() in {
+            f"{source_name}();",
+            f"{func_name.lstrip('_')}();",
+            f"{func_name}();",
+        }:
             del lines[insertion_index]
 
         lines[insertion_index:insertion_index] = [f"{return_type} {func_name}({args})", "{"]
@@ -2653,6 +2515,7 @@ def _align_function_header_with_cod_source_decl_text(
 
     return _impl()
 
+
 def _render_cod_source_function_text(function, metadata: CODProcMetadata | None) -> str | None:
     def _impl():
         if metadata is None or function is None:
@@ -2719,6 +2582,7 @@ def _render_cod_source_function_text(function, metadata: CODProcMetadata | None)
 
     return _impl()
 
+
 def _restore_collapsed_cod_source_function_text(c_text: str, function, metadata: CODProcMetadata | None) -> str:
     def _impl():
         if metadata is None or function is None:
@@ -2731,10 +2595,10 @@ def _restore_collapsed_cod_source_function_text(c_text: str, function, metadata:
         if not source_name:
             return c_text
 
-        header_pattern = re.compile(
-            rf"(?m)^\s*[A-Za-z_][\w\s\*\[\]]*?\s+{re.escape(func_name)}\s*\([^)]*\)\s*\{{?\s*$"
+        header_pattern = re.compile(rf"(?m)^\s*[A-Za-z_][\w\s\*\[\]]*?\s+{re.escape(func_name)}\s*\([^)]*\)\s*\{{?\s*$")
+        placeholder_pattern = re.compile(
+            rf"(?m)^\s*(?:{re.escape(source_name)}|{re.escape(func_name)})\s*\(\s*\)\s*;\s*$"
         )
-        placeholder_pattern = re.compile(rf"(?m)^\s*(?:{re.escape(source_name)}|{re.escape(func_name)})\s*\(\s*\)\s*;\s*$")
 
         source_lines = [line.rstrip() for line in metadata.source_lines if line.strip()]
         if not source_lines:
@@ -2752,12 +2616,16 @@ def _restore_collapsed_cod_source_function_text(c_text: str, function, metadata:
         source_body_lines = [line.strip() for line in source_lines[source_decl_index + 1 : block_end] if line.strip()]
         source_has_switch = any(line.startswith(("switch ", "case ", "default")) for line in source_body_lines)
         current_has_switch = re.search(r"(?m)^\s*(switch\s*\(|case\b|default\b)", c_text) is not None
-        if header_pattern.search(c_text) is not None and placeholder_pattern.search(c_text) is None and not (
-            source_has_switch and not current_has_switch
+        if (
+            header_pattern.search(c_text) is not None
+            and placeholder_pattern.search(c_text) is None
+            and not (source_has_switch and not current_has_switch)
         ):
             return c_text
 
-        decl_split_re = re.compile(r"^(?P<type>.+?)\s+(?P<names>[A-Za-z_]\w*(?:\s*=\s*[^,;]+)?(?:\s*,\s*[A-Za-z_]\w*(?:\s*=\s*[^,;]+)?)*)\s*;\s*$")
+        decl_split_re = re.compile(
+            r"^(?P<type>.+?)\s+(?P<names>[A-Za-z_]\w*(?:\s*=\s*[^,;]+)?(?:\s*,\s*[A-Za-z_]\w*(?:\s*=\s*[^,;]+)?)*)\s*;\s*$"
+        )
         lines = c_text.splitlines()
         _body_header_index, body_open_index = _find_function_body_open_8616(lines, header_pattern)
         body_end_index = next((idx for idx in range(len(lines) - 1, -1, -1) if lines[idx].strip() == "}"), None)
@@ -2797,9 +2665,9 @@ def _restore_collapsed_cod_source_function_text(c_text: str, function, metadata:
             normalized += "\n"
         return normalized
 
-
-
     return _impl()
+
+
 def _find_matching_line_index_8616(lines: list[str], pattern) -> int | None:
     for idx, line in enumerate(lines):
         if pattern.match(line.strip()) is not None:
@@ -2984,8 +2852,10 @@ def _rewrite_or_prune_duplicate_locals(
                     unique_name = _make_unique_identifier(name, used_names)
                     old_line = lines[entry.line_index]
                     lines[entry.line_index] = decl_re.sub(
-                        lambda m, un=unique_name: f"{m.group('indent')}{m.group('type')} {un}{m.group('array') or ''};"
-                        + (f" {m.group('comment')}" if m.group('comment') else ""),
+                        lambda m, un=unique_name: (
+                            f"{m.group('indent')}{m.group('type')} {un}{m.group('array') or ''};"
+                            + (f" {m.group('comment')}" if m.group("comment") else "")
+                        ),
                         old_line,
                         count=1,
                     )
@@ -3075,6 +2945,7 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
 
     return _impl()
 
+
 def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
     def _impl():
         trailing_newline = c_text.endswith("\n")
@@ -3094,9 +2965,7 @@ def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
                 name = match.group("name")
                 declared_names.add(name)
                 decls_by_name[name] = (idx, match.group("comment"))
-        header_re = re.compile(
-            r"^\s*[A-Za-z_][\w\s\*\[\]]*?\s+[A-Za-z_]\w*\s*\((?P<args>[^()]*)\)\s*(?:[;{])?\s*$"
-        )
+        header_re = re.compile(r"^\s*[A-Za-z_][\w\s\*\[\]]*?\s+[A-Za-z_]\w*\s*\((?P<args>[^()]*)\)\s*(?:[;{])?\s*$")
         for line in lines:
             match = header_re.match(line)
             if match is None:
@@ -3156,6 +3025,7 @@ def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
 
     return _impl()
 
+
 def _collapse_duplicate_type_keywords_text(c_text: str) -> str:
     replacements = (
         (r"\bextern\s+union\s+union\s+REGS\b", "extern union REGS"),
@@ -3167,6 +3037,7 @@ def _collapse_duplicate_type_keywords_text(c_text: str) -> str:
     for pattern, replacement in replacements:
         normalized = re.sub(pattern, replacement, normalized)
     return normalized
+
 
 def _dedupe_adjacent_prototype_lines(c_text: str) -> str:
     trailing_newline = c_text.endswith("\n")
@@ -3254,6 +3125,7 @@ def _materialize_opaque_pointer_typedefs_text(c_text: str) -> str:
 
     return _impl()
 
+
 def _sanitize_mangled_autonames_text(c_text: str) -> str:
     token_re = re.compile(
         r"\b(?:(?P<sub>sub_[0-9a-f]+)sub_[0-9a-f]+|(?P<dos>dos_int[0-9]+)sub_[0-9a-f]+|(?P<dos_dup>dos_int[0-9]+)_[0-9]+)\b"
@@ -3263,6 +3135,7 @@ def _sanitize_mangled_autonames_text(c_text: str) -> str:
         return match.group("sub") or match.group("dos") or match.group("dos_dup") or match.group(0)
 
     return token_re.sub(_replace, c_text)
+
 
 def _strip_register_fragment_suffixes_text(c_text: str) -> str:
     return re.sub(r"(?<![A-Za-z_])([A-Za-z_]\w*)\{r\d+\|\d+b\}(?![A-Za-z0-9_])", r"\1", c_text)
@@ -3292,9 +3165,7 @@ def _extract_expected_call_order_from_comments(lines: list[str]) -> list[str]:
     return [name for name in expected if isinstance(name, str) and name]
 
 
-def _build_unknown_call_rename_map(
-    lines: list[str], expected: list[str], call_re: re.Pattern[str]
-) -> dict[str, str]:
+def _build_unknown_call_rename_map(lines: list[str], expected: list[str], call_re: re.Pattern[str]) -> dict[str, str]:
     def _impl():
         body_calls: list[tuple[int, str]] = []
         for idx, line in enumerate(lines):
@@ -3340,10 +3211,8 @@ def _apply_unknown_call_renames(
                 if isinstance(replacement, str):
                     prefix = match_call.group("prefix") or ""
                     trailing = match_call.group("trailing") or ""
-                    lines[idx] = (
-                        f"{match_call.group('indent')}{prefix}{replacement}"
-                        f"({match_call.group('args')});"
-                        + (f" {trailing.strip()}" if trailing else "")
+                    lines[idx] = f"{match_call.group('indent')}{prefix}{replacement}({match_call.group('args')});" + (
+                        f" {trailing.strip()}" if trailing else ""
                     )
                     changed = True
                     continue
@@ -3355,8 +3224,7 @@ def _apply_unknown_call_renames(
             if not isinstance(replacement, str):
                 continue
             lines[idx] = (
-                f"{match_proto.group('indent')}{match_proto.group('ret')} {replacement}"
-                f"({match_proto.group('args')});"
+                f"{match_proto.group('indent')}{match_proto.group('ret')} {replacement}({match_proto.group('args')});"
             )
             changed = True
         return changed
@@ -3398,6 +3266,7 @@ def _align_unknown_call_names_from_cod_evidence_text(c_text: str) -> str:
         out += "\n"
     return out
 
+
 def _prune_trailing_generic_return_text(c_text: str) -> str:
     def _impl():
         trailing_newline = c_text.endswith("\n")
@@ -3432,6 +3301,7 @@ def _prune_trailing_generic_return_text(c_text: str) -> str:
         return normalized
 
     return _impl()
+
 
 def _collapse_annotated_stack_aliases_text(c_text: str) -> str:
     def _impl():
@@ -3621,6 +3491,7 @@ def _collapse_annotated_stack_aliases_text(c_text: str) -> str:
 
     return _impl()
 
+
 def _split_top_level_binary(expr: str, op: str) -> tuple[str, str] | None:
     depth = 0
     i = 0
@@ -3635,6 +3506,7 @@ def _split_top_level_binary(expr: str, op: str) -> tuple[str, str] | None:
         i += 1
     return None
 
+
 def _simplify_negated_condition(expr: str) -> str:
     expr = expr.strip()
     if not expr.startswith("!(") or not expr.endswith(")"):
@@ -3647,6 +3519,7 @@ def _simplify_negated_condition(expr: str) -> str:
             return collapsed
 
     return expr
+
 
 def _simplify_condition_line(line: str) -> str:
     marker = "if ("
@@ -3672,8 +3545,10 @@ def _simplify_condition_line(line: str) -> str:
         i += 1
     return line
 
+
 def _simplify_x86_16_conditions(c_text: str) -> str:
     return "\n".join(_simplify_condition_line(line) for line in c_text.splitlines())
+
 
 def _split_simple_assignment_conditions(c_text: str) -> str:
     pattern = re.compile(
@@ -3760,6 +3635,7 @@ def _split_for_header_8616(header: str) -> list[str] | None:
     parts.append(header[start:].strip())
     return parts if len(parts) == 3 else None
 
+
 def _simplify_x86_16_wrapped_stack_offsets(c_text: str) -> str:
     def _replace(match: re.Match[str]) -> str:
         name = match.group("name")
@@ -3775,6 +3651,7 @@ def _simplify_x86_16_wrapped_stack_offsets(c_text: str) -> str:
         c_text,
     )
     return c_text
+
 
 def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata | None = None) -> str:
     # Text-layer rule:
@@ -3874,7 +3751,10 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
         for line in lines:
             base_match = stack_alias_base_re.match(line)
             if base_match is not None:
-                stack_alias_seeds[base_match.group("name")] = (base_match.group("base"), int(base_match.group("index"), 0))
+                stack_alias_seeds[base_match.group("name")] = (
+                    base_match.group("base"),
+                    int(base_match.group("index"), 0),
+                )
                 continue
             chain_match = stack_alias_chain_re.match(line)
             if chain_match is not None:
@@ -3965,7 +3845,7 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
             if match.group("op") == "-":
                 delta = -delta
             addr_expr = base_expr if delta == 0 else f"({base_expr} {'+' if delta > 0 else '-'} {abs(delta)})"
-            return f'*(({match.group("type").strip()} *){addr_expr})'
+            return f"*(({match.group('type').strip()} *){addr_expr})"
 
         result = direct_ss_stack_expr_re.sub(_rewrite_direct_ss_stack_expr, result)
 
@@ -3976,7 +3856,7 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
             addr_expr = f"&{match.group('base')}"
             if delta != 0:
                 addr_expr = f"({addr_expr} {'+' if delta > 0 else '-'} {abs(delta)})"
-            return f'*((char *){addr_expr})'
+            return f"*((char *){addr_expr})"
 
         result = indexed_ss_local_expr_re.sub(_rewrite_indexed_ss_local_expr, result)
 
@@ -3985,7 +3865,7 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
         # base is invariant, so (ss << 4) + offset simplifies to offset within
         # the current SS context.  This is safe purely as an address-space
         # rebasing — it does not recover semantics.
-        result = re.sub(r'\(\s*ss\s*<<\s*4\s*\)\s*\+\s*', '', result)
+        result = re.sub(r"\(\s*ss\s*<<\s*4\s*\)\s*\+\s*", "", result)
 
         result = _rewrite_source_backed_assignments_8616(result, metadata)
         result = _split_simple_assignment_conditions(result)
@@ -4008,12 +3888,7 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
             indent = match.group("indent")
             ptr = match.group("ptr")
             counter = match.group("counter")
-            return (
-                f"{indent}while (*{ptr}++)\n"
-                f"{indent}{{\n"
-                f"{indent}    {counter} += 1;\n"
-                f"{indent}}}\n"
-            )
+            return f"{indent}while (*{ptr}++)\n{indent}{{\n{indent}    {counter} += 1;\n{indent}}}\n"
 
         result, count = byte_walk_loop_re.subn(_rewrite_byte_walk_loop, result)
         if count and result.endswith("\n\n"):
@@ -4086,11 +3961,11 @@ def _rewrite_stack_pointer_load_patterns_8616(
     stack_byte_pair_load_re: re.Pattern[str],
 ) -> str:
     result = segmented_byte_pair_load_re.sub(
-        lambda match: f'*((unsigned short far *)MK_FP({match.group("seg")}, {match.group("off")}))',
+        lambda match: f"*((unsigned short far *)MK_FP({match.group('seg')}, {match.group('off')}))",
         result,
     )
     return stack_byte_pair_load_re.sub(
-        lambda match: f'*((unsigned short *){match.group("base").replace("(unsigned int)", "").strip()})',
+        lambda match: f"*((unsigned short *){match.group('base').replace('(unsigned int)', '').strip()})",
         result,
     )
 
@@ -4128,7 +4003,7 @@ def _rewrite_single_stack_pointer_line_8616(
             if stack_pointer is not None:
                 base_name, base_offset = stack_pointer
                 return (
-                    f'{ss_stack_match.group("indent")}*(({ss_stack_match.group("type").strip()} *){render_stack_pointer_expr(base_name, base_offset)}) = {ss_stack_match.group("rhs").strip()};',
+                    f"{ss_stack_match.group('indent')}*(({ss_stack_match.group('type').strip()} *){render_stack_pointer_expr(base_name, base_offset)}) = {ss_stack_match.group('rhs').strip()};",
                     1,
                 )
         plain_stack_match = plain_stack_store_re.match(current)
@@ -4137,7 +4012,7 @@ def _rewrite_single_stack_pointer_line_8616(
             if stack_pointer is not None:
                 base_name, base_offset = stack_pointer
                 return (
-                    f'{plain_stack_match.group("indent")}*(({plain_stack_match.group("type").strip()} *){render_stack_pointer_expr(base_name, base_offset)}) = {plain_stack_match.group("rhs").strip()};',
+                    f"{plain_stack_match.group('indent')}*(({plain_stack_match.group('type').strip()} *){render_stack_pointer_expr(base_name, base_offset)}) = {plain_stack_match.group('rhs').strip()};",
                     1,
                 )
         direct_ss_stack_match = direct_ss_stack_store_re.match(current)
@@ -4148,7 +4023,7 @@ def _rewrite_single_stack_pointer_line_8616(
                 delta = -delta
             addr_expr = base_expr if delta == 0 else f"({base_expr} {'+' if delta > 0 else '-'} {abs(delta)})"
             return (
-                f'{direct_ss_stack_match.group("indent")}*(({direct_ss_stack_match.group("type").strip()} *){addr_expr}) = {direct_ss_stack_match.group("rhs").strip()};',
+                f"{direct_ss_stack_match.group('indent')}*(({direct_ss_stack_match.group('type').strip()} *){addr_expr}) = {direct_ss_stack_match.group('rhs').strip()};",
                 1,
             )
         low_match = low_store_re.match(current)
@@ -4162,7 +4037,7 @@ def _rewrite_single_stack_pointer_line_8616(
             high_rhs = high_match.group("rhs").strip()
             if low_seg == high_seg and high_off == low_off + 1 and rhs_base(high_rhs) == normalize_rhs(low_rhs):
                 return (
-                    f'{low_match.group("indent")}*(unsigned short far *)MK_FP({low_seg}, {low_match.group("off")}) = {low_rhs};',
+                    f"{low_match.group('indent')}*(unsigned short far *)MK_FP({low_seg}, {low_match.group('off')}) = {low_rhs};",
                     2,
                 )
         low_uncast_match = low_store_uncast_re.match(current)
@@ -4196,7 +4071,10 @@ def _rewrite_single_stack_pointer_line_8616(
             elif ptr_base_name in stack_pointer_names and ptr_base_name not in immutable_pointer_names:
                 stack_target_name = ptr_base_name
             if stack_target_name is not None:
-                return f'{far_pointer_match.group("indent")}*{stack_target_name} = {far_pointer_match.group("rhs").strip()};', 1
+                return (
+                    f"{far_pointer_match.group('indent')}*{stack_target_name} = {far_pointer_match.group('rhs').strip()};",
+                    1,
+                )
         raw_linear_pointer_match = raw_linear_pointer_store_re.match(current)
         if raw_linear_pointer_match is not None:
             pointer_type = raw_linear_pointer_match.group("type").strip()
@@ -4206,7 +4084,7 @@ def _rewrite_single_stack_pointer_line_8616(
                 if mk_fp_components is not None:
                     seg_value, off_value = mk_fp_components
                     return (
-                        f'{raw_linear_pointer_match.group("indent")}*((%s far *)MK_FP(0x%x, 0x%x)) = %s;'
+                        f"{raw_linear_pointer_match.group('indent')}*((%s far *)MK_FP(0x%x, 0x%x)) = %s;"
                         % (
                             pointer_type,
                             seg_value,
@@ -4220,7 +4098,7 @@ def _rewrite_single_stack_pointer_line_8616(
             pointer_type = pointer_match.group("type").strip()
             if pointer_type != "char":
                 return (
-                    f'{pointer_match.group("indent")}*((%s far *)MK_FP(%s, %s)) = %s;'
+                    f"{pointer_match.group('indent')}*((%s far *)MK_FP(%s, %s)) = %s;"
                     % (
                         pointer_type,
                         pointer_match.group("seg").strip(),
@@ -4231,9 +4109,9 @@ def _rewrite_single_stack_pointer_line_8616(
                 )
         return current, 1
 
-
-
     return _impl()
+
+
 def _rewrite_source_backed_assignments_8616(text: str, metadata: CODProcMetadata | None) -> str:
     def _impl():
         if metadata is None:
@@ -4263,9 +4141,7 @@ def _collect_source_assignments_8616(
     global_names: set[str],
 ) -> list[tuple[str, str, str]]:
     assignments: list[tuple[str, str, str]] = []
-    source_assignment_re = re.compile(
-        r"^(?P<lhs>.+?)\s*=\s*(?P<rhs>[A-Za-z_][\w$?@]*(?:\.[A-Za-z_][\w$?@]*)?)\s*;\s*$"
-    )
+    source_assignment_re = re.compile(r"^(?P<lhs>.+?)\s*=\s*(?P<rhs>[A-Za-z_][\w$?@]*(?:\.[A-Za-z_][\w$?@]*)?)\s*;\s*$")
     for line in getattr(metadata, "source_lines", ()) or ():
         stripped = line.strip()
         if not stripped or stripped.startswith("return "):
@@ -4396,7 +4272,11 @@ def _match_source_assignments_to_windows_8616(
                     continue
                 lhs_names = window["lhs_names"]
                 if isinstance(lhs_names, set) and source_lhs_name in lhs_names:
-                    replacements[window_index] = (int(window["start"]), int(window["end"]), f"{window['indent']}{source_line}")
+                    replacements[window_index] = (
+                        int(window["start"]),
+                        int(window["end"]),
+                        f"{window['indent']}{source_line}",
+                    )
                     used_windows.add(window_index)
                     used_sources.add(source_index)
                     break
@@ -4410,7 +4290,11 @@ def _match_source_assignments_to_windows_8616(
             candidates = remaining_by_global.get(str(window["global"])) or []
             if not candidates:
                 continue
-            replacements[window_index] = (int(window["start"]), int(window["end"]), f"{window['indent']}{candidates.pop(0)}")
+            replacements[window_index] = (
+                int(window["start"]),
+                int(window["end"]),
+                f"{window['indent']}{candidates.pop(0)}",
+            )
         return replacements
 
     return _impl()
@@ -4432,6 +4316,7 @@ def _apply_window_replacements_8616(lines: list[str], replacements: dict[int, tu
         new_lines.append(lines[index])
         index += 1
     return "\n".join(new_lines)
+
 
 def _format_bp_disp(disp: int) -> str:
     if disp >= 0:
@@ -4499,8 +4384,7 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
         )
         source_header_materialized = bool(source_decl) and not source_header_unmaterialized
         preserve_codegen_header = (
-            _codegen_signature_authoritative_8616(function=function, codegen=codegen)
-            and not source_header_materialized
+            _codegen_signature_authoritative_8616(function=function, codegen=codegen) and not source_header_materialized
         ) or source_header_unmaterialized
         header_source_decl = None if preserve_codegen_header else source_decl
         header_source_arg_text = None if preserve_codegen_header else source_arg_text
@@ -4562,9 +4446,9 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
             c_text = prepend_block + c_text
         return c_text
 
-
-
     return _impl()
+
+
 def _annotate_cod_lines_with_aliases_8616(
     c_text: str,
     *,
@@ -4635,9 +4519,13 @@ def _annotate_cod_lines_with_aliases_8616(
         if not alias_replacements:
             return lines
         replacement_pattern = re.compile(
-            r"(?<![A-Za-z_])(" + "|".join(sorted((re.escape(name) for name in alias_replacements), key=len, reverse=True)) + r")(?![A-Za-z_])"
+            r"(?<![A-Za-z_])("
+            + "|".join(sorted((re.escape(name) for name in alias_replacements), key=len, reverse=True))
+            + r")(?![A-Za-z_])"
         )
-        return [replacement_pattern.sub(lambda m: alias_replacements.get(m.group(1), m.group(1)), line) for line in lines]
+        return [
+            replacement_pattern.sub(lambda m: alias_replacements.get(m.group(1), m.group(1)), line) for line in lines
+        ]
 
     return _impl()
 
@@ -4836,9 +4724,7 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
                 r"^(?P<indent>\s*)(?P<name>[A-Za-z_]\w*)(?:\{[^}]+\})?\s*=\s*(?P<rhs>[^;]+);\s*$"
             )
             raw_register_frag_re = re.compile(r"\{r\d+\|\d+b\}")
-            self_addr_assign_re = re.compile(
-                r"^\s*(?P<name>[A-Za-z_]\w*)\s*=\s*&\s*(?P=name)\s*;\s*$"
-            )
+            self_addr_assign_re = re.compile(r"^\s*(?P<name>[A-Za-z_]\w*)\s*=\s*&\s*(?P=name)\s*;\s*$")
             ident_re = re.compile(r"\b[A-Za-z_]\w*\b")
             ident_use_counts: dict[str, int] = {}
             for line in lines:
@@ -4874,7 +4760,10 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
                 match = assign_re.match(stripped)
                 if match is None:
                     generic_match = generic_assign_re.match(stripped)
-                    if generic_match is not None and raw_register_frag_re.search(generic_match.group("rhs")) is not None:
+                    if (
+                        generic_match is not None
+                        and raw_register_frag_re.search(generic_match.group("rhs")) is not None
+                    ):
                         lhs_name = generic_match.group("name")
                         # If the assignment's LHS never appears elsewhere, this is
                         # a dead carrier of raw register-fragment text.
@@ -4899,6 +4788,7 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
             current = updated
 
     return _impl()
+
 
 def _prune_parameter_shadow_declarations_text(c_text: str) -> str:
     def _impl():
@@ -4978,6 +4868,7 @@ def _prune_parameter_shadow_declarations_text(c_text: str) -> str:
 
     return _impl()
 
+
 def _prune_undefined_fragment_carrier_assignments_text(c_text: str) -> str:
     def _impl():
         lines = c_text.splitlines()
@@ -4987,9 +4878,7 @@ def _prune_undefined_fragment_carrier_assignments_text(c_text: str) -> str:
         assign_re = re.compile(
             r"^(?P<indent>\s*)(?P<lhs>[A-Za-z_]\w*)\s*=\s*(?P<rhs>vvar_\d+(?:\{r\d+\|\d+b\})?)\s*;\s*$"
         )
-        decl_re = re.compile(
-            r"^(?P<indent>\s*)(?:[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?://.*)?$"
-        )
+        decl_re = re.compile(r"^(?P<indent>\s*)(?:[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?://.*)?$")
         declared: set[str] = set()
         for line in lines:
             dm = decl_re.match(line)
@@ -5038,9 +4927,7 @@ def _prune_non_lvalue_arithmetic_assignments(c_text: str) -> str:
     This is compile-hygiene cleanup only: real variable, member, index, and
     dereference assignments are preserved.
     """
-    assign_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[^=;]+?)\s*(?<![!<>=+\-*/%&|^])=(?!=)\s*(?P<rhs>[^;]+);\s*$"
-    )
+    assign_re = re.compile(r"^(?P<indent>\s*)(?P<lhs>[^=;]+?)\s*(?<![!<>=+\-*/%&|^])=(?!=)\s*(?P<rhs>[^;]+);\s*$")
     kept: list[str] = []
     for line in c_text.splitlines():
         match = assign_re.match(line)
@@ -5103,7 +4990,9 @@ def _normalize_seg_offset_void_pointer_args_text(c_text: str) -> str:
             if rewritten == args:
                 continue
             suffix = m.group("suffix")
-            lines[idx] = f"{m.group('indent')}{m.group('ret')} {m.group('name')}({rewritten}){(' ' + suffix) if suffix else ''}"
+            lines[idx] = (
+                f"{m.group('indent')}{m.group('ret')} {m.group('name')}({rewritten}){(' ' + suffix) if suffix else ''}"
+            )
             changed = True
         if not changed:
             return c_text
@@ -5133,7 +5022,7 @@ def _normalize_shift_add_precedence_in_assignments(c_text: str) -> str:
             return match.group(0)
         if base_expr.startswith("(") and base_expr.endswith(")"):
             return match.group(0)
-        return f'{match.group("indent")}{match.group("lhs").strip()} = ({base_expr} + 1) >> 8;'
+        return f"{match.group('indent')}{match.group('lhs').strip()} = ({base_expr} + 1) >> 8;"
 
     lines = c_text.splitlines()
     rewritten = [_rewrite_match(match) if (match := assign_re.match(line)) else line for line in lines]
@@ -5202,7 +5091,7 @@ def _rewrite_known_helper_signature_text(c_text: str, function, *, codegen=None)
                 for old_name, new_name in zip(annotated_arg_names, helper_arg_names)
                 if old_name and old_name != new_name
             ]
-    
+
         # Update the header with the correct signature regardless of whether arguments need renaming
         replacement_header = f"{header_match.group('indent')}{helper_decl}"
         if header_match.group("suffix") == "{":
@@ -5214,7 +5103,6 @@ def _rewrite_known_helper_signature_text(c_text: str, function, *, codegen=None)
             body_end = _find_body_end_index_8616(lines, body_open_index)
             _rename_identifiers_in_body_8616(lines, body_open_index + 1, body_end, renamed_pairs)
             _remove_missing_arg_decls_8616(lines, body_open_index + 1, body_end, helper_arg_names)
-
 
         normalized = "\n".join(lines)
         if c_text.endswith("\n"):
@@ -5305,7 +5193,7 @@ def _replace_decl_arg_name_8616(arg_text: str, old_name: str, new_name: str) -> 
     name_match = re.search(rf"(?<![A-Za-z_]){re.escape(old_name)}(?![A-Za-z_])", arg_text)
     if name_match is None:
         return arg_text
-    return f"{arg_text[: name_match.start()]}{new_name}{arg_text[name_match.end():]}"
+    return f"{arg_text[: name_match.start()]}{new_name}{arg_text[name_match.end() :]}"
 
 
 def _annotated_bp_arg_names_8616(lines_before_header: list[str]) -> list[str]:
@@ -5326,7 +5214,9 @@ def _find_body_end_index_8616(lines: list[str], body_open_index: int) -> int:
     return body_end
 
 
-def _rename_identifiers_in_body_8616(lines: list[str], start: int, end: int, renamed_pairs: list[tuple[str, str]]) -> None:
+def _rename_identifiers_in_body_8616(
+    lines: list[str], start: int, end: int, renamed_pairs: list[tuple[str, str]]
+) -> None:
     rename_patterns = [(re.compile(rf"(?<![A-Za-z_]){re.escape(old)}(?![A-Za-z_])"), new) for old, new in renamed_pairs]
     for index in range(start, end):
         line = lines[index]
@@ -5342,8 +5232,11 @@ def _remove_missing_arg_decls_8616(lines: list[str], start: int, end: int, helpe
         if "<missing-" not in line and "// [bp" not in line:
             continue
         stripped = line.strip()
-        if any(re.match(rf"^<missing-[^>]+>\s+{re.escape(arg)}\s*;\s*(?://.*)?$", stripped) for arg in helper_arg_name_set):
+        if any(
+            re.match(rf"^<missing-[^>]+>\s+{re.escape(arg)}\s*;\s*(?://.*)?$", stripped) for arg in helper_arg_name_set
+        ):
             lines[index] = ""
+
 
 def _prune_unused_local_declarations_text(c_text: str) -> str:
     def _impl():
@@ -5422,7 +5315,9 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
             local_decl_names: list[tuple[int, str]] = []
             for scan_index in range(body_start, body_end):
                 stripped_line = lines[scan_index].lstrip()
-                if stripped_line.startswith(("return ", "if ", "while ", "for ", "switch ", "goto ", "break;", "continue;")):
+                if stripped_line.startswith(
+                    ("return ", "if ", "while ", "for ", "switch ", "goto ", "break;", "continue;")
+                ):
                     continue
                 decl_match = decl_re.match(lines[scan_index])
                 if decl_match is not None:
@@ -5439,7 +5334,13 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
             for line_index, name in local_decl_names:
                 if name in arg_names:
                     continue
-                if re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])", body_text.replace(lines[line_index].split("//", 1)[0], "", 1)) is None:
+                if (
+                    re.search(
+                        rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])",
+                        body_text.replace(lines[line_index].split("//", 1)[0], "", 1),
+                    )
+                    is None
+                ):
                     removed_indexes.add(line_index)
 
             if removed_indexes:
@@ -5475,7 +5376,10 @@ def _prune_standalone_stack_probe_calls_text(c_text: str) -> str:
         remaining_text = "\n".join(without_calls)
         kept_lines = []
         for line in without_calls:
-            if proto_re.match(line) is not None and re.search(rf"\b(?:{probe_alt})\s*\(", remaining_text.replace(line, "", 1)) is None:
+            if (
+                proto_re.match(line) is not None
+                and re.search(rf"\b(?:{probe_alt})\s*\(", remaining_text.replace(line, "", 1)) is None
+            ):
                 continue
             kept_lines.append(line)
         result = "\n".join(kept_lines)
@@ -5484,6 +5388,7 @@ def _prune_standalone_stack_probe_calls_text(c_text: str) -> str:
         return result
 
     return _impl()
+
 
 def _format_known_helper_calls(
     project: angr.Project,
@@ -5538,7 +5443,9 @@ def _format_known_helper_calls(
                     break
 
         interrupt_replacements = _interrupt_call_replacement_map(project, function, api_style, binary_path)
-        for source_name, replacement in sorted(interrupt_replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        for source_name, replacement in sorted(
+            interrupt_replacements.items(), key=lambda item: len(item[0]), reverse=True
+        ):
             c_text = re.sub(
                 rf"(?<![A-Za-z_]){re.escape(source_name)}\s*\(\s*\)",
                 replacement,
@@ -5565,6 +5472,7 @@ def _format_known_helper_calls(
         return _repair_missing_fallthrough_returns(c_text).rstrip("\n")
 
     return _impl()
+
 
 def _repair_missing_fallthrough_returns(c_text: str) -> str:
     def _impl():
@@ -5643,11 +5551,14 @@ def _repair_missing_fallthrough_returns(c_text: str) -> str:
 
     return _impl()
 
+
 def _normalize_boolean_conditions(c_text: str) -> str:
     plus_not_pattern = re.compile(
         r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \(!(?P<lhs>[A-Za-z_][\w$?@]*) \+ (?P<rhs>0x[0-9a-fA-F]+|\d+)\)$"
     )
-    c_text = plus_not_pattern.sub(lambda m: f"{m.group('indent')}{m.group('kind')} (!({m.group('lhs')} + {m.group('rhs')}))", c_text)
+    c_text = plus_not_pattern.sub(
+        lambda m: f"{m.group('indent')}{m.group('kind')} (!({m.group('lhs')} + {m.group('rhs')}))", c_text
+    )
 
     def _replace(match: re.Match[str]) -> str:
         indent = match.group("indent")
@@ -5655,9 +5566,7 @@ def _normalize_boolean_conditions(c_text: str) -> str:
         expr = match.group("expr")
         return f"{indent}{kind} (({expr}) == 0)"
 
-    pattern = re.compile(
-        r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \(!\(\((?P<expr>[^()]*(?:\([^()]*\)[^()]*)*)\)\)\)"
-    )
+    pattern = re.compile(r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \(!\(\((?P<expr>[^()]*(?:\([^()]*\)[^()]*)*)\)\)\)")
     rewritten = pattern.sub(_replace, c_text)
 
     brace_while_pattern = re.compile(
@@ -5690,14 +5599,10 @@ def _normalize_boolean_conditions(c_text: str) -> str:
 
     rewritten = for_ternary_pattern.sub(_rewrite_for_ternary, rewritten)
 
-    addr_pattern = re.compile(
-        r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \(&(?P<name>[A-Za-z_][\w$?@]*)\)$"
-    )
+    addr_pattern = re.compile(r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \(&(?P<name>[A-Za-z_][\w$?@]*)\)$")
     rewritten = addr_pattern.sub(lambda m: f"{m.group('indent')}{m.group('kind')} ({m.group('name')})", rewritten)
 
-    index_pattern = re.compile(
-        r"(?m)^(?P<indent>\s*)(?P<name>[A-Za-z_][\w$?@]*) = &v\d+\[(?P<delta>\d+)\];$"
-    )
+    index_pattern = re.compile(r"(?m)^(?P<indent>\s*)(?P<name>[A-Za-z_][\w$?@]*) = &v\d+\[(?P<delta>\d+)\];$")
     rewritten = index_pattern.sub(lambda m: f"{m.group('indent')}{m.group('name')} += {m.group('delta')};", rewritten)
 
     compound_pattern = re.compile(
@@ -5738,6 +5643,7 @@ def _normalize_boolean_conditions(c_text: str) -> str:
     )
     return rewritten
 
+
 def _normalize_mk_fp_segment_names(c_text: str, metadata: CODProcMetadata | None) -> str:
     if metadata is None:
         return c_text
@@ -5769,6 +5675,7 @@ def _normalize_mk_fp_segment_names(c_text: str, metadata: CODProcMetadata | None
         _replace,
         c_text,
     )
+
 
 def _simplify_x86_16_stack_references(c_text: str) -> str:
     lines = c_text.splitlines()
@@ -5805,7 +5712,5 @@ def _simplify_x86_16_stack_references(c_text: str) -> str:
             return f"&{name}"
         return f"&{name}"
 
-    pattern = re.compile(
-        r"&(?P<anchor>v\d+)\s*(?P<sign>[+-])\s*(?P<value>0x[0-9A-Fa-f]+|\d+)"
-    )
+    pattern = re.compile(r"&(?P<anchor>v\d+)\s*(?P<sign>[+-])\s*(?P<value>0x[0-9A-Fa-f]+|\d+)")
     return pattern.sub(_replace, c_text)

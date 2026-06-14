@@ -67,7 +67,9 @@ def apply_candidate_mapping(
     mapped_function["entry"] = _resolve_candidate_entry(
         candidate_entry,
         functions_catalog=functions_catalog,
-        fallback_kind=str(function.get("entry", {}).get("kind", "near")) if isinstance(function.get("entry"), dict) else "near",
+        fallback_kind=str(function.get("entry", {}).get("kind", "near"))
+        if isinstance(function.get("entry"), dict)
+        else "near",
     )
     if "candidate_module" in mapping_document:
         mapped["module"] = mapping_document["candidate_module"]
@@ -129,19 +131,38 @@ def make_mapping_document(
         names = [str(name) for name in oracle_function.get("names", []) or []]
         name = names[0] if names else None
         if name is None:
-            diagnostics.append({"reason": "mapping_missing", "oracle_id": oracle_function.get("id"), "message": "oracle function has no name"})
+            diagnostics.append(
+                {
+                    "reason": "mapping_missing",
+                    "oracle_id": oracle_function.get("id"),
+                    "message": "oracle function has no name",
+                }
+            )
             continue
         candidates = candidates_by_name.get(name, [])
         if not candidates:
-            diagnostics.append({"reason": "mapping_missing", "oracle_id": oracle_function.get("id"), "oracle_name": name})
+            diagnostics.append(
+                {"reason": "mapping_missing", "oracle_id": oracle_function.get("id"), "oracle_name": name}
+            )
             continue
         if len(candidates) > 1:
-            diagnostics.append({"reason": "mapping_ambiguous", "oracle_id": oracle_function.get("id"), "oracle_name": name})
+            diagnostics.append(
+                {"reason": "mapping_ambiguous", "oracle_id": oracle_function.get("id"), "oracle_name": name}
+            )
             continue
         candidate = candidates[0]
-        candidate_entry = _entry_for_mapping(candidate, return_kind=str(oracle_function.get("return_kind", candidate.get("return_kind", "near"))))
+        candidate_entry = _entry_for_mapping(
+            candidate, return_kind=str(oracle_function.get("return_kind", candidate.get("return_kind", "near")))
+        )
         if candidate_entry is None:
-            diagnostics.append({"reason": "mapping_missing", "oracle_id": oracle_function.get("id"), "oracle_name": name, "message": "candidate entry has no concrete segment"})
+            diagnostics.append(
+                {
+                    "reason": "mapping_missing",
+                    "oracle_id": oracle_function.get("id"),
+                    "oracle_name": name,
+                    "message": "candidate entry has no concrete segment",
+                }
+            )
             continue
         functions.append(
             {

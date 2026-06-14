@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, cast
 
-
 NamingCandidate = tuple[int, int, int]
 
 
@@ -100,7 +99,11 @@ class AccessTraitEvidenceProfile:
             if structured_counts:
                 dominant_kind = max(
                     structured_counts.items(),
-                    key=lambda item: (item[1], {"induction_like": 3, "array_like": 2, "member_like": 1}.get(item[0], 0), item[0]),
+                    key=lambda item: (
+                        item[1],
+                        {"induction_like": 3, "array_like": 2, "member_like": 1}.get(item[0], 0),
+                        item[0],
+                    ),
                 )[0]
                 if dominant_kind == "induction_like":
                     return "induction"
@@ -154,7 +157,9 @@ def infer_induction_summary(profile: AccessTraitEvidenceProfile) -> InductionSum
         if len(stride_set) != 1 or len(index_keys) != 1 or len(base_keys) != 1 or len(widths) != 1:
             return None
 
-        best = max(candidates, key=lambda evidence: (int(evidence.count), int(evidence.width), -abs(int(evidence.offset))))
+        best = max(
+            candidates, key=lambda evidence: (int(evidence.count), int(evidence.width), -abs(int(evidence.offset)))
+        )
         if int(best.count) < 2:
             return None
         return InductionSummary(
@@ -212,7 +217,7 @@ def access_trait_profile_for_key(
 
 
 def build_access_trait_evidence_profiles(
-    traits: dict[str, dict[tuple[object, ...], object]]
+    traits: dict[str, dict[tuple[object, ...], object]],
 ) -> dict[tuple[object, ...], AccessTraitEvidenceProfile]:
     raw_profiles: dict[tuple[object, ...], dict[str, list[object]]] = {}
 
@@ -310,7 +315,7 @@ def build_access_trait_evidence_profiles(
 
 
 def access_trait_member_candidates(
-    traits: dict[str, dict[tuple[object, ...], object]]
+    traits: dict[str, dict[tuple[object, ...], object]],
 ) -> dict[tuple[object, ...], list[NamingCandidate]]:
     profiles = build_access_trait_evidence_profiles(traits)
     return {

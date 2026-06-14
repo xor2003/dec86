@@ -88,6 +88,7 @@ def _attach_decompile_quality_profile(
     )
     profile["quality"] = metrics.to_dict()
 
+
 COMPARE16_HARNESS_MAIN = """
 int main(void)
 {
@@ -517,7 +518,14 @@ FALLBACK_EXAMPLE_REBUILD = {
         "harness": COMPARE16_HARNESS_MAIN,
     },
     "compare32": {
-        "functions": ("select_max", "compare_signed", "compare_unsigned", "clamp_window", "rel_signed32", "rel_unsigned32"),
+        "functions": (
+            "select_max",
+            "compare_signed",
+            "compare_unsigned",
+            "clamp_window",
+            "rel_signed32",
+            "rel_unsigned32",
+        ),
         "harness": COMPARE32_HARNESS_MAIN,
     },
     "function_pointers": {
@@ -879,6 +887,7 @@ def _sanitize_decompiled_source(raw_c_text: str) -> str:
         keep_lines.append(line)
     return "\n".join(keep_lines) + ("\n" if raw_c_text.endswith("\n") else "")
 
+
 def _prepare_decompiled_source_for_c89(raw_c_text: str) -> str:
     """Prepare decompiler output for legacy MS C 5.x/6.x compilers.
 
@@ -901,9 +910,7 @@ def _inject_ms_c89_forward_decls(raw_c_text: str) -> str:
     redefinition diagnostics. Inject forward declarations from emitted function
     signatures so decompiled output links on legacy compilers.
     """
-    signature_re = re.compile(
-        r"(?m)^([A-Za-z_][\w\s\*]*?)\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\r?\n\s*\{"
-    )
+    signature_re = re.compile(r"(?m)^([A-Za-z_][\w\s\*]*?)\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\r?\n\s*\{")
     declarations: list[str] = []
     seen: set[tuple[str, str]] = set()
     for match in signature_re.finditer(raw_c_text):
@@ -1246,6 +1253,7 @@ def _read_map_obj_base_offset(map_path: Path) -> tuple[int | None, dict[int, int
             public_name_to_addr.setdefault(symbol.lstrip("_").lower(), (public_seg << 4) + public_off)
 
     return entry_off, code_starts, public_name_to_addr
+
 
 def _resolve_cod_offset_to_exe_addr(
     cod_offset: int,
@@ -1678,7 +1686,11 @@ def _extract_profile_summary(profile: dict[str, object]) -> str:
         return ""
     if not function_times:
         return ""
-    slow = [item for item in function_times if isinstance(item, dict) and item.get("seconds", 0.0) > DECOMPILE_SLOW_FUNCTION_SECONDS]
+    slow = [
+        item
+        for item in function_times
+        if isinstance(item, dict) and item.get("seconds", 0.0) > DECOMPILE_SLOW_FUNCTION_SECONDS
+    ]
     slow_passes = profile.get("slow_passes", [])
     if not isinstance(slow_passes, list):
         slow_passes = []
@@ -1686,11 +1698,7 @@ def _extract_profile_summary(profile: dict[str, object]) -> str:
         if not slow_passes:
             return ""
     slowest = max(
-        (
-            item
-            for item in function_times
-            if isinstance(item, dict) and isinstance(item.get("seconds"), (int, float))
-        ),
+        (item for item in function_times if isinstance(item, dict) and isinstance(item.get("seconds"), (int, float))),
         key=lambda item: float(item["seconds"]),
         default=None,
     )
@@ -1701,9 +1709,7 @@ def _extract_profile_summary(profile: dict[str, object]) -> str:
             "slow_functions": slow,
             "slowest": slowest,
             "slow_passes": [
-                item
-                for item in slow_passes
-                if isinstance(item, dict) and isinstance(item.get("seconds"), (int, float))
+                item for item in slow_passes if isinstance(item, dict) and isinstance(item.get("seconds"), (int, float))
             ],
         },
         sort_keys=True,
@@ -1970,7 +1976,11 @@ def _decompile(
 
         elapsed = time.perf_counter() - start
         profile["commands_tried"] = attempts
-        merged_profile = last_profile if isinstance(last_profile, dict) else _parse_decompile_profile((last_proc.stderr if last_proc else ""))
+        merged_profile = (
+            last_profile
+            if isinstance(last_profile, dict)
+            else _parse_decompile_profile((last_proc.stderr if last_proc else ""))
+        )
         merged_profile["commands_tried"] = attempts
         merged_profile["selected"] = profile.get("selected", {})
         merged_profile["wall_seconds"] = elapsed
@@ -2095,9 +2105,7 @@ def _decompile_and_validate(
         return 0
 
     fallback_functions = (
-        decompile_fallback_rebuild.get("functions")
-        if isinstance(decompile_fallback_rebuild, dict)
-        else None
+        decompile_fallback_rebuild.get("functions") if isinstance(decompile_fallback_rebuild, dict) else None
     )
     if isinstance(fallback_functions, tuple):
         fallback_profile: dict[str, object] = {
@@ -2125,7 +2133,9 @@ def _decompile_and_validate(
                 decomp_name, _obj_name, _exe_name, _map_name = _rebuild_names()
                 stdout_path = out_dir / decomp_name
                 stderr_path = out_dir / f"{Path(decomp_name).stem}.dec.err.txt"
-                stderr_path.write_text(json.dumps(_json_safe_profile(fallback_profile), sort_keys=True), encoding="utf-8")
+                stderr_path.write_text(
+                    json.dumps(_json_safe_profile(fallback_profile), sort_keys=True), encoding="utf-8"
+                )
                 return (
                     True,
                     stdout_path,
@@ -2260,13 +2270,7 @@ def _decompile_and_validate(
             timeout=decompile_run_timeout,
         )
 
-    if (
-        decompile_fallback_rebuild is not None
-        and (
-            not recompiled_ok
-            or decompile_run_exit != expected_exit_code
-        )
-    ):
+    if decompile_fallback_rebuild is not None and (not recompiled_ok or decompile_run_exit != expected_exit_code):
         fallback_result = _try_function_fallback(decompile_profile)
         if fallback_result is not None:
             (
@@ -2327,10 +2331,7 @@ def main() -> int:
         "--skip-constructs",
         type=lambda text: [item.strip() for item in text.split(",") if item.strip()],
         default=list(DEFAULT_DECOMPILE_SKIP),
-        help=(
-            "Comma-separated source stems to skip decompilation for "
-            f"(default: {','.join(DEFAULT_DECOMPILE_SKIP)})"
-        ),
+        help=(f"Comma-separated source stems to skip decompilation for (default: {','.join(DEFAULT_DECOMPILE_SKIP)})"),
     )
     ap.add_argument(
         "--decompile-mode",

@@ -1,24 +1,20 @@
-import pprint
 import re
-from abc import abstractmethod
-from copy import deepcopy, copy
+from copy import copy, deepcopy
 
 import angr
+import jsonpickle
 import pyvex
+
 # pip install keystone-engine
 # from capstone import *
 from archinfo import arch
-from pyvex import IRSB, IRTypeEnv
-from pyvex.const import U32, U1, U8, U16
-from pyvex.data_ref import DataRef
-from pyvex.expr import *
-from pyvex.stmt import *
-
-from pyvex.lifting import LibVEXLifter, lifters
-from cffi import FFI as ffi
-import jsonpickle
-
 from archinfo.arch_x86 import ArchX86
+from cffi import FFI as ffi
+from pyvex import IRSB, IRTypeEnv
+from pyvex.const import U1, U8, U16, U32
+from pyvex.expr import *
+from pyvex.lifting import LibVEXLifter, lifters
+from pyvex.stmt import *
 from reprmixin import ReprMixin
 
 arch = ArchX86()
@@ -35,14 +31,40 @@ U32.__repr__ = lambda self: "U32(%d)" % self.value
 IRTypeEnv.__repr__ = lambda self: f"IRTypeEnv(self.arch, types={self.types})"
 Get.__repr__ = lambda self: f"self.get('{arch.translate_register_name(self.offset)}')"
 Put.__repr__ = lambda self: f"self.put('{arch.translate_register_name(self.offset)}',{repr(self.data)})"
-IRSB.__repr__ = lambda \
-    self: f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n" + \
-          f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n" + \
-          f"v.data_refs={repr(self.data_refs)}\nv._tyenv={repr(self._tyenv)}\n" + \
-          f"v._instructions={repr(self._instructions)}\n" + \
-          f"v._instruction_addresses={repr(self._instruction_addresses)}"
-for Class in [Unop, IRExpr, Binder, VECRET, GSPTR, GetI, Qop, Triop, Load, ITE, CCall, IRStmt, NoOp, IMark, AbiHint,
-              Put, PutI, Store, CAS, LLSC, MBE, Dirty, Exit, LoadG, StoreG]:
+IRSB.__repr__ = lambda self: (
+    f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n"
+    + f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n"
+    + f"v.data_refs={repr(self.data_refs)}\nv._tyenv={repr(self._tyenv)}\n"
+    + f"v._instructions={repr(self._instructions)}\n"
+    + f"v._instruction_addresses={repr(self._instruction_addresses)}"
+)
+for Class in [
+    Unop,
+    IRExpr,
+    Binder,
+    VECRET,
+    GSPTR,
+    GetI,
+    Qop,
+    Triop,
+    Load,
+    ITE,
+    CCall,
+    IRStmt,
+    NoOp,
+    IMark,
+    AbiHint,
+    Put,
+    PutI,
+    Store,
+    CAS,
+    LLSC,
+    MBE,
+    Dirty,
+    Exit,
+    LoadG,
+    StoreG,
+]:
     Class.__bases__ += (ReprMixin,)
 
 
@@ -58,6 +80,7 @@ def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:
 
 def asm32(line) -> bytes:
     import keystone as ks
+
     if line:
         ks_ = ks.Ks(ks.KS_ARCH_X86, ks.KS_MODE_32)
         data, count = ks_.asm(line, as_bytes=True)
@@ -70,6 +93,7 @@ def asm32(line) -> bytes:
 
 def assembler(lines, bitness=0) -> bytes:
     import keystone as ks
+
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
     data, count = ks_.asm(lines, as_bytes=True)
     return data
@@ -81,7 +105,6 @@ sizes_32bit = []
 
 
 class Lifter16(LibVEXLifter):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         """
@@ -94,20 +117,22 @@ class Lifter16(LibVEXLifter):
         self.arch_16._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
         """
 
-    def lift(self,
-              data,
-              bytes_offset=None,
-              max_bytes=None,
-              max_inst=None,
-              opt_level=1,
-              traceflags=None,
-              allow_arch_optimizations=None,
-              strict_block_end=None,
-              skip_stmts=False,
-              collect_data_refs=False,
-              cross_insn_opt=True,
-              load_from_ro_regions=False):
-        print(f'Input: {locals()}')
+    def lift(
+        self,
+        data,
+        bytes_offset=None,
+        max_bytes=None,
+        max_inst=None,
+        opt_level=1,
+        traceflags=None,
+        allow_arch_optimizations=None,
+        strict_block_end=None,
+        skip_stmts=False,
+        collect_data_refs=False,
+        cross_insn_opt=True,
+        load_from_ro_regions=False,
+    ):
+        print(f"Input: {locals()}")
         collect_data_refs = False
 
         # asm = asm32()
@@ -120,18 +145,20 @@ class Lifter16(LibVEXLifter):
             bytes16 = ffi().unpack(data, len(data))
             # raise Exception()
         except:
-            vex = super().lift(data,
-                                bytes_offset=bytes_offset,
-                                max_bytes=max_bytes,
-                                max_inst=max_inst,
-                                opt_level=opt_level,
-                                traceflags=traceflags,
-                                allow_arch_optimizations=allow_arch_optimizations,
-                                strict_block_end=strict_block_end,
-                                skip_stmts=skip_stmts,
-                                collect_data_refs=collect_data_refs,
-                                cross_insn_opt=cross_insn_opt,
-                                load_from_ro_regions=load_from_ro_regions)
+            vex = super().lift(
+                data,
+                bytes_offset=bytes_offset,
+                max_bytes=max_bytes,
+                max_inst=max_inst,
+                opt_level=opt_level,
+                traceflags=traceflags,
+                allow_arch_optimizations=allow_arch_optimizations,
+                strict_block_end=strict_block_end,
+                skip_stmts=skip_stmts,
+                collect_data_refs=collect_data_refs,
+                cross_insn_opt=cross_insn_opt,
+                load_from_ro_regions=load_from_ro_regions,
+            )
             print(f"As is: {vex}")
             # self.render_vex_to_json(vex)
             return vex
@@ -154,18 +181,20 @@ class Lifter16(LibVEXLifter):
 
             try:
                 instr32_cdata = ffi().from_buffer(bytearray(bytes32))
-                vex_current = super().lift(instr32_cdata,
-                                            bytes_offset=bytes_offset,
-                                            max_bytes=max_bytes,  # instr32_size,
-                                            max_inst=1,
-                                            opt_level=opt_level,
-                                            traceflags=traceflags,
-                                            allow_arch_optimizations=allow_arch_optimizations,
-                                            strict_block_end=strict_block_end,
-                                            skip_stmts=False,
-                                            collect_data_refs=collect_data_refs,
-                                            cross_insn_opt=cross_insn_opt,
-                                            load_from_ro_regions=load_from_ro_regions)
+                vex_current = super().lift(
+                    instr32_cdata,
+                    bytes_offset=bytes_offset,
+                    max_bytes=max_bytes,  # instr32_size,
+                    max_inst=1,
+                    opt_level=opt_level,
+                    traceflags=traceflags,
+                    allow_arch_optimizations=allow_arch_optimizations,
+                    strict_block_end=strict_block_end,
+                    skip_stmts=False,
+                    collect_data_refs=collect_data_refs,
+                    cross_insn_opt=cross_insn_opt,
+                    load_from_ro_regions=load_from_ro_regions,
+                )
             except Exception as ex:
                 print(ex)
                 raise
@@ -191,14 +220,14 @@ class Lifter16(LibVEXLifter):
 
             if first:
                 vex = vex_current
-                #v = MyVex()
-                #vex = v.mov()
+                # v = MyVex()
+                # vex = v.mov()
                 first = False
             else:
                 # vex = merge_vexes(vex, vex_current)
                 vex.extend(vex_current)
 
-        print(f'Output: {vex}')
+        print(f"Output: {vex}")
         return vex
 
     def change_instr_size(self, vex_current, addr16bit, instr16_size):
@@ -219,20 +248,18 @@ class Lifter16(LibVEXLifter):
         return json
 
 
-lifters['X86'] = [Lifter16]
+lifters["X86"] = [Lifter16]
 
 # from archinfo.arch_x86 import ArchX86
 from angr.analyses import (
-    VariableRecoveryFast,
     CallingConventionAnalysis,
-    CompleteCallingConventionsAnalysis,
     CFGFast,
     Decompiler,
+    VariableRecoveryFast,
 )
 
 
 class MyVex(IRSB):
-
     def __init__(self, addr=0):
         self.addr = addr
         self.arch = ArchX86()
@@ -264,7 +291,7 @@ class MyVex(IRSB):
 
     def add(self, size, *args):
         if size not in [8, 16, 32]:
-            raise ValueError('Invalid op size %d' % size)
+            raise ValueError("Invalid op size %d" % size)
         if len(args) == 1:
             return Unop("Iop_Add%d" % size, args)
         elif len(args) == 2:
@@ -272,11 +299,11 @@ class MyVex(IRSB):
         elif len(args) == 3:
             return Triop("Iop_Add%d" % size, args)
         else:
-            raise ValueError('Invalid number of args %s' % args)
+            raise ValueError("Invalid number of args %s" % args)
 
     def mov(self):
         self.v._size = 5
-        '''
+        """
         self.v.statements = [
             IMark(self.addr, self.v._size, 0),
             WrTmp(t2, self.get('esp')),
@@ -285,7 +312,7 @@ class MyVex(IRSB):
             WrTmp(t3, self.conv16Uto32(RdTmp(t4))),
             self.put('eax', RdTmp(t3))
         ]
-        '''
+        """
         # self.v=IRSB(None, 0, self.arch)
         t0 = self.add_tmp(32)
         t1 = self.add_tmp(32)
@@ -293,14 +320,16 @@ class MyVex(IRSB):
         t3 = self.add_tmp(32)
         t4 = self.add_tmp(32)  # movzx     eax, word ptr [esp + 4]
         t5 = self.add_tmp(16)  # movzx     eax, word ptr [esp + 4]
-        self.v.statements = [IMark(addr=self.v.addr, length=self.v._size, delta=0),
-                             WrTmp(t2, self.get('es')),
-                             WrTmp(t3, Unop(op='Iop_16Uto32', args=[RdTmp(t2)])),
-                             WrTmp(t4, Binop('Iop_Shl32', [RdTmp(t3), Const(U8(4))])),
-                             WrTmp(t1, Binop('Iop_Add32', [RdTmp(t4), Const(U32(0x2000))])),
-                             WrTmp(t5, Load(end='Iend_LE', ty='Ity_I16', addr=RdTmp(t1))),
-                             WrTmp(t0, Unop(op='Iop_16Uto32', args=[RdTmp(t5)])),
-                             self.put('eax', RdTmp(t0))]
+        self.v.statements = [
+            IMark(addr=self.v.addr, length=self.v._size, delta=0),
+            WrTmp(t2, self.get("es")),
+            WrTmp(t3, Unop(op="Iop_16Uto32", args=[RdTmp(t2)])),
+            WrTmp(t4, Binop("Iop_Shl32", [RdTmp(t3), Const(U8(4))])),
+            WrTmp(t1, Binop("Iop_Add32", [RdTmp(t4), Const(U32(0x2000))])),
+            WrTmp(t5, Load(end="Iend_LE", ty="Ity_I16", addr=RdTmp(t1))),
+            WrTmp(t0, Unop(op="Iop_16Uto32", args=[RdTmp(t5)])),
+            self.put("eax", RdTmp(t0)),
+        ]
 
         self.v.next = Const(U32(self.v.addr + self.v._size))
         self.v.jumpkind = "Ijk_Boring"
@@ -320,8 +349,9 @@ class MyVex(IRSB):
 
 # from keystone import Ks
 
+
 def resolver(symbol, value):
-    if symbol == b'abcd':
+    if symbol == b"abcd":
         value.contents.value = 0x42
         return True
     return False
@@ -331,7 +361,7 @@ def vexer(instruction):
     global arch_32
     arch_16 = ArchX86()  # get architecture
     # arch_16.bits=16
-    arch_16.reg_blacklist = ('gdt', 'ldt')  # make cs,ds valid
+    arch_16.reg_blacklist = ("gdt", "ldt")  # make cs,ds valid
     arch_16.ks_mode = _keystone.KS_MODE_16 + _keystone.KS_MODE_LITTLE_ENDIAN
     arch_16.keystone  # init keystone assembler
     arch_16._ks.sym_resolver = resolver  # set resolver
@@ -347,7 +377,7 @@ def vexer(instruction):
     # a._configure_keystone()
     arch_32._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
     addr = 1
-    instruction = re.sub(r'\b[cdefgs]s:', '', instruction)
+    instruction = re.sub(r"\b[cdefgs]s:", "", instruction)
     bytes = arch_32.asm(instruction)
     vex = pyvex.lift(bytes, addr, arch_32)
     assert vex.statements
@@ -360,7 +390,8 @@ def vexer(instruction):
 
 
 def get_instructions_sizes(CODE):
-    from keystone import Ks, KS_ARCH_X86, KS_MODE_16, KS_MODE_32, KsError
+    from keystone import KS_ARCH_X86, KS_MODE_16, KS_MODE_32, Ks, KsError
+
     sizes16 = []
     sizes32 = []
     for line in CODE.splitlines():
@@ -393,7 +424,9 @@ def get_instructions_sizes(CODE):
 
 
 class myContext:
-    def __init__(self, ):
+    def __init__(
+        self,
+    ):
         self.results = []
 
 
@@ -446,7 +479,7 @@ def merge_vexes(vex1, vex2_):
 
     # Get temporary variables indexes for instr 2
     c2 = myContext()
-    statement_walker(vex2, 'get_temp', c2)
+    statement_walker(vex2, "get_temp", c2)
     # print(c2.results)
 
     # Shift second instruciton indexes
@@ -456,7 +489,7 @@ def merge_vexes(vex1, vex2_):
     # Add PUT(eip) = x
     # vex1.statements.append(Put(copy(vex1.next), 68))
     # Fix temporaries indexes
-    statement_walker(vex2, 'set_temp', c2)
+    statement_walker(vex2, "set_temp", c2)
 
     # Fix addr inside IMark
     # assert isinstance(vex2.statements[0], IMark)
@@ -477,7 +510,8 @@ def merge_vexes(vex1, vex2_):
     ##vex1.default_exit_target = vex2.default_exit_target
     # Add instruction addresses
     vex2._instruction_addresses = tuple(
-        list(vex1._instruction_addresses) + [vex1._size + ins_addr for ins_addr in vex2._instruction_addresses])
+        list(vex1._instruction_addresses) + [vex1._size + ins_addr for ins_addr in vex2._instruction_addresses]
+    )
     # Increase size
     vex2._size = vex1._size + vex2._size
     # Fix next
@@ -487,7 +521,7 @@ def merge_vexes(vex1, vex2_):
     return vex2
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         import capstone as _capstone
     except ImportError:
@@ -503,7 +537,7 @@ if __name__ == '__main__':
     # print(pyvex.lift(a.asm('je 3'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,5\nmul ax'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,abcd'), 0, a).pp())
-    instruction = 'add ax,abcd'
+    instruction = "add ax,abcd"
     # instruction = 'mov word ptr es:[di],0x42'
     # instruction = 'inc eax'
 
@@ -605,8 +639,7 @@ if __name__ == '__main__':
     ''')
     """
 
-
-    CODE = '''
+    CODE = """
         movzx     eax, word ptr [esp + 4]
         movzx     ecx, word ptr [esp + 8]
         shl     ecx, 4
@@ -614,8 +647,8 @@ if __name__ == '__main__':
         mov     ax, word ptr [eax + ecx]
         movzx eax,ax
         ret
-        '''
-    CODE = '''
+        """
+    CODE = """
             imul bx
             movzx     eax, word ptr [esp + 4]
             movzx     ecx, word ptr [esp + 8]
@@ -623,7 +656,7 @@ if __name__ == '__main__':
             sub ax,cx
             movzx eax,ax
             ret
-    '''
+    """
 
     # sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
     bytes_ = assembler(CODE, 16)

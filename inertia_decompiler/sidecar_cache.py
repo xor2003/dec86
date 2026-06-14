@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
@@ -12,7 +12,6 @@ from inertia_decompiler.cache import (
     _sidecar_metadata_cache_key,
     _store_cache_json,
 )
-
 
 _SOURCE_FORMAT_RENAMES = {
     "flair_pat": "startup_flair_pat",
@@ -82,8 +81,7 @@ def _maybe_rebase_stale_absolute_metadata(metadata: LSTMetadata, project) -> LST
             data_labels={addr + shift: name for addr, name in metadata.data_labels.items()},
             code_labels={addr + shift: name for addr, name in metadata.code_labels.items()},
             code_ranges={
-                addr + shift: (start + shift, end + shift)
-                for addr, (start, end) in metadata.code_ranges.items()
+                addr + shift: (start + shift, end + shift) for addr, (start, end) in metadata.code_ranges.items()
             },
             signature_code_addrs=frozenset(addr + shift for addr in metadata.signature_code_addrs),
             absolute_addrs=True,
@@ -214,10 +212,7 @@ def _deserialize_lst_metadata(payload: dict[str, object]) -> LSTMetadata | None:
     try:
         data_labels = {int(addr): str(name) for addr, name in payload.get("data_labels", ())}
         code_labels = {int(addr): str(name) for addr, name in payload.get("code_labels", ())}
-        code_ranges = {
-            int(addr): (int(start), int(end))
-            for addr, start, end in payload.get("code_ranges", ())
-        }
+        code_ranges = {int(addr): (int(start), int(end)) for addr, start, end in payload.get("code_ranges", ())}
         signature_code_addrs = frozenset(int(addr) for addr in payload.get("signature_code_addrs", ()))
         cod_proc_kinds = {int(addr): str(kind) for addr, kind in payload.get("cod_proc_kinds", ())}
         struct_names = tuple(str(name) for name in payload.get("struct_names", ()))

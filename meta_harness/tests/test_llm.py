@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import io
 import sys
-from pathlib import Path
 
 import pytest
 
-from meta_harness.config import LlmConfig
 import meta_harness.llm as llm_mod
+from meta_harness.config import LlmConfig
 from meta_harness.llm import (
     build_effective_prompt,
     extract_session_id,

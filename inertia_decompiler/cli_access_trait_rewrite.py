@@ -6,9 +6,8 @@ from typing import Any, Callable, TypeAlias
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from .cli_access_rewrite_artifact import AccessRewriteArtifact
 from .cli_access_object_hints import AccessTraitObjectHint, BaseKey
-
+from .cli_access_rewrite_artifact import AccessRewriteArtifact
 
 StableHints: TypeAlias = dict[BaseKey, AccessTraitObjectHint]
 ReplaceCChildren: TypeAlias = Callable[[Any, Callable[[Any], Any]], bool]
@@ -126,7 +125,9 @@ def _attach_pointer_member_names(
             return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
 
         def candidate_field_names(base_key: BaseKey) -> tuple[str, ...]:
-            if base_key in artifact.refusal_reasons or (len(base_key) == 4 and base_key[:3] in artifact.refusal_reasons):
+            if base_key in artifact.refusal_reasons or (
+                len(base_key) == 4 and base_key[:3] in artifact.refusal_reasons
+            ):
                 return ()
             hint = stable_access_object_hint_for_key(object_hints, base_key)
             if hint is None:
@@ -155,7 +156,9 @@ def _attach_pointer_member_names(
             for variable, cvar in list(variables_in_use.items()):
                 if not isinstance(variable, (SimRegisterVariable, SimStackVariable, SimMemoryVariable)):
                     continue
-                if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(getattr(cvar, "name", None)):
+                if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(
+                    getattr(cvar, "name", None)
+                ):
                     continue
                 base_key = access_trait_variable_key(variable)
                 if base_key is None:
@@ -182,7 +185,9 @@ def _attach_pointer_member_names(
             variable = getattr(cvar, "variable", None)
             if not isinstance(variable, (SimRegisterVariable, SimStackVariable, SimMemoryVariable)):
                 return None
-            if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(getattr(cvar, "name", None)):
+            if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(
+                getattr(cvar, "name", None)
+            ):
                 return None
             base_key = access_trait_variable_key(variable)
             if base_key is None:
@@ -222,4 +227,3 @@ def _attach_pointer_member_names(
         return changed
 
     return _impl()
-

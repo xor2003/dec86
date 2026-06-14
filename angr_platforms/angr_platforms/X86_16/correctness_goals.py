@@ -105,7 +105,9 @@ def summarize_x86_16_correctness_goals() -> dict[str, object]:
         partial = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "partial")
         open_ = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "open")
         strict_percent = round(landed / len(CORRECTNESS_GOALS) * 100, 2) if CORRECTNESS_GOALS else 0.0
-        weighted_percent = round((landed + 0.5 * partial) / len(CORRECTNESS_GOALS) * 100, 2) if CORRECTNESS_GOALS else 0.0
+        weighted_percent = (
+            round((landed + 0.5 * partial) / len(CORRECTNESS_GOALS) * 100, 2) if CORRECTNESS_GOALS else 0.0
+        )
         return {
             "total": len(CORRECTNESS_GOALS),
             "landed": landed,

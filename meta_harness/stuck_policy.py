@@ -4,7 +4,6 @@ import math
 import re
 from dataclasses import dataclass
 
-
 DEFAULT_ESTIMATED_ROUNDS = 1
 
 
@@ -24,6 +23,7 @@ def estimated_rounds(item_text: str) -> int:
         if not match:
             return DEFAULT_ESTIMATED_ROUNDS
         return max(1, int(match.group(1)))
+
     return _impl()
 
 
@@ -31,6 +31,7 @@ def stuck_after_rounds(item_text: str) -> int:
     def _impl():
         """Return the deterministic 1.5x stuck threshold for a plan item."""
         return max(2, math.ceil(estimated_rounds(item_text) * 1.5))
+
     return _impl()
 
 
@@ -47,6 +48,7 @@ def classify_stuck_reason(item_text: str, runtime_context: str = "") -> str:
         if len(item_text) > 1200 or item_text.count("`") > 18:
             return "plan-item-too-broad"
         return "worker-no-progress"
+
     return _impl()
 
 
@@ -60,6 +62,7 @@ def stuck_playbook(category: str) -> str:
             "plan-item-too-broad": "rewrite into smaller Execution Specification items with separate DoD and round budgets",
             "worker-no-progress": "route to planner for a narrower task packet and explicit stop conditions",
         }.get(category, "route to planner for classification before retry")
+
     return _impl()
 
 
@@ -75,4 +78,5 @@ def decide_stuck(item_text: str, completed_rounds: int, runtime_context: str = "
             stuck_after_rounds=threshold,
             is_stuck=completed_rounds >= threshold,
         )
+
     return _impl()

@@ -18,7 +18,6 @@ def resolve_flair_root(flair_root: Path | None = None) -> Path:
     ``flair_startup`` directory, with an explicit environment override via
     ``INERTIA_FLAIR_ROOT`` when needed.
     """
-
     if flair_root is not None:
         return flair_root
     env_root = os.environ.get("INERTIA_FLAIR_ROOT", "").strip()
@@ -29,7 +28,6 @@ def resolve_flair_root(flair_root: Path | None = None) -> Path:
 
 def flair_signature_root(flair_root: Path | None = None) -> Path:
     """Backward-compatible alias used by callers expecting a named helper."""
-
     return resolve_flair_root(flair_root)
 
 
@@ -42,7 +40,6 @@ def copy_flair_patterns_to_local(
 
     Existing destination files are preserved by identity.
     """
-
     source = Path(source_root)
     target = local_root or default_flair_startup_root()
     copied: list[Path] = []

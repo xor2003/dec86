@@ -43,10 +43,7 @@ def test_compact_trace_converts_full_jsonl_to_agent_text():
 
     assert converted.startswith("summary total_ms=8.5 spans=2 otel=off errors=0")
     assert "schema: id|parent|ms|name|attrs" in converted
-    assert (
-        "1|-|8.0|direct.decompile_job|addr=0x1000 label=cmp_i16 lowmem=0"
-        in converted
-    )
+    assert "1|-|8.0|direct.decompile_job|addr=0x1000 label=cmp_i16 lowmem=0" in converted
     assert "2|1|1.25|validation.acceptance|target=portable-flat" in converted
     assert "{" not in converted
 

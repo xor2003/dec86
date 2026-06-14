@@ -98,7 +98,9 @@ def _decoded_jcc_condition_fingerprint(cond, project) -> str | None:
         return None
     lhs = _expr_fingerprint(decoded.lhs, project)
     rhs = _expr_fingerprint(decoded.rhs, project)
-    if direct_cmp_fingerprint is None and (_fingerprint_contains_raw_register_8616(lhs) or _fingerprint_contains_raw_register_8616(rhs)):
+    if direct_cmp_fingerprint is None and (
+        _fingerprint_contains_raw_register_8616(lhs) or _fingerprint_contains_raw_register_8616(rhs)
+    ):
         if os.environ.get("INERTIA_DEBUG_TV_CONDITION_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}:
             import sys
 
@@ -112,9 +114,9 @@ def _decoded_jcc_condition_fingerprint(cond, project) -> str | None:
     decoded_fingerprint = f"{decoded.op}({lhs},{rhs})"
     if direct_cmp_fingerprint is not None and direct_cmp_fingerprint != decoded_fingerprint:
         if codegen is not None:
-            codegen._inertia_tail_validation_direct_cmp_jcc_overrides_8616 = int(
-                getattr(codegen, "_inertia_tail_validation_direct_cmp_jcc_overrides_8616", 0) or 0
-            ) + 1
+            codegen._inertia_tail_validation_direct_cmp_jcc_overrides_8616 = (
+                int(getattr(codegen, "_inertia_tail_validation_direct_cmp_jcc_overrides_8616", 0) or 0) + 1
+            )
         if os.environ.get("INERTIA_DEBUG_TV_CONDITION_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}:
             import sys
 
@@ -198,14 +200,18 @@ def _direct_cmp_immediate_jcc_fingerprint(cond, project, codegen, block_addr: in
     if len(immediate_operands) != 1:
         _debug_refuse(
             "no_immediate:"
-            + ",".join(f"type={getattr(operand, 'type', None)} imm={getattr(operand, 'imm', None)!r}" for operand in operands)
+            + ",".join(
+                f"type={getattr(operand, 'type', None)} imm={getattr(operand, 'imm', None)!r}" for operand in operands
+            )
         )
         return None
     if any(int(getattr(operand, "type", -1)) == 1 for operand in operands):
         _debug_refuse("register_operand")
         return None
     ds_offset = _reg_offset_8616(project, "ds")
-    ds_var = CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen) if isinstance(ds_offset, int) else None
+    ds_var = (
+        CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen) if isinstance(ds_offset, int) else None
+    )
     lhs = (
         _const_8616(int(getattr(operands[0], "imm", 0) or 0), codegen)
         if int(getattr(operands[0], "type", -1)) == 2

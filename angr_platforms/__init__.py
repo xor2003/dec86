@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 _ROOT = Path(__file__).resolve().parent
 _INNER = _ROOT / "angr_platforms"
 

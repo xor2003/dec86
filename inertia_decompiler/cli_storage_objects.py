@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 from angr_platforms.X86_16.lowering.object_lowering import AccessTraitObjectHint, BaseKey
+
 from .cli_access_profiles import AccessTraitEvidenceProfile
 
 StableHints = dict[BaseKey, AccessTraitObjectHint]

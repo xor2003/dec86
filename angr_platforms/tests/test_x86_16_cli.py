@@ -359,7 +359,7 @@ def test_live_call_rehydration_refuses_without_rendered_snapshot(monkeypatch):
     metadata = CODProcMetadata(
         stack_aliases={},
         call_names=("puts",),
-        call_sources=(("puts", "puts(\"x\")"),),
+        call_sources=(("puts", 'puts("x")'),),
         global_names=(),
         source_lines=(),
         source_line_set=frozenset(),
@@ -530,6 +530,8 @@ def test_apply_function_annotations_covers_rebased_active_and_original_addresses
 
     assert changed is True
     assert applied_addrs == [0x10768, 0x1000]
+
+
 LIFE_EXE = REPO_ROOT / "LIFE.EXE"
 LIFE2_EXE = REPO_ROOT / "LIFE2.EXE"
 LIFE_COD = REPO_ROOT / "LIFE.COD"
@@ -774,14 +776,20 @@ def test_heavy_fallback_lane_policy_stays_closed_for_sweep_runs():
 
 
 def test_explicit_direct_addr_timeout_disables_hidden_validation_retries():
-    assert cli_core._direct_addr_validation_retry_count_8616(
-        timeout_was_explicit=True,
-        args_timeout=60,
-    ) == 0
-    assert cli_core._direct_addr_validation_retry_count_8616(
-        timeout_was_explicit=False,
-        args_timeout=60,
-    ) == 2
+    assert (
+        cli_core._direct_addr_validation_retry_count_8616(
+            timeout_was_explicit=True,
+            args_timeout=60,
+        )
+        == 0
+    )
+    assert (
+        cli_core._direct_addr_validation_retry_count_8616(
+            timeout_was_explicit=False,
+            args_timeout=60,
+        )
+        == 2
+    )
     assert cli_core._direct_addr_robust_retry_enabled_8616(timeout_was_explicit=True) is False
     assert cli_core._direct_addr_robust_retry_enabled_8616(timeout_was_explicit=False) is True
 
@@ -2454,7 +2462,7 @@ def test_discover_ranked_binary_offsets_auto_prefers_rizin_when_no_sidecar_evide
     monkeypatch.setattr(
         cli_core,
         "_rank_exe_function_seeds",
-        lambda *_args, **_kwargs: (rank_calls.__setitem__("count", rank_calls["count"] + 1) or [0x9000]),
+        lambda *_args, **_kwargs: rank_calls.__setitem__("count", rank_calls["count"] + 1) or [0x9000],
     )
 
     result = cli_core._discover_ranked_binary_offsets(project, args=args)
@@ -2513,7 +2521,7 @@ def test_discover_ranked_binary_offsets_auto_falls_back_to_angr_when_rizin_unava
     monkeypatch.setattr(
         cli_core,
         "_rank_exe_function_seeds",
-        lambda *_args, **_kwargs: (rank_calls.__setitem__("count", rank_calls["count"] + 1) or [0x2000]),
+        lambda *_args, **_kwargs: rank_calls.__setitem__("count", rank_calls["count"] + 1) or [0x2000],
     )
 
     result = cli_core._discover_ranked_binary_offsets(project, args=args)
@@ -4477,7 +4485,9 @@ def test_coalesce_segmented_word_store_statements_folds_preceding_byte_load_pair
     )
     monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
     monkeypatch.setattr(decompile, "_same_c_expression", lambda lhs, rhs: lhs is rhs)
-    monkeypatch.setattr(decompile, "_match_shift_right_8_expr", lambda node: low_store_rhs if node is high_store_rhs else None)
+    monkeypatch.setattr(
+        decompile, "_match_shift_right_8_expr", lambda node: low_store_rhs if node is high_store_rhs else None
+    )
     monkeypatch.setattr(
         decompile,
         "_classify_segmented_addr_expr",
@@ -4570,7 +4580,9 @@ def test_coalesce_segmented_word_store_statements_uses_byte_lhs_for_wide_typed_l
     )
     monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
     monkeypatch.setattr(decompile, "_same_c_expression", lambda lhs, rhs: lhs is rhs)
-    monkeypatch.setattr(decompile, "_match_shift_right_8_expr", lambda node: low_store_rhs if node is high_store_rhs else None)
+    monkeypatch.setattr(
+        decompile, "_match_shift_right_8_expr", lambda node: low_store_rhs if node is high_store_rhs else None
+    )
     monkeypatch.setattr(
         decompile,
         "_classify_segmented_addr_expr",
@@ -5666,7 +5678,9 @@ def test_collect_direct_calls_merges_linear_exact_region_calls(monkeypatch):
     )
     project = SimpleNamespace(
         _inertia_original_linear_delta=0x10000,
-        factory=SimpleNamespace(block=lambda _block_addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=()))),
+        factory=SimpleNamespace(
+            block=lambda _block_addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=()))
+        ),
     )
     monkeypatch.setattr(
         cli_decompilation,
@@ -10921,6 +10935,7 @@ def test_detect_flair_metadata_forwards_pat_backend(monkeypatch):
     )
 
     monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
+
     def _fake_startup_pat_match(project_arg, flair_root, *, backend=None):
         recorded["backend"] = backend
         del project_arg, flair_root
@@ -12377,14 +12392,7 @@ def test_prune_void_function_return_values_text_drops_bare_returns_from_nonvoid_
 
 
 def test_prune_void_function_return_values_text_keeps_nonvoid_return_with_forward_decl() -> None:
-    text = (
-        "void helper(void);\n\n"
-        "int rel_i16(int a, int b)\n\n"
-        "{\n"
-        "    int sp_0;\n"
-        "    return sp_0;\n"
-        "}\n"
-    )
+    text = "void helper(void);\n\nint rel_i16(int a, int b)\n\n{\n    int sp_0;\n    return sp_0;\n}\n"
 
     assert decompile._prune_void_function_return_values_text(text) == text
 

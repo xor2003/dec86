@@ -274,9 +274,10 @@ def validate_known_call_semantics_8616(
 def assert_known_call_semantics_8616(c_text: str, *, function_addr: int | None = None) -> None:
     report = validate_known_call_semantics_8616(c_text, function_addr=function_addr)
     semantic_text = _strip_comments_for_placeholder_scan_8616(c_text)
-    if _RAW_STACK_NAME_RE_8616.search(semantic_text) is not None or _PLACEHOLDER_STACK_RE_8616.search(
-        semantic_text
-    ) is not None:
+    if (
+        _RAW_STACK_NAME_RE_8616.search(semantic_text) is not None
+        or _PLACEHOLDER_STACK_RE_8616.search(semantic_text) is not None
+    ):
         raise PipelineHardError(
             "function leaked unresolved stack locals into final C",
             layer="final_emission_semantics",

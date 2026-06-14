@@ -147,7 +147,11 @@ def _direct_jcc_condition_from_last_condition_8616(instruction, kind: str, condi
                     else None
                 )
             return (
-                value != zero if kind in JCC_EQ_MNEMONICS_8616 else value == zero if kind in JCC_NE_MNEMONICS_8616 else None
+                value != zero
+                if kind in JCC_EQ_MNEMONICS_8616
+                else value == zero
+                if kind in JCC_NE_MNEMONICS_8616
+                else None
             )
 
         return None

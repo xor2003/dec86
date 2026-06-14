@@ -194,7 +194,9 @@ def build_x86_16_string_intrinsic_artifact(artifact: StringInstructionArtifact) 
                 )
             )
         if not lowered_records and not refusals:
-            refusals.append(StringIntrinsicRefusal("no_lowering_signal", "string artifact produced no generic lowering"))
+            refusals.append(
+                StringIntrinsicRefusal("no_lowering_signal", "string artifact produced no generic lowering")
+            )
         return StringIntrinsicArtifact(records=tuple(lowered_records), refusals=tuple(refusals))
 
     return _impl()

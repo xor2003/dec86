@@ -485,7 +485,9 @@ def test_materialize_direct_global_inc_refuses_without_tagged_site():
     mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x1234)
     operand = SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem)
     insn = SimpleNamespace(address=0x4018, id=X86_INS_INC, operands=(operand,))
-    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(unknown_call, insn))),))
+    function = SimpleNamespace(
+        addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(unknown_call, insn))),)
+    )
 
     changed = materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
 
@@ -1133,7 +1135,9 @@ def test_materialize_direct_stack_mov_immediate_inserts_missing_setup_before_loo
         id=X86_INS_MOV,
         operands=(_bp_mem_operand(-4), SimpleNamespace(type=X86_OP_IMM, size=2, imm=0)),
     )
-    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(total_store, i_store))),))
+    function = SimpleNamespace(
+        addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(total_store, i_store))),)
+    )
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
 
@@ -1191,6 +1195,7 @@ def test_materialize_direct_stack_mov_stale_evidence_keeps_existing_for_initiali
         addr=0x1000,
         blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(changed_store, i_store))),),
     )
+
     def _evidence(offset: int, value: int, ins_addr: int):
         return (
             ("dst_offset", offset),
@@ -1335,7 +1340,9 @@ def test_materialize_direct_stack_mov_shifted_stack_source_replaces_tagged_assig
         id=X86_INS_MOV,
         operands=(SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem), ax_src),
     )
-    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, shift, store))),))
+    function = SimpleNamespace(
+        addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, shift, store))),)
+    )
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
 
@@ -1382,7 +1389,9 @@ def test_materialize_direct_stack_mov_signed_half_stack_source_replaces_tagged_a
     )
     function = SimpleNamespace(
         addr=0x4010,
-        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, sign_extend, subtract_sign, signed_shift, store))),),
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(load, sign_extend, subtract_sign, signed_shift, store))),
+        ),
     )
 
     facts = _direct_stack_move_instruction_facts_8616(project, function)
@@ -1415,7 +1424,9 @@ def test_materialize_direct_stack_mov_signed_half_inserts_before_first_stack_use
             CIfElse(
                 [
                     (
-                        CBinaryOp("CmpLE", dst_cvar, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen),
+                        CBinaryOp(
+                            "CmpLE", dst_cvar, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen
+                        ),
                         CStatements([], codegen=codegen),
                     )
                 ],
@@ -1456,7 +1467,9 @@ def test_materialize_direct_stack_mov_signed_half_inserts_before_first_stack_use
     )
     function = SimpleNamespace(
         addr=0x4010,
-        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, sign_extend, subtract_sign, signed_shift, store))),),
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(load, sign_extend, subtract_sign, signed_shift, store))),
+        ),
     )
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
@@ -1483,7 +1496,9 @@ def test_materialize_direct_stack_mov_recurses_into_nested_statements_before_fir
             CIfElse(
                 [
                     (
-                        CBinaryOp("CmpGT", dst_cvar, CConstant(7, SimTypeShort(False), codegen=codegen), codegen=codegen),
+                        CBinaryOp(
+                            "CmpGT", dst_cvar, CConstant(7, SimTypeShort(False), codegen=codegen), codegen=codegen
+                        ),
                         CStatements([], codegen=codegen),
                     )
                 ],
@@ -1644,9 +1659,7 @@ def test_materialize_direct_stack_mov_segmented_byte_source_replaces_tagged_assi
     function = SimpleNamespace(
         addr=0x4010,
         blocks=(
-            SimpleNamespace(
-                capstone=SimpleNamespace(insns=(load_index, shift_index, load_byte, sign_extend, store))
-            ),
+            SimpleNamespace(capstone=SimpleNamespace(insns=(load_index, shift_index, load_byte, sign_extend, store))),
         ),
     )
 
@@ -1746,7 +1759,11 @@ def test_materialize_direct_stack_mov_signed_idiv_remainder_replaces_nested_inse
     insert_artifact = CFunctionCall(
         "_INSERT",
         None,
-        [_reg(project, "ax", codegen), _const(2, codegen), CBinaryOp("Add", divisor_cvar, _const(1, codegen), codegen=codegen)],
+        [
+            _reg(project, "ax", codegen),
+            _const(2, codegen),
+            CBinaryOp("Add", divisor_cvar, _const(1, codegen), codegen=codegen),
+        ],
         codegen=codegen,
     )
     bad_stmt = CAssignment(
@@ -1782,7 +1799,9 @@ def test_materialize_direct_stack_mov_signed_idiv_remainder_replaces_nested_inse
         addr=0x4010,
         blocks=(
             SimpleNamespace(capstone=SimpleNamespace(insns=(call,))),
-            SimpleNamespace(capstone=SimpleNamespace(insns=(load_divisor, inc_divisor, sign_extend, idiv, store_remainder))),
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
         ),
     )
 
@@ -1926,7 +1945,9 @@ def test_materialize_direct_stack_mov_shifted_stack_source_inserts_before_follow
         id=X86_INS_MOV,
         operands=(SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem), ax_src),
     )
-    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, shift, store))),))
+    function = SimpleNamespace(
+        addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, shift, store))),)
+    )
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
 
@@ -2690,12 +2711,7 @@ def test_architecture_guard_accepts_segment_helpers():
 def test_architecture_guard_rejects_unreachable_call_after_return():
     with pytest.raises(Exception):
         assert_final_c_quality_8616(
-            "int f(void)\n"
-            "{\n"
-            "    helper();\n"
-            "    return 2;\n"
-            "    aNchkstk();\n"
-            "}\n",
+            "int f(void)\n{\n    helper();\n    return 2;\n    aNchkstk();\n}\n",
             function_addr=0x1000,
         )
 
@@ -2776,10 +2792,7 @@ def test_architecture_guard_accepts_decimal_generated_arg_names():
 def test_architecture_guard_rejects_nondecimal_arg_placeholder_noise():
     with pytest.raises(Exception):
         assert_final_c_quality_8616(
-            "void bad(int arg_fffe)\n"
-            "{\n"
-            "    SwapBars(0, arg_fffe);\n"
-            "}\n",
+            "void bad(int arg_fffe)\n{\n    SwapBars(0, arg_fffe);\n}\n",
             function_addr=0x10A88,
         )
 

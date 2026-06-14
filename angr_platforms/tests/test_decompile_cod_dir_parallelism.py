@@ -1,12 +1,11 @@
-from importlib.util import module_from_spec, spec_from_file_location
-from concurrent.futures.process import BrokenProcessPool
-from pathlib import Path
-from types import SimpleNamespace
 import json
 import sys
+from concurrent.futures.process import BrokenProcessPool
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+from types import SimpleNamespace
 
 from inertia_decompiler import tail_validation as _tail_validation
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "decompile_cod_dir.py"
@@ -48,12 +47,12 @@ def test_worker_failure_formatting_is_deterministic_for_broken_pools():
         proc_total=15,
         code=b"\x90",
     )
-    ex = BrokenProcessPool("A process in the process pool was terminated abruptly while the future was running or pending.")
+    ex = BrokenProcessPool(
+        "A process in the process pool was terminated abruptly while the future was running or pending."
+    )
 
     assert _script._worker_failure_summary(item, ex) == "parent pool breakage while recovering _dos_alloc (NEAR)"
-    assert _script._format_worker_failure(item, ex) == (
-        "/* parent pool breakage while recovering _dos_alloc (NEAR) */"
-    )
+    assert _script._format_worker_failure(item, ex) == ("/* parent pool breakage while recovering _dos_alloc (NEAR) */")
     assert "BrokenProcessPool" not in _script._format_worker_failure(item, ex)
 
 
@@ -569,7 +568,9 @@ def test_scheduler_timeout_flows_into_named_tail_validation_aggregate(tmp_path, 
         captured["scanned"] = scanned
         return {"summary": {}, "surface": {"severity": "uncollected"}}
 
-    monkeypatch.setattr(sys, "argv", ["decompile_cod_dir.py", str(cod_dir), "--max-workers", "2", "--subprocess-timeout", "1"])
+    monkeypatch.setattr(
+        sys, "argv", ["decompile_cod_dir.py", str(cod_dir), "--max-workers", "2", "--subprocess-timeout", "1"]
+    )
     monkeypatch.setattr(_script, "_resolve_selected_cod_files", lambda *_args, **_kwargs: [cod_path])
     monkeypatch.setattr(_script, "_build_work_items", lambda _path: [item])
     monkeypatch.setattr(_script, "_choose_parallelism", lambda *_args, **_kwargs: 2)
@@ -580,7 +581,9 @@ def test_scheduler_timeout_flows_into_named_tail_validation_aggregate(tmp_path, 
     monkeypatch.setattr(_script.time, "monotonic", lambda: next(monotonic_values))
     monkeypatch.setattr(_script, "build_x86_16_tail_validation_aggregate", fake_aggregate)
     monkeypatch.setattr(_script, "compare_x86_16_tail_validation_baseline", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(_script, "annotate_x86_16_tail_validation_surface_with_baseline", lambda surface, _comparison: surface)
+    monkeypatch.setattr(
+        _script, "annotate_x86_16_tail_validation_surface_with_baseline", lambda surface, _comparison: surface
+    )
     monkeypatch.setattr(_script, "emit_tail_validation_surface_summary", lambda **_kwargs: None)
 
     assert _script.main() == 1
@@ -647,7 +650,9 @@ def test_main_emits_changed_tail_validation_detail_summary_to_stderr(tmp_path, m
 
     assert _script.main() == 0
     captured = capsys.readouterr()
-    detail_path = _script._default_tail_validation_detail_path(cod_dir, timeout=20, cod_files=[cod_path], proc_names=None)
+    detail_path = _script._default_tail_validation_detail_path(
+        cod_dir, timeout=20, cod_files=[cod_path], proc_names=None
+    )
     detail_files = sorted(detail_path.parent.glob("COCKPIT.timeout20.tail_validation_surface.*.json"))
 
     assert "[tail-validation] whole-tail validation failed across 1 functions" in captured.err
@@ -692,7 +697,9 @@ def test_main_emits_uncollected_tail_validation_detail_summary_to_stderr(tmp_pat
 
     assert _script.main() == 1
     captured = capsys.readouterr()
-    detail_path = _script._default_tail_validation_detail_path(cod_dir, timeout=20, cod_files=[cod_path], proc_names=None)
+    detail_path = _script._default_tail_validation_detail_path(
+        cod_dir, timeout=20, cod_files=[cod_path], proc_names=None
+    )
     detail_files = sorted(detail_path.parent.glob("COCKPIT.timeout20.tail_validation_surface.*.json"))
 
     assert "[tail-validation] whole-tail validation not collected across 1 functions" in captured.err
@@ -898,9 +905,7 @@ def test_filter_work_items_by_proc_names_reindexes_selected_items(tmp_path):
 
     selected = _script._filter_work_items_by_proc_names(items, ["_displaymaster"])
 
-    assert [(item.proc_name, item.proc_index, item.proc_total) for item in selected] == [
-        ("_DisplayMaster", 1, 1)
-    ]
+    assert [(item.proc_name, item.proc_index, item.proc_total) for item in selected] == [("_DisplayMaster", 1, 1)]
 
 
 def test_tail_validation_cache_paths_include_proc_selection(tmp_path, monkeypatch):

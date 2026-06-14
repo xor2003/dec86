@@ -255,11 +255,7 @@ def build_worker_prompt(
     task_packet_text = task_packet.strip()
     if focus_item_text:
         focus_summary = focus_item_text.splitlines()[0]
-        prompt += (
-            "\nCurrent focus item:\n"
-            "- Treat this as the primary task for this worker step.\n"
-            f"{focus_summary}\n"
-        )
+        prompt += f"\nCurrent focus item:\n- Treat this as the primary task for this worker step.\n{focus_summary}\n"
     if retry_context_text:
         prompt += (
             "\nRecent worker retry context:\n"

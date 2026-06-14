@@ -8,10 +8,10 @@ Run:
 
 from __future__ import annotations
 
+import argparse
 import statistics
 import time
 from pathlib import Path
-import argparse
 
 from inertia_decompiler.project_loading import _build_project
 
@@ -53,7 +53,9 @@ def _bench(
     return timings_ms, per_addr
 
 
-def _print_stats(label: str, timings_ms: list[float], per_addr: dict[int, list[float]], addrs: list[int], rounds: int) -> None:
+def _print_stats(
+    label: str, timings_ms: list[float], per_addr: dict[int, list[float]], addrs: list[int], rounds: int
+) -> None:
     timings_ms.sort()
     p50 = _percentile(timings_ms, 0.50)
     p95 = _percentile(timings_ms, 0.95)

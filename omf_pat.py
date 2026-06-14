@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
 import hashlib
 import pickle
 import re
 import subprocess
 import tempfile
-
-from inertia_decompiler.signature_matching_policy import signature_matching_disabled
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
 from inertia_decompiler.flair_paths import flair_signature_root
+from inertia_decompiler.signature_matching_policy import signature_matching_disabled
 
 try:
     import hyperscan as _hyperscan
@@ -237,6 +236,7 @@ def parse_pat_line(line: str, *, source_path: str = "<memory>") -> PatModule | N
             referenced_names=tuple(referenced_names),
             tail_bytes=tail_bytes,
         )
+
     return _impl()
 
 
@@ -307,6 +307,7 @@ def _compiler_name_from_source_path(source_path: str) -> str:
         if "ida" in lowered or "flair" in lowered:
             return "IDA FLAIR"
         return ""
+
     return _impl()
 
 
@@ -421,6 +422,7 @@ def _normalize_compiler_banner_label(root_name: str, banner: str) -> str:
         if version:
             return f"{root_name} {version}"
         return root_name
+
     return _impl()
 
 
@@ -452,7 +454,9 @@ def ensure_pat_from_omf_input(
             if _run_local_plb(input_path, out_path, flair_root=flair_root):
                 try:
                     lines.extend(
-                        line for line in out_path.read_text(errors="ignore").splitlines() if line.strip() and line.strip() != "---"
+                        line
+                        for line in out_path.read_text(errors="ignore").splitlines()
+                        if line.strip() and line.strip() != "---"
                     )
                 except OSError:
                     pass
@@ -506,6 +510,7 @@ def ensure_pat_from_omf_input(
         deduped_lines = list(dict.fromkeys(lines))
         out_path.write_text("".join(f"{line}\n" for line in deduped_lines) + "---\n")
         return out_path
+
     return _impl()
 
 
@@ -525,9 +530,7 @@ def match_pat_modules(
         if len(hits) != 1:
             continue
         for compiler_name in (
-            part.strip()
-            for part in getattr(module, "compiler_name", "").split(" || ")
-            if part.strip()
+            part.strip() for part in getattr(module, "compiler_name", "").split(" || ") if part.strip()
         ):
             if compiler_name not in matched_compiler_names:
                 matched_compiler_names.append(compiler_name)
@@ -569,11 +572,11 @@ def generate_pat_from_omf_lib(lib_path: Path, out_path: Path) -> int:
         # Check if this is actually a Microsoft OMF library before attempting extraction
         blob = lib_path.read_bytes()
         lib_format = _detect_lib_format(blob)
-        
+
         if lib_format != "microsoft":
             # Unsupported format - don't crash, just return 0
             return 0
-        
+
         for module in extract_omf_modules_from_lib(lib_path):
             lines.extend(
                 _generate_pat_lines_from_omf_blob(
@@ -583,13 +586,13 @@ def generate_pat_from_omf_lib(lib_path: Path, out_path: Path) -> int:
                     provenance_compiler=_compiler_name_from_source_path(str(lib_path)),
                 )
             )
-        
+
         if lines:
             out_path.write_text("".join(f"{line}\n" for line in lines) + "---\n")
         return len(lines)
     except Exception:
         # Silently fail - return 0 patterns generated
-        # Caller will handle fallback/error reporting  
+        # Caller will handle fallback/error reporting
         return 0
 
 
@@ -598,21 +601,18 @@ def extract_omf_modules_from_lib(lib_path: Path) -> tuple[OMFModuleBlob, ...]:
 
 
 def parse_omf_lib(lib_path: Path) -> MicrosoftLibMetadata:
-    """
-    Parse a page-based OMF library container.
+    """Parse a page-based OMF library container.
 
     Borland/Turbo C libraries use the same archive shell we already support for
     Microsoft-style OMF libraries, so keep one parser and expose a vendor-neutral
     name for callers that only care about the outer `.LIB` container.
     """
-
     return parse_microsoft_lib(lib_path)
 
 
 def get_lib_format_info(lib_path: Path) -> dict[str, str | int]:
-    """
-    Get diagnostic information about a library file format.
-    
+    """Get diagnostic information about a library file format.
+
     Returns a dict with:
     - format: "microsoft", "intel", "unknown", or None
     - size: file size in bytes
@@ -621,14 +621,14 @@ def get_lib_format_info(lib_path: Path) -> dict[str, str | int]:
     """
     if not lib_path.exists():
         return {"error": "File not found"}
-    
+
     try:
         blob = lib_path.read_bytes()
         lib_format = _detect_lib_format(blob)
-        
+
         header_hex = blob[:4].hex() if len(blob) >= 4 else blob.hex()
         supported = lib_format == "microsoft"
-        
+
         return {
             "format": lib_format,
             "size": len(blob),
@@ -640,9 +640,8 @@ def get_lib_format_info(lib_path: Path) -> dict[str, str | int]:
 
 
 def _detect_lib_format(blob: bytes) -> str | None:
-    """
-    Detect the format of a library file.
-    
+    """Detect the format of a library file.
+
     Returns:
         - "microsoft": Microsoft OMF format (0xF0 header)
         - "intel": Intel iC-86 format (0xA4 0x07 header)
@@ -651,21 +650,21 @@ def _detect_lib_format(blob: bytes) -> str | None:
     """
     if len(blob) < 2:
         return None
-    
+
     first_byte = blob[0]
-    
+
     # Microsoft OMF format
     if first_byte == 0xF0:
         return "microsoft"
-    
+
     # Intel iC-86 / Intel IA-86 format (ARN - Archive Librarian format)
-    if len(blob) >= 4 and blob[:2] == b'\xa4\x07':
+    if len(blob) >= 4 and blob[:2] == b"\xa4\x07":
         return "intel"
-    
+
     # Unknown/unsupported format
     if len(blob) >= 4:
         return "unknown"
-    
+
     return None
 
 
@@ -673,7 +672,9 @@ def parse_microsoft_lib(lib_path: Path) -> MicrosoftLibMetadata:
     # Check if file exists first
     def _impl():
         if not lib_path.exists():
-            empty_header = MicrosoftLibHeader(page_size=0, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False)
+            empty_header = MicrosoftLibHeader(
+                page_size=0, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False
+            )
             return MicrosoftLibMetadata(header=empty_header, modules=(), dictionary_entries=(), extended_records=())
 
         blob = lib_path.read_bytes()
@@ -681,19 +682,25 @@ def parse_microsoft_lib(lib_path: Path) -> MicrosoftLibMetadata:
         # Detect and handle unsupported formats gracefully
         lib_format = _detect_lib_format(blob)
         if lib_format is None:
-            empty_header = MicrosoftLibHeader(page_size=0, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False)
+            empty_header = MicrosoftLibHeader(
+                page_size=0, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False
+            )
             return MicrosoftLibMetadata(header=empty_header, modules=(), dictionary_entries=(), extended_records=())
 
         # For Intel and other unsupported formats, return empty but don't crash
         if lib_format != "microsoft":
             # Could add support for other formats here in the future
             # For now, return empty result with format hint in header page_size (abuse I know, but keeps API stable)
-            empty_header = MicrosoftLibHeader(page_size=-1, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False)
+            empty_header = MicrosoftLibHeader(
+                page_size=-1, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False
+            )
             return MicrosoftLibMetadata(header=empty_header, modules=(), dictionary_entries=(), extended_records=())
 
         # Parse Microsoft OMF format
         if len(blob) < 16:
-            empty_header = MicrosoftLibHeader(page_size=0, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False)
+            empty_header = MicrosoftLibHeader(
+                page_size=0, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False
+            )
             return MicrosoftLibMetadata(header=empty_header, modules=(), dictionary_entries=(), extended_records=())
 
         header = _parse_microsoft_lib_header(blob)
@@ -737,6 +744,7 @@ def parse_microsoft_lib(lib_path: Path) -> MicrosoftLibMetadata:
             dictionary_entries=dictionary_entries,
             extended_records=extended_records,
         )
+
     return _impl()
 
 
@@ -777,10 +785,7 @@ def _build_pat_line(
         head.append(None)
     tail = list(function_bytes[32:])
     ref_tokens = " ".join(f"^{ref.offset:04X} {ref.name}" for ref in _dedupe_referenced_names(referenced_names))
-    line = (
-        f"{_encode_pat_bytes(head)} 00 0000 {len(function_bytes):04X} "
-        f":0000 {public_name}"
-    )
+    line = f"{_encode_pat_bytes(head)} 00 0000 {len(function_bytes):04X} :0000 {public_name}"
     if ref_tokens:
         line += f" {ref_tokens}"
     line += f" {_encode_pat_bytes(tail)} ; {module_name}"
@@ -810,14 +815,14 @@ def _wildcard_zero_displacement_control_transfers(
                 continue
             index += 1
         return rewritten
+
     return _impl()
 
 
 def _wildcard_far_transfer_opcode_variants(
     function_bytes: list[int | None],
 ) -> list[int | None]:
-    """
-    IDA FLAIR PAT guidance for 16-bit x86 says external far calls may be
+    """IDA FLAIR PAT guidance for 16-bit x86 says external far calls may be
     linker-rewritten from:
 
         9A ........
@@ -830,7 +835,6 @@ def _wildcard_far_transfer_opcode_variants(
     pattern matchable against the linked image, the far-transfer opcode byte
     itself must also be allowed to vary.
     """
-
     rewritten = list(function_bytes)
     limit = len(rewritten)
     index = 0
@@ -863,8 +867,7 @@ def _looks_like_msvc_fpu_runtime(
 
 
 def _x87_emulator_variant_bytes(function_bytes: list[int | None]) -> list[int | None]:
-    """
-    MS-DOS x87 emulator encoding observed in Microsoft C 16-bit runtimes.
+    """MS-DOS x87 emulator encoding observed in Microsoft C 16-bit runtimes.
 
     Ghidra issue #2427 and MS DOS reverse-engineering notes use this mapping:
 
@@ -881,7 +884,6 @@ def _x87_emulator_variant_bytes(function_bytes: list[int | None]) -> list[int | 
     This is emitted only as an alternate PAT row for runtime helpers so exact
     matching can see both the direct x87 and emulator-linked encodings.
     """
-
     mapping = {
         (0x9B, 0xD9): (0xCD, 0x35),
         (0x9B, 0xDA): (0xCD, 0x36),
@@ -954,6 +956,7 @@ def _parse_omf_blob(
                     )
                 )
         return module_name, segments, publics, fixup_refs
+
     return _impl()
 
 
@@ -1009,15 +1012,19 @@ def _generate_pat_lines_from_omf_blob(
                     referenced_names=function_refs,
                 )
                 if line is not None:
-                    line = line.rsplit(" ; ", 1)[0] + " ; " + _sanitize_pat_comment(
-                        " | ".join(
-                            part
-                            for part in (
-                                f"mod={public.name}",
-                                f"src={provenance_source}" if provenance_source else "",
-                                f"compiler={provenance_compiler}" if provenance_compiler else "",
+                    line = (
+                        line.rsplit(" ; ", 1)[0]
+                        + " ; "
+                        + _sanitize_pat_comment(
+                            " | ".join(
+                                part
+                                for part in (
+                                    f"mod={public.name}",
+                                    f"src={provenance_source}" if provenance_source else "",
+                                    f"compiler={provenance_compiler}" if provenance_compiler else "",
+                                )
+                                if part
                             )
-                            if part
                         )
                     )
                 if line is not None:
@@ -1031,15 +1038,19 @@ def _generate_pat_lines_from_omf_blob(
                         referenced_names=function_refs,
                     )
                     if wildcard_line is not None:
-                        wildcard_line = wildcard_line.rsplit(" ; ", 1)[0] + " ; " + _sanitize_pat_comment(
-                            " | ".join(
-                                part
-                                for part in (
-                                    f"mod={public.name}",
-                                    f"src={provenance_source}" if provenance_source else "",
-                                    f"compiler={provenance_compiler}" if provenance_compiler else "",
+                        wildcard_line = (
+                            wildcard_line.rsplit(" ; ", 1)[0]
+                            + " ; "
+                            + _sanitize_pat_comment(
+                                " | ".join(
+                                    part
+                                    for part in (
+                                        f"mod={public.name}",
+                                        f"src={provenance_source}" if provenance_source else "",
+                                        f"compiler={provenance_compiler}" if provenance_compiler else "",
+                                    )
+                                    if part
                                 )
-                                if part
                             )
                         )
                         lines.append(wildcard_line)
@@ -1052,33 +1063,10 @@ def _generate_pat_lines_from_omf_blob(
                         referenced_names=function_refs,
                     )
                     if wildcard_far_transfer_line is not None:
-                        wildcard_far_transfer_line = wildcard_far_transfer_line.rsplit(" ; ", 1)[0] + " ; " + _sanitize_pat_comment(
-                            " | ".join(
-                                part
-                                for part in (
-                                    f"mod={public.name}",
-                                    f"src={provenance_source}" if provenance_source else "",
-                                    f"compiler={provenance_compiler}" if provenance_compiler else "",
-                                )
-                                if part
-                            )
-                        )
-                        lines.append(wildcard_far_transfer_line)
-                if _looks_like_msvc_fpu_runtime(
-                    public.name,
-                    function_refs,
-                    compiler_name=provenance_compiler,
-                ):
-                    x87_emulator_bytes = _x87_emulator_variant_bytes(func_bytes)
-                    if x87_emulator_bytes != func_bytes and x87_emulator_bytes != wildcard_ctf_bytes and x87_emulator_bytes != wildcard_far_transfer_bytes:
-                        emulator_line = _build_pat_line(
-                            x87_emulator_bytes,
-                            public_name=public.name,
-                            module_name=public.name,
-                            referenced_names=function_refs,
-                        )
-                        if emulator_line is not None:
-                            emulator_line = emulator_line.rsplit(" ; ", 1)[0] + " ; " + _sanitize_pat_comment(
+                        wildcard_far_transfer_line = (
+                            wildcard_far_transfer_line.rsplit(" ; ", 1)[0]
+                            + " ; "
+                            + _sanitize_pat_comment(
                                 " | ".join(
                                     part
                                     for part in (
@@ -1088,7 +1076,42 @@ def _generate_pat_lines_from_omf_blob(
                                     )
                                     if part
                                 )
+                            )
                         )
+                        lines.append(wildcard_far_transfer_line)
+                if _looks_like_msvc_fpu_runtime(
+                    public.name,
+                    function_refs,
+                    compiler_name=provenance_compiler,
+                ):
+                    x87_emulator_bytes = _x87_emulator_variant_bytes(func_bytes)
+                    if (
+                        x87_emulator_bytes != func_bytes
+                        and x87_emulator_bytes != wildcard_ctf_bytes
+                        and x87_emulator_bytes != wildcard_far_transfer_bytes
+                    ):
+                        emulator_line = _build_pat_line(
+                            x87_emulator_bytes,
+                            public_name=public.name,
+                            module_name=public.name,
+                            referenced_names=function_refs,
+                        )
+                        if emulator_line is not None:
+                            emulator_line = (
+                                emulator_line.rsplit(" ; ", 1)[0]
+                                + " ; "
+                                + _sanitize_pat_comment(
+                                    " | ".join(
+                                        part
+                                        for part in (
+                                            f"mod={public.name}",
+                                            f"src={provenance_source}" if provenance_source else "",
+                                            f"compiler={provenance_compiler}" if provenance_compiler else "",
+                                        )
+                                        if part
+                                    )
+                                )
+                            )
                         lines.append(emulator_line)
         if not lines:
             fallback_public_names = _SYNTHETIC_OMF_MODULE_FALLBACK_PUBLICS.get(module_name.upper())
@@ -1102,19 +1125,24 @@ def _generate_pat_lines_from_omf_blob(
                         module_name=public_name,
                     )
                     if fallback_line is not None:
-                        fallback_line = fallback_line.rsplit(" ; ", 1)[0] + " ; " + _sanitize_pat_comment(
-                            " | ".join(
-                                part
-                                for part in (
-                                    f"mod={public_name}",
-                                    f"src={provenance_source}" if provenance_source else "",
-                                    f"compiler={provenance_compiler}" if provenance_compiler else "",
+                        fallback_line = (
+                            fallback_line.rsplit(" ; ", 1)[0]
+                            + " ; "
+                            + _sanitize_pat_comment(
+                                " | ".join(
+                                    part
+                                    for part in (
+                                        f"mod={public_name}",
+                                        f"src={provenance_source}" if provenance_source else "",
+                                        f"compiler={provenance_compiler}" if provenance_compiler else "",
+                                    )
+                                    if part
                                 )
-                                if part
                             )
                         )
                         lines.append(fallback_line)
         return lines
+
     return _impl()
 
 
@@ -1260,7 +1288,12 @@ def _parse_microsoft_lib_dictionary(
             if entry is None:
                 continue
             entries.setdefault((entry.symbol_name, entry.module_page), entry)
-    return tuple(sorted(entries.values(), key=lambda item: (item.symbol_name.lower(), item.module_page, item.page_index, item.bucket_index)))
+    return tuple(
+        sorted(
+            entries.values(),
+            key=lambda item: (item.symbol_name.lower(), item.module_page, item.page_index, item.bucket_index),
+        )
+    )
 
 
 def _parse_microsoft_lib_dictionary_entry(
@@ -1324,6 +1357,7 @@ def _lookup_microsoft_lib_symbol_in_metadata(
                 current_bucket = (current_bucket + bucket_index_delta) % 37
             current_page = (current_page + page_index_delta) % header.dictionary_blocks
         return None
+
     return _impl()
 
 
@@ -1516,8 +1550,7 @@ def _parse_fixupp_refs(
 
 
 def _omf_fixup_width_from_location_kind(location_kind: int) -> int:
-    """
-    OMF LOCAT.LOC width classes for x86, per linker/reference behavior.
+    """OMF LOCAT.LOC width classes for x86, per linker/reference behavior.
 
       0  -> low-order byte
       1  -> 16-bit offset
@@ -1531,7 +1564,6 @@ def _omf_fixup_width_from_location_kind(location_kind: int) -> int:
     Unsupported/unknown kinds fall back conservatively to 2 bytes to avoid
     under-consuming the common 16-bit displacement field shape.
     """
-
     width_by_kind = {
         0: 1,
         1: 2,
@@ -1817,7 +1849,9 @@ def _build_pat_regex_source(module: PatModule) -> tuple[bytes, bytes, int]:
         python_parts.append(_pattern_bytes_to_regex(module.tail_bytes))
         hyperscan_parts.append(_pattern_bytes_to_hyperscan_regex(module.tail_bytes))
     scan_source = b"".join(hyperscan_parts)
-    checked_match_length = checked_prefix_len + (len(module.tail_bytes) if module.module_length > 32 and module.tail_bytes else 0)
+    checked_match_length = checked_prefix_len + (
+        len(module.tail_bytes) if module.module_length > 32 and module.tail_bytes else 0
+    )
     return b"(?=(" + b"".join(python_parts) + b"))", scan_source, checked_match_length
 
 

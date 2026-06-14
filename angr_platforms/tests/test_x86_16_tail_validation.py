@@ -251,7 +251,7 @@ def test_large_function_local_evidence_only_allows_primary_callsite_materializat
         _inertia_postprocess_function_complexity_8616={"blocks": 42, "bytes": 0x180},
         _inertia_callsite_summaries={
             1: SimpleNamespace(push_arg_sources=("ax", None)),
-        }
+        },
     )
     very_large_codegen = SimpleNamespace(
         _inertia_postprocess_function_complexity_8616={"blocks": 76, "bytes": 0x1AE},
@@ -292,7 +292,9 @@ def test_large_function_local_evidence_only_allows_primary_callsite_materializat
 
 def test_tail_validation_normalizes_named_helper_call_with_project_label_to_addr():
     project = _project()
-    project.kb = SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: None), labels={0x112BA: "_sprintf"})
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda **_kwargs: None), labels={0x112BA: "_sprintf"}
+    )
 
     assert tail_validation_module._normalize_helper_call_fingerprint_8616(project, "name:sprintf") == "addr:0x112ba"
 
@@ -539,7 +541,12 @@ def test_contextual_condition_fingerprint_matches_dirty_register_flags_by_regist
     )
     assignment = CAssignment(
         flags_assignment_lhs,
-        CBinaryOp("Or", _const(0x1234, codegen), CBinaryOp("Shl", predicate, _const(6, codegen), codegen=codegen), codegen=codegen),
+        CBinaryOp(
+            "Or",
+            _const(0x1234, codegen),
+            CBinaryOp("Shl", predicate, _const(6, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
         codegen=codegen,
     )
     condition = CBinaryOp(
@@ -548,7 +555,9 @@ def test_contextual_condition_fingerprint_matches_dirty_register_flags_by_regist
         _const(0, codegen),
         codegen=codegen,
     )
-    root = CStatements([assignment, CIfElse([(condition, CStatements([], codegen=codegen))], None, codegen=codegen)], codegen=codegen)
+    root = CStatements(
+        [assignment, CIfElse([(condition, CStatements([], codegen=codegen))], None, codegen=codegen)], codegen=codegen
+    )
 
     mapping = build_x86_16_contextual_condition_fingerprints(root, project)
 
@@ -1101,9 +1110,7 @@ def test_tail_validation_compare_treats_stack_slot_reference_as_same_segmented_w
         register_writes=(),
         stack_writes=(),
         global_writes=(),
-        segmented_writes=(
-            "deref:Add(Mul(reg:ss,const:16),Reference(stack_slot:SS:BP-0x8:size1),const:-17)",
-        ),
+        segmented_writes=("deref:Add(Mul(reg:ss,const:16),Reference(stack_slot:SS:BP-0x8:size1),const:-17)",),
         returns=(),
         conditions=(),
         control_flow_effects=(),
@@ -1113,9 +1120,7 @@ def test_tail_validation_compare_treats_stack_slot_reference_as_same_segmented_w
         register_writes=(),
         stack_writes=(),
         global_writes=(),
-        segmented_writes=(
-            "deref:Add(Mul(reg:ss,const:16),stack_slot:SS:BP-0x8:size1,const:-17)",
-        ),
+        segmented_writes=("deref:Add(Mul(reg:ss,const:16),stack_slot:SS:BP-0x8:size1,const:-17)",),
         returns=(),
         conditions=(),
         control_flow_effects=(),
@@ -3235,7 +3240,9 @@ def test_postprocess_codegen_does_not_regenerate_when_no_pass_changed(monkeypatc
     )
 
     monkeypatch.setattr(postprocess_stage, "_decompiler_postprocess_passes_for_function", lambda _project, _codegen: ())
-    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regen") or True)
+    monkeypatch.setattr(
+        postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regen") or True
+    )
 
     changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
 

@@ -24,7 +24,10 @@ def _typed_ir_summary_from_codegen(codegen) -> dict[str, object]:
             for instr in tuple(getattr(block, "instrs", ()) or ()):
                 for atom in tuple(getattr(instr, "args", ()) or ()):
                     if isinstance(atom, IRAddress):
-                        if getattr(atom, "status", None) is not None and getattr(atom.status, "value", "") == "provisional":
+                        if (
+                            getattr(atom, "status", None) is not None
+                            and getattr(atom.status, "value", "") == "provisional"
+                        ):
                             provisional_addresses += 1
                         if len(getattr(atom, "base", ()) or ()) > 1:
                             multi_base_addresses += 1
@@ -294,7 +297,9 @@ def apply_x86_16_type_equivalence_classes(codegen) -> bool:
                 "ir_aliasable_values": int(ir_summary.get("aliasable_value_count", 0) or 0)
                 if isinstance(ir_summary, dict)
                 else 0,
-                "ir_frame_slots": int(ir_summary.get("frame_slot_count", 0) or 0) if isinstance(ir_summary, dict) else 0,
+                "ir_frame_slots": int(ir_summary.get("frame_slot_count", 0) or 0)
+                if isinstance(ir_summary, dict)
+                else 0,
                 "ir_provisional_addresses": int(ir_summary.get("provisional_address_count", 0) or 0)
                 if isinstance(ir_summary, dict)
                 else 0,

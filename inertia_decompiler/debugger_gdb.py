@@ -22,22 +22,22 @@ Commands:
 
 from __future__ import annotations
 
+import json
 import socket
 import struct
 import threading
-import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
 import angr
 import claripy
-
 from angr_platforms.X86_16.analysis_helpers import preferred_known_helper_signature_decl
 
 
 class GDBStopReason(Enum):
     """Why the debuggee stopped"""
+
     TRAP = "S05"  # SIGTRAP (breakpoint/step)
     SEGFAULT = "S11"  # SIGSEGV
     ABRT = "S06"  # SIGABRT
@@ -47,6 +47,7 @@ class GDBStopReason(Enum):
 @dataclass
 class Breakpoint:
     """Debugger breakpoint"""
+
     address: int
     enabled: bool = True
     hit_count: int = 0
@@ -75,15 +76,15 @@ class GDBServer:
     """
 
     # DOSBox-compatible constants
-    DOS_MEM_START = 0x16f    # First segment DOS can use
-    PSP_SEGMENT = 0x1000     # Default PSP segment
-    PSP_SIZE = 0x100         # 256 bytes
-    IVT_SIZE = 0x400         # 256 vectors * 4 bytes
-    MCB_TYPE_LAST = 0x5a     # Last MCB in chain
-    MCB_TYPE_NORMAL = 0x4d   # Normal MCB (more follow)
-    MCB_FREE = 0x0000        # Free block
+    DOS_MEM_START = 0x16F  # First segment DOS can use
+    PSP_SEGMENT = 0x1000  # Default PSP segment
+    PSP_SIZE = 0x100  # 256 bytes
+    IVT_SIZE = 0x400  # 256 vectors * 4 bytes
+    MCB_TYPE_LAST = 0x5A  # Last MCB in chain
+    MCB_TYPE_NORMAL = 0x4D  # Normal MCB (more follow)
+    MCB_FREE = 0x0000  # Free block
 
-    def __init__(self, project: angr.Project, port: int = 1234, host: str = '127.0.0.1'):
+    def __init__(self, project: angr.Project, port: int = 1234, host: str = "127.0.0.1"):
         self.project = project
         self.port = port
         self.host = host
@@ -203,8 +204,8 @@ class GDBServer:
         # 1. IVT at 0x0000 (256 vectors, each 4 bytes: offset + segment)
         for vec in range(256):
             vec_addr = vec * 4
-            m.store(vec_addr, bv16(0xfff0))       # offset
-            m.store(vec_addr + 2, bv16(0xf000))   # segment
+            m.store(vec_addr, bv16(0xFFF0))  # offset
+            m.store(vec_addr + 2, bv16(0xF000))  # segment
 
         # INT 0x21 (DOS services)
         m.store(0x21 * 4, bv16(0x0000))
@@ -217,18 +218,18 @@ class GDBServer:
         # 2. BDA (BIOS Data Area) at 0x0400
         m.store(0x0400, bv8(0x00))
         m.store(0x0449, bv8(0x03))
-        m.store(0x044a, bv16(0x50))
-        m.store(0x044c, bv16(0x19))
+        m.store(0x044A, bv16(0x50))
+        m.store(0x044C, bv16(0x19))
 
         # 3. MCB chain
         mcb_addr = self.dos_mem_start << 4
-        m.store(mcb_addr, bv8(ord('M')))
+        m.store(mcb_addr, bv8(ord("M")))
         m.store(mcb_addr + 1, bv16(0x0000))
         mcb_size = self.psp_segment - self.dos_mem_start - 1
         m.store(mcb_addr + 3, bv16(mcb_size))
 
         psp_mcb_addr = self.psp_segment << 4
-        m.store(psp_mcb_addr, bv8(ord('Z')))
+        m.store(psp_mcb_addr, bv8(ord("Z")))
         m.store(psp_mcb_addr + 1, bv16(self.psp_segment))
         remaining = 0xA000 - self.psp_segment
         m.store(psp_mcb_addr + 3, bv16(remaining))
@@ -293,7 +294,7 @@ class GDBServer:
                         if not data:
                             break
 
-                        commands = data.decode('utf-8', errors='ignore').strip().split('\n')
+                        commands = data.decode("utf-8", errors="ignore").strip().split("\n")
                         for cmd in commands:
                             self._handle_command(cmd)
 
@@ -341,10 +342,12 @@ class GDBServer:
         self.state.regs.bp = 0
         self.state.regs.flags = 0x0200
 
-        print(f"[GDB] DOS environment setup: PSP=0x{self.psp_segment:04x}, "
-              f"MEM_START=0x{self.dos_mem_start:04x}, "
-              f"Entry CS:IP = 0x{self.psp_segment:04x}:0x{entry:04x} "
-              f"(phys 0x{phys_entry:x})")
+        print(
+            f"[GDB] DOS environment setup: PSP=0x{self.psp_segment:04x}, "
+            f"MEM_START=0x{self.dos_mem_start:04x}, "
+            f"Entry CS:IP = 0x{self.psp_segment:04x}:0x{entry:04x} "
+            f"(phys 0x{phys_entry:x})"
+        )
 
     def _send_packet(self, data: str) -> None:
         """Send GDB RSP packet (with checksum)."""
@@ -357,7 +360,7 @@ class GDBServer:
 
     def _handle_q_command(self, cmd: str) -> bool:
         def _impl():
-            if cmd.startswith('qSupported'):
+            if cmd.startswith("qSupported"):
                 self._send_packet(
                     "PacketSize=3fff;qXfer:memory-map:read+;"
                     "qXfer:features:read+;vContSupported+;"
@@ -366,38 +369,38 @@ class GDBServer:
                     "ExtendedMode+;QStartNoAckMode+"
                 )
                 return True
-            if cmd.startswith('qXfer:memory-map:read::'):
+            if cmd.startswith("qXfer:memory-map:read::"):
                 self._send_packet(self._get_memory_map_xml())
                 return True
-            if cmd.startswith('qXfer:features:read:'):
+            if cmd.startswith("qXfer:features:read:"):
                 self._send_packet(self._get_target_description_xml())
                 return True
-            if cmd.startswith('qXfer:'):
+            if cmd.startswith("qXfer:"):
                 self._send_packet("l")
                 return True
-            if cmd == 'qAttached':
+            if cmd == "qAttached":
                 self._send_packet("0")
                 return True
-            if cmd == 'qTStatus':
+            if cmd == "qTStatus":
                 self._send_packet("")
                 return True
-            if cmd == 'qfThreadInfo':
-                threads_hex = ','.join(f"{tid:x}" for tid in self.threads.keys())
+            if cmd == "qfThreadInfo":
+                threads_hex = ",".join(f"{tid:x}" for tid in self.threads.keys())
                 self._send_packet(f"m{threads_hex}")
                 return True
-            if cmd == 'qsThreadInfo':
+            if cmd == "qsThreadInfo":
                 self._send_packet("l")
                 return True
-            if cmd == 'qC':
+            if cmd == "qC":
                 self._send_packet(f"QC{self.current_thread:x}")
                 return True
-            if cmd == 'qOffsets':
+            if cmd == "qOffsets":
                 self._send_packet("Text=0;Data=0;Bss=0")
                 return True
-            if cmd == 'qInertiaHelpers':
+            if cmd == "qInertiaHelpers":
                 self._send_packet(json.dumps(self._build_helper_info(), separators=(",", ":")))
                 return True
-            if cmd.startswith('qSymbol'):
+            if cmd.startswith("qSymbol"):
                 self._send_packet("OK")
                 return True
             return False
@@ -405,72 +408,72 @@ class GDBServer:
         return _impl()
 
     def _handle_vcont_command(self, cmd: str) -> bool:
-        if cmd == 'vCont?':
+        if cmd == "vCont?":
             self._send_packet("vCont;s;c")
             return True
-        if not cmd.startswith('vCont'):
+        if not cmd.startswith("vCont"):
             return False
-        if ':s' in cmd or cmd == 'vCont;s':
+        if ":s" in cmd or cmd == "vCont;s":
             self._handle_step()
-        elif ':c' in cmd or cmd == 'vCont;c':
+        elif ":c" in cmd or cmd == "vCont;c":
             self._handle_continue()
         else:
             self._handle_continue()
         return True
 
     def _handle_thread_command(self, cmd: str) -> bool:
-        if cmd.startswith('Hg') or cmd.startswith('Hc'):
+        if cmd.startswith("Hg") or cmd.startswith("Hc"):
             self._send_packet("OK")
             return True
         return False
 
     def _handle_register_command(self, cmd: str) -> bool:
-        if cmd == 'g':
+        if cmd == "g":
             self._handle_read_all_registers()
             return True
-        if cmd.startswith('p'):
+        if cmd.startswith("p"):
             self._handle_read_register(cmd)
             return True
-        if cmd.startswith('P'):
+        if cmd.startswith("P"):
             self._handle_write_register(cmd)
             return True
         return False
 
     def _handle_memory_command(self, cmd: str) -> bool:
-        if cmd.startswith('m'):
+        if cmd.startswith("m"):
             self._handle_read_memory(cmd)
             return True
-        if cmd.startswith('M'):
+        if cmd.startswith("M"):
             self._handle_write_memory(cmd)
             return True
-        if cmd.startswith('X'):
+        if cmd.startswith("X"):
             self._handle_write_memory_binary(cmd)
             return True
         return False
 
     def _handle_execution_command(self, cmd: str) -> bool:
-        if cmd == 'c':
+        if cmd == "c":
             self._handle_continue()
             return True
-        if cmd == 's':
+        if cmd == "s":
             self._handle_step()
             return True
-        if cmd == 'n':
+        if cmd == "n":
             self._handle_step_over()
             return True
-        if cmd == '?':
+        if cmd == "?":
             self._send_packet("S05")
             return True
         return False
 
     def _handle_breakpoint_command(self, cmd: str) -> bool:
-        if cmd.startswith('Z0,') or cmd.startswith('Z1,'):
+        if cmd.startswith("Z0,") or cmd.startswith("Z1,"):
             self._handle_set_breakpoint(cmd)
             return True
-        if cmd.startswith('z0,') or cmd.startswith('z1,'):
+        if cmd.startswith("z0,") or cmd.startswith("z1,"):
             self._handle_remove_breakpoint(cmd)
             return True
-        if cmd.startswith('Z') or cmd.startswith('z'):
+        if cmd.startswith("Z") or cmd.startswith("z"):
             self._send_packet("")
             return True
         return False
@@ -479,11 +482,11 @@ class GDBServer:
         def _impl():
             """Dispatch GDB RSP command."""
             print(f"[GDB] Received raw command: {repr(cmd)}")
-            if not cmd or cmd.startswith('+'):
+            if not cmd or cmd.startswith("+"):
                 return
 
-            if cmd.startswith('$'):
-                cmd = cmd[1:].split('#')[0]
+            if cmd.startswith("$"):
+                cmd = cmd[1:].split("#")[0]
             print(f"[GDB] Parsed command: {repr(cmd)}")
             if self._handle_q_command(cmd):
                 return
@@ -499,7 +502,7 @@ class GDBServer:
                 return
             if self._handle_breakpoint_command(cmd):
                 return
-            if cmd == 'QStartNoAckMode':
+            if cmd == "QStartNoAckMode":
                 self._send_packet("OK")
                 return
             self._send_packet("")
@@ -516,22 +519,22 @@ class GDBServer:
 
         # x86-16 registers (16-bit names used by 86_16 arch)
         registers = [
-            ev(s.regs.ax) & 0xFFFF,   # ax
-            ev(s.regs.cx) & 0xFFFF,   # cx
-            ev(s.regs.dx) & 0xFFFF,   # dx
-            ev(s.regs.bx) & 0xFFFF,   # bx
-            ev(s.regs.sp) & 0xFFFF,   # sp
-            ev(s.regs.bp) & 0xFFFF,   # bp
-            ev(s.regs.si) & 0xFFFF,   # si
-            ev(s.regs.di) & 0xFFFF,   # di
-            ev(s.regs.ip) & 0xFFFF,   # ip (PC)
+            ev(s.regs.ax) & 0xFFFF,  # ax
+            ev(s.regs.cx) & 0xFFFF,  # cx
+            ev(s.regs.dx) & 0xFFFF,  # dx
+            ev(s.regs.bx) & 0xFFFF,  # bx
+            ev(s.regs.sp) & 0xFFFF,  # sp
+            ev(s.regs.bp) & 0xFFFF,  # bp
+            ev(s.regs.si) & 0xFFFF,  # si
+            ev(s.regs.di) & 0xFFFF,  # di
+            ev(s.regs.ip) & 0xFFFF,  # ip (PC)
             ev(s.regs.flags) & 0xFFFF,  # flags
-            ev(s.regs.cs) & 0xFFFF,   # cs
-            ev(s.regs.ss) & 0xFFFF,   # ss
-            ev(s.regs.ds) & 0xFFFF,   # ds
-            ev(s.regs.es) & 0xFFFF,   # es
-            ev(s.regs.fs) & 0xFFFF,   # fs
-            ev(s.regs.gs) & 0xFFFF,   # gs
+            ev(s.regs.cs) & 0xFFFF,  # cs
+            ev(s.regs.ss) & 0xFFFF,  # ss
+            ev(s.regs.ds) & 0xFFFF,  # ds
+            ev(s.regs.es) & 0xFFFF,  # es
+            ev(s.regs.fs) & 0xFFFF,  # fs
+            ev(s.regs.gs) & 0xFFFF,  # gs
         ]
 
         # GDB RSP uses little-endian byte order
@@ -548,8 +551,22 @@ class GDBServer:
 
             # x86-16 register names (g-packet order)
             reg_names = [
-                'ax', 'cx', 'dx', 'bx', 'sp', 'bp', 'si', 'di',
-                'ip', 'flags', 'cs', 'ss', 'ds', 'es', 'fs', 'gs',
+                "ax",
+                "cx",
+                "dx",
+                "bx",
+                "sp",
+                "bp",
+                "si",
+                "di",
+                "ip",
+                "flags",
+                "cs",
+                "ss",
+                "ds",
+                "es",
+                "fs",
+                "gs",
             ]
 
             if 0 <= reg_num < len(reg_names):
@@ -564,7 +581,7 @@ class GDBServer:
     def _handle_read_memory(self, cmd: str) -> None:
         """Read memory: m<addr>,<len>"""
         try:
-            parts = cmd[1:].split(',')
+            parts = cmd[1:].split(",")
             addr = int(parts[0], 16)
             length = int(parts[1], 16)
 
@@ -583,8 +600,8 @@ class GDBServer:
     def _handle_write_memory(self, cmd: str) -> None:
         """Write memory: M<addr>,<len>:<data>"""
         try:
-            parts = cmd[1:].split(':')
-            header = parts[0].split(',')
+            parts = cmd[1:].split(":")
+            header = parts[0].split(",")
             addr = int(header[0], 16)
             length = int(header[1], 16)
             data = bytes.fromhex(parts[1])
@@ -643,15 +660,15 @@ class GDBServer:
             try:
                 # Get current IP
                 ip = self.state.solver.eval(self.state.regs.ip)
-            
+
                 # Read instruction at current IP
                 mem = self.state.memory.load(ip, 15)
                 concrete = self.state.solver.eval(mem, cast_to=bytes)
-            
+
                 # Check if it's a call instruction (0xE8 = call rel32, 0xFF/2 = call r/m)
                 is_call = False
                 insn_len = 0
-            
+
                 if concrete[0] == 0xE8:
                     # call rel32
                     is_call = True
@@ -677,16 +694,16 @@ class GDBServer:
                         else:
                             insn_len = 2
                         next_ip = ip + insn_len
-            
+
                 if is_call and insn_len > 0:
                     # Set temporary breakpoint at next instruction
                     next_ip = ip + insn_len
                     self.breakpoints[next_ip] = Breakpoint(next_ip)
                     print(f"[GDB] Step over: setting temp BP at 0x{next_ip:x}")
-                
+
                     # Continue until breakpoint
                     self._handle_continue()
-                
+
                     # Remove temporary breakpoint
                     self.breakpoints.pop(next_ip, None)
                 else:
@@ -704,7 +721,7 @@ class GDBServer:
     def _handle_set_breakpoint(self, cmd: str) -> None:
         """Set breakpoint: Z0,<addr>,<kind>"""
         try:
-            parts = cmd[2:].split(',')
+            parts = cmd[2:].split(",")
             addr = int(parts[0], 16)
             bp = Breakpoint(addr)
             self.breakpoints[addr] = bp
@@ -715,7 +732,7 @@ class GDBServer:
     def _handle_remove_breakpoint(self, cmd: str) -> None:
         """Remove breakpoint: z0,<addr>,<kind>"""
         try:
-            parts = cmd[2:].split(',')
+            parts = cmd[2:].split(",")
             addr = int(parts[0], 16)
             if addr in self.breakpoints:
                 del self.breakpoints[addr]
@@ -726,15 +743,29 @@ class GDBServer:
     def _handle_write_register(self, cmd: str) -> None:
         """Write single register: P<regnum>=<value>"""
         try:
-            eq_pos = cmd.index('=')
+            eq_pos = cmd.index("=")
             reg_num = int(cmd[1:eq_pos], 16)
-            hex_val = cmd[eq_pos + 1:]
+            hex_val = cmd[eq_pos + 1 :]
             value = int(hex_val, 16)
 
             if self.state:
                 reg_names = [
-                    'ax', 'cx', 'dx', 'bx', 'sp', 'bp', 'si', 'di',
-                    'ip', 'flags', 'cs', 'ss', 'ds', 'es', 'fs', 'gs',
+                    "ax",
+                    "cx",
+                    "dx",
+                    "bx",
+                    "sp",
+                    "bp",
+                    "si",
+                    "di",
+                    "ip",
+                    "flags",
+                    "cs",
+                    "ss",
+                    "ds",
+                    "es",
+                    "fs",
+                    "gs",
                 ]
                 if 0 <= reg_num < len(reg_names):
                     setattr(self.state.regs, reg_names[reg_num], value)
@@ -747,12 +778,12 @@ class GDBServer:
     def _handle_write_memory_binary(self, cmd: str) -> None:
         """Write memory binary: X<addr>,<len>:<data>"""
         try:
-            colon_pos = cmd.index(':')
+            colon_pos = cmd.index(":")
             header = cmd[1:colon_pos]
-            addr_str, len_str = header.split(',')
+            addr_str, len_str = header.split(",")
             addr = int(addr_str, 16)
             length = int(len_str, 16)
-            data = cmd[colon_pos + 1:].encode('latin-1')
+            data = cmd[colon_pos + 1 :].encode("latin-1")
 
             if self.state and len(data) == length:
                 self.state.memory.store(addr, data)
@@ -772,12 +803,12 @@ class GDBServer:
 
         xml = (
             '<?xml version="1.0"?>'
-            '<!DOCTYPE memory-map PUBLIC '
+            "<!DOCTYPE memory-map PUBLIC "
             '"+//IDN gnu.org//DTD GDB Memory Map V1.0//EN"'
             '"http://sourceware.org/gdb/gdb-memory-map.dtd">'
-            '<memory-map>'
+            "<memory-map>"
             f'<memory type="ram" start="0x0" length="0x{mem_size:x}"/>'
-            '</memory-map>'
+            "</memory-map>"
         )
         return f"l{xml}"
 
@@ -786,8 +817,8 @@ class GDBServer:
         xml = (
             '<?xml version="1.0"?>'
             '<!DOCTYPE target SYSTEM "gdb-target.dtd">'
-            '<target>'
-            '<architecture>i8086</architecture>'
+            "<target>"
+            "<architecture>i8086</architecture>"
             '<feature name="org.gnu.gdb.i386.core">'
             '<reg name="ax" bitsize="16" type="int16"/>'
             '<reg name="cx" bitsize="16" type="int16"/>'
@@ -805,8 +836,8 @@ class GDBServer:
             '<reg name="es" bitsize="16" type="int16"/>'
             '<reg name="fs" bitsize="16" type="int16"/>'
             '<reg name="gs" bitsize="16" type="int16"/>'
-            '</feature>'
-            '</target>'
+            "</feature>"
+            "</target>"
         )
         return f"l{xml}"
 
@@ -820,7 +851,7 @@ class GDBServer:
 
 
 __all__ = [
-    'GDBServer',
-    'GDBStopReason',
-    'Breakpoint',
+    "GDBServer",
+    "GDBStopReason",
+    "Breakpoint",
 ]

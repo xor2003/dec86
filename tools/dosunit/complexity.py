@@ -7,7 +7,6 @@ from tools.dosunit.ir_edges import REG8, _load_lifter_project
 from tools.dosunit.model import DosUnitError, normalize_hex, parse_int, stable_id
 from tools.dosunit.region_effects import REGION_BRANCH_MNEMONICS, _instruction_summary, _refusal_counts, _target_int
 
-
 CALL_MNEMONICS = {"call", "lcall"}
 INTERRUPT_MNEMONICS = {"int"}
 JUMP_MNEMONICS = {"jmp", "ljmp"}
@@ -175,12 +174,20 @@ def _analyze_one_function(
             block = project.factory.block(at, size=min(0x80, end - at), opt_level=0)
             _ = block.vex
         except Exception as ex:  # noqa: BLE001
-            refusals.append(_refusal(function_id, "unsupported_ir", f"lifter block failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}"))
+            refusals.append(
+                _refusal(
+                    function_id,
+                    "unsupported_ir",
+                    f"lifter block failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}",
+                )
+            )
             continue
         blocks_lifted += 1
         lifted_insns = [item.insn for item in block.capstone.insns if start <= item.insn.address < end]
         if not lifted_insns:
-            refusals.append(_refusal(function_id, "unsupported_ir", f"lifter produced no instructions at {normalize_hex(at)}"))
+            refusals.append(
+                _refusal(function_id, "unsupported_ir", f"lifter produced no instructions at {normalize_hex(at)}")
+            )
             continue
 
         for insn in lifted_insns:
@@ -237,7 +244,10 @@ def _analyze_one_function(
         },
         "end": {
             "cs": normalize_hex(segment_para, width=4),
-            "ip": normalize_hex((instructions[-1]["address_linear_int"] + int(instructions[-1]["size"]) - function_base) & 0xFFFF, width=4),
+            "ip": normalize_hex(
+                (instructions[-1]["address_linear_int"] + int(instructions[-1]["size"]) - function_base) & 0xFFFF,
+                width=4,
+            ),
             "linear": normalize_hex(instructions[-1]["address_linear_int"] + int(instructions[-1]["size"])),
         },
         "classification": classification,
@@ -246,7 +256,9 @@ def _analyze_one_function(
         "risk": risk,
         "risk_points": risk_points,
         "comparison_parts": comparison_parts,
-        "sample_instructions": [_sample_instruction(instruction) for instruction in instructions[: min(8, len(instructions))]],
+        "sample_instructions": [
+            _sample_instruction(instruction) for instruction in instructions[: min(8, len(instructions))]
+        ],
     }
     for instruction in result_without_id["sample_instructions"]:
         instruction.pop("address_linear_int", None)
@@ -346,7 +358,14 @@ def _risk_summary(metrics: dict[str, int]) -> dict[str, Any]:
     factors: list[dict[str, Any]] = []
     instruction_score = metrics.get("instruction_count", 0) // 8
     if instruction_score:
-        factors.append({"kind": "instruction_count", "count": metrics.get("instruction_count", 0), "weight": "floor(count/8)", "score": instruction_score})
+        factors.append(
+            {
+                "kind": "instruction_count",
+                "count": metrics.get("instruction_count", 0),
+                "weight": "floor(count/8)",
+                "score": instruction_score,
+            }
+        )
     for key, weight in RISK_WEIGHTS.items():
         count = int(metrics.get(key, 0))
         if count <= 0:
@@ -434,7 +453,9 @@ def _comparison_parts(
     return [part]
 
 
-def _append_instruction_risk_points(risk_points: list[dict[str, Any]], *, summary: dict[str, Any], max_risk_points: int) -> None:
+def _append_instruction_risk_points(
+    risk_points: list[dict[str, Any]], *, summary: dict[str, Any], max_risk_points: int
+) -> None:
     if len(risk_points) >= max_risk_points:
         return
     mnemonic = str(summary.get("mnemonic", "")).lower()

@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
 import copy
-from dataclasses import dataclass
 import hashlib
 import os
 import pickle
 import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from tools.dosunit.ir_edges import _load_lifter_project
 from tools.dosunit.model import DosUnitError, canonical_json_bytes, normalize_hex, parse_int, stable_id
-
 
 REG_BY_OFFSET = {
     0: ("ax", 16),
@@ -427,7 +426,9 @@ def compare_ssa_documents(
                 continue
             changed = True
             if result.get("status") == "passed" and proof_cache is not None:
-                proof_cache.record(item["oracle_function"], item["candidate_function"], proof=str(result.get("reason") or "z3_equal"))
+                proof_cache.record(
+                    item["oracle_function"], item["candidate_function"], proof=str(result.get("reason") or "z3_equal")
+                )
         pending_callee_proofs = still_pending
         if not changed:
             break
@@ -728,33 +729,65 @@ def _lower_function(
             )
             irsb = lifted.irsb
         except Exception as ex:  # noqa: BLE001
-            refusals.append(_refusal(function, "unsupported_ir", f"lifter block failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}"))
+            refusals.append(
+                _refusal(
+                    function, "unsupported_ir", f"lifter block failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}"
+                )
+            )
             continue
         blocks_lifted += int(lifted.lifted)
 
-        instructions = [_instruction_text_from_record(record, function_base=function_base) for record in lifted.instructions if start <= parse_int(record.get("linear", 0), field="instruction.linear") < end]
+        instructions = [
+            _instruction_text_from_record(record, function_base=function_base)
+            for record in lifted.instructions
+            if start <= parse_int(record.get("linear", 0), field="instruction.linear") < end
+        ]
         if not instructions:
-            refusals.append(_refusal(function, "unsupported_ir", f"lifter produced no instructions at {normalize_hex(at)}"))
+            refusals.append(
+                _refusal(function, "unsupported_ir", f"lifter produced no instructions at {normalize_hex(at)}")
+            )
             continue
         if len(instructions) > max_insns_per_function:
-            refusals.append(_refusal(function, "unsupported_ir", f"instruction limit reached at {normalize_hex(at)}: {len(instructions)} > {max_insns_per_function}"))
+            refusals.append(
+                _refusal(
+                    function,
+                    "unsupported_ir",
+                    f"instruction limit reached at {normalize_hex(at)}: {len(instructions)} > {max_insns_per_function}",
+                )
+            )
             continue
         if _is_incomplete_noncontrol_block(irsb, instructions):
             last = instructions[-1]
-            refusals.append(_refusal(function, "incomplete_block", f"lifter stopped before a control transfer at {last.get('address', {}).get('linear')}: {last.get('disassembly')}"))
+            refusals.append(
+                _refusal(
+                    function,
+                    "incomplete_block",
+                    f"lifter stopped before a control transfer at {last.get('address', {}).get('linear')}: {last.get('disassembly')}",
+                )
+            )
             continue
 
         transfer = _transfer_info(irsb, instructions)
         block_output_regs = _with_control_output_regs(output_regs, transfer)
         if source_ir == "vex":
-            lowered = _lower_irsb(irsb, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function)
+            lowered = _lower_irsb(
+                irsb, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function
+            )
         elif source_ir == "ail":
             try:
                 ail_block = _vex_irsb_to_ail_block(project=project, irsb=irsb)
             except Exception as ex:  # noqa: BLE001
-                refusals.append(_refusal(function, "unsupported_ir", f"AIL conversion failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}"))
+                refusals.append(
+                    _refusal(
+                        function,
+                        "unsupported_ir",
+                        f"AIL conversion failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}",
+                    )
+                )
                 continue
-            lowered = _lower_ail_block(ail_block, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function)
+            lowered = _lower_ail_block(
+                ail_block, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function
+            )
         else:
             refusals.append(_refusal(function, "unsupported_ir", f"unsupported SSA source IR: {source_ir}"))
             continue
@@ -816,10 +849,14 @@ def _with_control_output_regs(output_regs: tuple[str, ...], transfer: dict[str, 
     return (*output_regs, "ip")
 
 
-def _lower_irsb(irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int) -> dict[str, Any] | LowerFailure:
+def _lower_irsb(
+    irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int
+) -> dict[str, Any] | LowerFailure:
     temp_defs: dict[int, SsaExpr] = {}
     temp_failures: dict[int, LowerFailure] = {}
-    reg_versions: dict[str, SsaExpr] = {name: SsaExpr("input", width, name=name) for _offset, (name, width) in REG_BY_OFFSET.items()}
+    reg_versions: dict[str, SsaExpr] = {
+        name: SsaExpr("input", width, name=name) for _offset, (name, width) in REG_BY_OFFSET.items()
+    }
     mem_version = SsaExpr("mem_input", 0, name="mem")
     memory_touched = False
     exits: list[tuple[SsaExpr, SsaExpr]] = []
@@ -829,7 +866,14 @@ def _lower_irsb(irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_
         if tag == "Ist_IMark":
             continue
         if tag == "Ist_WrTmp":
-            expr = _lower_expr(statement.data, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=irsb.tyenv, memory=mem_version)
+            expr = _lower_expr(
+                statement.data,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                tyenv=irsb.tyenv,
+                memory=mem_version,
+            )
             if isinstance(expr, LowerFailure):
                 temp_failures[int(statement.tmp)] = expr
             else:
@@ -838,7 +882,14 @@ def _lower_irsb(irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_
         if tag == "Ist_Put":
             if _is_unobserved_flags_write(int(statement.offset), output_regs):
                 continue
-            expr = _lower_expr(statement.data, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=irsb.tyenv, memory=mem_version)
+            expr = _lower_expr(
+                statement.data,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                tyenv=irsb.tyenv,
+                memory=mem_version,
+            )
             if isinstance(expr, LowerFailure):
                 access = _register_write_target(int(statement.offset), None)
                 if access is None:
@@ -850,10 +901,24 @@ def _lower_irsb(irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_
                 return failure
             continue
         if tag == "Ist_Store":
-            addr = _lower_expr(statement.addr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=irsb.tyenv, memory=mem_version)
+            addr = _lower_expr(
+                statement.addr,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                tyenv=irsb.tyenv,
+                memory=mem_version,
+            )
             if isinstance(addr, LowerFailure):
                 return addr
-            data = _lower_expr(statement.data, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=irsb.tyenv, memory=mem_version)
+            data = _lower_expr(
+                statement.data,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                tyenv=irsb.tyenv,
+                memory=mem_version,
+            )
             if isinstance(data, LowerFailure):
                 return data
             endness = str(getattr(statement, "endness", "Iend_LE"))
@@ -864,10 +929,24 @@ def _lower_irsb(irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_
             memory_touched = True
             continue
         if tag == "Ist_Exit":
-            guard = _lower_expr(statement.guard, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=irsb.tyenv, memory=mem_version)
+            guard = _lower_expr(
+                statement.guard,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                tyenv=irsb.tyenv,
+                memory=mem_version,
+            )
             if isinstance(guard, LowerFailure):
                 return guard
-            dst = _lower_expr(statement.dst, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=irsb.tyenv, memory=mem_version)
+            dst = _lower_expr(
+                statement.dst,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                tyenv=irsb.tyenv,
+                memory=mem_version,
+            )
             if isinstance(dst, LowerFailure):
                 return dst
             exits.append((_coerce_width(guard, 1), _coerce_width(dst, 16 if dst.width <= 16 else dst.width)))
@@ -876,7 +955,14 @@ def _lower_irsb(irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_
             continue
         return LowerFailure("unsupported_ir", f"unsupported VEX statement: {tag}")
 
-    next_expr = _lower_expr(irsb.next, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=irsb.tyenv, memory=mem_version)
+    next_expr = _lower_expr(
+        irsb.next,
+        temp_defs=temp_defs,
+        temp_failures=temp_failures,
+        reg_versions=reg_versions,
+        tyenv=irsb.tyenv,
+        memory=mem_version,
+    )
     if isinstance(next_expr, LowerFailure):
         return next_expr
     ip_expr = _coerce_width(next_expr, 16)
@@ -897,11 +983,16 @@ def _lower_irsb(irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_
     assignments: list[dict[str, Any]] = []
     memo: dict[tuple[Any, ...], str] = {}
     key_cache: dict[int, tuple[Any, ...]] = {}
-    outputs = {reg: _materialize(expr, assignments=assignments, memo=memo, key_cache=key_cache) for reg, expr in requested.items()}
+    outputs = {
+        reg: _materialize(expr, assignments=assignments, memo=memo, key_cache=key_cache)
+        for reg, expr in requested.items()
+    }
     if memory_touched:
         outputs["memory"] = _materialize(mem_version, assignments=assignments, memo=memo, key_cache=key_cache)
     if max_assignments_per_function > 0 and len(assignments) > max_assignments_per_function:
-        return LowerFailure("slice_too_large", f"SSA assignment limit reached: {len(assignments)} > {max_assignments_per_function}")
+        return LowerFailure(
+            "slice_too_large", f"SSA assignment limit reached: {len(assignments)} > {max_assignments_per_function}"
+        )
     inputs = _collect_inputs(requested.values())
     if memory_touched:
         inputs.update(_collect_inputs((mem_version,)))
@@ -931,10 +1022,14 @@ def _vex_irsb_to_ail_block(*, project: Any, irsb: Any) -> Any:
     return VEXIRSBConverter.convert(irsb, Manager(arch=project.arch))
 
 
-def _lower_ail_block(block: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int) -> dict[str, Any] | LowerFailure:
+def _lower_ail_block(
+    block: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int
+) -> dict[str, Any] | LowerFailure:
     temp_defs: dict[int, SsaExpr] = {}
     temp_failures: dict[int, LowerFailure] = {}
-    reg_versions: dict[str, SsaExpr] = {name: SsaExpr("input", width, name=name) for _offset, (name, width) in REG_BY_OFFSET.items()}
+    reg_versions: dict[str, SsaExpr] = {
+        name: SsaExpr("input", width, name=name) for _offset, (name, width) in REG_BY_OFFSET.items()
+    }
     mem_version = SsaExpr("mem_input", 0, name="mem")
     memory_touched = False
     ip_expr: SsaExpr | None = None
@@ -947,7 +1042,13 @@ def _lower_ail_block(block: Any, *, output_regs: tuple[str, ...], max_assignment
             dst_kind = dst.__class__.__name__
             if dst_kind == "Register" and _is_unobserved_flags_write(int(dst.reg_offset), output_regs):
                 continue
-            src = _lower_ail_expr(statement.src, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=mem_version)
+            src = _lower_ail_expr(
+                statement.src,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                memory=mem_version,
+            )
             if dst_kind == "Tmp":
                 if isinstance(src, LowerFailure):
                     temp_failures[int(dst.tmp_idx)] = src
@@ -970,15 +1071,33 @@ def _lower_ail_block(block: Any, *, output_regs: tuple[str, ...], max_assignment
         if kind == "Store":
             guard = getattr(statement, "guard", None)
             if guard is not None:
-                lowered_guard = _lower_ail_expr(guard, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=mem_version)
+                lowered_guard = _lower_ail_expr(
+                    guard,
+                    temp_defs=temp_defs,
+                    temp_failures=temp_failures,
+                    reg_versions=reg_versions,
+                    memory=mem_version,
+                )
                 if isinstance(lowered_guard, LowerFailure):
                     return lowered_guard
                 if _const_value(lowered_guard) != 1:
                     return LowerFailure("unsupported_ir", "guarded AIL store is not modeled")
-            addr = _lower_ail_expr(statement.addr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=mem_version)
+            addr = _lower_ail_expr(
+                statement.addr,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                memory=mem_version,
+            )
             if isinstance(addr, LowerFailure):
                 return addr
-            data = _lower_ail_expr(statement.data, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=mem_version)
+            data = _lower_ail_expr(
+                statement.data,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                memory=mem_version,
+            )
             if isinstance(data, LowerFailure):
                 return data
             endness = str(getattr(statement, "endness", "Iend_LE"))
@@ -993,15 +1112,33 @@ def _lower_ail_block(block: Any, *, output_regs: tuple[str, ...], max_assignment
             continue
 
         if kind == "ConditionalJump":
-            guard = _lower_ail_expr(statement.condition, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=mem_version)
+            guard = _lower_ail_expr(
+                statement.condition,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                memory=mem_version,
+            )
             if isinstance(guard, LowerFailure):
                 return guard
-            dst = _lower_ail_expr(statement.true_target, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=mem_version)
+            dst = _lower_ail_expr(
+                statement.true_target,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                memory=mem_version,
+            )
             if isinstance(dst, LowerFailure):
                 return dst
             false_target = getattr(statement, "false_target", None)
             if false_target is not None:
-                false_expr = _lower_ail_expr(false_target, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=mem_version)
+                false_expr = _lower_ail_expr(
+                    false_target,
+                    temp_defs=temp_defs,
+                    temp_failures=temp_failures,
+                    reg_versions=reg_versions,
+                    memory=mem_version,
+                )
                 if isinstance(false_expr, LowerFailure):
                     return false_expr
                 ip_expr = _coerce_width(false_expr, 16)
@@ -1009,7 +1146,13 @@ def _lower_ail_block(block: Any, *, output_regs: tuple[str, ...], max_assignment
             continue
 
         if kind == "Jump":
-            target = _lower_ail_expr(statement.target, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=mem_version)
+            target = _lower_ail_expr(
+                statement.target,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                memory=mem_version,
+            )
             if isinstance(target, LowerFailure):
                 return target
             ip_expr = _coerce_width(target, 16)
@@ -1048,11 +1191,16 @@ def _lower_ail_block(block: Any, *, output_regs: tuple[str, ...], max_assignment
     assignments: list[dict[str, Any]] = []
     memo: dict[tuple[Any, ...], str] = {}
     key_cache: dict[int, tuple[Any, ...]] = {}
-    outputs = {reg: _materialize(expr, assignments=assignments, memo=memo, key_cache=key_cache) for reg, expr in requested.items()}
+    outputs = {
+        reg: _materialize(expr, assignments=assignments, memo=memo, key_cache=key_cache)
+        for reg, expr in requested.items()
+    }
     if memory_touched:
         outputs["memory"] = _materialize(mem_version, assignments=assignments, memo=memo, key_cache=key_cache)
     if max_assignments_per_function > 0 and len(assignments) > max_assignments_per_function:
-        return LowerFailure("slice_too_large", f"SSA assignment limit reached: {len(assignments)} > {max_assignments_per_function}")
+        return LowerFailure(
+            "slice_too_large", f"SSA assignment limit reached: {len(assignments)} > {max_assignments_per_function}"
+        )
     inputs = _collect_inputs(requested.values())
     if memory_touched:
         inputs.update(_collect_inputs((mem_version,)))
@@ -1090,11 +1238,17 @@ def _lower_ail_expr(
     if kind == "Register":
         return _read_register(reg_versions, int(expr.reg_offset), int(expr.bits), source="AIL")
     if kind == "BinaryOp":
-        return _lower_ail_binop(expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        return _lower_ail_binop(
+            expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
     if kind == "UnaryOp":
-        return _lower_ail_unop(expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        return _lower_ail_unop(
+            expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
     if kind == "Convert":
-        operand = _lower_ail_expr(expr.operand, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        operand = _lower_ail_expr(
+            expr.operand, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
         if isinstance(operand, LowerFailure):
             return operand
         width = int(expr.to_bits)
@@ -1106,12 +1260,16 @@ def _lower_ail_expr(
     if kind == "Load":
         guard = getattr(expr, "guard", None)
         if guard is not None:
-            lowered_guard = _lower_ail_expr(guard, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+            lowered_guard = _lower_ail_expr(
+                guard, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+            )
             if isinstance(lowered_guard, LowerFailure):
                 return lowered_guard
             if _const_value(lowered_guard) != 1:
                 return LowerFailure("unsupported_ir", "guarded AIL load is not modeled")
-        addr = _lower_ail_expr(expr.addr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        addr = _lower_ail_expr(
+            expr.addr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
         if isinstance(addr, LowerFailure):
             return addr
         endness = str(getattr(expr, "endness", "Iend_LE"))
@@ -1120,20 +1278,34 @@ def _lower_ail_expr(
         op = "loadle" if endness == "Iend_LE" else "loadbe"
         return SsaExpr(op, int(expr.size) * 8, (memory, _coerce_width(addr, 32)))
     if kind == "ITE":
-        cond = _lower_ail_expr(expr.cond, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        cond = _lower_ail_expr(
+            expr.cond, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
         if isinstance(cond, LowerFailure):
             return cond
-        iftrue = _lower_ail_expr(expr.iftrue, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        iftrue = _lower_ail_expr(
+            expr.iftrue, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
         if isinstance(iftrue, LowerFailure):
             return iftrue
-        iffalse = _lower_ail_expr(expr.iffalse, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        iffalse = _lower_ail_expr(
+            expr.iffalse, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
         if isinstance(iffalse, LowerFailure):
             return iffalse
-        return SsaExpr("ite", int(expr.bits), (_coerce_width(cond, 1), _coerce_width(iftrue, int(expr.bits)), _coerce_width(iffalse, int(expr.bits))))
+        return SsaExpr(
+            "ite",
+            int(expr.bits),
+            (_coerce_width(cond, 1), _coerce_width(iftrue, int(expr.bits)), _coerce_width(iffalse, int(expr.bits))),
+        )
     if kind == "Extract":
-        return _lower_ail_extract(expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        return _lower_ail_extract(
+            expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
     if kind == "Insert":
-        return _lower_ail_insert(expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        return _lower_ail_insert(
+            expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
     if kind == "Call":
         return LowerFailure("unsupported_ir", "AIL call expression is not modeled inside value slice")
     if kind in {"DirtyExpression", "VEXCCallExpression"}:
@@ -1154,7 +1326,9 @@ def _lower_ail_binop(
 ) -> SsaExpr | LowerFailure:
     args: list[SsaExpr] = []
     for operand in expr.operands:
-        lowered = _lower_ail_expr(operand, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+        lowered = _lower_ail_expr(
+            operand, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+        )
         if isinstance(lowered, LowerFailure):
             return lowered
         args.append(lowered)
@@ -1209,7 +1383,9 @@ def _lower_ail_unop(
     reg_versions: dict[str, SsaExpr],
     memory: SsaExpr,
 ) -> SsaExpr | LowerFailure:
-    operand = _lower_ail_expr(expr.operand, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+    operand = _lower_ail_expr(
+        expr.operand, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+    )
     if isinstance(operand, LowerFailure):
         return operand
     op = str(expr.op)
@@ -1229,16 +1405,22 @@ def _lower_ail_extract(
     reg_versions: dict[str, SsaExpr],
     memory: SsaExpr,
 ) -> SsaExpr | LowerFailure:
-    base = _lower_ail_expr(expr.base, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+    base = _lower_ail_expr(
+        expr.base, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+    )
     if isinstance(base, LowerFailure):
         return base
-    offset = _lower_ail_expr(expr.offset, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+    offset = _lower_ail_expr(
+        expr.offset, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+    )
     if isinstance(offset, LowerFailure):
         return offset
     offset_value = _const_value(offset)
     if offset_value is None:
         return LowerFailure("unsupported_ir", "AIL dynamic bit extract offset is not modeled")
-    shifted = SsaExpr("lshr", base.width, (_coerce_width(base, base.width), SsaExpr("const", 8, value=offset_value & 0xFF)))
+    shifted = SsaExpr(
+        "lshr", base.width, (_coerce_width(base, base.width), SsaExpr("const", 8, value=offset_value & 0xFF))
+    )
     return _coerce_width(shifted, int(expr.bits))
 
 
@@ -1250,13 +1432,19 @@ def _lower_ail_insert(
     reg_versions: dict[str, SsaExpr],
     memory: SsaExpr,
 ) -> SsaExpr | LowerFailure:
-    base = _lower_ail_expr(expr.base, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+    base = _lower_ail_expr(
+        expr.base, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+    )
     if isinstance(base, LowerFailure):
         return base
-    value = _lower_ail_expr(expr.value, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+    value = _lower_ail_expr(
+        expr.value, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+    )
     if isinstance(value, LowerFailure):
         return value
-    offset = _lower_ail_expr(expr.offset, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory)
+    offset = _lower_ail_expr(
+        expr.offset, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, memory=memory
+    )
     if isinstance(offset, LowerFailure):
         return offset
     offset_value = _const_value(offset)
@@ -1359,22 +1547,64 @@ def _lower_expr(
     if tag == "Iex_Const":
         return SsaExpr("const", int(expr.con.size), value=int(expr.con.value) & _mask(int(expr.con.size)))
     if tag == "Iex_Binop":
-        return _lower_binop(expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory)
+        return _lower_binop(
+            expr,
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
     if tag == "Iex_Unop":
-        return _lower_unop(expr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory)
+        return _lower_unop(
+            expr,
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
     if tag == "Iex_ITE":
-        cond = _lower_expr(expr.cond, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory)
+        cond = _lower_expr(
+            expr.cond,
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
         if isinstance(cond, LowerFailure):
             return cond
-        iftrue = _lower_expr(expr.iftrue, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory)
+        iftrue = _lower_expr(
+            expr.iftrue,
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
         if isinstance(iftrue, LowerFailure):
             return iftrue
-        iffalse = _lower_expr(expr.iffalse, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory)
+        iffalse = _lower_expr(
+            expr.iffalse,
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
         if isinstance(iffalse, LowerFailure):
             return iffalse
         return SsaExpr("ite", int(expr.result_size(tyenv)), (_coerce_width(cond, 1), iftrue, iffalse))
     if tag == "Iex_Load":
-        addr = _lower_expr(expr.addr, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory)
+        addr = _lower_expr(
+            expr.addr,
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
         if isinstance(addr, LowerFailure):
             return addr
         endness = str(getattr(expr, "endness", "Iend_LE"))
@@ -1401,7 +1631,9 @@ def _lower_binop(
         return LowerFailure("unsupported_ir", f"unsupported VEX binop: {op}")
     args: list[SsaExpr] = []
     for arg in expr.args:
-        lowered = _lower_expr(arg, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory)
+        lowered = _lower_expr(
+            arg, temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory
+        )
         if isinstance(lowered, LowerFailure):
             return lowered
         args.append(lowered)
@@ -1429,7 +1661,14 @@ def _lower_unop(
     op = _strip_iop(str(expr.op))
     if len(expr.args) != 1:
         return LowerFailure("unsupported_ir", f"unsupported VEX unop arity: {op}")
-    arg = _lower_expr(expr.args[0], temp_defs=temp_defs, temp_failures=temp_failures, reg_versions=reg_versions, tyenv=tyenv, memory=memory)
+    arg = _lower_expr(
+        expr.args[0],
+        temp_defs=temp_defs,
+        temp_failures=temp_failures,
+        reg_versions=reg_versions,
+        tyenv=tyenv,
+        memory=memory,
+    )
     if isinstance(arg, LowerFailure):
         return arg
     width = int(expr.result_size(tyenv))
@@ -1532,7 +1771,11 @@ def _ssa_solver_gate(
 
 
 def _ssa_store_count(function: dict[str, Any]) -> int:
-    return sum(1 for item in function.get("assignments", []) or [] if isinstance(item, dict) and item.get("op") in {"storele", "storebe"})
+    return sum(
+        1
+        for item in function.get("assignments", []) or []
+        if isinstance(item, dict) and item.get("op") in {"storele", "storebe"}
+    )
 
 
 def _compare_ssa_pair(
@@ -1690,7 +1933,9 @@ def _compare_ssa_region_equality(
             oracle_name=oracle_name,
             mapped=mapped,
         )
-        if not _should_attempt_region_equality(oracle_id, oracle_name, oracle_group, candidate_group, status_by_function):
+        if not _should_attempt_region_equality(
+            oracle_id, oracle_name, oracle_group, candidate_group, status_by_function
+        ):
             continue
         base_result = {
             "function": {"id": oracle_id, "name": oracle_name},
@@ -1722,13 +1967,15 @@ def _compare_ssa_region_equality(
                 }
             )
             continue
-        oracle_group_for_compare, candidate_group_for_compare, call_normalizations = _prepare_region_call_normalized_groups(
-            oracle_group,
-            candidate_group,
-            mapping_document=mapping_document,
-            oracle_index=oracle_index,
-            candidate_index=candidate_index,
-            allow_aliased_call_targets=allow_aliased_call_targets,
+        oracle_group_for_compare, candidate_group_for_compare, call_normalizations = (
+            _prepare_region_call_normalized_groups(
+                oracle_group,
+                candidate_group,
+                mapping_document=mapping_document,
+                oracle_index=oracle_index,
+                candidate_index=candidate_index,
+                allow_aliased_call_targets=allow_aliased_call_targets,
+            )
         )
         if call_normalizations:
             base_result["call_normalizations"] = call_normalizations
@@ -1766,7 +2013,12 @@ def _compare_ssa_region_equality(
                 }
                 results.append(result)
                 if proof_cache is not None:
-                    proof_cache.record(oracle_group_for_compare[0], candidate_group_for_compare[0], proof="transition_system_equal", scope="function")
+                    proof_cache.record(
+                        oracle_group_for_compare[0],
+                        candidate_group_for_compare[0],
+                        proof="transition_system_equal",
+                        scope="function",
+                    )
                 continue
         require_complete_paths = True
         oracle_summary = _summarize_abi_function(
@@ -1834,7 +2086,12 @@ def _compare_ssa_region_equality(
             }
             results.append(result)
             if result["status"] == "passed" and proof_cache is not None:
-                proof_cache.record(oracle_group_for_compare[0], candidate_group_for_compare[0], proof=str(result.get("reason") or "region_equal"), scope="function")
+                proof_cache.record(
+                    oracle_group_for_compare[0],
+                    candidate_group_for_compare[0],
+                    proof=str(result.get("reason") or "region_equal"),
+                    scope="function",
+                )
             continue
         gate = _ssa_solver_gate(
             oracle_function,
@@ -1890,7 +2147,12 @@ def _compare_ssa_region_equality(
         }
         results.append(result)
         if result["status"] == "passed" and proof_cache is not None:
-            proof_cache.record(oracle_group_for_compare[0], candidate_group_for_compare[0], proof=str(result.get("reason") or "region_equal"), scope="function")
+            proof_cache.record(
+                oracle_group_for_compare[0],
+                candidate_group_for_compare[0],
+                proof=str(result.get("reason") or "region_equal"),
+                scope="function",
+            )
 
     status = "not_applicable"
     if any(result.get("status") == "failed" for result in results):
@@ -2108,7 +2370,9 @@ def _compare_region_transition_system(
         "status": "passed",
         "reason": "transition_system_equal",
         "part_count": len(deltas),
-        "terminal_count": sum(1 for block in oracle_group if _ssa_source_jumpkind(block).startswith(("Ijk_Ret", "Ijk_Sig"))),
+        "terminal_count": sum(
+            1 for block in oracle_group if _ssa_source_jumpkind(block).startswith(("Ijk_Ret", "Ijk_Sig"))
+        ),
         "blocks_composed": len(deltas),
         "branches": sum(1 for block in oracle_group if _direct_successor_delta_set(block)),
         "branch_prunes": 0,
@@ -2129,7 +2393,10 @@ def _compare_region_transition_system(
 
 def _region_has_direct_cycle(parts: list[dict[str, Any]]) -> bool:
     blocks = _region_blocks_by_delta(parts)
-    graph = {delta: {successor for successor in _direct_successor_delta_set(block) if successor in blocks} for delta, block in blocks.items()}
+    graph = {
+        delta: {successor for successor in _direct_successor_delta_set(block) if successor in blocks}
+        for delta, block in blocks.items()
+    }
     for component in _strongly_connected_components(graph):
         if len(component) > 1:
             return True
@@ -2141,7 +2408,9 @@ def _region_has_direct_cycle(parts: list[dict[str, Any]]) -> bool:
 def _region_blocks_by_delta(parts: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     blocks: dict[int, dict[str, Any]] = {}
     for part in parts:
-        delta = _ssa_detail_entry_delta({"part": part.get("part"), "entry": part.get("entry"), "function_entry": part.get("function_entry")})
+        delta = _ssa_detail_entry_delta(
+            {"part": part.get("part"), "entry": part.get("entry"), "function_entry": part.get("function_entry")}
+        )
         if delta is not None:
             blocks[delta & 0xFFFF] = part
     return blocks
@@ -2388,7 +2657,9 @@ def _apply_region_equality_gate(results: list[dict[str, Any]], region_equality: 
     covered = 0
     for result in results:
         function = result.get("function") if isinstance(result.get("function"), dict) else {}
-        region_result = passed_by_key.get(str(function.get("id") or "")) or passed_by_key.get(str(function.get("name") or ""))
+        region_result = passed_by_key.get(str(function.get("id") or "")) or passed_by_key.get(
+            str(function.get("name") or "")
+        )
         if region_result is None:
             continue
         if result.get("status") == "passed" and result.get("reason") == "covered_by_region_equal":
@@ -2522,7 +2793,9 @@ def _apply_ssa_connectivity_gate(
                     "oracle_successor_delta": _format_ssa_delta(successor_delta),
                     "candidate_from_delta": _format_ssa_delta(candidate_delta),
                     "expected_candidate_successor_delta": _format_ssa_delta(expected_candidate_delta),
-                    "candidate_successor_deltas": [_format_ssa_delta(value) for value in sorted(candidate_successor_set)],
+                    "candidate_successor_deltas": [
+                        _format_ssa_delta(value) for value in sorted(candidate_successor_set)
+                    ],
                     "result_index": index,
                 }
                 failures.append(failure)
@@ -2532,7 +2805,12 @@ def _apply_ssa_connectivity_gate(
             oracle_successor = _ssa_body_for_result(results[successor_index], oracle_body_by_id, side="oracle")
             candidate_predecessor = _ssa_body_for_result(result, candidate_body_by_id, side="candidate")
             candidate_successor = _ssa_body_for_result(results[successor_index], candidate_body_by_id, side="candidate")
-            if oracle_predecessor is not None and oracle_successor is not None and candidate_predecessor is not None and candidate_successor is not None:
+            if (
+                oracle_predecessor is not None
+                and oracle_successor is not None
+                and candidate_predecessor is not None
+                and candidate_successor is not None
+            ):
                 # Keep control-flow layout constants aligned for successor-state checks (e.g. IP offsets).
                 oracle_predecessor, candidate_predecessor, _ = _prepare_layout_normalized_functions(
                     oracle_predecessor,
@@ -2639,10 +2917,14 @@ def _apply_ssa_connectivity_gate(
 
 
 def _ssa_body_by_id(functions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {str(function.get("id")): function for function in functions if isinstance(function, dict) and function.get("id")}
+    return {
+        str(function.get("id")): function for function in functions if isinstance(function, dict) and function.get("id")
+    }
 
 
-def _ssa_body_for_result(result: dict[str, Any], body_by_id: dict[str, dict[str, Any]], *, side: str) -> dict[str, Any] | None:
+def _ssa_body_for_result(
+    result: dict[str, Any], body_by_id: dict[str, dict[str, Any]], *, side: str
+) -> dict[str, Any] | None:
     key = result.get(f"{side}_function")
     if key is None:
         return None
@@ -2728,7 +3010,9 @@ def _connectivity_state_check(
                 "inputs_checked": len(checked),
                 "solver_time_ms": solver_time_ms,
             }
-        mismatch_kind = "connectivity_state_mismatch" if comparison.get("status") == "failed" else "connectivity_state_refused"
+        mismatch_kind = (
+            "connectivity_state_mismatch" if comparison.get("status") == "failed" else "connectivity_state_refused"
+        )
         status = "failed" if comparison.get("status") == "failed" else "refused"
         reason = "edge_state_mismatch" if status == "failed" else f"edge_state_{comparison.get('reason', 'refused')}"
         return {
@@ -2775,7 +3059,11 @@ def _connectivity_state_check(
 
 def _project_ssa_outputs(function: dict[str, Any], names: list[str]) -> dict[str, Any]:
     outputs = function.get("outputs", {}) if isinstance(function.get("outputs"), dict) else {}
-    source_assignments = {str(item["id"]): item for item in function.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
+    source_assignments = {
+        str(item["id"]): item
+        for item in function.get("assignments", []) or []
+        if isinstance(item, dict) and "id" in item
+    }
     assignments: list[dict[str, Any]] = []
     memo: dict[str, str] = {}
     term_cache: dict[int, dict[str, Any]] = {}
@@ -2870,7 +3158,9 @@ def _ssa_detail_inputs(detail: Any) -> set[str]:
     return {str(name) for name in detail.get("inputs", []) or []}
 
 
-def _apply_loop_scc_gate(results: list[dict[str, Any]], *, region_exempt_functions: set[str] | None = None) -> dict[str, Any]:
+def _apply_loop_scc_gate(
+    results: list[dict[str, Any]], *, region_exempt_functions: set[str] | None = None
+) -> dict[str, Any]:
     region_exempt_functions = region_exempt_functions or set()
     by_function: dict[str, dict[int, tuple[int, dict[str, Any]]]] = defaultdict(dict)
     for index, result in enumerate(results):
@@ -2909,7 +3199,9 @@ def _apply_loop_scc_gate(results: list[dict[str, Any]], *, region_exempt_functio
                     "status": status,
                     "block_deltas": [_format_ssa_delta(delta) for delta in component],
                     "block_count": len(component),
-                    "edge_count": sum(1 for source in component for target in graph.get(source, set()) if target in component),
+                    "edge_count": sum(
+                        1 for source in component for target in graph.get(source, set()) if target in component
+                    ),
                     "member_statuses": dict(sorted(statuses.items())),
                 }
             )
@@ -2949,7 +3241,9 @@ def _apply_call_scc_gate(results: list[dict[str, Any]]) -> dict[str, Any]:
             graph.setdefault(target_id, set())
 
     call_results: list[dict[str, Any]] = []
-    for component in _strongly_connected_components({key: {target for target in value if target in graph} for key, value in graph.items()}):
+    for component in _strongly_connected_components(
+        {key: {target for target in value if target in graph} for key, value in graph.items()}
+    ):
         has_self_call = len(component) == 1 and component[0] in graph.get(component[0], set())
         if len(component) <= 1 and not has_self_call:
             continue
@@ -2968,9 +3262,14 @@ def _apply_call_scc_gate(results: list[dict[str, Any]]) -> dict[str, Any]:
             {
                 "status": status,
                 "reason": reason,
-                "functions": [{"id": function_id, "name": names_by_function.get(function_id, function_id)} for function_id in component],
+                "functions": [
+                    {"id": function_id, "name": names_by_function.get(function_id, function_id)}
+                    for function_id in component
+                ],
                 "function_count": len(component),
-                "edge_count": sum(1 for source in component for target in graph.get(source, set()) if target in component),
+                "edge_count": sum(
+                    1 for source in component for target in graph.get(source, set()) if target in component
+                ),
                 "member_statuses": dict(sorted(status_counts.items())),
             }
         )
@@ -3049,7 +3348,12 @@ def _compare_functions(
     try:
         import z3  # type: ignore
     except Exception:  # noqa: BLE001
-        return {"status": "refused", "reason": "unsupported_ir", "mismatches": [{"kind": "z3_unavailable"}], "solver_time_ms": 0}
+        return {
+            "status": "refused",
+            "reason": "unsupported_ir",
+            "mismatches": [{"kind": "z3_unavailable"}],
+            "solver_time_ms": 0,
+        }
 
     import time
 
@@ -3073,7 +3377,12 @@ def _compare_functions(
         }
     output_regs = sorted(oracle_output_names)
     if not output_regs:
-        return {"status": "refused", "reason": "unsupported_ir", "mismatches": [{"kind": "no_common_outputs"}], "solver_time_ms": 0}
+        return {
+            "status": "refused",
+            "reason": "unsupported_ir",
+            "mismatches": [{"kind": "no_common_outputs"}],
+            "solver_time_ms": 0,
+        }
 
     inputs = _z3_inputs(oracle, candidate, z3)
     solver = z3.Solver()
@@ -3081,8 +3390,12 @@ def _compare_functions(
     _add_z3_input_constraints(solver, inputs, input_constraints or [], z3)
     differing: list[Any] = []
     pairs: list[tuple[str, Any, Any]] = []
-    oracle_assignments = {item["id"]: item for item in oracle.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
-    candidate_assignments = {item["id"]: item for item in candidate.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
+    oracle_assignments = {
+        item["id"]: item for item in oracle.get("assignments", []) or [] if isinstance(item, dict) and "id" in item
+    }
+    candidate_assignments = {
+        item["id"]: item for item in candidate.get("assignments", []) or [] if isinstance(item, dict) and "id" in item
+    }
     oracle_cache: dict[str, Any] = {}
     candidate_cache: dict[str, Any] = {}
     for reg in output_regs:
@@ -3112,11 +3425,20 @@ def _compare_functions(
     status = solver.check()
     elapsed = int((time.monotonic() - started) * 1000)
     if status == z3.unknown:
-        return {"status": "refused", "reason": "timeout", "mismatches": [{"kind": "z3_unknown", "detail": solver.reason_unknown()}], "solver_time_ms": elapsed}
+        return {
+            "status": "refused",
+            "reason": "timeout",
+            "mismatches": [{"kind": "z3_unknown", "detail": solver.reason_unknown()}],
+            "solver_time_ms": elapsed,
+        }
     if status != z3.sat:
         return {"status": "passed", "reason": None, "mismatches": [], "solver_time_ms": elapsed}
     model = solver.model()
-    counterexample = {name: normalize_hex(model.eval(value, model_completion=True).as_long(), width=width // 4) for name, (value, width) in inputs.items() if width > 0}
+    counterexample = {
+        name: normalize_hex(model.eval(value, model_completion=True).as_long(), width=width // 4)
+        for name, (value, width) in inputs.items()
+        if width > 0
+    }
     mismatches: list[dict[str, Any]] = []
     for reg, oracle_expr, candidate_expr in pairs:
         if _is_z3_array(oracle_expr, z3) or _is_z3_array(candidate_expr, z3):
@@ -3174,7 +3496,9 @@ def _ssa_function_report_detail(function: dict[str, Any] | None) -> dict[str, An
         "function_entry": function.get("function_entry") if isinstance(function.get("function_entry"), dict) else None,
         "entry": function.get("entry"),
         "jumpkind": source.get("jumpkind"),
-        "transfer": source.get("transfer") if isinstance(source.get("transfer"), dict) else _transfer_info_from_instructions(source),
+        "transfer": source.get("transfer")
+        if isinstance(source.get("transfer"), dict)
+        else _transfer_info_from_instructions(source),
         "instruction_count": source.get("instruction_count", len(instructions)),
         "instructions": instructions,
         "instructions_truncated": 0,
@@ -3217,7 +3541,17 @@ def _ssa_region_report_detail(group: list[dict[str, Any]] | None) -> dict[str, A
         "function_entry": first.get("function_entry"),
         "jumpkind": first.get("jumpkind"),
         "instructions": instructions,
-        "instructions_truncated": max(0, sum(len((part.get("source", {}) if isinstance(part.get("source"), dict) else {}).get("instructions", []) or []) for part in ordered) - len(instructions)),
+        "instructions_truncated": max(
+            0,
+            sum(
+                len(
+                    (part.get("source", {}) if isinstance(part.get("source"), dict) else {}).get("instructions", [])
+                    or []
+                )
+                for part in ordered
+            )
+            - len(instructions),
+        ),
     }
 
 
@@ -3261,7 +3595,9 @@ def _abi_functions(abi_manifest: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _abi_data_segment_para(abi_manifest: dict[str, Any]) -> int:
-    contract = abi_manifest.get("data_segment_contract") if isinstance(abi_manifest.get("data_segment_contract"), dict) else {}
+    contract = (
+        abi_manifest.get("data_segment_contract") if isinstance(abi_manifest.get("data_segment_contract"), dict) else {}
+    )
     for key in ("static_data_segment", "link_data_segment", "data_segment"):
         value = _optional_int(contract.get(key))
         if value is not None:
@@ -3350,7 +3686,10 @@ def _summarize_abi_function(
             if value is not None:
                 block_by_key[value & 0xFFFF] = part
     callsite_ordinals = _abi_callsite_ordinals(parts)
-    start = min(parts, key=lambda item: int((item.get("part", {}) if isinstance(item.get("part"), dict) else {}).get("index", 0)))
+    start = min(
+        parts,
+        key=lambda item: int((item.get("part", {}) if isinstance(item.get("part"), dict) else {}).get("index", 0)),
+    )
     state = _initial_abi_state(abi_function, observables=observables, data_segment_para=data_segment_para)
     compose_stats = {"blocks_composed": 0, "branch_merges": 0, "branch_prunes": 0, "loop_cuts": 0}
     try:
@@ -3369,7 +3708,9 @@ def _summarize_abi_function(
         if terminal_count <= 0:
             raise LowerFailure("loop_bound_no_terminal", "bounded loop summary did not reach a return path")
         if require_complete_paths and compose_stats["loop_cuts"] > 0:
-            raise LowerFailure("loop_bound_incomplete", f"bounded loop summary cut {compose_stats['loop_cuts']} path(s)")
+            raise LowerFailure(
+                "loop_bound_incomplete", f"bounded loop summary cut {compose_stats['loop_cuts']} path(s)"
+            )
         summary_function = _materialize_abi_summary(
             start,
             final_state,
@@ -3399,7 +3740,9 @@ def _initial_abi_state(
     data_segment_para: int = 0x0100,
 ) -> dict[str, dict[str, Any]]:
     if abi_function is None:
-        state = {name: {"op": "input", "name": name, "width": width} for _offset, (name, width) in REG_BY_OFFSET.items()}
+        state = {
+            name: {"op": "input", "name": name, "width": width} for _offset, (name, width) in REG_BY_OFFSET.items()
+        }
         state["memory"] = {"op": "mem_input", "name": "mem", "addr_width": 32, "value_width": 8}
         return state
 
@@ -3425,7 +3768,11 @@ def _initial_abi_state(
         if name in symbolic_regs:
             state[name] = {"op": "input", "name": name, "width": width}
         else:
-            state[name] = {"op": "const", "value": normalize_hex(defaults.get(name, 0), width=max(1, width // 4)), "width": width}
+            state[name] = {
+                "op": "const",
+                "value": normalize_hex(defaults.get(name, 0), width=max(1, width // 4)),
+                "width": width,
+            }
     state["memory"] = _initial_abi_memory(abi_function, state)
     return state
 
@@ -3516,7 +3863,9 @@ def _compose_abi_state(
     if key in path and max_loop_unroll <= 0:
         raise LowerFailure("unsupported_ir", f"loop or repeated block reached at {normalize_hex(key, width=4)}")
     source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
-    assignments = {str(item["id"]): item for item in block.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
+    assignments = {
+        str(item["id"]): item for item in block.get("assignments", []) or [] if isinstance(item, dict) and "id" in item
+    }
     state = dict(incoming_state)
     block_outputs = block.get("outputs", {}) if isinstance(block.get("outputs"), dict) else {}
     inline_cache: dict[str, dict[str, Any]] = {}
@@ -3537,7 +3886,10 @@ def _compose_abi_state(
         return state, 1
     transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
     if transfer.get("kind") == "direct_successors" and "ip" not in block_outputs:
-        raise LowerFailure("branch_predicate_unobserved", "direct-successor block requires `ip` in SSA outputs for function-level composition")
+        raise LowerFailure(
+            "branch_predicate_unobserved",
+            "direct-successor block requires `ip` in SSA outputs for function-level composition",
+        )
     ip_term = state.get("ip")
     if ip_term is None:
         raise LowerFailure("unsupported_ir", "function-level ABI summary requires `ip` in SSA outputs")
@@ -3642,7 +3994,9 @@ def _compose_abi_summary_call(
     summary = _abi_call_summary_for_block(block, abi_function, callsite_ordinals=callsite_ordinals)
     if summary is None:
         context = _callsite_error_context(block, label="no matching callee summary")
-        raise LowerFailure("callee_summary_missing", f"function summary stops at a call with no matching callee summary; {context}")
+        raise LowerFailure(
+            "callee_summary_missing", f"function summary stops at a call with no matching callee summary; {context}"
+        )
     source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
     transfer = source.get("transfer", {}) if isinstance(source.get("transfer"), dict) else {}
     fallthrough = transfer.get("fallthrough", {}) if isinstance(transfer.get("fallthrough"), dict) else {}
@@ -3659,7 +4013,9 @@ def _compose_abi_summary_call(
         context = _callsite_error_context(block, label="missing post-call sp")
         raise LowerFailure("call_boundary", f"callee summary requires `sp` in SSA outputs; {context}")
 
-    _record_abi_call_arguments(call_state, summary, call_key=call_key, post_call_sp=post_call_sp, return_bytes=return_bytes)
+    _record_abi_call_arguments(
+        call_state, summary, call_key=call_key, post_call_sp=post_call_sp, return_bytes=return_bytes
+    )
     _apply_abi_call_returns_and_clobbers(call_state, summary, call_key=call_key)
     _apply_abi_call_memory_effects(call_state, summary, call_key=call_key, data_segment_para=data_segment_para)
 
@@ -3685,10 +4041,14 @@ def _compose_abi_balanced_ignored_call(
     policy = str(abi_function.get("ssa_call_policy") or "ignore_balanced").strip().lower()
     if policy not in {"ignore", "ignore_balanced", "ignore-call", "balanced_ignore", "msc_prologue_stack_check"}:
         context = _callsite_error_context(block, label="no callee summary policy")
-        raise LowerFailure("call_boundary", f"function summary stops at a call; callee summaries are required; {context}")
+        raise LowerFailure(
+            "call_boundary", f"function summary stops at a call; callee summaries are required; {context}"
+        )
     if policy == "msc_prologue_stack_check" and not _is_msc_stack_check_prologue_call(block):
         context = _callsite_error_context(block, label="msc stack check policy mismatch")
-        raise LowerFailure("call_boundary", f"msc_prologue_stack_check only applies to the entry prologue helper call; {context}")
+        raise LowerFailure(
+            "call_boundary", f"msc_prologue_stack_check only applies to the entry prologue helper call; {context}"
+        )
     source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
     transfer = source.get("transfer", {}) if isinstance(source.get("transfer"), dict) else {}
     fallthrough = transfer.get("fallthrough", {}) if isinstance(transfer.get("fallthrough"), dict) else {}
@@ -3731,11 +4091,7 @@ def _callsite_error_context(block: dict[str, Any], *, label: str) -> str:
         callsite_ip = " / ".join(parts)
     else:
         callsite_ip = "<unknown>"
-    target_text = (
-        f"target=0x{target_low16:04x}"
-        if target_low16 is not None
-        else "target=<unknown>"
-    )
+    target_text = f"target=0x{target_low16:04x}" if target_low16 is not None else "target=<unknown>"
     if target_linear is not None:
         target_text = f"{target_text} linear=0x{target_linear:04x}"
     if fallthrough_low16 is not None:
@@ -3811,9 +4167,7 @@ def _abi_call_summary_for_block(
     if len(explicit_matches) == 1:
         return explicit_matches[0]
     ordinal_matches = [
-        summary
-        for summary in matching_target
-        if _abi_call_summary_matches_ordinal(summary, callsite_info)
+        summary for summary in matching_target if _abi_call_summary_matches_ordinal(summary, callsite_info)
     ]
     if len(ordinal_matches) == 1:
         return ordinal_matches[0]
@@ -4044,7 +4398,9 @@ def _record_abi_call_arguments(
     ss_term = state.get("ss")
     memory = state.get("memory")
     if not isinstance(ss_term, dict) or not isinstance(memory, dict):
-        raise LowerFailure("callee_summary_missing", "callee summary argument capture requires `ss` and memory in SSA state")
+        raise LowerFailure(
+            "callee_summary_missing", "callee summary argument capture requires `ss` and memory in SSA state"
+        )
     next_stack_offset = return_bytes
     for index, arg in enumerate(_abi_call_argument_descriptors(summary)):
         name = _abi_call_argument_name(arg, index)
@@ -4053,7 +4409,9 @@ def _record_abi_call_arguments(
         if location:
             value = state.get(location)
             if not isinstance(value, dict):
-                raise LowerFailure("callee_summary_missing", f"callee summary register argument `{location}` is unavailable")
+                raise LowerFailure(
+                    "callee_summary_missing", f"callee summary register argument `{location}` is unavailable"
+                )
         else:
             offset = _optional_int(arg.get("entry_sp_offset") or arg.get("sp_offset") or arg.get("offset"))
             if offset is None:
@@ -4088,7 +4446,9 @@ def _abi_call_argument_name(arg: dict[str, Any], index: int) -> str:
     return re.sub(r"[^A-Za-z0-9_]+", "_", raw).strip("_") or f"arg{index}"
 
 
-def _apply_abi_call_returns_and_clobbers(state: dict[str, dict[str, Any]], summary: dict[str, Any], *, call_key: str) -> None:
+def _apply_abi_call_returns_and_clobbers(
+    state: dict[str, dict[str, Any]], summary: dict[str, Any], *, call_key: str
+) -> None:
     reg_widths = {name: width for _offset, (name, width) in REG_BY_OFFSET.items()}
     returns = {_abi_location_name(item) for item in summary.get("returns", []) or []}
     returns.discard("")
@@ -4126,7 +4486,10 @@ def _apply_abi_call_memory_effects(
         if not isinstance(effect, dict):
             continue
         if _abi_call_effect_is_broad_memory(effect):
-            name = re.sub(r"[^A-Za-z0-9_]+", "_", str(effect.get("name") or f"memory{index}")).strip("_") or f"memory{index}"
+            name = (
+                re.sub(r"[^A-Za-z0-9_]+", "_", str(effect.get("name") or f"memory{index}")).strip("_")
+                or f"memory{index}"
+            )
             memory = {
                 "op": "mem_input",
                 "name": f"calleffect_{call_key}_{name}_memory",
@@ -4174,7 +4537,9 @@ def _abi_call_effect_has_concrete_range(effect: dict[str, Any]) -> bool:
     return offset is not None and size is not None and size > 0
 
 
-def _abi_call_effect_value(effect: dict[str, Any], state: dict[str, dict[str, Any]], *, call_key: str, index: int, width: int) -> dict[str, Any]:
+def _abi_call_effect_value(
+    effect: dict[str, Any], state: dict[str, dict[str, Any]], *, call_key: str, index: int, width: int
+) -> dict[str, Any]:
     if "value" in effect:
         value = _optional_int(effect.get("value"))
         if value is None:
@@ -4182,7 +4547,11 @@ def _abi_call_effect_value(effect: dict[str, Any], state: dict[str, dict[str, An
         return {"op": "const", "value": normalize_hex(value & _mask(width), width=max(1, width // 4)), "width": width}
     arg_name = str(effect.get("arg") or effect.get("argument") or "")
     if arg_name:
-        matches = [value for key, value in state.items() if key.startswith(f"callarg:{call_key}:") and key.rsplit(":", 1)[-1] == arg_name]
+        matches = [
+            value
+            for key, value in state.items()
+            if key.startswith(f"callarg:{call_key}:") and key.rsplit(":", 1)[-1] == arg_name
+        ]
         if len(matches) == 1:
             return _coerce_json_width(matches[0], width)
         raise LowerFailure("callee_summary_missing", f"callee memory effect references unknown argument `{arg_name}`")
@@ -4250,7 +4619,9 @@ def _compose_or_terminal(
     )
 
 
-def _direct_branch_targets(term: dict[str, Any], block_by_key: dict[int, dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+def _direct_branch_targets(
+    term: dict[str, Any], block_by_key: dict[int, dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
     if term.get("op") != "ite":
         return None
     args = [arg for arg in term.get("args", []) or [] if isinstance(arg, dict)]
@@ -4355,7 +4726,9 @@ def _materialize_abi_summary(
             "ir": (start.get("source", {}) if isinstance(start.get("source"), dict) else {}).get("ir"),
             "jumpkind": "Ijk_FunctionSummary",
             "instruction_count": sum(
-                int((part.get("source", {}) if isinstance(part.get("source"), dict) else {}).get("instruction_count", 0))
+                int(
+                    (part.get("source", {}) if isinstance(part.get("source"), dict) else {}).get("instruction_count", 0)
+                )
                 for part in [start]
             ),
             "instructions": [],
@@ -4455,7 +4828,9 @@ def _effect_segment_term(
     return copy.deepcopy(fallback)
 
 
-def _inline_ssa_json_term(term: dict[str, Any], *, assignments: dict[str, dict[str, Any]], cache: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _inline_ssa_json_term(
+    term: dict[str, Any], *, assignments: dict[str, dict[str, Any]], cache: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
     if "ref" in term:
         ident = str(term["ref"])
         if ident in cache:
@@ -4508,9 +4883,7 @@ def _substitute_abi_inputs(
     cache[key] = copied
     if isinstance(term.get("args"), list):
         copied["args"] = [
-            _substitute_abi_inputs(arg, state, cache=cache)
-            for arg in term["args"]
-            if isinstance(arg, dict)
+            _substitute_abi_inputs(arg, state, cache=cache) for arg in term["args"] if isinstance(arg, dict)
         ]
     return copied
 
@@ -4564,7 +4937,9 @@ def _materialized_term_key(term: dict[str, Any]) -> str:
         if op == "input":
             parts.append(("input", str(arg.get("name")), int(arg.get("width", 16))))
         elif op == "mem_input":
-            parts.append(("mem_input", str(arg.get("name")), int(arg.get("addr_width", 32)), int(arg.get("value_width", 8))))
+            parts.append(
+                ("mem_input", str(arg.get("name")), int(arg.get("addr_width", 32)), int(arg.get("value_width", 8)))
+            )
         elif op == "const":
             parts.append(("const", str(arg.get("value")), int(arg.get("width", 16))))
         else:
@@ -4593,7 +4968,9 @@ def _stable_abi_summary_id(body_without_id: dict[str, Any]) -> str:
 def _term_input_items(terms: Any, assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     widths: dict[str, int] = {}
     memory_inputs: set[str] = set()
-    assignment_by_id = {str(item.get("id")): item for item in assignments if isinstance(item, dict) and item.get("id") is not None}
+    assignment_by_id = {
+        str(item.get("id")): item for item in assignments if isinstance(item, dict) and item.get("id") is not None
+    }
     seen_terms: set[int] = set()
     seen_refs: set[str] = set()
 
@@ -4701,7 +5078,9 @@ class _SemanticEqualityCache:
     def count(self) -> int:
         return len({id(fact) for fact in self._facts.values()})
 
-    def record(self, oracle_function: dict[str, Any], candidate_function: dict[str, Any], *, proof: str, scope: str = "block") -> None:
+    def record(
+        self, oracle_function: dict[str, Any], candidate_function: dict[str, Any], *, proof: str, scope: str = "block"
+    ) -> None:
         fact_without_id = {
             "kind": "semantic_equality_fact",
             "scope": scope,
@@ -4717,7 +5096,9 @@ class _SemanticEqualityCache:
             for candidate_key in candidate_keys:
                 self._facts[(oracle_key, candidate_key)] = fact
 
-    def lookup_call_targets(self, oracle_targets: list[dict[str, Any]], candidate_targets: list[dict[str, Any]]) -> dict[str, Any] | None:
+    def lookup_call_targets(
+        self, oracle_targets: list[dict[str, Any]], candidate_targets: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         for oracle_target in oracle_targets:
             for candidate_target in candidate_targets:
                 for oracle_key in _semantic_cache_keys(oracle_target):
@@ -4762,8 +5143,12 @@ def _compare_call_targets(
     proof_cache: _SemanticEqualityCache | None = None,
     require_proven_call_targets: bool = False,
 ) -> dict[str, Any] | None:
-    oracle_call = _resolve_call_target(oracle_function, oracle_index, allow_aliased_call_targets=allow_aliased_call_targets)
-    candidate_call = _resolve_call_target(candidate_function, candidate_index, allow_aliased_call_targets=allow_aliased_call_targets)
+    oracle_call = _resolve_call_target(
+        oracle_function, oracle_index, allow_aliased_call_targets=allow_aliased_call_targets
+    )
+    candidate_call = _resolve_call_target(
+        candidate_function, candidate_index, allow_aliased_call_targets=allow_aliased_call_targets
+    )
     if oracle_call is None and candidate_call is None:
         return None
     equivalent, reason, proof_fact, unproven_reason = _call_targets_equivalent(
@@ -4798,7 +5183,9 @@ def _resolve_call_target(
     raw = _direct_call_target(function)
     if raw is None:
         return {"kind": "unresolved", "reason": "call target is not a direct constant"}
-    target, aliases, alias_reason = _function_for_call_target(raw, index, allow_aliased_call_targets=allow_aliased_call_targets)
+    target, aliases, alias_reason = _function_for_call_target(
+        raw, index, allow_aliased_call_targets=allow_aliased_call_targets
+    )
     detail = {
         "kind": "direct",
         "raw": normalize_hex(raw),
@@ -4888,10 +5275,17 @@ def _same_entry_aliases(functions: list[dict[str, Any]]) -> list[dict[str, Any]]
         groups.setdefault(key, []).append(function)
     if len(groups) != 1:
         return []
-    return sorted(functions, key=lambda item: str((item.get("function", {}) if isinstance(item.get("function"), dict) else {}).get("name", "")))
+    return sorted(
+        functions,
+        key=lambda item: str(
+            (item.get("function", {}) if isinstance(item.get("function"), dict) else {}).get("name", "")
+        ),
+    )
 
 
-def _ssa_function_brief(function: dict[str, Any] | None, *, instruction_limit: int = CALL_TARGET_PREVIEW_INSTRUCTION_LIMIT) -> dict[str, Any] | None:
+def _ssa_function_brief(
+    function: dict[str, Any] | None, *, instruction_limit: int = CALL_TARGET_PREVIEW_INSTRUCTION_LIMIT
+) -> dict[str, Any] | None:
     if not isinstance(function, dict):
         return None
     info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
@@ -4966,14 +5360,19 @@ def _call_targets_equivalent(
     for oracle_target in oracle_targets:
         oracle_id = str(oracle_target.get("id") or "")
         oracle_name = str(oracle_target.get("name") or "")
-        if any(oracle_id and oracle_id == str(candidate_target.get("id") or "") for candidate_target in candidate_targets):
+        if any(
+            oracle_id and oracle_id == str(candidate_target.get("id") or "") for candidate_target in candidate_targets
+        ):
             unproven_reason = "direct call targets have the same function id"
             if semantic_reason is not None:
                 return True, unproven_reason, None, None
             if require_proven_call_targets:
                 return False, "callee_not_proven", None, unproven_reason
             return True, unproven_reason, None, None
-        if any(oracle_name and oracle_name == str(candidate_target.get("name") or "") for candidate_target in candidate_targets):
+        if any(
+            oracle_name and oracle_name == str(candidate_target.get("name") or "")
+            for candidate_target in candidate_targets
+        ):
             unproven_reason = "direct call targets have the same function name"
             if semantic_reason is not None:
                 return True, unproven_reason, None, None
@@ -5011,14 +5410,20 @@ def _normalized_symbol_name(name: str) -> str:
     return name.lstrip("_").lower()
 
 
-def _call_target_semantic_equivalence_reason(oracle_targets: list[dict[str, Any]], candidate_targets: list[dict[str, Any]]) -> str | None:
+def _call_target_semantic_equivalence_reason(
+    oracle_targets: list[dict[str, Any]], candidate_targets: list[dict[str, Any]]
+) -> str | None:
     for oracle_target in oracle_targets:
         for candidate_target in candidate_targets:
             oracle_block_hash = oracle_target.get("machine_code_sha256")
             candidate_block_hash = candidate_target.get("machine_code_sha256")
             oracle_block_size = oracle_target.get("machine_code_size")
             candidate_block_size = candidate_target.get("machine_code_size")
-            if oracle_block_hash and oracle_block_hash == candidate_block_hash and oracle_block_size == candidate_block_size:
+            if (
+                oracle_block_hash
+                and oracle_block_hash == candidate_block_hash
+                and oracle_block_size == candidate_block_size
+            ):
                 return "direct call target entry blocks have identical machine code"
             oracle_semantic = oracle_target.get("semantic_ssa_id")
             candidate_semantic = candidate_target.get("semantic_ssa_id")
@@ -5027,7 +5432,9 @@ def _call_target_semantic_equivalence_reason(oracle_targets: list[dict[str, Any]
     return None
 
 
-def _mapped_call_target(oracle_id: str, oracle_name: str, mapping_document: dict[str, Any] | None) -> dict[str, Any] | None:
+def _mapped_call_target(
+    oracle_id: str, oracle_name: str, mapping_document: dict[str, Any] | None
+) -> dict[str, Any] | None:
     if not isinstance(mapping_document, dict) or mapping_document.get("schema") != "dosunit.mapping.v1":
         return None
     for item in mapping_document.get("functions", []) or []:
@@ -5067,8 +5474,12 @@ def _prepare_call_normalized_functions(
         target_value = None
 
     if oracle_raw is not None and candidate_raw is not None:
-        oracle_copy = _with_call_target_output(oracle_function, target_value if target_value is not None else oracle_raw)
-        candidate_copy = _with_call_target_output(candidate_function, target_value if target_value is not None else candidate_raw)
+        oracle_copy = _with_call_target_output(
+            oracle_function, target_value if target_value is not None else oracle_raw
+        )
+        candidate_copy = _with_call_target_output(
+            candidate_function, target_value if target_value is not None else candidate_raw
+        )
     else:
         oracle_copy = copy.deepcopy(oracle_function)
         candidate_copy = copy.deepcopy(candidate_function)
@@ -5138,7 +5549,12 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
             if pair.get("reason") in {"memory_operand", "absolute_memory_operand"}:
                 memory_pairs.append((int(pair["oracle"]), int(pair["candidate"])))
                 pairs.append(pair)
-            elif pair.get("reason") in {"pointer_immediate", "pointer_arithmetic", "ivt_segment", "data_segment_immediate"}:
+            elif pair.get("reason") in {
+                "pointer_immediate",
+                "pointer_arithmetic",
+                "ivt_segment",
+                "data_segment_immediate",
+            }:
                 pairs.append(pair)
             else:
                 deferred.append(pair)
@@ -5169,7 +5585,9 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
     return _unique_layout_pairs(pairs)
 
 
-def _control_transfer_layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: dict[str, Any]) -> list[dict[str, Any]]:
+def _control_transfer_layout_constant_pairs(
+    oracle_function: dict[str, Any], candidate_function: dict[str, Any]
+) -> list[dict[str, Any]]:
     oracle_successors = _successor_low16_by_delta(oracle_function)
     candidate_successors = _successor_low16_by_delta(candidate_function)
     pairs: list[dict[str, Any]] = []
@@ -5246,7 +5664,9 @@ def _instruction_layout_constant_pairs(
             data_segment_immediate=data_segment_immediate,
             pointer_arithmetic_regs=pointer_arithmetic_regs,
         )
-        if reason not in {"absolute_memory_operand", "data_segment_immediate"} and not _looks_layout_constant(oracle_value, candidate_value):
+        if reason not in {"absolute_memory_operand", "data_segment_immediate"} and not _looks_layout_constant(
+            oracle_value, candidate_value
+        ):
             continue
         if reason is None:
             pairs.append(
@@ -5312,7 +5732,12 @@ def _layout_pair_reason(
         return "absolute_memory_operand"
     oracle_first = oracle_op.split(",", 1)[0].strip()
     candidate_first = candidate_op.split(",", 1)[0].strip()
-    if mnemonic == "mov" and data_segment_immediate and oracle_first == candidate_first and oracle_first in {"ax", "bx", "cx", "dx"}:
+    if (
+        mnemonic == "mov"
+        and data_segment_immediate
+        and oracle_first == candidate_first
+        and oracle_first in {"ax", "bx", "cx", "dx"}
+    ):
         return "data_segment_immediate"
     if mnemonic in {"add", "sub"} and oracle_first == candidate_first and oracle_first in pointer_arithmetic_regs:
         return "pointer_arithmetic"
@@ -5359,7 +5784,9 @@ def _data_segment_immediate_indexes(
             continue
         if not _number_tokens(oracle_operands[1]) or not _number_tokens(candidate_operands[1]):
             continue
-        if _is_mov_segment_from_register(oracle_instructions[index + 1], "ds", oracle_operands[0]) and _is_mov_segment_from_register(
+        if _is_mov_segment_from_register(
+            oracle_instructions[index + 1], "ds", oracle_operands[0]
+        ) and _is_mov_segment_from_register(
             candidate_instructions[index + 1],
             "ds",
             candidate_operands[0],
@@ -5392,7 +5819,9 @@ def _pointer_arithmetic_evidence_by_index(
         candidate_reg = _pointer_arithmetic_destination_register(candidate)
         if oracle_reg is None or oracle_reg != candidate_reg:
             continue
-        if _register_used_as_memory_base_later(oracle_instructions, index + 1, oracle_reg) and _register_used_as_memory_base_later(
+        if _register_used_as_memory_base_later(
+            oracle_instructions, index + 1, oracle_reg
+        ) and _register_used_as_memory_base_later(
             candidate_instructions,
             index + 1,
             candidate_reg,
@@ -5518,7 +5947,9 @@ def _canonical_call_target_token(call_compare: dict[str, Any]) -> str:
         oracle = proof_fact.get("oracle") if isinstance(proof_fact.get("oracle"), dict) else {}
         candidate = proof_fact.get("candidate") if isinstance(proof_fact.get("candidate"), dict) else {}
         oracle_key = str(oracle.get("semantic_ssa_id") or oracle.get("id") or oracle.get("name") or "unknown-oracle")
-        candidate_key = str(candidate.get("semantic_ssa_id") or candidate.get("id") or candidate.get("name") or "unknown-candidate")
+        candidate_key = str(
+            candidate.get("semantic_ssa_id") or candidate.get("id") or candidate.get("name") or "unknown-candidate"
+        )
         if proof_id:
             return f"callee-proof:{proof_id}"
         return f"callee-proof:{proof_fact.get('proof')}:{oracle_key}:{candidate_key}"
@@ -5539,7 +5970,9 @@ def _normalize_call_return_store(function: dict[str, Any]) -> tuple[dict[str, An
     if not isinstance(ref, str):
         return function, {"applied": False, "reason": "no memory output store to normalize"}
     assignments = list(function.get("assignments", []) or [])
-    index = next((idx for idx, item in enumerate(assignments) if isinstance(item, dict) and item.get("id") == ref), None)
+    index = next(
+        (idx for idx, item in enumerate(assignments) if isinstance(item, dict) and item.get("id") == ref), None
+    )
     if index is None:
         return function, {"applied": False, "reason": "memory output assignment was not found"}
     store = assignments[index]
@@ -5552,13 +5985,17 @@ def _normalize_call_return_store(function: dict[str, Any]) -> tuple[dict[str, An
     fallthrough = _call_fallthrough_linear(function)
     if value is None or fallthrough is None:
         if fallthrough is not None:
-            chain_normalized, chain_result = _normalize_call_return_store_chain(function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough)
+            chain_normalized, chain_result = _normalize_call_return_store_chain(
+                function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough
+            )
             if chain_result.get("applied"):
                 return chain_normalized, chain_result
         return function, {"applied": False, "reason": "final store value or call fall-through was not constant"}
     width = int(args[2].get("width", 16)) if isinstance(args[2], dict) else 16
     if width <= 8:
-        chain_normalized, chain_result = _normalize_call_return_store_chain(function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough)
+        chain_normalized, chain_result = _normalize_call_return_store_chain(
+            function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough
+        )
         if chain_result.get("applied"):
             return chain_normalized, chain_result
         return function, {
@@ -5570,7 +6007,9 @@ def _normalize_call_return_store(function: dict[str, Any]) -> tuple[dict[str, An
         }
     mask = _mask(width)
     if (value & mask) != (fallthrough & mask):
-        chain_normalized, chain_result = _normalize_call_return_store_chain(function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough)
+        chain_normalized, chain_result = _normalize_call_return_store_chain(
+            function, assignments=assignments, memory_ref=ref, fallthrough=fallthrough
+        )
         if chain_result.get("applied"):
             return chain_normalized, chain_result
         return function, {
@@ -5612,7 +6051,14 @@ def _normalize_call_return_store_chain(
         expected_words.add(call_return_ip & 0xFFFF)
     expected_bytes = {(word >> shift) & 0xFF for word in expected_words for shift in (0, 8)}
     while current_ref:
-        index = next((idx for idx, item in enumerate(normalized_assignments) if isinstance(item, dict) and item.get("id") == current_ref), None)
+        index = next(
+            (
+                idx
+                for idx, item in enumerate(normalized_assignments)
+                if isinstance(item, dict) and item.get("id") == current_ref
+            ),
+            None,
+        )
         if index is None:
             break
         store = normalized_assignments[index]
@@ -5621,11 +6067,23 @@ def _normalize_call_return_store_chain(
         args = list(store.get("args", []) or [])
         if len(args) < 3:
             break
-        stored_value = _call_return_store_byte_value(args[2], assignments=by_id, function=function) if isinstance(args[2], dict) else None
-        if stored_value is None or stored_value < 0 or stored_value > 0xFF or (stored_value & 0xFF) not in expected_bytes:
+        stored_value = (
+            _call_return_store_byte_value(args[2], assignments=by_id, function=function)
+            if isinstance(args[2], dict)
+            else None
+        )
+        if (
+            stored_value is None
+            or stored_value < 0
+            or stored_value > 0xFF
+            or (stored_value & 0xFF) not in expected_bytes
+        ):
             if normalized_indexes:
                 break
-            return function, {"applied": False, "reason": "final store chain does not start with call return-address bytes"}
+            return function, {
+                "applied": False,
+                "reason": "final store chain does not start with call return-address bytes",
+            }
         normalized_store = dict(store)
         args[2] = {"op": "const", "value": "0x00", "width": 8}
         normalized_store["args"] = args
@@ -5688,7 +6146,9 @@ def _eval_call_return_term(
     width = max(1, _term_width(term))
     mask = _mask(width)
     if "ref" in term:
-        return _eval_call_return_term(assignments.get(str(term.get("ref"))), assignments=assignments, input_constants=input_constants)
+        return _eval_call_return_term(
+            assignments.get(str(term.get("ref"))), assignments=assignments, input_constants=input_constants
+        )
     op = str(term.get("op") or "")
     if op == "const":
         value = _optional_int(term.get("value"))
@@ -5871,7 +6331,9 @@ def _z3_inputs(oracle: dict[str, Any], candidate: dict[str, Any], z3: Any) -> di
     return inputs
 
 
-def _add_z3_input_constraints(solver: Any, inputs: dict[str, tuple[Any, int]], constraints: list[dict[str, Any]], z3: Any) -> None:
+def _add_z3_input_constraints(
+    solver: Any, inputs: dict[str, tuple[Any, int]], constraints: list[dict[str, Any]], z3: Any
+) -> None:
     for item in constraints:
         if not isinstance(item, dict):
             continue
@@ -5906,10 +6368,16 @@ def _z3_term(
 ) -> Any:
     if "ref" in term:
         if assignments is None:
-            assignments = {item["id"]: item for item in document.get("assignments", []) or [] if isinstance(item, dict) and "id" in item}
+            assignments = {
+                item["id"]: item
+                for item in document.get("assignments", []) or []
+                if isinstance(item, dict) and "id" in item
+            }
         if cache is None:
             cache = {}
-        return _z3_assignment(str(term["ref"]), assignments=assignments, document=document, inputs=inputs, z3=z3, cache=cache)
+        return _z3_assignment(
+            str(term["ref"]), assignments=assignments, document=document, inputs=inputs, z3=z3, cache=cache
+        )
     op = term.get("op")
     width = int(term.get("width", 16))
     if op == "input":
@@ -5964,9 +6432,13 @@ def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
         left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
         return _resize_z3(left * right, op_width, width, signed=False, z3=z3)
     if op == "umull":
-        return _resize_z3(args[0], args[0].size(), width, signed=False, z3=z3) * _resize_z3(args[1], args[1].size(), width, signed=False, z3=z3)
+        return _resize_z3(args[0], args[0].size(), width, signed=False, z3=z3) * _resize_z3(
+            args[1], args[1].size(), width, signed=False, z3=z3
+        )
     if op == "smull":
-        return _resize_z3(args[0], args[0].size(), width, signed=True, z3=z3) * _resize_z3(args[1], args[1].size(), width, signed=True, z3=z3)
+        return _resize_z3(args[0], args[0].size(), width, signed=True, z3=z3) * _resize_z3(
+            args[1], args[1].size(), width, signed=True, z3=z3
+        )
     if op == "udiv":
         left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
         return _resize_z3(z3.UDiv(left, right), op_width, width, signed=False, z3=z3)
@@ -5993,40 +6465,66 @@ def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
     if op == "concat":
         return z3.Concat(*args)
     if op == "shl":
-        return _resize_z3(args[0] << _resize_z3(args[1], args[1].size(), args[0].size(), signed=False, z3=z3), args[0].size(), width, signed=False, z3=z3)
+        return _resize_z3(
+            args[0] << _resize_z3(args[1], args[1].size(), args[0].size(), signed=False, z3=z3),
+            args[0].size(),
+            width,
+            signed=False,
+            z3=z3,
+        )
     if op == "lshr":
         return z3.LShR(args[0], _resize_z3(args[1], args[1].size(), args[0].size(), signed=False, z3=z3))
     if op == "ashr":
         return args[0] >> _resize_z3(args[1], args[1].size(), args[0].size(), signed=False, z3=z3)
     if op == "eq":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3
+        )
         return z3.If(left == right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "ne":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3
+        )
         return z3.If(left != right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "ult":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3
+        )
         return z3.If(z3.ULT(left, right), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "ule":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3
+        )
         return z3.If(z3.ULE(left, right), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "ugt":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3
+        )
         return z3.If(z3.UGT(left, right), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "uge":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=False, z3=z3
+        )
         return z3.If(z3.UGE(left, right), z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "slt":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3
+        )
         return z3.If(left < right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "sle":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3
+        )
         return z3.If(left <= right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "sgt":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3
+        )
         return z3.If(left > right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "sge":
-        left, right, _op_width = _align_z3_pair(args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3)
+        left, right, _op_width = _align_z3_pair(
+            args[0], args[1], max(args[0].size(), args[1].size()), signed=True, z3=z3
+        )
         return z3.If(left >= right, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     if op == "zext":
         return _resize_z3(args[0], args[0].size(), width, signed=False, z3=z3)
@@ -6094,7 +6592,9 @@ def _align_z3_widths(left: Any, right: Any, z3: Any) -> tuple[Any, Any]:
     left_width = int(left.size())
     right_width = int(right.size())
     width = max(left_width, right_width)
-    return _resize_z3(left, left_width, width, signed=False, z3=z3), _resize_z3(right, right_width, width, signed=False, z3=z3)
+    return _resize_z3(left, left_width, width, signed=False, z3=z3), _resize_z3(
+        right, right_width, width, signed=False, z3=z3
+    )
 
 
 def _normalized_constant_value(value: int, *, width: int, document: dict[str, Any]) -> int:
@@ -6217,7 +6717,11 @@ def _load_vex_cache(*, cache_dir: Path, exe_digest: str) -> dict[str, Any]:
         return _new_vex_cache(exe_digest)
     if not isinstance(document, dict):
         return _new_vex_cache(exe_digest)
-    if document.get("schema") != LIFTER_CACHE_SCHEMA or document.get("flavor") != "vex" or document.get("exe_sha256") != exe_digest:
+    if (
+        document.get("schema") != LIFTER_CACHE_SCHEMA
+        or document.get("flavor") != "vex"
+        or document.get("exe_sha256") != exe_digest
+    ):
         return _new_vex_cache(exe_digest)
     if not isinstance(document.get("entries"), dict):
         document["entries"] = {}
@@ -6255,7 +6759,12 @@ def _lift_vex_block_cached(
     entries = cache_document.get("entries", {}) if isinstance(cache_document, dict) else {}
     if isinstance(entries, dict) and key in entries:
         entry = entries.get(key)
-        if isinstance(entry, dict) and entry.get("exe_sha256") == exe_digest and "irsb" in entry and isinstance(entry.get("instructions"), list):
+        if (
+            isinstance(entry, dict)
+            and entry.get("exe_sha256") == exe_digest
+            and "irsb" in entry
+            and isinstance(entry.get("instructions"), list)
+        ):
             cache_stats["hits"] += 1
             return LiftedBlock(irsb=entry["irsb"], instructions=list(entry["instructions"]), lifted=False)
         cache_stats["errors"] += 1

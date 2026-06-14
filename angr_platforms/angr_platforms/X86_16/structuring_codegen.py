@@ -169,7 +169,9 @@ class StructuringCodegenPass:
 
             return LoopCodegenInfo(
                 loop_type=loop_type,
-                condition_expr=region.metadata.get("condition") or region.metadata.get("typed_ir_condition_hint") or "cond",
+                condition_expr=region.metadata.get("condition")
+                or region.metadata.get("typed_ir_condition_hint")
+                or "cond",
                 init_stmt=region.metadata.get("init"),
                 increment_stmt=region.metadata.get("increment"),
                 body_regions=body_regions,

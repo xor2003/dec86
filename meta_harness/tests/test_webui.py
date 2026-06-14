@@ -83,7 +83,8 @@ def test_web_ui_serves_state_and_accepts_comments(monkeypatch, tmp_path):
                 "total_tokens": 1234,
                 "cost_usd": 0.25,
             }
-        ) + "\n",
+        )
+        + "\n",
         encoding="utf-8",
     )
     cfg.maintenance_file.write_text(

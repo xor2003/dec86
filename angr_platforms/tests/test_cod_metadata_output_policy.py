@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.cod_extract import CODProcMetadata
 from angr_platforms.X86_16.cod_comment_emitter import format_cod_comment_block
+from angr_platforms.X86_16.cod_extract import CODProcMetadata
+
 from inertia_decompiler import cli
 
 

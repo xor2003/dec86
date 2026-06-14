@@ -73,7 +73,7 @@ class ParseInstr(X86Instruction):
                 prefix_len += 1
 
         return _impl()
-            # self.emu.update_eip(1)
+        # self.emu.update_eip(1)
 
     def parse(self) -> None:
         def _impl():

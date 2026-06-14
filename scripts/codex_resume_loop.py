@@ -8,7 +8,6 @@ import enum
 import json
 import shlex
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -142,7 +141,9 @@ def _goal_met(cfg: LoopConfig) -> StopReason | None:
     return None
 
 
-def _write_marker(cfg: LoopConfig, reason: StopReason, best: IterationResult | None, last: IterationResult | None) -> None:
+def _write_marker(
+    cfg: LoopConfig, reason: StopReason, best: IterationResult | None, last: IterationResult | None
+) -> None:
     cfg.marker_file.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "stop_reason": reason.value,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-
 GREEN_RED = "red"
 GREEN_FOCUSED = "focused-item-green"
 GREEN_CYCLE = "cycle-green"
@@ -45,7 +44,9 @@ def decide_worker_runtime(context: WorkerRuntimeContext) -> PolicyDecision:
                 reason="repeated failed test on a stalled item",
                 actions=(
                     PolicyAction("switch_worker_model", {"model": context.escalated_model}),
-                    PolicyAction("reduce_failure_limit", {"failure_limit": max(1, context.escalated_failure_limit - 1)}),
+                    PolicyAction(
+                        "reduce_failure_limit", {"failure_limit": max(1, context.escalated_failure_limit - 1)}
+                    ),
                 ),
                 details={"escalation_reason": reason},
             )
@@ -84,7 +85,11 @@ def decide_worker_timeout(context: WorkerTimeoutContext) -> PolicyDecision:
     return PolicyDecision(
         name="worker_timeout_retry",
         reason="timeout budget not yet exhausted",
-        actions=(PolicyAction("retry_worker_fresh", {"remaining_budget": context.failure_limit - context.consecutive_failures}),),
+        actions=(
+            PolicyAction(
+                "retry_worker_fresh", {"remaining_budget": context.failure_limit - context.consecutive_failures}
+            ),
+        ),
     )
 
 

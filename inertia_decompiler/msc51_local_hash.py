@@ -12,7 +12,6 @@ with MSC 5.1's hashing mechanism.
 from __future__ import annotations
 
 
-
 def msc51_hash(name: str) -> int:
     """Compute MSC 5.1 bucket index for a local variable name."""
     return sum(ord(c.upper()) for c in name) % 16
@@ -93,9 +92,7 @@ def _collect_named_stack_locals(codegen) -> list[tuple[str, int, object]]:
     return sorted(named_locals, key=lambda x: x[1])
 
 
-def _check_declaration_order_feasible(
-    names: list[str], bucket_assignments: dict[str, int]
-) -> bool:
+def _check_declaration_order_feasible(names: list[str], bucket_assignments: dict[str, int]) -> bool:
     def _impl():
         """Check whether any declaration order could produce the observed bucket assignments.
 

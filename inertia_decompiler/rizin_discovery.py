@@ -178,7 +178,9 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             "subprocess timeout",
         )
         if key is not None:
-            _store_cache_json("recovery", key, {"status": timeout_result.status.value, "offsets": [], "detail": timeout_result.detail})
+            _store_cache_json(
+                "recovery", key, {"status": timeout_result.status.value, "offsets": [], "detail": timeout_result.detail}
+            )
         return timeout_result
     except Exception as ex:
         error_result = RizinDiscoveryResult(
@@ -188,7 +190,9 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             str(ex),
         )
         if key is not None:
-            _store_cache_json("recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail})
+            _store_cache_json(
+                "recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail}
+            )
         return error_result
     if completed.returncode != 0:
         error_result = RizinDiscoveryResult(
@@ -198,7 +202,9 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             f"exit={completed.returncode}",
         )
         if key is not None:
-            _store_cache_json("recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail})
+            _store_cache_json(
+                "recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail}
+            )
         return error_result
     try:
         payload = json.loads(completed.stdout)
@@ -210,7 +216,9 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             "invalid JSON",
         )
         if key is not None:
-            _store_cache_json("recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail})
+            _store_cache_json(
+                "recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail}
+            )
         return error_result
     if not isinstance(payload, list):
         error_result = RizinDiscoveryResult(
@@ -220,7 +228,9 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             "aflj payload is not a list",
         )
         if key is not None:
-            _store_cache_json("recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail})
+            _store_cache_json(
+                "recovery", key, {"status": error_result.status.value, "offsets": [], "detail": error_result.detail}
+            )
         return error_result
     candidates: list[dict[str, object]] = [item for item in payload if isinstance(item, dict)]
     if not candidates:
@@ -250,7 +260,9 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             "no function entries",
         )
         if key is not None:
-            _store_cache_json("recovery", key, {"status": empty_result.status.value, "offsets": [], "detail": empty_result.detail})
+            _store_cache_json(
+                "recovery", key, {"status": empty_result.status.value, "offsets": [], "detail": empty_result.detail}
+            )
         return empty_result
     ordered = sorted(candidates, key=_score_aflj_entry, reverse=True)
     dedup: set[int] = set()
@@ -269,7 +281,9 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             "no valid offsets",
         )
         if key is not None:
-            _store_cache_json("recovery", key, {"status": empty_result.status.value, "offsets": [], "detail": empty_result.detail})
+            _store_cache_json(
+                "recovery", key, {"status": empty_result.status.value, "offsets": [], "detail": empty_result.detail}
+            )
         return empty_result
     if key is not None:
         _store_cache_json(

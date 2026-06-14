@@ -4,7 +4,6 @@ import argparse
 import os
 from pathlib import Path
 
-
 __all__ = ["_build_cli_argument_parser"]
 
 
@@ -69,10 +68,7 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dump-layers",
         action="store_true",
-        help=(
-            "Dump every decompilation-stage C snapshot under a layer directory "
-            "instead of printing to stdout only."
-        ),
+        help=("Dump every decompilation-stage C snapshot under a layer directory instead of printing to stdout only."),
     )
     parser.add_argument(
         "--dump-layer-dir",
@@ -187,9 +183,7 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         "--otel-top-n",
         type=int,
         default=None,
-        help=(
-            "Keep only N slowest spans in compact summaries (default: INERTIA_OTEL_TOP_N, env fallback)."
-        ),
+        help=("Keep only N slowest spans in compact summaries (default: INERTIA_OTEL_TOP_N, env fallback)."),
     )
     parser.add_argument(
         "--otel-min-ms",
@@ -214,8 +208,7 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Write compact telemetry output to stderr (default: INERTIA_OTEL_STDERR, "
-            "false disables stderr summary)."
+            "Write compact telemetry output to stderr (default: INERTIA_OTEL_STDERR, false disables stderr summary)."
         ),
     )
     parser.add_argument(

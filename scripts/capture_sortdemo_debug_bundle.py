@@ -12,13 +12,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "angr_platforms"))
 sys.path.insert(0, str(REPO_ROOT))
 
-from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
 from angr_platforms.X86_16.analysis_helpers import (
     extend_cfg_for_far_calls,
     extend_cfg_for_neighbor_calls,
     patch_interrupt_service_call_sites,
     seed_calling_conventions,
 )
+from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _attach_callsite_summaries_8616,
     _materialize_callsite_prototypes_8616,
@@ -27,16 +27,17 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import build_typed_stack_probe_return_facts_8616
 from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
+
+import inertia_decompiler.cli_function_discovery as function_discovery
 from inertia_decompiler.cli_decompilation import (
     _function_complexity,
     _function_decompilation_profile,
-    _prepare_function_for_decompilation,
     _preferred_decompiler_options,
+    _prepare_function_for_decompilation,
     _regenerate_codegen_text_safely,
     _rewrite_ss_stack_byte_offsets,
     _snapshot_codegen_text,
 )
-import inertia_decompiler.cli_function_discovery as function_discovery
 from inertia_decompiler.disassembly_helpers import _format_asm_range, _format_first_block_asm
 from inertia_decompiler.project_loading import _build_project, _is_blob_only_input
 from inertia_decompiler.x86_16_exact_slice import function_original_addr

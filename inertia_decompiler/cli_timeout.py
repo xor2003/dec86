@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import sys
 
 
@@ -30,7 +29,9 @@ class _AdaptivePerByteTimeoutModel:
         if not self._samples:
             return (0.05, 0.5)
         rates = [elapsed / max(1, byte_count) for byte_count, elapsed in self._samples]
-        overheads = [max(0.0, elapsed - (rate * byte_count)) for (byte_count, elapsed), rate in zip(self._samples, rates)]
+        overheads = [
+            max(0.0, elapsed - (rate * byte_count)) for (byte_count, elapsed), rate in zip(self._samples, rates)
+        ]
         rate = sum(rates) / len(rates)
         overhead = sum(overheads) / len(overheads) if overheads else 0.5
         return max(0.005, rate), max(0.0, overhead)

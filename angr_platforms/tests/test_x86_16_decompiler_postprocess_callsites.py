@@ -67,13 +67,7 @@ def test_sanitize_direct_call_sites_prunes_proven_non_call_entry():
                 )
             )
         ),
-        0x10060: SimpleNamespace(
-            capstone=SimpleNamespace(
-                insns=(
-                    SimpleNamespace(address=0x10060, mnemonic="call"),
-                )
-            )
-        ),
+        0x10060: SimpleNamespace(capstone=SimpleNamespace(insns=(SimpleNamespace(address=0x10060, mnemonic="call"),))),
     }
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
@@ -106,18 +100,9 @@ def test_call_arg_semantic_kind_uses_cod_source_pointer_evidence(tmp_path):
     )
     project = SimpleNamespace(_inertia_lst_metadata=SimpleNamespace(cod_path=cod_path))
 
-    assert (
-        _call_arg_semantic_kind_8616("Swaps", 0, project=project)
-        is CallArgSemanticKind8616.POINTER
-    )
-    assert (
-        _call_arg_semantic_kind_8616("Swaps", 1, project=project)
-        is CallArgSemanticKind8616.POINTER
-    )
-    assert (
-        _call_arg_semantic_kind_8616("SwapBars", 0, project=project)
-        is CallArgSemanticKind8616.VALUE
-    )
+    assert _call_arg_semantic_kind_8616("Swaps", 0, project=project) is CallArgSemanticKind8616.POINTER
+    assert _call_arg_semantic_kind_8616("Swaps", 1, project=project) is CallArgSemanticKind8616.POINTER
+    assert _call_arg_semantic_kind_8616("SwapBars", 0, project=project) is CallArgSemanticKind8616.VALUE
 
 
 def test_call_arg_semantic_kind_ignores_cod_source_call_when_reading_prototypes(tmp_path):
@@ -133,14 +118,11 @@ def test_call_arg_semantic_kind_ignores_cod_source_call_when_reading_prototypes(
     )
     project = SimpleNamespace(_inertia_lst_metadata=SimpleNamespace(cod_path=cod_path))
 
-    assert (
-        _call_arg_semantic_kind_8616("outtext", 0, project=project)
-        is CallArgSemanticKind8616.POINTER
-    )
+    assert _call_arg_semantic_kind_8616("outtext", 0, project=project) is CallArgSemanticKind8616.POINTER
 
 
 def test_mov_reg_imm_setup_matches_push_source_from_instruction_bytes():
-    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\xB8\x4C\x0B\x50\x31\xC0", 0x1000)))
+    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\xb8\x4c\x0b\x50\x31\xc0", 0x1000)))
 
     assert _mov_reg_imm_setup_matches_push_source_8616(project, 0x1000, ("imm", 0x0B4C))
     assert _mov_reg_imm_setup_matches_push_source_8616(project, 0x1003, ("imm", 0x0B4C))
@@ -149,7 +131,7 @@ def test_mov_reg_imm_setup_matches_push_source_from_instruction_bytes():
 
 
 def test_reg_expr_setup_matches_push_source_from_instruction_bytes():
-    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\x8B\x46\xFE\xD1\xE0\x05\x4C\x0B\x50", 0x1000)))
+    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\x8b\x46\xfe\xd1\xe0\x05\x4c\x0b\x50", 0x1000)))
     source = ("expr", ("bp", -2), (("shl", 1), ("add", 0x0B4C)))
 
     assert _reg_expr_setup_matches_push_source_8616(project, 0x1008, source)
@@ -158,7 +140,7 @@ def test_reg_expr_setup_matches_push_source_from_instruction_bytes():
 
 
 def test_reg_expr_setup_matches_dec_push_source_from_instruction_bytes():
-    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\x8B\x46\xFE\x48\x50", 0x1000)))
+    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\x8b\x46\xfe\x48\x50", 0x1000)))
     source = ("expr", ("bp", -2), (("sub", 1),))
 
     assert _reg_expr_setup_matches_push_source_8616(project, 0x1004, source)
@@ -170,7 +152,7 @@ def test_callsite_materialization_prunes_proven_expr_push_source_alias_clobber(t
     cod_path.write_text(";|*** void Swaps( BAR *bar1, BAR *bar2 )\n", encoding="utf-8")
     project = SimpleNamespace(
         arch=Arch86_16(),
-        loader=SimpleNamespace(memory=_Memory(b"\x8B\x46\xFC\xD1\xE0\x05\x4C\x0B\x50", 0x1040)),
+        loader=SimpleNamespace(memory=_Memory(b"\x8b\x46\xfc\xd1\xe0\x05\x4c\x0b\x50", 0x1040)),
         _inertia_c_target="portable-flat",
         _inertia_lst_metadata=SimpleNamespace(cod_path=cod_path, code_labels={}),
     )
@@ -245,7 +227,7 @@ def test_callsite_materialization_prunes_proven_expr_push_source_alias_clobber(t
 
 
 def test_reg_expr_setup_matches_imul_ax_memory_push_source_from_instruction_bytes():
-    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\xB8\x3C\x00\xF7\x6E\x04\x50", 0x1000)))
+    project = SimpleNamespace(loader=SimpleNamespace(memory=_Memory(b"\xb8\x3c\x00\xf7\x6e\x04\x50", 0x1000)))
     source = ("expr", ("bp", 4), ((CallsitePushExprOp8616.MUL.value, 60),))
 
     assert _reg_expr_setup_matches_push_source_8616(project, 0x1006, source)

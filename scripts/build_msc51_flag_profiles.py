@@ -3,19 +3,39 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
 import json
-import re
-from pathlib import Path
 import math
-
+import re
+from collections import Counter, defaultdict
+from pathlib import Path
 
 TOKEN_RE = re.compile(r"\b[_$A-Za-z][_$A-Za-z0-9]*\b")
 ASM_LINE_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9]*)\b(.*)$")
 SKIP = {
-    "if", "for", "while", "switch", "return", "goto", "break", "continue",
-    "mov", "push", "pop", "call", "cmp", "add", "sub", "mul", "div", "lea",
-    "byte", "word", "ptr", "short", "near", "far",
+    "if",
+    "for",
+    "while",
+    "switch",
+    "return",
+    "goto",
+    "break",
+    "continue",
+    "mov",
+    "push",
+    "pop",
+    "call",
+    "cmp",
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "lea",
+    "byte",
+    "word",
+    "ptr",
+    "short",
+    "near",
+    "far",
 }
 ASM_PROMPT_RE = re.compile(r"Recover the function from this assembly:\s*(.*)", re.S | re.I)
 
@@ -23,7 +43,7 @@ ASM_PROMPT_RE = re.compile(r"Recover the function from this assembly:\s*(.*)", r
 def combo_from_name(path: Path) -> str:
     stem = path.stem
     if stem.startswith("output_"):
-        stem = stem[len("output_"):]
+        stem = stem[len("output_") :]
     parts = [p for p in stem.split("_") if p]
     return " ".join(sorted(parts))
 
@@ -242,7 +262,6 @@ def main(argv: list[str] | None = None) -> int:
         args.output.write_text(json.dumps(payload, indent=2, sort_keys=True))
         print(f"wrote {args.output} combos={len(payload['combos'])} files={used_files}")
         return 0
-
 
     if __name__ == "__main__":
         raise SystemExit(main())

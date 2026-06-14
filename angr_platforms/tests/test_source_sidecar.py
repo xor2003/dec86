@@ -4,24 +4,17 @@ from pathlib import Path
 
 import inertia_decompiler.cli as cli
 from inertia_decompiler.cli_arg_parser import _build_cli_argument_parser
-from inertia_decompiler.source_sidecar import collect_local_source_sidecar_return_types, render_local_source_sidecar_function
+from inertia_decompiler.source_sidecar import (
+    collect_local_source_sidecar_return_types,
+    render_local_source_sidecar_function,
+)
 
 
 def test_render_local_source_sidecar_function_extracts_knr_body(tmp_path: Path) -> None:
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     source = tmp_path / "sample.c"
-    source.write_text(
-        "helper()\n"
-        "{\n"
-        "    return(1);\n"
-        "}\n"
-        "\n"
-        "pause_screen()\n"
-        "{\n"
-        "    return(0);\n"
-        "}\n"
-    )
+    source.write_text("helper()\n{\n    return(1);\n}\n\npause_screen()\n{\n    return(0);\n}\n")
 
     rendered = render_local_source_sidecar_function(binary, "pause_screen")
 
@@ -44,13 +37,7 @@ def test_render_local_source_sidecar_function_extracts_knr_with_arg_decls(tmp_pa
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     source = tmp_path / "sample.c"
-    source.write_text(
-        "draw_box(attr)\n"
-        "int attr;\n"
-        "{\n"
-        "    return;\n"
-        "}\n"
-    )
+    source.write_text("draw_box(attr)\nint attr;\n{\n    return;\n}\n")
 
     rendered = render_local_source_sidecar_function(binary, "draw_box")
 

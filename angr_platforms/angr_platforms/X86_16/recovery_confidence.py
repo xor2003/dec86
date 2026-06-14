@@ -89,7 +89,12 @@ def _append_recovery_evidence_8616(
         if ok and decompiled_count > 0:
             evidence.append(RecoveryEvidence("decompiled_output", "decompiler produced structured C output"))
         if interrupt_dos_helper_count or interrupt_bios_helper_count:
-            evidence.append(RecoveryEvidence("helper_lowering", f"{interrupt_dos_helper_count} DOS helper(s), {interrupt_bios_helper_count} BIOS helper(s)"))
+            evidence.append(
+                RecoveryEvidence(
+                    "helper_lowering",
+                    f"{interrupt_dos_helper_count} DOS helper(s), {interrupt_bios_helper_count} BIOS helper(s)",
+                )
+            )
         if last_structuring_pass:
             evidence.append(RecoveryEvidence("structuring_pass", f"last structuring pass: {last_structuring_pass}"))
         if last_postprocess_pass:
@@ -131,8 +136,17 @@ def _append_recovery_evidence_8616(
                     ),
                 )
             )
-        if ok and fallback_kind == "cfg_only" and _value(source, "semantic_family", None) == "stack_control" and _value(source, "stage_reached", None) == "cleanup":
-            evidence.append(RecoveryEvidence("bounded_recovery", "scan-safe helper lane completed at cleanup without requiring decompilation"))
+        if (
+            ok
+            and fallback_kind == "cfg_only"
+            and _value(source, "semantic_family", None) == "stack_control"
+            and _value(source, "stage_reached", None) == "cleanup"
+        ):
+            evidence.append(
+                RecoveryEvidence(
+                    "bounded_recovery", "scan-safe helper lane completed at cleanup without requiring decompilation"
+                )
+            )
         return evidence
 
     return _impl()
@@ -158,39 +172,93 @@ def _append_recovery_assumptions_8616(
     def _impl():
         assumptions: list[RecoveryAssumption] = []
         if interrupt_unresolved_wrapper_count > 0:
-            assumptions.append(RecoveryAssumption("helper_guessed_from_weak_evidence", f"{interrupt_unresolved_wrapper_count} unresolved wrapper call(s) still need helper signatures"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "helper_guessed_from_weak_evidence",
+                    f"{interrupt_unresolved_wrapper_count} unresolved wrapper call(s) still need helper signatures",
+                )
+            )
         elif interrupt_wrapper_call_count > 0 and interrupt_dos_helper_count == 0 and interrupt_bios_helper_count == 0:
-            assumptions.append(RecoveryAssumption("helper_guessed_from_weak_evidence", f"{interrupt_wrapper_call_count} wrapper call(s) were observed without a settled helper mapping"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "helper_guessed_from_weak_evidence",
+                    f"{interrupt_wrapper_call_count} wrapper call(s) were observed without a settled helper mapping",
+                )
+            )
             if helper_summary.status != "eligible":
                 assumptions.append(RecoveryAssumption("helper_shape_refused", helper_summary.brief()))
         if has_far_call_reloc and (not ok or fallback_kind not in (None, "none")):
-            assumptions.append(RecoveryAssumption("far_pointer_unresolved", "far pointer / far call evidence still needs a stable target association"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "far_pointer_unresolved", "far pointer / far call evidence still needs a stable target association"
+                )
+            )
         if rewrite_failed or regeneration_failed:
-            assumptions.append(RecoveryAssumption("return_shape_uncertain", "postprocess rewrite/regeneration still needs a stable return-shape boundary"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "return_shape_uncertain",
+                    "postprocess rewrite/regeneration still needs a stable return-shape boundary",
+                )
+            )
         if structuring_failed:
-            assumptions.append(RecoveryAssumption("structuring_failure", "control-flow structuring still needs a stable downstream boundary"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "structuring_failure", "control-flow structuring still needs a stable downstream boundary"
+                )
+            )
         if effect_summary.has_indirect_control():
-            assumptions.append(RecoveryAssumption("indirect_control_flow", "indirect call/branch behavior still needs an explicit effect-summary consumer"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "indirect_control_flow",
+                    "indirect call/branch behavior still needs an explicit effect-summary consumer",
+                )
+            )
         if helper_summary.status == "refused" and interrupt_unresolved_wrapper_count > 0:
             assumptions.append(RecoveryAssumption("helper_shape_refused", helper_summary.brief()))
         if state_summary.touches_segments():
-            assumptions.append(RecoveryAssumption("segment_state_needs_tracking", "segment-register dataflow should stay explicit across CFG and call boundaries"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "segment_state_needs_tracking",
+                    "segment-register dataflow should stay explicit across CFG and call boundaries",
+                )
+            )
         if state_summary.touches_flags() and ir_readiness.condition_count == 0:
-            assumptions.append(RecoveryAssumption("live_flags_need_typed_conditions", "live flag dependencies still need typed condition recovery at branch and loop boundaries"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "live_flags_need_typed_conditions",
+                    "live flag dependencies still need typed condition recovery at branch and loop boundaries",
+                )
+            )
         if ir_readiness.unknown_segment_count > 0:
-            assumptions.append(RecoveryAssumption("typed_ir_segment_unknown", f"{ir_readiness.unknown_segment_count} typed address(es) still have unknown segment identity"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "typed_ir_segment_unknown",
+                    f"{ir_readiness.unknown_segment_count} typed address(es) still have unknown segment identity",
+                )
+            )
         elif ir_readiness.defaulted_segment_count > 0 and ir_readiness.proven_segment_count == 0:
-            assumptions.append(RecoveryAssumption("typed_ir_segment_defaulted", f"{ir_readiness.defaulted_segment_count} typed address(es) still rely on default segment identity"))
+            assumptions.append(
+                RecoveryAssumption(
+                    "typed_ir_segment_defaulted",
+                    f"{ir_readiness.defaulted_segment_count} typed address(es) still rely on default segment identity",
+                )
+            )
         if ir_readiness.block_count > 1 and ir_readiness.phi_node_count == 0:
-            assumptions.append(RecoveryAssumption("typed_ir_cross_block_ssa_missing", "typed IR is still block-local across CFG joins"))
+            assumptions.append(
+                RecoveryAssumption("typed_ir_cross_block_ssa_missing", "typed IR is still block-local across CFG joins")
+            )
         if ir_readiness.condition_count == 0 and ir_readiness.block_count > 0:
-            assumptions.append(RecoveryAssumption("typed_ir_conditions_missing", "typed IR still lacks lifted branch/loop conditions"))
+            assumptions.append(
+                RecoveryAssumption("typed_ir_conditions_missing", "typed IR still lacks lifted branch/loop conditions")
+            )
         return assumptions
 
     return _impl()
 
 
-def _recovery_diagnostics_8616(*, reason, failure_class, stage_reached, effect_summary, state_summary, helper_summary, ir_readiness) -> list[str]:
+def _recovery_diagnostics_8616(
+    *, reason, failure_class, stage_reached, effect_summary, state_summary, helper_summary, ir_readiness
+) -> list[str]:
     diagnostics: list[str] = []
     if reason:
         diagnostics.append(str(reason))
@@ -233,7 +301,13 @@ def _recovery_status_8616(
     assumptions: list[RecoveryAssumption],
 ) -> str:
     def _impl():
-        if ok and fallback_kind == "cfg_only" and _value(source, "semantic_family", None) == "stack_control" and _value(source, "stage_reached", None) == "cleanup" and not assumptions:
+        if (
+            ok
+            and fallback_kind == "cfg_only"
+            and _value(source, "semantic_family", None) == "stack_control"
+            and _value(source, "stage_reached", None) == "cleanup"
+            and not assumptions
+        ):
             return "bounded_recovery"
         if rewrite_failed or regeneration_failed:
             return "return_shape_uncertain"
@@ -241,7 +315,9 @@ def _recovery_status_8616(
             return "partial_recovery"
         if has_far_call_reloc and (assumptions or not ok):
             return "far_pointer_unresolved"
-        if interrupt_unresolved_wrapper_count > 0 or (interrupt_wrapper_call_count > 0 and interrupt_dos_helper_count == 0 and interrupt_bios_helper_count == 0):
+        if interrupt_unresolved_wrapper_count > 0 or (
+            interrupt_wrapper_call_count > 0 and interrupt_dos_helper_count == 0 and interrupt_bios_helper_count == 0
+        ):
             return "helper_guessed_weak"
         if ok and fallback_kind not in (None, "none"):
             return "partial_recovery"

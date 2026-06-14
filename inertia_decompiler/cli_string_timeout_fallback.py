@@ -19,7 +19,9 @@ class StringTimeoutFallback:
     c_text: str
 
 
-def try_render_x86_16_string_timeout_fallback(project, *, start: int, end: int, name: str) -> StringTimeoutFallback | None:
+def try_render_x86_16_string_timeout_fallback(
+    project, *, start: int, end: int, name: str
+) -> StringTimeoutFallback | None:
     if getattr(getattr(project, "arch", None), "name", None) != "86_16":
         return None
     artifact = build_x86_16_string_instruction_artifact_from_linear_range(project, start=start, end=end)

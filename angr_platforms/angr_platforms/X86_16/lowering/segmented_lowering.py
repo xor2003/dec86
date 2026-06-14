@@ -153,7 +153,9 @@ def _classify_segmented_addr_expr(
                 name=f"{reg_name}_0",
                 region=region,
             )
-            return structured_c.CVariable(synthetic, variable_type=getattr(term, "variable_type", None), codegen=codegen), 0
+            return structured_c.CVariable(
+                synthetic, variable_type=getattr(term, "variable_type", None), codegen=codegen
+            ), 0
 
         def _synthetic_sp_match(term):
             synthetic = _synthetic_sp_anchor(term)

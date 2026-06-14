@@ -72,13 +72,24 @@ def _expr_to_value(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
             if cond is not None:
                 return IRValue(MemSpace.TMP, name=f"cond:{cond.op}", size=1, expr=(op,))
             if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
-                return IRValue(left.space, name=left.name, offset=left.offset + int(right.const), size=left.size, expr=(op,))
+                return IRValue(
+                    left.space, name=left.name, offset=left.offset + int(right.const), size=left.size, expr=(op,)
+                )
             if "Sub" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
-                return IRValue(left.space, name=left.name, offset=left.offset - int(right.const), size=left.size, expr=(op,))
+                return IRValue(
+                    left.space, name=left.name, offset=left.offset - int(right.const), size=left.size, expr=(op,)
+                )
             if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.REG and left.name and right.name:
-                return IRValue(MemSpace.TMP, name=f"addr:{left.name}+{right.name}", size=left.size, expr=(op, left.name, right.name))
+                return IRValue(
+                    MemSpace.TMP,
+                    name=f"addr:{left.name}+{right.name}",
+                    size=left.size,
+                    expr=(op, left.name, right.name),
+                )
             if "And" in op:
-                return IRValue(MemSpace.TMP, name=f"mask:{left.name or 'lhs'}", size=max(left.size, right.size), expr=(op,))
+                return IRValue(
+                    MemSpace.TMP, name=f"mask:{left.name or 'lhs'}", size=max(left.size, right.size), expr=(op,)
+                )
             return IRValue(MemSpace.TMP, name=f"expr:{op}", size=max(left.size, right.size), expr=(op,))
 
         tag = getattr(expr, "tag", "")

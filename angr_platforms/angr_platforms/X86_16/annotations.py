@@ -29,6 +29,7 @@ def _source_prototype_calling_convention_8616(project):
         return None
     return SimCC8616MSCsmall(arch)
 
+
 _C_TYPE_KEYWORDS_8616 = {
     "char",
     "const",
@@ -258,9 +259,7 @@ def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name:
 def _source_function_pointer_local_types_8616(project, source_lines: tuple[str, ...]) -> dict[str, SimTypePointer]:
     def _impl():
         local_types: dict[str, SimTypePointer] = {}
-        fp_decl_re = re.compile(
-            r"^\s*(?P<ret>.+?)\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)\s*\((?P<args>[^;]*)\)\s*;\s*$"
-        )
+        fp_decl_re = re.compile(r"^\s*(?P<ret>.+?)\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)\s*\((?P<args>[^;]*)\)\s*;\s*$")
         for raw_line in tuple(source_lines or ()):
             stripped = raw_line.strip()
             if not stripped or stripped.startswith((";", "//")):
@@ -476,7 +475,9 @@ def _apply_source_prototype_annotations_8616(project, func_addr: int, func, sour
         changed = False
         annotations = _annotation_dict(func)
         annotations["source_lines"] = source_lines
-        annotations["source_return_lines"] = tuple(line.strip() for line in source_lines if re.match(r"^return\s+[^;]+;\s*$", line.strip()))
+        annotations["source_return_lines"] = tuple(
+            line.strip() for line in source_lines if re.match(r"^return\s+[^;]+;\s*$", line.strip())
+        )
         source_decl = _source_decl_from_cod_source_lines(source_lines, getattr(func, "name", None))
         if source_decl is None:
             return changed
@@ -524,7 +525,9 @@ def _apply_source_prototype_annotations_8616(project, func_addr: int, func, sour
                 changed = True
                 active_proto = getattr(func, "prototype", parsed_proto)
         if active_proto is not None:
-            source_arg_names = _split_source_arg_names_8616(_source_args_from_cod_source_lines(source_lines, getattr(func, "name", None)))
+            source_arg_names = _split_source_arg_names_8616(
+                _source_args_from_cod_source_lines(source_lines, getattr(func, "name", None))
+            )
             if source_arg_names and len(source_arg_names) == len(getattr(active_proto, "args", ()) or ()):
                 with contextlib.suppress(ValueError):
                     annotate_function(
@@ -569,7 +572,9 @@ def apply_x86_16_metadata_annotations(
         if func_addr is not None and cod_metadata is not None:
             stack_aliases = getattr(cod_metadata, "stack_aliases", None) or {}
             source_lines = tuple(getattr(cod_metadata, "source_lines", ()) or ())
-            source_local_types = _source_function_pointer_local_types_8616(project, source_lines) if source_lines else {}
+            source_local_types = (
+                _source_function_pointer_local_types_8616(project, source_lines) if source_lines else {}
+            )
             if stack_aliases:
                 typed_stack_aliases = {}
                 for bp_disp, alias in stack_aliases.items():
@@ -606,9 +611,7 @@ def apply_x86_16_metadata_annotations(
                 annotate_function(
                     project,
                     func_addr,
-                    global_vars={
-                        addr: _typed_cod_spec_dict_8616(spec)
-                    },
+                    global_vars={addr: _typed_cod_spec_dict_8616(spec)},
                 )
                 changed = True
 

@@ -121,10 +121,7 @@ class TestConditionOpNormalization:
             "Shl(Dereference(Add(Add(Mul(reg:ds,const:16),const:352),const:1)),const:8)))"
         )
 
-        assert (
-            normalize_condition_fingerprint_algebraic_8616(value)
-            == "CmpLT(stack_slot:SS:BP-0x2:size2,global:0x160)"
-        )
+        assert normalize_condition_fingerprint_algebraic_8616(value) == "CmpLT(stack_slot:SS:BP-0x2:size2,global:0x160)"
 
     def test_condition_fingerprint_normalizes_prefixed_ds_byte_pair_to_global_word(self):
         value = (
@@ -134,8 +131,7 @@ class TestConditionOpNormalization:
         )
 
         assert (
-            normalize_condition_fingerprint_algebraic_8616(value)
-            == "if:CmpLT(stack_slot:SS:BP-0x2:size2,global:0x160)"
+            normalize_condition_fingerprint_algebraic_8616(value) == "if:CmpLT(stack_slot:SS:BP-0x2:size2,global:0x160)"
         )
 
 

@@ -623,7 +623,9 @@ def test_post_flag_dirty_dce_deletes_dead_dirty_copy_from_storage_value_read():
 def test_dce_does_not_count_parent_structured_body_as_outside_read():
     codegen = _mk_codegen_with_statements([])
     tmp = _mk_cvar(codegen, "tmp_225", 225)
-    body = structured_c.CStatements([structured_c.CAssignment(tmp, _const(codegen, 7), codegen=codegen)], codegen=codegen)
+    body = structured_c.CStatements(
+        [structured_c.CAssignment(tmp, _const(codegen, 7), codegen=codegen)], codegen=codegen
+    )
     loop = structured_c.CWhileLoop(_const(codegen, 1), body, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([loop], codegen=codegen)
 

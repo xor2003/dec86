@@ -89,7 +89,9 @@ def _ir_value_from_vex_expr(expr, size_hint: int = 0) -> IRValue:
         reg_offset = getattr(expr, "reg", None)
         reg_name = getattr(expr, "reg_name", None)
         if isinstance(reg_offset, int):
-            return IRValue(MemSpace.REG, name=str(reg_name or f"reg_{reg_offset}"), offset=reg_offset, size=size_hint or 2)
+            return IRValue(
+                MemSpace.REG, name=str(reg_name or f"reg_{reg_offset}"), offset=reg_offset, size=size_hint or 2
+            )
 
         # Generic tmp
         return IRValue(MemSpace.TMP, name=getattr(expr, "__class__", type(expr)).__name__, size=size_hint or 2)

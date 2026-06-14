@@ -15,7 +15,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterator, TypeVar
 
-
 TRACE_ENABLE_ENV = "INERTIA_OTEL_SPANS"
 TRACE_FILE_ENV = "INERTIA_OTEL_SPAN_FILE"
 TRACE_TOP_N_ENV = "INERTIA_OTEL_TOP_N"
@@ -602,10 +601,7 @@ def build_agent_slow_trace_text() -> str:
         otel_status = "off"
     errors = summary.get("errors", [])
     lines = [
-        (
-            f"trace total={summary.get('total_ms', 0.0)}ms "
-            f"spans={len(finished)} otel={otel_status} errors={len(errors)}"
-        )
+        (f"trace total={summary.get('total_ms', 0.0)}ms spans={len(finished)} otel={otel_status} errors={len(errors)}")
     ]
     visible = [record for record in finished if record.duration_ms >= _STATE.min_ms]
     top = sorted(visible, key=lambda record: record.duration_ms, reverse=True)[: max(1, int(_STATE.top_n))]

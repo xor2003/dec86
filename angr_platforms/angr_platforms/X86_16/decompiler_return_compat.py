@@ -736,7 +736,9 @@ def _make_c_stack_value_8616(codegen, *, bp_disp: int, size: int, variable_type)
     region = getattr(function, "addr", None)
     internal_offset = bp_disp - 2 if bp_disp < 0 else bp_disp
     name = _stack_annotation_name_for_bp_disp_8616(function, bp_disp) or (
-        f"local_{max(((-internal_offset) + 1) // 2, 1)}" if internal_offset < 0 else f"arg_{max(internal_offset // 2, 1)}"
+        f"local_{max(((-internal_offset) + 1) // 2, 1)}"
+        if internal_offset < 0
+        else f"arg_{max(internal_offset // 2, 1)}"
     )
     variable = SimStackVariable(internal_offset, max(size, 1), base="bp", name=name, region=region)
     cvar = CVariable(variable, variable_type=variable_type, codegen=codegen)
@@ -963,7 +965,9 @@ def _c_expr_from_x87_operand_8616(codegen, operand: dict[str, int], *, project=N
     kind = operand.get("kind")
     value_type = SimTypeFloat() if size == 4 else SimTypeDouble()
     if kind == 1:
-        return _make_c_stack_value_8616(codegen, bp_disp=int(operand.get("disp", 0)), size=size, variable_type=value_type)
+        return _make_c_stack_value_8616(
+            codegen, bp_disp=int(operand.get("disp", 0)), size=size, variable_type=value_type
+        )
     if kind == 0:
         value = _read_x87_constant_8616(codegen, project=project, offset=int(operand.get("offset", 0)), size=size)
         if value is None:

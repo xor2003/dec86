@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from angr_platforms.X86_16.lst_extract import LSTMetadata
+
 from inertia_decompiler.non_optimized_fallback import sidecar_verdict_closes_non_optimized_lane
 from inertia_decompiler.sidecar_cache import _maybe_rebase_stale_absolute_metadata
 from inertia_decompiler.slice_recovery import BoundedSliceVerdict

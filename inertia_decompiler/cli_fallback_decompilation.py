@@ -1,161 +1,18 @@
-from __future__ import annotations
-
 # AUTO-GENERATED split from cli_runtime_shared.py
-
 from __future__ import annotations
 
-import argparse
-
-import atexit
+import logging
+import os
+import re
+import sys
+import threading
+from dataclasses import dataclass
+from pathlib import Path
 
 import angr
 
-import contextlib
-
-import copy
-
-import logging
-
-import os
-
-import re
-
-import sys
-
-import threading
-
-import time
-
-from collections.abc import Mapping, Sequence
-
-from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
-
-from dataclasses import dataclass, replace
-
-from pathlib import Path
-
-from types import SimpleNamespace
-
-from inertia_decompiler.cache import (
-    _function_decompilation_cache_key,
-    _load_cache_json,
-    _recovery_cache_key,
-    _store_cache_json,
-)
-
-from inertia_decompiler.project_loading import (
-    _build_project,
-    _build_project_cached,
-    _build_project_from_bytes,
-    _describe_exception,
-    _is_blob_only_input,
-)
-
-from inertia_decompiler.sidecar_metadata import (
-    _load_lst_metadata,
-    _lst_code_label,
-    _lst_code_region,
-    _lst_data_label,
-    _recovery_code_labels,
-    _signature_matched_code_addrs,
-    _visible_code_labels,
-)
-
-from inertia_decompiler.sidecar_parsers import _parse_ida_map_metadata
-
-from inertia_decompiler.disassembly_helpers import (
-    _format_asm_range,
-    _format_first_block_asm,
-    _infer_linear_disassembly_window,
-    _probe_lift_break,
-)
-
-from inertia_decompiler.cli_output import (
-    _RAW_PRINT,
-    _asm_fallback_pattern_note,
-    _emit_exit_marker,
-    _print_asm_fallback_text,
-    _print_diagnostic_text,
-    _timestamp_prefix,
-    _timestamped_print,
-)
-
-from inertia_decompiler.cli_timeout import (
-    _AdaptivePerByteTimeoutModel,
-    _default_recovery_timeout,
-    _stdout_is_interactive,
-)
-
-from inertia_decompiler import cli_access_traits as _cli_access_traits
-
-from inertia_decompiler import cli_access_object_hints as _cli_access_object_hints
-
-from inertia_decompiler import cli_access_profiles as _cli_access_profiles
-
-from inertia_decompiler import cli_access_rewrite_artifact as _cli_access_rewrite_artifact
-
-from inertia_decompiler import cli_access_trait_rewrite as _cli_access_trait_rewrite
-
-from inertia_decompiler import cli_memory_prune as _cli_memory_prune
-
-from inertia_decompiler import cli_dead_local_prune as _cli_dead_local_prune
-
-from inertia_decompiler import cli_local_prune as _cli_local_prune
-
-from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
-
-from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
-
-from inertia_decompiler import cli_cod_globals as _cli_cod_globals
-
-from inertia_decompiler import cli_cod_global_statements as _cli_cod_global_statements
-
-from inertia_decompiler import cli_helper_modeling as _cli_helper_modeling
-
-from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
-
-from inertia_decompiler import cli_far_pointer_stack as _cli_far_pointer_stack
-
-from inertia_decompiler import cli_linear_aliases as _cli_linear_aliases
-
-from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
-
-from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
-
-from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
-
-from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
-
-from inertia_decompiler import cli_stack_byte_offsets as _cli_stack_byte_offsets
-
-from inertia_decompiler import cli_stack_locals as _cli_stack_locals
-
 from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
-
-from inertia_decompiler import cli_segmented as _cli_segmented
-
-from inertia_decompiler import cli_segmented_elision as _cli_segmented_elision
-
-from inertia_decompiler import cli_segmented_compare as _cli_segmented_compare
-
-from inertia_decompiler import cli_segmented_lowering as _cli_segmented_lowering
-
-from inertia_decompiler import cli_segmented_load_coalesce as _cli_segmented_load_coalesce
-
-from inertia_decompiler import cli_segmented_store_coalesce as _cli_segmented_store_coalesce
-
-from inertia_decompiler import cli_word_loads as _cli_word_loads
-
-from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
-
 from inertia_decompiler.cli_c_text_postprocess import _render_cod_source_function_text
-
-from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
-
-from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
-
-from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
-
 from inertia_decompiler.cli_decompilation import (
     _decompile_function_with_stats,
     _effective_decompile_timeout_8616,
@@ -163,93 +20,54 @@ from inertia_decompiler.cli_decompilation import (
     _prepare_function_for_decompilation,
     _sidecar_cod_metadata_for_function,
 )
+from inertia_decompiler.cli_output import (
+    _timestamped_print,
+)
+from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
 from inertia_decompiler.direct_addr_failure_family import FailureFamilyState
-
-from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
-
-from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
-
+from inertia_decompiler.disassembly_helpers import (
+    _format_asm_range,
+    _infer_linear_disassembly_window,
+)
+from inertia_decompiler.project_loading import (
+    _build_project_cached,
+    _build_project_from_bytes,
+    _describe_exception,
+    _is_blob_only_input,
+)
+from inertia_decompiler.sidecar_metadata import (
+    _lst_code_region,
+)
+from inertia_decompiler.tail_validation import (
+    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
+)
+from inertia_decompiler.tail_validation import (
+    tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
+)
 from inertia_decompiler.x86_16_exact_slice import (
-    function_original_addr,
     mark_function_original_addr,
     non_optimized_slice_codegen_policy,
     plan_x86_16_exact_slice,
 )
 
-from inertia_decompiler.tail_validation import (
-    TAIL_VALIDATION_ENABLE_ENV as _TAIL_VALIDATION_ENABLE_ENV,
-    emit_tail_validation_console_summary as _emit_tail_validation_console_summary,
-    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
-    parse_env_bool as _parse_env_bool,
-    set_tail_validation_runtime_enabled as _set_tail_validation_runtime_enabled,
-    tail_validation_console_cache_path as _tail_validation_console_cache_path,
-    tail_validation_detail_cache_path as _tail_validation_detail_cache_path,
-    tail_validation_enabled_for_run as _tail_validation_enabled_for_run,
-    tail_validation_fallback_allows_project_snapshot as _tail_validation_fallback_allows_project_snapshot,
-    tail_validation_runtime_enabled as _tail_validation_runtime_enabled,
-    tail_validation_snapshot_for_fallback as _tail_validation_snapshot_for_fallback,
-    tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
-)
-
 logger = logging.getLogger(__name__)
 
+from inertia_decompiler.cli_function_discovery import _pick_function, _pick_function_lean
+from inertia_decompiler.non_optimized_fallback import (
+    bounded_non_optimized_attempt_timeout,
+)
 from inertia_decompiler.runtime_support import (
-    AnalysisTimeout as _AnalysisTimeout,
-    DaemonThreadPoolExecutor,
-    DECOMPILATION_PREP_LOCK,
-    FORCE_SERIAL_FUNCTION_DECOMP_ENV as _FORCE_SERIAL_FUNCTION_DECOMP_ENV,
-    JumpkindLoggingHandler,
-    apply_memory_limit as _apply_memory_limit,
-    analysis_timeout as _analysis_timeout,
-    capture_thread_output as _capture_thread_output,
-    choose_function_parallelism as _choose_function_parallelism,
-    default_exe_showcase_cap as _default_exe_showcase_cap,
-    emit_timeout_and_exit as _emit_timeout_and_exit,
-    format_address as _format_address,
-    guard_angr_ail_narrowing as _guard_angr_ail_narrowing,
-    guard_angr_clinic_stage_markers as _guard_angr_clinic_stage_markers,
-    guard_angr_peephole_expr_bitwidth_assertion as _guard_angr_peephole_expr_bitwidth_assertion,
-    guard_angr_variable_recovery_binop_sub_size_mismatch as _guard_angr_variable_recovery_binop_sub_size_mismatch,
-    install_angr_peephole_expr_bitwidth_guard as _install_angr_peephole_expr_bitwidth_guard,
-    install_angr_variable_recovery_binop_sub_size_guard as _install_angr_variable_recovery_binop_sub_size_guard,
-    log_step,
-    lower_process_priority as _lower_process_priority,
-    memory_available_mb as _memory_available_mb,
-    PreforkJobPool,
-    prefer_low_memory_path as _prefer_low_memory_path,
-    run_with_timeout_in_fork as _run_with_timeout_in_fork,
     run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
-    raise_timeout as _raise_timeout,
-    should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
 )
-
-from inertia_decompiler.work_items import (
-    FunctionDecompileResult,
-    FunctionDecompileTask,
-    FunctionWorkItem,
-    FunctionWorkResult,
-    emit_tail_validation_for_function_run_or_uncollected as _emit_tail_validation_for_function_run_or_uncollected,
-    emit_tail_validation_snapshot_or_uncollected as _emit_tail_validation_snapshot_or_uncollected,
-    function_attempt_display_status as _function_attempt_display_status,
-    print_function_attempt_status as _print_function_attempt_status,
-    recovery_evidence_line as _recovery_evidence_line,
-    tail_validation_display_status as _tail_validation_display_status,
+from inertia_decompiler.runtime_support import (
+    run_with_timeout_in_fork as _run_with_timeout_in_fork,
 )
-
 from inertia_decompiler.slice_recovery import (
     BoundedSliceVerdict,
     SliceRecoveryAttemptOutcome,
     build_default_slice_recovery_attempts,
     run_bounded_slice_recovery,
 )
-
-from inertia_decompiler.non_optimized_fallback import (
-    allows_heavy_fallbacks_for_run,
-    bounded_non_optimized_attempt_timeout,
-    describe_non_optimized_unavailable,
-    sidecar_verdict_closes_non_optimized_lane,
-)
-from inertia_decompiler.cli_function_discovery import _pick_function, _pick_function_lean
 
 print = _timestamped_print
 __all__ = [
@@ -264,6 +82,7 @@ __all__ = [
     "_try_emit_known_runtime_helper_c",
 ]
 
+
 @dataclass(frozen=True)
 class NonOptimizedSliceOutcome:
     rendered: str | None
@@ -274,6 +93,7 @@ class NonOptimizedSliceOutcome:
     attempt_failures: tuple[str, ...] = ()
     verdict: BoundedSliceVerdict | None = None
 
+
 def _non_optimized_slice_rendered(
     outcome: NonOptimizedSliceOutcome | str | None,
 ) -> str | None:
@@ -283,12 +103,14 @@ def _non_optimized_slice_rendered(
         return outcome.rendered
     return outcome
 
+
 def _non_optimized_slice_failure_detail(
     outcome: NonOptimizedSliceOutcome | str | None,
 ) -> str | None:
     if not isinstance(outcome, NonOptimizedSliceOutcome):
         return None
     return outcome.failure_detail
+
 
 def _try_decompile_sidecar_slice(
     project: angr.Project,
@@ -333,6 +155,7 @@ def _try_decompile_sidecar_slice(
                 pick_function_lean=_pick_function_lean,
                 pick_function=_pick_function,
             )
+
             def _decompile_attempt(attempt_name, slice_project, cfg, func):
                 func.name = name
                 if slice_plan is not None:
@@ -381,21 +204,15 @@ def _try_decompile_sidecar_slice(
                     entry_point=slice_start,
                 ),
                 inherit_runtime_policy=lambda slice_project: (
-                    setattr(slice_project, "_inertia_original_project", project)
-                    if slice_plan is not None
-                    else None,
+                    setattr(slice_project, "_inertia_original_project", project) if slice_plan is not None else None,
                     setattr(slice_project, "_inertia_original_linear_delta", start - slice_start)
                     if slice_plan is not None
                     else None,
-                    setattr(slice_project, "_inertia_disable_ail_narrowing", True)
-                    if slice_plan is not None
-                    else None,
+                    setattr(slice_project, "_inertia_disable_ail_narrowing", True) if slice_plan is not None else None,
                     setattr(slice_project, "_inertia_disable_complex_expr_scan", True)
                     if slice_plan is not None
                     else None,
-                    setattr(slice_project, "_inertia_fast_block_peephole", True)
-                    if slice_plan is not None
-                    else None,
+                    setattr(slice_project, "_inertia_fast_block_peephole", True) if slice_plan is not None else None,
                     _inherit_tail_validation_runtime_policy(slice_project, project),
                 )[-1],
                 describe_exception=_describe_exception,
@@ -406,7 +223,11 @@ def _try_decompile_sidecar_slice(
                     if attempt.snapshot:
                         setattr(project, "_inertia_last_tail_validation_snapshot", dict(attempt.snapshot))
                     if attempt.attempt_name != "lean":
-                        print(f"[dbg] sidecar slice fallback recovered {addr:#x} {name} via {attempt.attempt_name}", file=sys.stderr, flush=True)
+                        print(
+                            f"[dbg] sidecar slice fallback recovered {addr:#x} {name} via {attempt.attempt_name}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                     return attempt
             if not outcomes:
                 return SliceRecoveryAttemptOutcome(
@@ -461,11 +282,11 @@ def _try_decompile_sidecar_slice(
             return SliceRecoveryAttemptOutcome(
                 attempt_name="sidecar-slice",
                 status="error",
-                payload="sidecar slice timed wrapper failed"
-                + (f": {fork_error}" if fork_error is not None else ""),
+                payload="sidecar slice timed wrapper failed" + (f": {fork_error}" if fork_error is not None else ""),
             )
 
     return _impl()
+
 
 def _try_decompile_non_optimized_slice(
     project: angr.Project,
@@ -534,9 +355,7 @@ def _try_decompile_non_optimized_slice(
             slice_start = slice_plan.slice_start if slice_plan is not None else start
             slice_end = slice_plan.slice_end if slice_plan is not None else end
             reuse_existing_slice_project = (
-                lst_metadata is None
-                and arch_name == "86_16"
-                and addr == getattr(slice_source_project, "entry", None)
+                lst_metadata is None and arch_name == "86_16" and addr == getattr(slice_source_project, "entry", None)
             )
             recovery_attempts = build_default_slice_recovery_attempts(
                 slice_start,
@@ -634,7 +453,8 @@ def _try_decompile_non_optimized_slice(
                         and threading.active_count() == 1
                         and (
                             isinstance(slice_source_project, angr.Project)
-                            or getattr(_run_with_timeout_in_fork, "__module__", "") != "inertia_decompiler.runtime_support"
+                            or getattr(_run_with_timeout_in_fork, "__module__", "")
+                            != "inertia_decompiler.runtime_support"
                         )
                     ):
                         return _run_with_timeout_in_fork(job, timeout=attempt_timeout)
@@ -669,17 +489,21 @@ def _try_decompile_non_optimized_slice(
                         entry_point=slice_start,
                     )
                 ),
-                inherit_runtime_policy=lambda slice_project: _inherit_tail_validation_runtime_policy(
-                    slice_project,
-                    slice_source_project,
-                ) if slice_plan is None else (
-                    setattr(slice_project, "_inertia_original_project", slice_source_project),
-                    setattr(slice_project, "_inertia_original_linear_delta", start - slice_start),
-                    setattr(slice_project, "_inertia_disable_ail_narrowing", True),
-                    setattr(slice_project, "_inertia_disable_complex_expr_scan", True),
-                    setattr(slice_project, "_inertia_fast_block_peephole", True),
-                    _inherit_tail_validation_runtime_policy(slice_project, slice_source_project),
-                )[-1],
+                inherit_runtime_policy=lambda slice_project: (
+                    _inherit_tail_validation_runtime_policy(
+                        slice_project,
+                        slice_source_project,
+                    )
+                    if slice_plan is None
+                    else (
+                        setattr(slice_project, "_inertia_original_project", slice_source_project),
+                        setattr(slice_project, "_inertia_original_linear_delta", start - slice_start),
+                        setattr(slice_project, "_inertia_disable_ail_narrowing", True),
+                        setattr(slice_project, "_inertia_disable_complex_expr_scan", True),
+                        setattr(slice_project, "_inertia_fast_block_peephole", True),
+                        _inherit_tail_validation_runtime_policy(slice_project, slice_source_project),
+                    )[-1]
+                ),
                 describe_exception=_describe_exception,
                 decompile=_decompile_attempt,
                 run_attempt=_run_bounded_attempt,
@@ -748,14 +572,20 @@ def _try_decompile_non_optimized_slice(
                     attempt_failures=tuple(failure_details),
                     verdict=final_verdict,
                 )
+
             outcome = _recover_and_summarize()
 
             slice_snapshot = snapshot_holder["value"]
             if isinstance(slice_snapshot, dict):
                 setattr(slice_source_project, "_inertia_partial_tail_validation_snapshot", dict(slice_snapshot))
             if outcome.rendered is not None and outcome.status != "ok":
-                print(f"[dbg] non-optimized fallback produced partial output for {addr:#x} {name} via {label}", file=sys.stderr, flush=True)
+                print(
+                    f"[dbg] non-optimized fallback produced partial output for {addr:#x} {name} via {label}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             return outcome
+
         outcome = _attempt(project, label="shared-project slice")
         if outcome.rendered is not None:
             return outcome
@@ -785,7 +615,11 @@ def _try_decompile_non_optimized_slice(
             else:
                 outcome = _attempt(fresh_project, label="fresh-project slice")
                 if outcome.rendered is not None:
-                    print(f"[dbg] non-optimized fallback recovered {addr:#x} {name} after rebuilding a fresh project", file=sys.stderr, flush=True)
+                    print(
+                        f"[dbg] non-optimized fallback recovered {addr:#x} {name} after rebuilding a fresh project",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     return outcome
                 if outcome.attempt_failures:
                     retry_failures.extend(outcome.attempt_failures)
@@ -798,13 +632,15 @@ def _try_decompile_non_optimized_slice(
                 if outcome.verdict is not None and not outcome.verdict.can_retry_with_fresh_project
                 else f"timeout budget {timeout}s is too short for a second project build"
             )
-            retry_failures.append(
-                f"fresh-project slice skipped: {skip_reason}"
-            )
+            retry_failures.append(f"fresh-project slice skipped: {skip_reason}")
 
         failure_detail = "; ".join(retry_failures[:3]) if retry_failures else None
         if retry_failures:
-            print(f"[dbg] non-optimized fallback unavailable for {addr:#x} {name}: {'; '.join(retry_failures[:3])}", file=sys.stderr, flush=True)
+            print(
+                f"[dbg] non-optimized fallback unavailable for {addr:#x} {name}: {'; '.join(retry_failures[:3])}",
+                file=sys.stderr,
+                flush=True,
+            )
         return NonOptimizedSliceOutcome(
             rendered=None,
             status="error",
@@ -815,6 +651,7 @@ def _try_decompile_non_optimized_slice(
         )
 
     return _impl()
+
 
 def _try_decompile_non_optimized_known_function(
     project: angr.Project,
@@ -907,6 +744,7 @@ def _try_decompile_non_optimized_known_function(
         attempt_failures=(failure_detail,),
     )
 
+
 def _try_emit_trivial_sidecar_c(
     project: angr.Project,
     lst_metadata: LSTMetadata | None,
@@ -921,6 +759,7 @@ def _try_emit_trivial_sidecar_c(
     if len(lines) == 1 and lines[0].endswith(": ret"):
         return f"void {name}(void)\n{{\n}}\n"
     return None
+
 
 def _try_emit_string_intrinsic_c(
     project: angr.Project,
@@ -989,11 +828,7 @@ def _try_emit_known_runtime_helper_c(
         lowered = normalized.lower()
         if re.search(r"[^A-Za-z0-9_$]", normalized):
             safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "sub_helper"
-            return (
-                f"void {safe_name}(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return f"void {safe_name}(void)\n{{\n}}\n"
         if lowered == "catox":
             return (
                 "int32_t catox(const uint8_t *s)\n"
@@ -1012,7 +847,7 @@ def _try_emit_known_runtime_helper_c(
                 "            sign = -1;\n"
                 "        }\n"
                 "        s++;\n"
-            "        ch = *s;\n"
+                "        ch = *s;\n"
                 "    }\n"
                 "    while (ch >= '0' && ch <= '9') {\n"
                 "        value = value * 10 + (int32_t)(ch - '0');\n"
@@ -1052,100 +887,34 @@ def _try_emit_known_runtime_helper_c(
                 "}\n"
             )
         if lowered == "inp":
-            return (
-                "uint8_t inp(uint16_t port)\n"
-                "{\n"
-                "    (void)port;\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "uint8_t inp(uint16_t port)\n{\n    (void)port;\n    return 0;\n}\n"
         if lowered in {"outp", "_outp"}:
-            return (
-                "uint16_t outp(uint16_t port, uint16_t value)\n"
-                "{\n"
-                "    (void)port;\n"
-                "    return (uint8_t)value;\n"
-                "}\n"
-            )
+            return "uint16_t outp(uint16_t port, uint16_t value)\n{\n    (void)port;\n    return (uint8_t)value;\n}\n"
         if lowered in {"cexit", "_cexit"}:
-            return (
-                "void cexit(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void cexit(void)\n{\n}\n"
         if lowered in {"astart", "_astart", "cstart", "_cstart", "__cstart", "cinit", "_cinit", "__cinit"}:
             safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "astart"
-            return (
-                f"void {safe_name}(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return f"void {safe_name}(void)\n{{\n}}\n"
         if lowered in {"$_qcg_enter_far", "_qcg_enter_far"} or "qcg_enter_far" in lowered:
-            return (
-                "void _qcg_enter_far(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void _qcg_enter_far(void)\n{\n}\n"
         if lowered in {"b$nearrettext", "b_nearrettext"}:
-            return (
-                "void B$NearRetText(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void B$NearRetText(void)\n{\n}\n"
         if lowered in {"exit", "_exit"}:
-            return (
-                "void exit(int status)\n"
-                "{\n"
-                "    (void)status;\n"
-                "}\n"
-            )
+            return "void exit(int status)\n{\n    (void)status;\n}\n"
         if lowered in {"dosreturn", "_dosreturn"}:
-            return (
-                "int dosreturn(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int dosreturn(void)\n{\n    return 0;\n}\n"
         if lowered in {"flushall", "_flushall"}:
-            return (
-                "int flushall(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int flushall(void)\n{\n    return 0;\n}\n"
         if lowered in {"clear_mat", "_clear_mat"}:
-            return (
-                "void clear_mat(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void clear_mat(void)\n{\n}\n"
         if lowered in {"refresh", "_refresh"}:
-            return (
-                "void refresh(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void refresh(void)\n{\n}\n"
         if lowered in {"ftol", "_ftol"}:
-            return (
-                "long ftol(double x)\n"
-                "{\n"
-                "    return (long)x;\n"
-                "}\n"
-            )
+            return "long ftol(double x)\n{\n    return (long)x;\n}\n"
         if lowered in {"edit", "_edit"}:
-            return (
-                "void edit(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void edit(void)\n{\n}\n"
         if lowered in {"set_cursor", "_set_cursor"}:
-            return (
-                "void set_cursor(unsigned short row, unsigned short col)\n"
-                "{\n"
-                "    (void)row;\n"
-                "    (void)col;\n"
-                "}\n"
-            )
+            return "void set_cursor(unsigned short row, unsigned short col)\n{\n    (void)row;\n    (void)col;\n}\n"
         if lowered in {"ultoa", "_ultoa"}:
             return (
                 "char *ultoa(unsigned long value, char *str, int radix)\n"
@@ -1159,26 +928,11 @@ def _try_emit_known_runtime_helper_c(
                 "}\n"
             )
         if lowered in {"free", "_free"}:
-            return (
-                "void free(void *ptr)\n"
-                "{\n"
-                "    (void)ptr;\n"
-                "}\n"
-            )
+            return "void free(void *ptr)\n{\n    (void)ptr;\n}\n"
         if lowered in {"myalloc", "_myalloc"}:
-            return (
-                "void *myalloc(unsigned short size)\n"
-                "{\n"
-                "    (void)size;\n"
-                "    return (void *)0;\n"
-                "}\n"
-            )
+            return "void *myalloc(unsigned short size)\n{\n    (void)size;\n    return (void *)0;\n}\n"
         if lowered in {"cltoasub", "_cltoasub"}:
-            return (
-                "void cltoasub(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void cltoasub(void)\n{\n}\n"
         if lowered in {"cxtoa", "_cxtoa"}:
             return (
                 "char *cxtoa(unsigned short value, char *buf)\n"
@@ -1191,86 +945,34 @@ def _try_emit_known_runtime_helper_c(
                 "}\n"
             )
         if lowered in {"amallocbrk", "_amallocbrk"}:
-            return (
-                "unsigned long amallocbrk(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "unsigned long amallocbrk(void)\n{\n    return 0;\n}\n"
         if lowered in {"fltinf", "_fltinf"}:
-            return (
-                "void fltinf(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void fltinf(void)\n{\n}\n"
         if lowered in {"fltin", "_fltin"}:
-            return (
-                "double fltin(void)\n"
-                "{\n"
-                "    return 0.0;\n"
-                "}\n"
-            )
+            return "double fltin(void)\n{\n    return 0.0;\n}\n"
         return _try_emit_known_runtime_helper_c_tail_8616(normalized=normalized, lowered=lowered)
 
-
-
     return _impl()
+
+
 def _try_emit_known_runtime_helper_c_tail_8616(*, normalized: str, lowered: str) -> str | None:
     def _impl():
         if lowered in {"anfld1", "a_nfld1"}:
-            return (
-                "double aNfld1(void)\n"
-                "{\n"
-                "    return 1.0;\n"
-                "}\n"
-            )
+            return "double aNfld1(void)\n{\n    return 1.0;\n}\n"
         if lowered in {"anlmul", "a_nlmul"}:
-            return (
-                "long aNlmul(long a, long b)\n"
-                "{\n"
-                "    return a * b;\n"
-                "}\n"
-            )
+            return "long aNlmul(long a, long b)\n{\n    return a * b;\n}\n"
         if lowered in {"$i8_tpwr10", "i8_tpwr10", "_i8_tpwr10"}:
-            return (
-                "double i8_tpwr10(void)\n"
-                "{\n"
-                "    return 1.0;\n"
-                "}\n"
-            )
+            return "double i8_tpwr10(void)\n{\n    return 1.0;\n}\n"
         if lowered in {"$i8_output", "i8_output", "_i8_output"}:
-            return (
-                "int i8_output(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int i8_output(void)\n{\n    return 0;\n}\n"
         if lowered in {"$i8_input", "i8_input", "_i8_input"}:
-            return (
-                "int i8_input(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int i8_input(void)\n{\n    return 0;\n}\n"
         if lowered in {"ctermsub", "_ctermsub"}:
-            return (
-                "void ctermsub(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void ctermsub(void)\n{\n}\n"
         if lowered in {"fpinstall87", "_fpinstall87"}:
-            return (
-                "int FPINSTALL87(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int FPINSTALL87(void)\n{\n    return 0;\n}\n"
         if lowered in {"fierqq", "_fierqq"}:
-            return (
-                "void FIERQQ(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void FIERQQ(void)\n{\n}\n"
         if lowered in {"fcmp", "_fcmp"}:
             return (
                 "int fcmp(double a, double b)\n"
@@ -1285,68 +987,23 @@ def _try_emit_known_runtime_helper_c_tail_8616(*, normalized: str, lowered: str)
                 "}\n"
             )
         if lowered in {"maperror", "_maperror"}:
-            return (
-                "int maperror(int err)\n"
-                "{\n"
-                "    return err;\n"
-                "}\n"
-            )
+            return "int maperror(int err)\n{\n    return err;\n}\n"
         if lowered in {"perror", "_perror"}:
-            return (
-                "void perror(const char *msg)\n"
-                "{\n"
-                "    (void)msg;\n"
-                "}\n"
-            )
+            return "void perror(const char *msg)\n{\n    (void)msg;\n}\n"
         if lowered in {"fmalloc", "_fmalloc"}:
-            return (
-                "void *fmalloc(unsigned int size)\n"
-                "{\n"
-                "    (void)size;\n"
-                "    return (void *)0;\n"
-                "}\n"
-            )
+            return "void *fmalloc(unsigned int size)\n{\n    (void)size;\n    return (void *)0;\n}\n"
         if lowered in {"nmsg_text", "_nmsg_text"}:
-            return (
-                "const char *NMSG_TEXT(void)\n"
-                "{\n"
-                "    return \"\";\n"
-                "}\n"
-            )
+            return 'const char *NMSG_TEXT(void)\n{\n    return "";\n}\n'
         if lowered in {"nmsg_write", "_nmsg_write"}:
-            return (
-                "int NMSG_WRITE(const char *msg)\n"
-                "{\n"
-                "    (void)msg;\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int NMSG_WRITE(const char *msg)\n{\n    (void)msg;\n    return 0;\n}\n"
         if lowered in {"forcdecpt", "_forcdecpt"}:
-            return (
-                "void forcdecpt(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void forcdecpt(void)\n{\n}\n"
         if lowered in {"fpsignal", "_fpsignal"}:
-            return (
-                "void fpsignal(unsigned short code)\n"
-                "{\n"
-                "    (void)code;\n"
-                "}\n"
-            )
+            return "void fpsignal(unsigned short code)\n{\n    (void)code;\n}\n"
         if lowered in {"fisrqq", "_fisrqq"}:
-            return (
-                "void FISRQQ(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void FISRQQ(void)\n{\n}\n"
         if lowered in {"inc", "_inc"}:
-            return (
-                "unsigned short inc(unsigned short x)\n"
-                "{\n"
-                "    return (unsigned short)(x + 1u);\n"
-                "}\n"
-            )
+            return "unsigned short inc(unsigned short x)\n{\n    return (unsigned short)(x + 1u);\n}\n"
         if lowered in {"rand", "_rand"}:
             return (
                 "int rand(void)\n"
@@ -1357,37 +1014,15 @@ def _try_emit_known_runtime_helper_c_tail_8616(*, normalized: str, lowered: str)
                 "}\n"
             )
         if lowered in {"srand", "_srand"}:
-            return (
-                "void srand(unsigned int seed)\n"
-                "{\n"
-                "    (void)seed;\n"
-                "}\n"
-            )
+            return "void srand(unsigned int seed)\n{\n    (void)seed;\n}\n"
         if lowered in {"b$scnio", "b_scnio"}:
-            return (
-                "unsigned short B$SCNIO(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "unsigned short B$SCNIO(void)\n{\n    return 0;\n}\n"
         if lowered in {"b$bumpds", "b_bumpds"}:
-            return (
-                "void B$BumpDS(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void B$BumpDS(void)\n{\n}\n"
         if lowered in {"b$bumpes", "b_bumpes"}:
-            return (
-                "void B$BumpES(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void B$BumpES(void)\n{\n}\n"
         if lowered in {"b$decds", "b_decds"}:
-            return (
-                "void B$DecDS(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void B$DecDS(void)\n{\n}\n"
         return _try_emit_known_runtime_helper_c_tail2_8616(normalized=normalized, lowered=lowered)
 
     return _impl()
@@ -1397,82 +1032,29 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
     def _impl():
         if lowered.startswith("b$egachkbt"):
             safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "B$EgaCHKBT"
-            return (
-                f"unsigned short {safe_name}(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return f"unsigned short {safe_name}(void)\n{{\n    return 0;\n}}\n"
         if lowered in {"andcvt", "a_ndcvt"}:
-            return (
-                "void aNdcvt(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aNdcvt(void)\n{\n}\n"
         if lowered in {"affdivs", "a_ffdivs", "b$ffdiv", "b$ffdivs"}:
             safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "aFfdivs"
-            return (
-                f"void {safe_name}(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return f"void {safe_name}(void)\n{{\n}}\n"
         if lowered == "dos_getdate":
-            return (
-                "int dos_getdate(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int dos_getdate(void)\n{\n    return 0;\n}\n"
         if lowered == "dos_gettime":
-            return (
-                "int dos_gettime(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int dos_gettime(void)\n{\n    return 0;\n}\n"
         if lowered in {"isatty", "_isatty"}:
-            return (
-                "int isatty(int fd)\n"
-                "{\n"
-                "    (void)fd;\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int isatty(int fd)\n{\n    (void)fd;\n    return 0;\n}\n"
         if lowered == "findlast":
-            return (
-                "int findlast(void)\n"
-                "{\n"
-                "    return -1;\n"
-                "}\n"
-            )
+            return "int findlast(void)\n{\n    return -1;\n}\n"
         if lowered in {"getenv", "_getenv"}:
-            return (
-                "char *getenv(const char *name)\n"
-                "{\n"
-                "    (void)name;\n"
-                "    return (char *)0;\n"
-                "}\n"
-            )
+            return "char *getenv(const char *name)\n{\n    (void)name;\n    return (char *)0;\n}\n"
         if lowered == "b$egachkbtr":
-            return (
-                "short B$EgaCHKBTR(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "short B$EgaCHKBTR(void)\n{\n    return 0;\n}\n"
         if lowered == "b$colorpalette":
-            return (
-                "void b$ColorPalette(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void b$ColorPalette(void)\n{\n}\n"
         if lowered.startswith("b$") and "palette" in lowered:
             safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "b$PaletteHelper"
-            return (
-                f"void {safe_name}(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return f"void {safe_name}(void)\n{{\n}}\n"
         if lowered == "strcpy":
             return (
                 "char *strcpy(char *dst, const char *src)\n"
@@ -1597,13 +1179,7 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
                 "}\n"
             )
         if lowered == "ctime":
-            return (
-                "char *ctime(const time_t *tp)\n"
-                "{\n"
-                "    (void)tp;\n"
-                "    return (char *)0;\n"
-                "}\n"
-            )
+            return "char *ctime(const time_t *tp)\n{\n    (void)tp;\n    return (char *)0;\n}\n"
         if lowered == "setvbuf":
             return (
                 "int setvbuf(void *stream, char *buffer, int mode, size_t size)\n"
@@ -1628,61 +1204,23 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
                 "}\n"
             )
         if lowered == "strdup":
-            return (
-                "char *strdup(const char *s)\n"
-                "{\n"
-                "    (void)s;\n"
-                "    return (char *)0;\n"
-                "}\n"
-            )
+            return "char *strdup(const char *s)\n{\n    (void)s;\n    return (char *)0;\n}\n"
         if lowered in {"afuldiv", "_afuldiv"}:
-            return (
-                "void aFuldiv(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aFuldiv(void)\n{\n}\n"
         if lowered in {"afldiv", "_afldiv"}:
-            return (
-                "void aFldiv(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aFldiv(void)\n{\n}\n"
         if lowered in {"afulmul", "_afulmul"}:
-            return (
-                "void aFulmul(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aFulmul(void)\n{\n}\n"
         if lowered in {"afulrem", "_afulrem"}:
-            return (
-                "void aFulrem(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aFulrem(void)\n{\n}\n"
         if lowered in {"aflrem", "_aflrem"}:
-            return (
-                "void aFlrem(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aFlrem(void)\n{\n}\n"
         if lowered in {"afnalmul", "_afnalmul"}:
-            return (
-                "void aFNalmul(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aFNalmul(void)\n{\n}\n"
         if lowered in {"afnaldiv", "_afnaldiv"}:
-            return (
-                "void aFNaldiv(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aFNaldiv(void)\n{\n}\n"
         if lowered in {"cropzeros", "_cropzeros"}:
-            return (
-                "void cropzeros(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void cropzeros(void)\n{\n}\n"
         if lowered in {"fptostr", "_fptostr"}:
             return (
                 "char *fptostr(char *dst, double value)\n"
@@ -1695,11 +1233,7 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
                 "}\n"
             )
         if lowered == "shift":
-            return (
-                "void shift(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void shift(void)\n{\n}\n"
         if lowered in {"intdos", "_intdos"}:
             return (
                 "int intdos(void *in_regs, void *out_regs)\n"
@@ -1710,18 +1244,9 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
                 "}\n"
             )
         if lowered in {"store_dt", "_store_dt"}:
-            return (
-                "void store_dt(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void store_dt(void)\n{\n}\n"
         if lowered in {"dosretax", "_dosretax"}:
-            return (
-                "int dosretax(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int dosretax(void)\n{\n    return 0;\n}\n"
         if lowered in {"fopen", "_fopen"}:
             return (
                 "void *fopen(const char *path, const char *mode)\n"
@@ -1732,19 +1257,9 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
                 "}\n"
             )
         if lowered in {"nfree", "_nfree"}:
-            return (
-                "void nfree(void *ptr)\n"
-                "{\n"
-                "    (void)ptr;\n"
-                "}\n"
-            )
+            return "void nfree(void *ptr)\n{\n    (void)ptr;\n}\n"
         if lowered in {"putch", "_putch"}:
-            return (
-                "int putch(int ch)\n"
-                "{\n"
-                "    return ch;\n"
-                "}\n"
-            )
+            return "int putch(int ch)\n{\n    return ch;\n}\n"
         if lowered in {"movedata", "_movedata"}:
             return (
                 "void movedata(unsigned short src_seg, unsigned short src_off,\n"
@@ -1759,34 +1274,14 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
                 "}\n"
             )
         if lowered in {"ffree_lk", "_ffree_lk"}:
-            return (
-                "short ffree_lk(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "short ffree_lk(void)\n{\n    return 0;\n}\n"
         if lowered == "b$chkolivetti":
-            return (
-                "int B$ChkOlivetti(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return "int B$ChkOlivetti(void)\n{\n    return 0;\n}\n"
         if lowered in {"b$cganreadl", "b$eganreadl"}:
             safe_name = "B$CgaNReadL" if lowered == "b$cganreadl" else "B$EgaNReadL"
-            return (
-                f"int {safe_name}(void)\n"
-                "{\n"
-                "    return 0;\n"
-                "}\n"
-            )
+            return f"int {safe_name}(void)\n{{\n    return 0;\n}}\n"
         if lowered == "anulmul":
-            return (
-                "uint32_t aNulmul(uint32_t a, uint32_t b)\n"
-                "{\n"
-                "    return a * b;\n"
-                "}\n"
-            )
+            return "uint32_t aNulmul(uint32_t a, uint32_t b)\n{\n    return a * b;\n}\n"
         if lowered == "anldiv":
             return (
                 "int32_t aNldiv(int32_t a, int32_t b)\n"
@@ -1819,26 +1314,11 @@ def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str
                 "}\n"
             )
         if lowered == "anssubs":
-            return (
-                "int16_t aNssubs(int16_t a, int16_t b)\n"
-                "{\n"
-                "    return (int16_t)(a - b);\n"
-                "}\n"
-            )
+            return "int16_t aNssubs(int16_t a, int16_t b)\n{\n    return (int16_t)(a - b);\n}\n"
         if lowered == "nullcheck":
-            return (
-                "int nullcheck(const void *p)\n"
-                "{\n"
-                "    return p == NULL;\n"
-                "}\n"
-            )
+            return "int nullcheck(const void *p)\n{\n    return p == NULL;\n}\n"
         if lowered.startswith("afc") and lowered.endswith("ceill"):
-            return (
-                "void aFCIceill(void)\n"
-                "{\n"
-                "}\n"
-            )
+            return "void aFCIceill(void)\n{\n}\n"
         return None
-
 
     return _impl()

@@ -10,8 +10,8 @@ from meta_harness.config import LlmConfig, RuntimeConfig
 from meta_harness.orchestrator import MetaHarness, ResourceBlockedError, RoleRunError
 from meta_harness.runtime_records import (
     CYCLE_STATE_SCHEMA_VERSION,
-    EVIDENCE_FACTS_SCHEMA_VERSION,
     EVENT_NAMES,
+    EVIDENCE_FACTS_SCHEMA_VERSION,
     FAILURE_CLASSES,
     HISTORY_EVENT_SCHEMA_VERSION,
     PREFLIGHT_STATE_SCHEMA_VERSION,
@@ -278,7 +278,9 @@ def test_worker_cycle_stalls_when_repeated_failed_test_is_outside_current_task_p
 
     monkeypatch.setattr(harness, "check_stop_file", lambda: None)
     monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
-    monkeypatch.setattr(harness, "run_role", lambda *args, **kwargs: pytest.fail("worker should not run once drift is detected"))
+    monkeypatch.setattr(
+        harness, "run_role", lambda *args, **kwargs: pytest.fail("worker should not run once drift is detected")
+    )
 
     harness.worker_cycle()
 
@@ -558,14 +560,20 @@ def test_perform_maintenance_writes_summary(monkeypatch, tmp_path):
     harness = MetaHarness(cfg, llm_cfg)
     cfg.session_ledger_file.parent.mkdir(parents=True, exist_ok=True)
     cfg.session_ledger_file.write_text(
-        json.dumps({"schema_version": "meta_harness.session.v1", "role": "worker", "duration_secs": 5, "total_tokens": 250001})
+        json.dumps(
+            {"schema_version": "meta_harness.session.v1", "role": "worker", "duration_secs": 5, "total_tokens": 250001}
+        )
         + "\n",
         encoding="utf-8",
     )
     cfg.history_log_file.write_text(
-        json.dumps({"schema_version": "meta_harness.event.v1", "event": "role.timed_out", "failure_class": "worker_timeout"})
+        json.dumps(
+            {"schema_version": "meta_harness.event.v1", "event": "role.timed_out", "failure_class": "worker_timeout"}
+        )
         + "\n"
-        + json.dumps({"schema_version": "meta_harness.event.v1", "event": "role.timed_out", "failure_class": "worker_timeout"})
+        + json.dumps(
+            {"schema_version": "meta_harness.event.v1", "event": "role.timed_out", "failure_class": "worker_timeout"}
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -622,7 +630,11 @@ def test_auto_commit_current_packet_uses_packet_commit_message(monkeypatch, tmp_
     harness.prepare_cycle_workspace()
     harness.current_green_level = "focused-item-green"
     harness.cycle_state["git_clean_start"] = True
-    harness.last_completed_task_packet = {"item_id": "3", "objective": "finish focused item", "target_files": ["meta_harness/orchestrator.py"]}
+    harness.last_completed_task_packet = {
+        "item_id": "3",
+        "objective": "finish focused item",
+        "target_files": ["meta_harness/orchestrator.py"],
+    }
 
     class Result:
         def __init__(self, returncode=0, stdout="", stderr=""):
@@ -761,7 +773,13 @@ def test_run_stops_when_unattended_cycle_budget_reached(monkeypatch, tmp_path):
     monkeypatch.setattr(harness, "planner_step", lambda: None)
     monkeypatch.setattr(harness, "worker_cycle", lambda: None)
     monkeypatch.setattr(harness, "reviewer_step", lambda: "1")
-    monkeypatch.setattr(harness, "perform_maintenance", lambda _reason: cfg.maintenance_file.write_text('{"schema_version":"meta_harness.maintenance.v1"}\n', encoding="utf-8"))
+    monkeypatch.setattr(
+        harness,
+        "perform_maintenance",
+        lambda _reason: cfg.maintenance_file.write_text(
+            '{"schema_version":"meta_harness.maintenance.v1"}\n', encoding="utf-8"
+        ),
+    )
 
     assert harness.run(resume=False) == 0
     assert "unattended-budget-reached" in cfg.status_file.read_text(encoding="utf-8")
@@ -1017,7 +1035,9 @@ def test_sweep_step_retries_thread_exhaustion_in_forced_serial_mode(monkeypatch,
     assert "INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION" not in popen_envs[0]
     assert popen_envs[1]["INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION"] == "1"
     evidence = cfg.evidence_log_file.read_text(encoding="utf-8")
-    assert "retry reason=thread-start failure; retrying full sweep with forced serial function decompilation" in evidence
+    assert (
+        "retry reason=thread-start failure; retrying full sweep with forced serial function decompilation" in evidence
+    )
     assert "disabled (forced serial)" in evidence
 
 
@@ -1063,7 +1083,9 @@ def test_maybe_self_restart_writes_restarting_status_before_exec(monkeypatch, tm
     harness.prepare_cycle_workspace()
 
     monkeypatch.setattr(harness, "_compute_script_checksums", lambda: {"run.sh": "new", "meta_harness": "new"})
-    monkeypatch.setattr("meta_harness.orchestrator.os.execvpe", lambda *args, **kwargs: (_ for _ in ()).throw(SystemExit(0)))
+    monkeypatch.setattr(
+        "meta_harness.orchestrator.os.execvpe", lambda *args, **kwargs: (_ for _ in ()).throw(SystemExit(0))
+    )
 
     with pytest.raises(SystemExit):
         harness.maybe_self_restart("reviewer")
@@ -1181,7 +1203,9 @@ def test_worker_cycle_does_not_retry_fresh_immediately_after_resume_timeout(monk
 
 def test_worker_cycle_retries_when_worker_claims_zero_but_plan_has_steps(monkeypatch, tmp_path):
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
-    cfg.plan_path.write_text("## Remaining steps\n\n1. First\n2. Second\n\nGlobal Remaining steps: 2\n", encoding="utf-8")
+    cfg.plan_path.write_text(
+        "## Remaining steps\n\n1. First\n2. Second\n\nGlobal Remaining steps: 2\n", encoding="utf-8"
+    )
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
 
@@ -1247,9 +1271,13 @@ def test_planner_timeout_continues_with_existing_plan(monkeypatch, tmp_path):
     monkeypatch.setattr(
         harness,
         "run_role",
-        lambda role, model, prompt, **_kwargs: (_ for _ in ()).throw(RoleRunError(role, timed_out_log, "planner timed out", 124)),
+        lambda role, model, prompt, **_kwargs: (_ for _ in ()).throw(
+            RoleRunError(role, timed_out_log, "planner timed out", 124)
+        ),
     )
-    monkeypatch.setattr(harness, "sync_current_plan_item", lambda *args, **kwargs: synced.__setitem__("count", synced["count"] + 1))
+    monkeypatch.setattr(
+        harness, "sync_current_plan_item", lambda *args, **kwargs: synced.__setitem__("count", synced["count"] + 1)
+    )
 
     harness.planner_step()
 
@@ -1274,7 +1302,9 @@ def test_reviewer_timeout_returns_plan_remaining(monkeypatch, tmp_path):
     monkeypatch.setattr(
         harness,
         "run_role",
-        lambda role, model, prompt, **_kwargs: (_ for _ in ()).throw(RoleRunError(role, timed_out_log, "reviewer timed out", 124)),
+        lambda role, model, prompt, **_kwargs: (_ for _ in ()).throw(
+            RoleRunError(role, timed_out_log, "reviewer timed out", 124)
+        ),
     )
     monkeypatch.setattr(harness, "plan_remaining_steps", lambda: 2)
 
@@ -1382,9 +1412,7 @@ def test_worker_cycle_stalls_after_max_worker_iters(monkeypatch, tmp_path):
     progress_log = cfg.log_dir / "progress_worker.log"
     progress_log.parent.mkdir(parents=True, exist_ok=True)
     progress_log.write_text(
-        "codex\n"
-        "Item 11 remains blocked; the upstream hook is still absent.\n"
-        "Global Remaining steps: 3\n",
+        "codex\nItem 11 remains blocked; the upstream hook is still absent.\nGlobal Remaining steps: 3\n",
         encoding="utf-8",
     )
 
@@ -1549,9 +1577,7 @@ def test_current_worker_model_auto_escalates_after_recent_timeout_log(monkeypatc
 def test_first_plan_item_text_returns_first_numbered_item(monkeypatch, tmp_path):
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
-        "1. `decompile.py:10` fix BYTEOPS first\n"
-        "still same item detail\n"
-        "2. `other.py:20` later item\n",
+        "1. `decompile.py:10` fix BYTEOPS first\nstill same item detail\n2. `other.py:20` later item\n",
         encoding="utf-8",
     )
     harness = MetaHarness(cfg, llm_cfg)

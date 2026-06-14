@@ -269,7 +269,7 @@ def _collect_access_traits(
                 return []
             expr = unwrap_c_casts(expr)
             if isinstance(expr, structured_c.CBinaryOp) and expr.op == "Add":
-                return [* _flatten_c_add_terms(expr.lhs), * _flatten_c_add_terms(expr.rhs)]
+                return [*_flatten_c_add_terms(expr.lhs), *_flatten_c_add_terms(expr.rhs)]
             return [expr]
 
         for node in iter_c_nodes_deep(codegen.cfunc.statements):

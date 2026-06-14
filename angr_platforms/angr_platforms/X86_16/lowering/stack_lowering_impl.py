@@ -40,10 +40,7 @@ def _is_generic_stack_name_text_8616(name: object) -> bool:
     base = _strip_typed_suffix_8616(name)
     if base is None:
         return False
-    return (
-        re.fullmatch(r"(?:arg_\d+|local_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", base)
-        is not None
-    )
+    return re.fullmatch(r"(?:arg_\d+|local_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", base) is not None
 
 
 def _canonical_stack_offset_8616(offset):
@@ -209,9 +206,14 @@ def _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offse
             var_offset = getattr(variable, "offset", None)
             if isinstance(var_offset, int):
                 for candidate_var, candidate_cvar in variables_in_use.items():
-                    if not isinstance(candidate_var, SimStackVariable) or not isinstance(candidate_cvar, structured_c.CVariable):
+                    if not isinstance(candidate_var, SimStackVariable) or not isinstance(
+                        candidate_cvar, structured_c.CVariable
+                    ):
                         continue
-                    if getattr(candidate_var, "base", None) == var_base and getattr(candidate_var, "offset", None) == var_offset:
+                    if (
+                        getattr(candidate_var, "base", None) == var_base
+                        and getattr(candidate_var, "offset", None) == var_offset
+                    ):
                         return candidate_cvar
         name = getattr(resolved, "name", None) or getattr(variable, "name", None)
         if not _is_generic_stack_name_8616(name):
@@ -308,7 +310,9 @@ def _preferred_stack_name_8616(variable, cvar) -> str | None:
 def _build_stack_resolution_context_8616(codegen, stack_slot_identity_for_variable):
     arg_list = tuple(getattr(codegen.cfunc, "arg_list", ()) or ())
     arg_candidates: list[tuple[object, object]] = []
-    arg_variable_ids = {id(getattr(arg, "variable", None)) for arg in arg_list if getattr(arg, "variable", None) is not None}
+    arg_variable_ids = {
+        id(getattr(arg, "variable", None)) for arg in arg_list if getattr(arg, "variable", None) is not None
+    }
     arg_slot_identities = {
         stack_slot_identity_for_variable(getattr(arg, "variable", None))
         for arg in arg_list
@@ -576,23 +580,23 @@ def _canonicalize_stack_cvar_expr(
                 and isinstance(active_dirty_varids, set)
                 and varid in active_dirty_varids
             ):
-                codegen._inertia_stack_lowering_dirty_cycle_refused_8616 = int(
-                    getattr(codegen, "_inertia_stack_lowering_dirty_cycle_refused_8616", 0) or 0
-                ) + 1
+                codegen._inertia_stack_lowering_dirty_cycle_refused_8616 = (
+                    int(getattr(codegen, "_inertia_stack_lowering_dirty_cycle_refused_8616", 0) or 0) + 1
+                )
             return expr
         max_depth = getattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616", 64)
         if not isinstance(max_depth, int) or max_depth <= 0:
             max_depth = 64
         if len(active_expr_ids) >= max_depth:
-            codegen._inertia_stack_lowering_canonicalize_depth_refused_8616 = int(
-                getattr(codegen, "_inertia_stack_lowering_canonicalize_depth_refused_8616", 0) or 0
-            ) + 1
+            codegen._inertia_stack_lowering_canonicalize_depth_refused_8616 = (
+                int(getattr(codegen, "_inertia_stack_lowering_canonicalize_depth_refused_8616", 0) or 0) + 1
+            )
             debug_stats["lowering_refusals"] += 1
             refusal_reasons = debug_stats.setdefault("stable_ss_lowering_refusal_reasons", {})
             if isinstance(refusal_reasons, dict):
-                refusal_reasons["canonicalize_depth_limit"] = int(
-                    refusal_reasons.get("canonicalize_depth_limit", 0) or 0
-                ) + 1
+                refusal_reasons["canonicalize_depth_limit"] = (
+                    int(refusal_reasons.get("canonicalize_depth_limit", 0) or 0) + 1
+                )
             return expr
         active_expr_ids.add(expr_id)
 
@@ -749,7 +753,9 @@ def _canonicalize_stack_cvar_expr(
             best_score = 0
             tied = False
             for bias, _ in sorted(bias_scores.items()):
-                matched_offsets = {disp + bias for disp in stack_base_displacements if (disp + bias) in known_bp_offsets}
+                matched_offsets = {
+                    disp + bias for disp in stack_base_displacements if (disp + bias) in known_bp_offsets
+                }
                 score = len(matched_offsets)
                 if score > best_score:
                     best_bias = bias
@@ -851,12 +857,8 @@ def _canonicalize_stack_cvar_expr(
                 return True
             return _is_linear_temp_name_8616(name)
 
-        _UNRESOLVED_SINGLE_ASSIGNMENT = analysis_context.setdefault(
-            "unresolved_single_assignment_sentinel", object()
-        )
-        dirty_expr_single_assignment_cache = analysis_context.setdefault(
-            "dirty_expr_single_assignment_cache", {}
-        )
+        _UNRESOLVED_SINGLE_ASSIGNMENT = analysis_context.setdefault("unresolved_single_assignment_sentinel", object())
+        dirty_expr_single_assignment_cache = analysis_context.setdefault("dirty_expr_single_assignment_cache", {})
         if not isinstance(dirty_expr_single_assignment_cache, dict):
             dirty_expr_single_assignment_cache = {}
             analysis_context["dirty_expr_single_assignment_cache"] = dirty_expr_single_assignment_cache
@@ -998,9 +1000,9 @@ def _canonicalize_stack_cvar_expr(
                             index[lhs_key] = rhs
                 dirty_expr_single_assignment_index = index
                 analysis_context["dirty_expr_single_assignment_index"] = dirty_expr_single_assignment_index
-                codegen._inertia_stack_lowering_virtual_assignment_index_scanned = int(
-                    getattr(codegen, "_inertia_stack_lowering_virtual_assignment_index_scanned", 0) or 0
-                ) + scanned
+                codegen._inertia_stack_lowering_virtual_assignment_index_scanned = (
+                    int(getattr(codegen, "_inertia_stack_lowering_virtual_assignment_index_scanned", 0) or 0) + scanned
+                )
                 codegen._inertia_stack_lowering_virtual_assignment_index_keys = int(
                     getattr(codegen, "_inertia_stack_lowering_virtual_assignment_index_keys", 0) or 0
                 ) + len(index)
@@ -1009,11 +1011,13 @@ def _canonicalize_stack_cvar_expr(
             if resolved is _UNRESOLVED_SINGLE_ASSIGNMENT:
                 dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGNMENT
                 return None
-            dirty_expr_single_assignment_cache[normalized_name] = resolved if resolved is not None else _UNRESOLVED_SINGLE_ASSIGNMENT
+            dirty_expr_single_assignment_cache[normalized_name] = (
+                resolved if resolved is not None else _UNRESOLVED_SINGLE_ASSIGNMENT
+            )
             if resolved is not None:
-                codegen._inertia_stack_lowering_virtual_assignment_index_hits = int(
-                    getattr(codegen, "_inertia_stack_lowering_virtual_assignment_index_hits", 0) or 0
-                ) + 1
+                codegen._inertia_stack_lowering_virtual_assignment_index_hits = (
+                    int(getattr(codegen, "_inertia_stack_lowering_virtual_assignment_index_hits", 0) or 0) + 1
+                )
             return resolved
 
         def _top_level_statements() -> list[object]:
@@ -1070,7 +1074,9 @@ def _canonicalize_stack_cvar_expr(
             if not isinstance(varid, int):
                 reg = _safe_dirty_attr_8616(dirty, "reg")
                 bits = _safe_dirty_attr_8616(dirty, "bits")
-                if _is_sp_virtual_register(SimpleNamespace(reg=reg, size=(bits // 8) if isinstance(bits, int) else None)):
+                if _is_sp_virtual_register(
+                    SimpleNamespace(reg=reg, size=(bits // 8) if isinstance(bits, int) else None)
+                ):
                     return _synthetic_sp_anchor_cvar()
                 return None
             if seen_varids is None:
@@ -1098,9 +1104,9 @@ def _canonicalize_stack_cvar_expr(
                 active_dirty_varids = set()
                 analysis_context["active_dirty_varids"] = active_dirty_varids
             if isinstance(varid, int) and varid in active_dirty_varids:
-                codegen._inertia_stack_lowering_dirty_cycle_refused_8616 = int(
-                    getattr(codegen, "_inertia_stack_lowering_dirty_cycle_refused_8616", 0) or 0
-                ) + 1
+                codegen._inertia_stack_lowering_dirty_cycle_refused_8616 = (
+                    int(getattr(codegen, "_inertia_stack_lowering_dirty_cycle_refused_8616", 0) or 0) + 1
+                )
                 return node
             resolved = _resolve_dirty_virtual_expr(node)
             if resolved is None:
@@ -1250,7 +1256,9 @@ def _canonicalize_stack_cvar_expr(
                         if isinstance(lhs_var, SimStackVariable):
                             if getattr(lhs_var, "base", None) != "bp":
                                 continue
-                        if isinstance(lhs_var, SimStackVariable) and not _is_pointer_capable_stack_variable(lhs_var, lhs):
+                        if isinstance(lhs_var, SimStackVariable) and not _is_pointer_capable_stack_variable(
+                            lhs_var, lhs
+                        ):
                             # Accept tiny stack temporaries that are proved to carry a stack pointer.
                             # These appear in helper prologue/epilogue carrier patterns.
                             rhs_expr = unwrap_c_casts(getattr(node, "rhs", None))
@@ -1454,9 +1462,9 @@ def _canonicalize_stack_cvar_expr(
             ):
                 debug_stats["candidate_ast_match_count"] += 1
                 debug_stats["lowering_replacements"] += 1
-                codegen._inertia_stack_cvar_rebased_from_stack_base_bias_count_8616 = int(
-                    getattr(codegen, "_inertia_stack_cvar_rebased_from_stack_base_bias_count_8616", 0) or 0
-                ) + 1
+                codegen._inertia_stack_cvar_rebased_from_stack_base_bias_count_8616 = (
+                    int(getattr(codegen, "_inertia_stack_cvar_rebased_from_stack_base_bias_count_8616", 0) or 0) + 1
+                )
                 return resolved
             if not callable(materialize_stack_cvar_at_offset):
                 return None
@@ -1470,9 +1478,9 @@ def _canonicalize_stack_cvar_expr(
             ):
                 debug_stats["candidate_ast_match_count"] += 1
                 debug_stats["lowering_replacements"] += 1
-                codegen._inertia_stack_cvar_rebased_from_stack_base_bias_count_8616 = int(
-                    getattr(codegen, "_inertia_stack_cvar_rebased_from_stack_base_bias_count_8616", 0) or 0
-                ) + 1
+                codegen._inertia_stack_cvar_rebased_from_stack_base_bias_count_8616 = (
+                    int(getattr(codegen, "_inertia_stack_cvar_rebased_from_stack_base_bias_count_8616", 0) or 0) + 1
+                )
                 return materialized
             return None
 
@@ -1491,7 +1499,9 @@ def _canonicalize_stack_cvar_expr(
                             active_expr_ids.discard(expr_id)
                             return rebased
                     preferred_size = (
-                        _fact_backed_stack_size_for_offset(canonical_offset) if isinstance(canonical_offset, int) else None
+                        _fact_backed_stack_size_for_offset(canonical_offset)
+                        if isinstance(canonical_offset, int)
+                        else None
                     )
                     if preferred_size is None:
                         preferred_size = getattr(variable, "size", None)
@@ -1556,14 +1566,43 @@ def _canonicalize_stack_cvar_expr(
                 if isinstance(target_offset, int):
                     resolution_candidates.append((target_offset + alias_offset + index_value, alias_base_var))
             for resolved_offset, alias_base_var in resolution_candidates:
-                    resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset, preferred_size=requested_size)
-                    resolved = _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offset)
-                    resolved_var = getattr(resolved, "variable", None)
+                resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset, preferred_size=requested_size)
+                resolved = _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offset)
+                resolved_var = getattr(resolved, "variable", None)
+                if (
+                    isinstance(resolved, structured_c.CVariable)
+                    and isinstance(resolved_var, SimStackVariable)
+                    and getattr(resolved_var, "offset", None) == resolved_offset
+                ):
+                    _record_stack_canonicalization_bridge_8616(
+                        codegen,
+                        expr=expr,
+                        resolved_offset=resolved_offset,
+                        kind="indexed_value",
+                    )
+                    debug_stats["candidate_ast_match_count"] += 1
+                    debug_stats["lowering_replacements"] += 1
+                    active_expr_ids.discard(expr_id)
+                    return resolved
+                if alias_base_var is None:
+                    continue
+                base_size = getattr(alias_base_var, "size", None)
+                if (
+                    callable(materialize_stack_cvar_at_offset)
+                    and isinstance(requested_size, int)
+                    and isinstance(base_size, int)
+                    and requested_size > base_size
+                ):
+                    materialized = materialize_stack_cvar_at_offset(codegen, resolved_offset, requested_size)
+                    materialized_var = getattr(materialized, "variable", None)
                     if (
-                        isinstance(resolved, structured_c.CVariable)
-                        and isinstance(resolved_var, SimStackVariable)
-                        and getattr(resolved_var, "offset", None) == resolved_offset
+                        isinstance(materialized, structured_c.CVariable)
+                        and isinstance(materialized_var, SimStackVariable)
+                        and getattr(materialized_var, "offset", None) == resolved_offset
                     ):
+                        materialized = _prefer_bound_stack_cvar_8616(
+                            codegen, materialized, resolve_stack_cvar_at_offset
+                        )
                         _record_stack_canonicalization_bridge_8616(
                             codegen,
                             expr=expr,
@@ -1573,61 +1612,32 @@ def _canonicalize_stack_cvar_expr(
                         debug_stats["candidate_ast_match_count"] += 1
                         debug_stats["lowering_replacements"] += 1
                         active_expr_ids.discard(expr_id)
-                        return resolved
-                    if alias_base_var is None:
-                        continue
-                    base_size = getattr(alias_base_var, "size", None)
+                        return materialized
+                if callable(materialize_stack_cvar_at_offset):
+                    materialized = materialize_stack_cvar_at_offset(
+                        codegen,
+                        resolved_offset,
+                        requested_size if isinstance(requested_size, int) and requested_size > 0 else 1,
+                    )
+                    materialized_var = getattr(materialized, "variable", None)
                     if (
-                        callable(materialize_stack_cvar_at_offset)
-                        and isinstance(requested_size, int)
-                        and isinstance(base_size, int)
-                        and requested_size > base_size
+                        isinstance(materialized, structured_c.CVariable)
+                        and isinstance(materialized_var, SimStackVariable)
+                        and getattr(materialized_var, "offset", None) == resolved_offset
                     ):
-                        materialized = materialize_stack_cvar_at_offset(codegen, resolved_offset, requested_size)
-                        materialized_var = getattr(materialized, "variable", None)
-                        if (
-                            isinstance(materialized, structured_c.CVariable)
-                            and isinstance(materialized_var, SimStackVariable)
-                            and getattr(materialized_var, "offset", None) == resolved_offset
-                        ):
-                            materialized = _prefer_bound_stack_cvar_8616(
-                                codegen, materialized, resolve_stack_cvar_at_offset
-                            )
-                            _record_stack_canonicalization_bridge_8616(
-                                codegen,
-                                expr=expr,
-                                resolved_offset=resolved_offset,
-                                kind="indexed_value",
-                            )
-                            debug_stats["candidate_ast_match_count"] += 1
-                            debug_stats["lowering_replacements"] += 1
-                            active_expr_ids.discard(expr_id)
-                            return materialized
-                    if callable(materialize_stack_cvar_at_offset):
-                        materialized = materialize_stack_cvar_at_offset(
-                            codegen,
-                            resolved_offset,
-                            requested_size if isinstance(requested_size, int) and requested_size > 0 else 1,
+                        materialized = _prefer_bound_stack_cvar_8616(
+                            codegen, materialized, resolve_stack_cvar_at_offset
                         )
-                        materialized_var = getattr(materialized, "variable", None)
-                        if (
-                            isinstance(materialized, structured_c.CVariable)
-                            and isinstance(materialized_var, SimStackVariable)
-                            and getattr(materialized_var, "offset", None) == resolved_offset
-                        ):
-                            materialized = _prefer_bound_stack_cvar_8616(
-                                codegen, materialized, resolve_stack_cvar_at_offset
-                            )
-                            _record_stack_canonicalization_bridge_8616(
-                                codegen,
-                                expr=expr,
-                                resolved_offset=resolved_offset,
-                                kind="indexed_value",
-                            )
-                            debug_stats["candidate_ast_match_count"] += 1
-                            debug_stats["lowering_replacements"] += 1
-                            active_expr_ids.discard(expr_id)
-                            return materialized
+                        _record_stack_canonicalization_bridge_8616(
+                            codegen,
+                            expr=expr,
+                            resolved_offset=resolved_offset,
+                            kind="indexed_value",
+                        )
+                        debug_stats["candidate_ast_match_count"] += 1
+                        debug_stats["lowering_replacements"] += 1
+                        active_expr_ids.discard(expr_id)
+                        return materialized
             if base_expr is not expr.variable or index_expr is not expr.index:
                 active_expr_ids.discard(expr_id)
                 return structured_c.CIndexedVariable(base_expr, index_expr, codegen=getattr(expr, "codegen", None))
@@ -1666,7 +1676,10 @@ def _canonicalize_stack_cvar_expr(
                     byte_width = getattr(arch, "byte_width", None)
                     access_size = (
                         max(type_bits // byte_width, 1)
-                        if isinstance(type_bits, int) and type_bits > 0 and isinstance(byte_width, int) and byte_width > 0
+                        if isinstance(type_bits, int)
+                        and type_bits > 0
+                        and isinstance(byte_width, int)
+                        and byte_width > 0
                         else 2
                     )
                     resolved = resolve_stack_cvar_at_offset(codegen, displacement, preferred_size=access_size)
@@ -1695,7 +1708,9 @@ def _canonicalize_stack_cvar_expr(
                             )
                             debug_stats["candidate_ast_match_count"] += 1
                             debug_stats["lowering_replacements"] += 1
-                            _debug_stack_condition_rebind_8616(codegen, expr, materialized, note="bp-deref-materialized")
+                            _debug_stack_condition_rebind_8616(
+                                codegen, expr, materialized, note="bp-deref-materialized"
+                            )
                             active_expr_ids.discard(expr_id)
                             return materialized
                 if isinstance(deref_operand, structured_c.CIndexedVariable):
@@ -1740,7 +1755,9 @@ def _canonicalize_stack_cvar_expr(
                                 )
                                 debug_stats["candidate_ast_match_count"] += 1
                                 debug_stats["lowering_replacements"] += 1
-                                _debug_stack_condition_rebind_8616(codegen, expr, resolved, note="indexed-deref-resolved")
+                                _debug_stack_condition_rebind_8616(
+                                    codegen, expr, resolved, note="indexed-deref-resolved"
+                                )
                                 active_expr_ids.discard(expr_id)
                                 return resolved
                             if callable(materialize_stack_cvar_at_offset):
@@ -1829,9 +1846,9 @@ def _canonicalize_stack_cvar_expr(
         active_expr_ids.discard(expr_id)
         return expr
 
-
-
     return _impl()
+
+
 def _canonicalize_stack_cvars(codegen, *, replace_c_children, canonicalize_stack_cvar_expr) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False

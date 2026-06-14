@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from dataclasses import dataclass
-
+from pathlib import Path
 
 TASK_PACKET_SCHEMA_VERSION = "meta_harness.task_packet.v1"
 PLAN_PRUNE_FINISHED_STATUSES = frozenset({"done", "completed", "superseded"})
@@ -41,6 +40,7 @@ class TaskPacket:
                 "retry_notes": list(self.retry_notes),
                 "escalation_policy": self.escalation_policy,
             }
+
         return _impl()
 
     def to_prompt_block(self) -> str:
@@ -53,15 +53,19 @@ class TaskPacket:
                 parts.append("Callable refs: " + _format_limited(callable_refs, _TASK_PACKET_MAX_TARGET_REFS))
             if self.acceptance_tests:
                 parts.append(
-                    "Acceptance tests: " + _format_limited(self.acceptance_tests, _TASK_PACKET_MAX_ACCEPTANCE_TESTS, sep=" | ")
+                    "Acceptance tests: "
+                    + _format_limited(self.acceptance_tests, _TASK_PACKET_MAX_ACCEPTANCE_TESTS, sep=" | ")
                 )
             if self.done_conditions:
                 parts.append(
                     "Done when: " + _format_limited(self.done_conditions, _TASK_PACKET_MAX_DONE_CONDITIONS, sep=" | ")
                 )
             if self.retry_notes:
-                parts.append("Retry notes: " + _format_limited(self.retry_notes, _TASK_PACKET_MAX_RETRY_NOTES, sep=" | "))
+                parts.append(
+                    "Retry notes: " + _format_limited(self.retry_notes, _TASK_PACKET_MAX_RETRY_NOTES, sep=" | ")
+                )
             return "\n".join(parts)
+
         return _impl()
 
 
@@ -91,12 +95,14 @@ def _split_plan_items(plan_text: str) -> list[str]:
         if current:
             items.append("\n".join(current).strip())
         return [item for item in items if item]
+
     return _impl()
 
 
 def split_plan_items(plan_text: str) -> list[str]:
     def _impl():
         return _split_plan_items(plan_text)
+
     return _impl()
 
 
@@ -120,6 +126,7 @@ def _split_plan_prefix_and_items(plan_text: str) -> tuple[list[str], list[str]]:
         if current:
             items.append("\n".join(current).rstrip())
         return prefix_lines, [item for item in items if item]
+
     return _impl()
 
 
@@ -135,6 +142,7 @@ def _target_refs(item_text: str) -> tuple[str, ...]:
             if _is_path_like_ref(cleaned) or cleaned.endswith("()"):
                 refs.append(cleaned)
         return tuple(refs)
+
     return _impl()
 
 
@@ -147,6 +155,7 @@ def _target_files(refs: tuple[str, ...]) -> tuple[str, ...]:
                 if path not in files:
                     files.append(path)
         return tuple(files)
+
     return _impl()
 
 
@@ -159,6 +168,7 @@ def _acceptance_tests(item_text: str) -> tuple[str, ...]:
             if cleaned not in ordered:
                 ordered.append(cleaned)
         return tuple(ordered)
+
     return _impl()
 
 
@@ -170,6 +180,7 @@ def _done_conditions(item_text: str) -> tuple[str, ...]:
         text = match.group(1).strip()
         parts = [part.strip(" .") for part in re.split(r"\band\b|;", text) if part.strip()]
         return tuple(parts)
+
     return _impl()
 
 
@@ -189,18 +200,21 @@ def _plan_item_status(item_text: str) -> str:
             if status in PLAN_PRUNE_FINISHED_STATUSES:
                 return status
         return ""
+
     return _impl()
 
 
 def _plan_item_is_finished(item_text: str) -> bool:
     def _impl():
         return _plan_item_status(item_text) in PLAN_PRUNE_FINISHED_STATUSES
+
     return _impl()
 
 
 def plan_item_is_finished(item_text: str) -> bool:
     def _impl():
         return _plan_item_is_finished(item_text)
+
     return _impl()
 
 
@@ -211,6 +225,7 @@ def _retry_notes(item_text: str) -> tuple[str, ...]:
             for clause in re.findall(r"contains no ([^,.;]+)", item_text):
                 notes.append("avoid: " + clause.strip())
         return tuple(notes[:4])
+
     return _impl()
 
 
@@ -220,6 +235,7 @@ def _is_path_like_ref(ref: str) -> bool:
             return True
         path_head = ref.split(":", 1)[0]
         return path_head.endswith((".py", ".md", ".sh", ".json", ".txt"))
+
     return _impl()
 
 
@@ -230,6 +246,7 @@ def _compact_objective(text: str) -> str:
         compact = re.sub(r"`[^`]+`", "", compact)
         compact = re.sub(r"\s+", " ", compact).strip(" ,.")
         return compact
+
     return _impl()
 
 
@@ -241,6 +258,7 @@ def _format_limited(values: tuple[str, ...], limit: int, *, sep: str = ", ") -> 
         hidden = len(values) - limit
         suffix = f"{sep}(+{hidden} more)"
         return shown + suffix
+
     return _impl()
 
 
@@ -263,18 +281,21 @@ def parse_task_packet(item_text: str) -> TaskPacket:
             retry_notes=_retry_notes(item_text),
             escalation_policy="rewrite current item after repeated stall; otherwise continue focused worker retries",
         )
+
     return _impl()
 
 
 def parse_plan_task_packets(plan_text: str) -> list[TaskPacket]:
     def _impl():
         return [parse_task_packet(item) for item in _split_plan_items(plan_text)]
+
     return _impl()
 
 
 def unfinished_plan_items_from_text(plan_text: str) -> list[str]:
     def _impl():
         return [item for item in _split_plan_items(plan_text) if not _plan_item_is_finished(item)]
+
     return _impl()
 
 
@@ -301,6 +322,7 @@ def count_remaining_plan_steps(plan_text: str) -> int | None:
         if numbered or unchecked:
             return numbered + unchecked
         return None
+
     return _impl()
 
 
@@ -323,6 +345,7 @@ def prune_completed_plan_text(plan_text: str) -> PlanPruneResult:
             changed=updated_text != plan_text,
             updated_text=updated_text,
         )
+
     return _impl()
 
 
@@ -335,4 +358,5 @@ def prune_completed_plan_file(plan_path: Path) -> PlanPruneResult:
         if result.changed:
             plan_path.write_text(result.updated_text, encoding="utf-8")
         return result
+
     return _impl()

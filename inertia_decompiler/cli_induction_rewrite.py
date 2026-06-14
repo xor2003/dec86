@@ -6,7 +6,6 @@ from typing import Any
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-
 BaseKey = tuple[object, ...]
 BuildAccessTraitEvidenceProfiles = Callable[[dict[str, dict[tuple[object, ...], object]]], dict[BaseKey, Any]]
 InferInductionVariable = Callable[[Any], Any | None]
@@ -118,8 +117,7 @@ def rewrite_for_loop_conditions_from_access_traits(
         stable_index_keys = {
             getattr(candidate, "index_key", None)
             for candidate in (
-                infer_induction_variable(profile)
-                for profile in build_access_trait_evidence_profiles(traits).values()
+                infer_induction_variable(profile) for profile in build_access_trait_evidence_profiles(traits).values()
             )
             if getattr(candidate, "index_key", None) is not None
         }

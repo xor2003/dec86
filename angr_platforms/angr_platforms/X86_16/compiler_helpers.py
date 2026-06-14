@@ -161,7 +161,9 @@ def hook_x86_16_compiler_helper_at_8616(project, addr: int | None) -> CompilerHe
     return evidence
 
 
-def hook_x86_16_known_compiler_helpers_8616(project, *, max_scan_bytes: int = 0x20000) -> tuple[CompilerHelperEvidence8616, ...]:
+def hook_x86_16_known_compiler_helpers_8616(
+    project, *, max_scan_bytes: int = 0x20000
+) -> tuple[CompilerHelperEvidence8616, ...]:
     if _project_arch_name_8616(project) != "86_16":
         return ()
     addr_range = _main_object_addr_range_8616(project)

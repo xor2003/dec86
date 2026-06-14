@@ -527,8 +527,12 @@ def test_callsite_summary_prefers_linear_window_when_block_sources_are_unknown(m
         _Insn(0x1116, "mov", [_Operand(reg=3), _Operand(imm=0)], reg_names=reg_names),
         _Insn(0x1119, "push", [_Operand(reg=3, size=2)], reg_names=reg_names),
         _Insn(0x111A, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
-        _Insn(0x111B, "push", [_Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0134), size=2)], reg_names=reg_names),
-        _Insn(0x111F, "push", [_Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0132), size=2)], reg_names=reg_names),
+        _Insn(
+            0x111B, "push", [_Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0134), size=2)], reg_names=reg_names
+        ),
+        _Insn(
+            0x111F, "push", [_Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0132), size=2)], reg_names=reg_names
+        ),
         _Insn(0x1123, "call", [_Operand(imm=0x2000)], reg_names=reg_names),
         _Insn(0x1126, "push", [_Operand(reg=3, size=2)], reg_names=reg_names),
         _Insn(0x1127, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
@@ -693,8 +697,18 @@ def test_callsite_summary_keeps_outer_pushes_across_nested_callee_clean_call(mon
         _Insn(0x100B, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
         _Insn(0x100C, "mov", [_Operand(reg=2), _Operand(imm=0x3333)], reg_names=reg_names),
         _Insn(0x100F, "mov", [_Operand(reg=3), _Operand(imm=0x4444)], reg_names=reg_names),
-        _Insn(0x1010, "sub", [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x10))], reg_names=reg_names),
-        _Insn(0x1011, "sbb", [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x12))], reg_names=reg_names),
+        _Insn(
+            0x1010,
+            "sub",
+            [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x10))],
+            reg_names=reg_names,
+        ),
+        _Insn(
+            0x1011,
+            "sbb",
+            [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x12))],
+            reg_names=reg_names,
+        ),
         _Insn(0x1012, "push", [_Operand(reg=3, size=2)], reg_names=reg_names),
         _Insn(0x1013, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
         _Insn(0x1014, "call", [_Operand(imm=0x2000)], reg_names=reg_names),
@@ -787,10 +801,30 @@ def test_callsite_summary_records_sbb_memory_source_for_32bit_global_sub(monkeyp
         _Insn(0x1003, "mov", [_Operand(reg=3), _Operand(imm=0)], reg_names=reg_names),
         _Insn(0x1006, "push", [_Operand(reg=3, size=2)], reg_names=reg_names),
         _Insn(0x1007, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
-        _Insn(0x1008, "mov", [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0B48), size=2)], reg_names=reg_names),
-        _Insn(0x100B, "mov", [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0B4A), size=2)], reg_names=reg_names),
-        _Insn(0x100E, "sub", [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0BA6), size=2)], reg_names=reg_names),
-        _Insn(0x1011, "sbb", [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0BA8), size=2)], reg_names=reg_names),
+        _Insn(
+            0x1008,
+            "mov",
+            [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0B48), size=2)],
+            reg_names=reg_names,
+        ),
+        _Insn(
+            0x100B,
+            "mov",
+            [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0B4A), size=2)],
+            reg_names=reg_names,
+        ),
+        _Insn(
+            0x100E,
+            "sub",
+            [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0BA6), size=2)],
+            reg_names=reg_names,
+        ),
+        _Insn(
+            0x1011,
+            "sbb",
+            [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=0, index=0, disp=0x0BA8), size=2)],
+            reg_names=reg_names,
+        ),
         _Insn(0x1014, "push", [_Operand(reg=3, size=2)], reg_names=reg_names),
         _Insn(0x1015, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
         _Insn(0x1016, "call", [_Operand(imm=0x2000)], reg_names=reg_names),
@@ -935,12 +969,24 @@ def test_callsite_summary_records_lea_bp_index_push_address_source(monkeypatch):
 def test_callsite_summary_keeps_prior_pushes_before_indexed_lea_setup(monkeypatch):
     function = _function_with_block(
         [
-            _Insn(0x1000, "push", [_Operand(mem=SimpleNamespace(base=5, index=0, disp=-46), size=2)], reg_names={5: "bp"}),
+            _Insn(
+                0x1000, "push", [_Operand(mem=SimpleNamespace(base=5, index=0, disp=-46), size=2)], reg_names={5: "bp"}
+            ),
             _Insn(0x1003, "mov", [_Operand(reg=2), _Operand(imm=32)], reg_names={2: "ax"}),
             _Insn(0x1006, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
-            _Insn(0x1007, "mov", [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=5, index=0, disp=4))], reg_names={3: "bx", 5: "bp"}),
+            _Insn(
+                0x1007,
+                "mov",
+                [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=5, index=0, disp=4))],
+                reg_names={3: "bx", 5: "bp"},
+            ),
             _Insn(0x100A, "shl", [_Operand(reg=3), _Operand(imm=1)], reg_names={3: "bx"}),
-            _Insn(0x100C, "mov", [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=3, index=0, disp=0xB4C))], reg_names={2: "ax", 3: "bx"}),
+            _Insn(
+                0x100C,
+                "mov",
+                [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=3, index=0, disp=0xB4C))],
+                reg_names={2: "ax", 3: "bx"},
+            ),
             _Insn(0x100F, "cwde", []),
             _Insn(0x1010, "mov", [_Operand(reg=6), _Operand(reg=2)], reg_names={2: "ax", 6: "si"}),
             _Insn(

@@ -2,17 +2,15 @@
 from __future__ import annotations
 
 import contextlib
-import copy
 import logging
 import os
-import re
 import sys
 import threading
 import time
 import weakref
 from collections.abc import Mapping, Sequence
-from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
-from dataclasses import dataclass, replace
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,185 +31,43 @@ from angr_platforms.X86_16.exact_region_diagnostics import (
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 from inertia_decompiler.cache import (
-    _function_decompilation_cache_key,
     _load_cache_json,
     _recovery_cache_key,
     _store_cache_json,
 )
 from inertia_decompiler.cli_output import (
-    _RAW_PRINT,
-    _asm_fallback_pattern_note,
-    _emit_exit_marker,
-    _print_asm_fallback_text,
-    _print_diagnostic_text,
-    _timestamp_prefix,
     _timestamped_print,
 )
-from inertia_decompiler.cli_timeout import (
-    _AdaptivePerByteTimeoutModel,
-    _default_recovery_timeout,
-    _stdout_is_interactive,
-)
 from inertia_decompiler.disassembly_helpers import (
-    _format_asm_range,
-    _format_first_block_asm,
-    _infer_linear_disassembly_window,
     _linear_disassembly,
-    _probe_lift_break,
-)
-from inertia_decompiler.non_optimized_fallback import (
-    allows_heavy_fallbacks_for_run,
-    bounded_non_optimized_attempt_timeout,
-    describe_non_optimized_unavailable,
-    sidecar_verdict_closes_non_optimized_lane,
 )
 from inertia_decompiler.project_loading import (
-    _build_project,
     _build_project_cached,
     _build_project_from_bytes,
-    _describe_exception,
-    _is_blob_only_input,
 )
 from inertia_decompiler.sidecar_metadata import (
-    _load_lst_metadata,
     _lst_code_label,
     _lst_code_region,
-    _lst_data_label,
     _recovery_code_labels,
     _signature_matched_code_addrs,
     _visible_code_labels,
 )
-from inertia_decompiler.sidecar_parsers import _parse_ida_map_metadata
-from inertia_decompiler.slice_recovery import (
-    BoundedSliceVerdict,
-    SliceRecoveryAttemptOutcome,
-    build_default_slice_recovery_attempts,
-    run_bounded_slice_recovery,
-)
 from inertia_decompiler.tail_validation import (
-    TAIL_VALIDATION_ENABLE_ENV as _TAIL_VALIDATION_ENABLE_ENV,
-    emit_tail_validation_console_summary as _emit_tail_validation_console_summary,
     inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
-    parse_env_bool as _parse_env_bool,
-    set_tail_validation_runtime_enabled as _set_tail_validation_runtime_enabled,
-    tail_validation_console_cache_path as _tail_validation_console_cache_path,
-    tail_validation_detail_cache_path as _tail_validation_detail_cache_path,
-    tail_validation_enabled_for_run as _tail_validation_enabled_for_run,
-    tail_validation_fallback_allows_project_snapshot as _tail_validation_fallback_allows_project_snapshot,
-    tail_validation_runtime_enabled as _tail_validation_runtime_enabled,
-    tail_validation_snapshot_for_fallback as _tail_validation_snapshot_for_fallback,
-    tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
 )
 from inertia_decompiler.telemetry import trace_function
 from inertia_decompiler.x86_16_exact_slice import (
-    function_original_addr,
     mark_function_original_addr,
-    non_optimized_slice_codegen_policy,
     plan_x86_16_exact_slice,
 )
-
-from inertia_decompiler import cli_access_object_hints as _cli_access_object_hints
-from inertia_decompiler import cli_access_profiles as _cli_access_profiles
-from inertia_decompiler import cli_access_rewrite_artifact as _cli_access_rewrite_artifact
-from inertia_decompiler import cli_access_trait_rewrite as _cli_access_trait_rewrite
-from inertia_decompiler import cli_access_traits as _cli_access_traits
-from inertia_decompiler import cli_cod_global_statements as _cli_cod_global_statements
-from inertia_decompiler import cli_cod_globals as _cli_cod_globals
-from inertia_decompiler import cli_dead_local_prune as _cli_dead_local_prune
-from inertia_decompiler import cli_far_pointer_stack as _cli_far_pointer_stack
-from inertia_decompiler import cli_helper_modeling as _cli_helper_modeling
-from inertia_decompiler import cli_linear_aliases as _cli_linear_aliases
-from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
-from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
-from inertia_decompiler import cli_local_prune as _cli_local_prune
-from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
-from inertia_decompiler import cli_memory_prune as _cli_memory_prune
-from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
-from inertia_decompiler import cli_segmented as _cli_segmented
-from inertia_decompiler import cli_segmented_compare as _cli_segmented_compare
-from inertia_decompiler import cli_segmented_elision as _cli_segmented_elision
-from inertia_decompiler import cli_segmented_load_coalesce as _cli_segmented_load_coalesce
-from inertia_decompiler import cli_segmented_lowering as _cli_segmented_lowering
-from inertia_decompiler import cli_segmented_store_coalesce as _cli_segmented_store_coalesce
-from inertia_decompiler import cli_stack_byte_offsets as _cli_stack_byte_offsets
-from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
-from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
-from inertia_decompiler import cli_stack_locals as _cli_stack_locals
-from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
-from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
-from inertia_decompiler import cli_word_loads as _cli_word_loads
-from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
-from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
-from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
-from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
-from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
-from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
 
 # Pseudo-callee DOS helper addresses (when materialized) live in a synthetic
 # high-address range, well above real 16-bit image code.
 DOS_SERVICE_BASE_ADDR = 0xF000_0000
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 from inertia_decompiler.runtime_support import (
     AnalysisTimeout as _AnalysisTimeout,
-    DaemonThreadPoolExecutor,
-    DECOMPILATION_PREP_LOCK,
-    FORCE_SERIAL_FUNCTION_DECOMP_ENV as _FORCE_SERIAL_FUNCTION_DECOMP_ENV,
-    JumpkindLoggingHandler,
-    PreforkJobPool,
-    apply_memory_limit as _apply_memory_limit,
-    capture_thread_output as _capture_thread_output,
-    choose_function_parallelism as _choose_function_parallelism,
-    default_exe_showcase_cap as _default_exe_showcase_cap,
-    emit_timeout_and_exit as _emit_timeout_and_exit,
-    format_address as _format_address,
-    guard_angr_ail_narrowing as _guard_angr_ail_narrowing,
-    guard_angr_clinic_stage_markers as _guard_angr_clinic_stage_markers,
-    guard_angr_peephole_expr_bitwidth_assertion as _guard_angr_peephole_expr_bitwidth_assertion,
-    guard_angr_variable_recovery_binop_sub_size_mismatch as _guard_angr_variable_recovery_binop_sub_size_mismatch,
-    install_angr_peephole_expr_bitwidth_guard as _install_angr_peephole_expr_bitwidth_guard,
-    install_angr_variable_recovery_binop_sub_size_guard as _install_angr_variable_recovery_binop_sub_size_guard,
-    log_step,
-    lower_process_priority as _lower_process_priority,
-    memory_available_mb as _memory_available_mb,
-    prefer_low_memory_path as _prefer_low_memory_path,
-    raise_timeout as _raise_timeout,
-    should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
 )
 from inertia_decompiler.runtime_support import (
     analysis_timeout as _analysis_timeout,
@@ -222,24 +78,78 @@ from inertia_decompiler.runtime_support import (
 from inertia_decompiler.runtime_support import (
     run_with_timeout_in_fork as _run_with_timeout_in_fork,
 )
-from inertia_decompiler.tail_validation import (
-    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
-)
 from inertia_decompiler.work_items import (
-    FunctionDecompileResult,
-    FunctionDecompileTask,
-    FunctionWorkItem,
     FunctionWorkResult,
-    emit_tail_validation_for_function_run_or_uncollected as _emit_tail_validation_for_function_run_or_uncollected,
-    emit_tail_validation_snapshot_or_uncollected as _emit_tail_validation_snapshot_or_uncollected,
-    function_attempt_display_status as _function_attempt_display_status,
-    print_function_attempt_status as _print_function_attempt_status,
-    recovery_evidence_line as _recovery_evidence_line,
-    tail_validation_display_status as _tail_validation_display_status,
 )
 
 print = _timestamped_print
-__all__ = ['_seed_scan_windows', '_entry_window_seed_targets', '_linear_function_seed_targets', '_looks_like_x86_16_function_prologue', '_looks_like_x86_16_entry_byte', '_resolve_x86_16_function_start', '_resolve_x86_16_call_target', '_infer_x86_16_linear_region', '_pick_function', '_pick_function_lean', '_x86_16_recovery_windows', '_x86_16_fast_recovery_windows', '_recover_cfg', '_recover_partial_cfg', '_function_skip_reason', '_function_recovery_score', '_function_covered_ranges', '_addr_in_ranges', '_candidate_recovery_regions', '_richest_bounded_recovery_region', '_recovery_score_good_enough', '_exact_region_recovery_looks_truncated', '_count_region_local_functions', '_function_recovery_truncated', '_needs_pre_entry_body_supplement', '_prioritized_pre_entry_follow_on_targets', '_mark_function_recovery_truncated', '_recover_candidate_function_pair', '_interesting_functions', '_rank_function_cfg_pairs_for_display', '_expanded_exe_discovery_limit', '_supplement_cached_seeded_recovery', '_store_catalog_address_cache', '_load_catalog_address_cache', '_supplement_functions_from_prologue_scan', '_rank_gap_scan_candidate_addrs', '_rank_prologue_scan_candidate_addrs', '_relocation_seed_targets', '_rank_exe_function_seeds', '_recover_fast_seed_functions', '_recover_fast_exe_catalog', '_recover_hidden_sidecar_display_pairs', '_rank_hidden_sidecar_pairs_for_display_throughput', '_recover_cached_function_pairs', '_candidate_recovery_cache_key', '_lookup_candidate_recovery_cache', '_store_candidate_recovery_cache', '_persistent_recovery_attempt_cache_key', '_lookup_persistent_recovery_timeout', '_recover_candidate_with_timeout', '_recover_seeded_exe_functions', '_direct_recovery_inventory_count', '_fallback_entry_function', '_recover_lst_function', '_recover_ranked_binary_function', '_make_placeholder_function', '_is_zero_filled_region', '_rank_labeled_function_entries', '_sidecar_label_ranking_cache_key', '_rank_labeled_function_entries_cached', '_select_sidecar_showcase_entries', '_format_sidecar_function_catalog', '_recover_blob_entry_function', '_recover_direct_addr_function']
+__all__ = [
+    "_seed_scan_windows",
+    "_entry_window_seed_targets",
+    "_linear_function_seed_targets",
+    "_looks_like_x86_16_function_prologue",
+    "_looks_like_x86_16_entry_byte",
+    "_resolve_x86_16_function_start",
+    "_resolve_x86_16_call_target",
+    "_infer_x86_16_linear_region",
+    "_pick_function",
+    "_pick_function_lean",
+    "_x86_16_recovery_windows",
+    "_x86_16_fast_recovery_windows",
+    "_recover_cfg",
+    "_recover_partial_cfg",
+    "_function_skip_reason",
+    "_function_recovery_score",
+    "_function_covered_ranges",
+    "_addr_in_ranges",
+    "_candidate_recovery_regions",
+    "_richest_bounded_recovery_region",
+    "_recovery_score_good_enough",
+    "_exact_region_recovery_looks_truncated",
+    "_count_region_local_functions",
+    "_function_recovery_truncated",
+    "_needs_pre_entry_body_supplement",
+    "_prioritized_pre_entry_follow_on_targets",
+    "_mark_function_recovery_truncated",
+    "_recover_candidate_function_pair",
+    "_interesting_functions",
+    "_rank_function_cfg_pairs_for_display",
+    "_expanded_exe_discovery_limit",
+    "_supplement_cached_seeded_recovery",
+    "_store_catalog_address_cache",
+    "_load_catalog_address_cache",
+    "_supplement_functions_from_prologue_scan",
+    "_rank_gap_scan_candidate_addrs",
+    "_rank_prologue_scan_candidate_addrs",
+    "_relocation_seed_targets",
+    "_rank_exe_function_seeds",
+    "_recover_fast_seed_functions",
+    "_recover_fast_exe_catalog",
+    "_recover_hidden_sidecar_display_pairs",
+    "_rank_hidden_sidecar_pairs_for_display_throughput",
+    "_recover_cached_function_pairs",
+    "_candidate_recovery_cache_key",
+    "_lookup_candidate_recovery_cache",
+    "_store_candidate_recovery_cache",
+    "_persistent_recovery_attempt_cache_key",
+    "_lookup_persistent_recovery_timeout",
+    "_recover_candidate_with_timeout",
+    "_recover_seeded_exe_functions",
+    "_direct_recovery_inventory_count",
+    "_fallback_entry_function",
+    "_recover_lst_function",
+    "_recover_ranked_binary_function",
+    "_make_placeholder_function",
+    "_is_zero_filled_region",
+    "_rank_labeled_function_entries",
+    "_sidecar_label_ranking_cache_key",
+    "_rank_labeled_function_entries_cached",
+    "_select_sidecar_showcase_entries",
+    "_format_sidecar_function_catalog",
+    "_recover_blob_entry_function",
+    "_recover_direct_addr_function",
+]
+
 
 def _seed_scan_windows(project: angr.Project) -> list[tuple[int, int]]:
     def _impl():
@@ -282,6 +192,7 @@ def _seed_scan_windows(project: angr.Project) -> list[tuple[int, int]]:
 
     return _impl()
 
+
 def _entry_window_seed_targets(
     project: angr.Project,
     code: bytes,
@@ -317,6 +228,7 @@ def _entry_window_seed_targets(
         return entry_targets
 
     return _impl()
+
 
 def _linear_function_seed_targets(
     project: angr.Project,
@@ -364,9 +276,11 @@ def _linear_function_seed_targets(
 
     return _impl()
 
+
 def _looks_like_x86_16_function_prologue(code: bytes, offset: int) -> bool:
     window = code[offset : offset + 4]
-    return window.startswith(b"\x55\x8B\xEC")
+    return window.startswith(b"\x55\x8b\xec")
+
 
 def _looks_like_x86_16_entry_byte(code: bytes, offset: int) -> bool:
     if offset < 0 or offset >= len(code):
@@ -390,6 +304,7 @@ def _resolve_x86_16_function_start(code: bytes, offset: int, *, max_padding: int
         return padded
     return None
 
+
 def _resolve_x86_16_call_target(code: bytes, offset: int) -> int | None:
     canonical = _resolve_x86_16_function_start(code, offset)
     if canonical is not None:
@@ -397,6 +312,7 @@ def _resolve_x86_16_call_target(code: bytes, offset: int) -> int | None:
     if _looks_like_x86_16_entry_byte(code, offset):
         return offset
     return None
+
 
 def _infer_x86_16_linear_region(project: angr.Project, start_addr: int, *, window: int) -> tuple[int, int]:
     def _impl():
@@ -453,6 +369,7 @@ def _infer_x86_16_linear_region(project: angr.Project, start_addr: int, *, windo
         return start_addr, max(start_addr + 1, current)
 
     return _impl()
+
 
 def _pick_function(
     project: angr.Project,
@@ -524,6 +441,7 @@ def _pick_function(
 
     return _impl()
 
+
 def _pick_function_lean(
     project: angr.Project,
     addr: int | None,
@@ -533,15 +451,13 @@ def _pick_function_lean(
     extend_far_calls: bool = True,
 ):
     def _impl():
-        """
-        Recover a known entry point with a deliberately cheap CFGFast pass.
+        """Recover a known entry point with a deliberately cheap CFGFast pass.
 
         This is used as an early fast path for COD procedures that are dominated by
         helper calls. For those procedures, indirect-jump resolution and cross-
         reference discovery are often unnecessary and can dominate the recovery
         budget before the function is even identified.
         """
-
         target_addr = project.entry if addr is None else addr
         cfg = project.analyses.CFGFast(
             start_at_entry=False,
@@ -586,6 +502,7 @@ def _pick_function_lean(
 
 _DEFAULT_PICK_FUNCTION_LEAN = _pick_function_lean
 
+
 def _normalized_x86_16_recovery_window(window: int | None, *, low_memory: bool = False) -> int:
     floor = 0x80 if low_memory else 0x200
     if not isinstance(window, int):
@@ -596,6 +513,7 @@ def _normalized_x86_16_recovery_window(window: int | None, *, low_memory: bool =
 def _x86_16_recovery_windows(window: int | None, *, low_memory: bool = False) -> tuple[int, ...]:
     base_window = _normalized_x86_16_recovery_window(window, low_memory=low_memory)
     return tuple(base_window * factor for factor in (1, 2, 4, 8, 16))
+
 
 def _x86_16_fast_recovery_windows(window: int | None, *, low_memory: bool = False) -> tuple[int, ...]:
     effective_window = _normalized_x86_16_recovery_window(window, low_memory=low_memory)
@@ -612,6 +530,7 @@ def _x86_16_fast_recovery_windows(window: int | None, *, low_memory: bool = Fals
         windows.append(effective_window)
     return tuple(windows)
 
+
 @trace_function(name="discovery.recover_cfg")
 def _recover_cfg(
     project: angr.Project,
@@ -621,7 +540,9 @@ def _recover_cfg(
     window: int,
     low_memory: bool = False,
 ):
-    print(f"[dbg] recover_cfg: entry={hex(project.entry)} base_addr={hex(base_addr)} window={hex(window)} binary={binary_path}")
+    print(
+        f"[dbg] recover_cfg: entry={hex(project.entry)} base_addr={hex(base_addr)} window={hex(window)} binary={binary_path}"
+    )
     sys.stdout.flush()
     if binary_path.suffix.lower() == ".com":
         force_smart_scan = False if project.arch.name == "86_16" else None
@@ -657,6 +578,7 @@ def _recover_cfg(
     seed_calling_conventions(cfg)
     return cfg
 
+
 @trace_function(name="discovery.recover_partial_cfg")
 def _recover_partial_cfg(
     project: angr.Project,
@@ -665,14 +587,12 @@ def _recover_partial_cfg(
     low_memory: bool = False,
 ):
     def _impl():
-        """
-        Recover a bounded x86-16 catalog around the entry point.
+        """Recover a bounded x86-16 catalog around the entry point.
 
         This is the whole-binary fallback for awkward real-mode executables such as
         packed startup stubs. It keeps CFGFast inside narrow entry windows instead
         of asking angr to recover the entire executable at once.
         """
-
         candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
         last_error: Exception | None = None
         for candidate_window in candidate_windows:
@@ -726,6 +646,7 @@ def _recover_partial_cfg(
 
     return _impl()
 
+
 def _function_skip_reason(function):
     if getattr(function, "is_simprocedure", False):
         return "SimProcedure (DOS helper)"
@@ -733,6 +654,7 @@ def _function_skip_reason(function):
     if isinstance(addr, int) and addr >= DOS_SERVICE_BASE_ADDR:
         return "DOS service address"
     return None
+
 
 def _function_recovery_score(function) -> tuple[int, int]:
     blocks = tuple(getattr(function, "blocks", ()) or ())
@@ -833,8 +755,10 @@ def _function_covered_ranges(function) -> list[tuple[int, int]]:
 
     return _impl()
 
+
 def _addr_in_ranges(addr: int, ranges: list[tuple[int, int]]) -> bool:
     return any(start <= addr < end for start, end in ranges)
+
 
 def _candidate_recovery_regions(
     metadata: LSTMetadata | None,
@@ -856,6 +780,7 @@ def _candidate_recovery_regions(
         if region not in regions:
             regions.append(region)
     return regions
+
 
 def _richest_bounded_recovery_region(
     addr: int,
@@ -941,9 +866,11 @@ def _x86_16_exact_region_has_terminator(
     terminators = {0xC2, 0xC3, 0xCA, 0xCB, 0xCF, 0xE9, 0xEA, 0xEB}
     return any(byte in terminators for byte in raw)
 
+
 def _recovery_score_good_enough(score: tuple[int, int]) -> bool:
     blocks, total_bytes = score
     return total_bytes >= 0x40 or blocks >= 4
+
 
 def _exact_region_recovery_looks_truncated(
     function,
@@ -1174,7 +1101,9 @@ def _reset_function_graph_state_8616(function) -> None:
         pass
 
 
-def _rebuild_function_transition_graph_8616(function, reachable: dict[int, object], edges: set[tuple[int, int]]) -> None:
+def _rebuild_function_transition_graph_8616(
+    function, reachable: dict[int, object], edges: set[tuple[int, int]]
+) -> None:
     from angr.knowledge_plugins.cfg.cfg_node import BlockNode
 
     for block_addr in sorted(reachable):
@@ -1222,9 +1151,10 @@ def _mark_x86_16_stitched_recovery_8616(function) -> None:
         setattr(function, "_inertia_x86_16_stitched_recovery", True)
 
 
-def _commit_exact_region_function_to_kb_8616(project: angr.Project, cfg, function, exact_region: tuple[int, int] | None) -> bool:
-    """
-    Commit a selected exact-region function into the function managers that later
+def _commit_exact_region_function_to_kb_8616(
+    project: angr.Project, cfg, function, exact_region: tuple[int, int] | None
+) -> bool:
+    """Commit a selected exact-region function into the function managers that later
     analysis consults.
 
     CFGFast can leave smaller region-local pseudo-functions in the project KB
@@ -1233,7 +1163,6 @@ def _commit_exact_region_function_to_kb_8616(project: angr.Project, cfg, functio
     block leaders as independent functions. The recovery layer owns this handoff:
     it has the exact-region evidence and the selected bounded graph.
     """
-
     if getattr(getattr(project, "arch", None), "name", None) != "86_16":
         return False
     if exact_region is None:
@@ -1299,8 +1228,7 @@ def _commit_exact_region_function_to_kb_8616(project: angr.Project, cfg, functio
 
 
 def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
-    """
-    Best-effort, conservative CFG completion for x86-16 direct recovery paths.
+    """Best-effort, conservative CFG completion for x86-16 direct recovery paths.
 
     The recovery layer should own this because missing return sites here are
     usually a graph-completion issue from bounded CFGFast extraction, not an
@@ -1325,13 +1253,7 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
         return
 
     block_addrs = sorted(
-        (
-            addr
-            for addr in (
-                getattr(block, "addr", None) for block in existing_blocks
-            )
-            if isinstance(addr, int)
-        )
+        (addr for addr in (getattr(block, "addr", None) for block in existing_blocks) if isinstance(addr, int))
     )
     if not block_addrs:
         return
@@ -1479,6 +1401,7 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
         with contextlib.suppress(Exception):
             setattr(function, "_inertia_x86_16_return_repair_applied", True)
 
+
 def _count_region_local_functions(cfg, exact_region: tuple[int, int] | None) -> int:
     if exact_region is None or cfg is None:
         return 0
@@ -1520,15 +1443,18 @@ def _best_region_function_candidate(
 
     return _impl()
 
+
 def _function_recovery_truncated(function) -> bool:
     info = getattr(function, "info", None)
     return isinstance(info, dict) and bool(info.get("x86_16_recovery_truncated"))
+
 
 def _needs_pre_entry_body_supplement(function, project_entry: int) -> bool:
     addr = getattr(function, "addr", None)
     if not isinstance(addr, int) or addr >= project_entry:
         return False
     return _function_recovery_truncated(function) or _function_recovery_score(function)[1] <= 0x20
+
 
 def _prioritized_pre_entry_follow_on_targets(
     project: angr.Project,
@@ -1584,10 +1510,12 @@ def _prioritized_pre_entry_follow_on_targets(
 
     return prioritized
 
+
 def _mark_function_recovery_truncated(function, truncated: bool) -> None:
     info = getattr(function, "info", None)
     if isinstance(info, dict):
         info["x86_16_recovery_truncated"] = truncated
+
 
 @trace_function(name="discovery.recover_candidate")
 def _recover_candidate_function_pair(
@@ -1628,16 +1556,19 @@ def _recover_candidate_function_pair(
                 if score > best_score:
                     best_pair = recovered_pair
                     best_score = score
-                if (
-                    _recovery_score_good_enough(score)
-                    and not (candidate_addr < project_entry and score[1] <= 0x20 and candidate_region != candidate_regions[-1])
+                if _recovery_score_good_enough(score) and not (
+                    candidate_addr < project_entry and score[1] <= 0x20 and candidate_region != candidate_regions[-1]
                 ):
                     break
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 continue
         truncated = False
-        if best_pair is not None and exact_region is not None and _exact_region_recovery_looks_truncated(best_pair[1], exact_region):
+        if (
+            best_pair is not None
+            and exact_region is not None
+            and _exact_region_recovery_looks_truncated(best_pair[1], exact_region)
+        ):
             truncated = True
             try:
                 stitched_func, stitched = _stitch_x86_16_exact_function_8616(
@@ -1656,7 +1587,9 @@ def _recover_candidate_function_pair(
                     hex(candidate_addr),
                     ex,
                 )
-            bounded_region = _richest_bounded_recovery_region(candidate_addr, image_end=image_end, region_span=region_span)
+            bounded_region = _richest_bounded_recovery_region(
+                candidate_addr, image_end=image_end, region_span=region_span
+            )
             richer_best_pair: tuple[object, object] | None = None
             richer_best_score = best_score
             for data_references in (False, True):
@@ -1679,18 +1612,15 @@ def _recover_candidate_function_pair(
                 best_pair = richer_best_pair
                 best_score = richer_best_score
                 truncated = False
-        if (
-            best_pair is not None
-            and candidate_addr < project_entry
-            and best_score[1] <= 0x20
-            and candidate_regions
-        ):
+        if best_pair is not None and candidate_addr < project_entry and best_score[1] <= 0x20 and candidate_regions:
             truncated = True
             try:
                 richer_pair = _pick_function(
                     candidate_project,
                     candidate_addr,
-                    regions=[_richest_bounded_recovery_region(candidate_addr, image_end=image_end, region_span=region_span)],
+                    regions=[
+                        _richest_bounded_recovery_region(candidate_addr, image_end=image_end, region_span=region_span)
+                    ],
                     data_references=True,
                     force_smart_scan=False,
                 )
@@ -1709,6 +1639,7 @@ def _recover_candidate_function_pair(
         raise KeyError(f"Function {candidate_addr:#x} was not recovered.")
 
     return _impl()
+
 
 def _interesting_functions(cfg, *, limit: int | None):
     functions = []
@@ -1747,6 +1678,7 @@ def _function_complexity_local(function) -> tuple[int, int]:
 
 _function_complexity = _function_complexity_local
 
+
 def _rank_function_cfg_pairs_for_display(
     project: angr.Project,
     function_cfg_pairs: list[tuple[object, object]],
@@ -1784,7 +1716,12 @@ def _rank_function_cfg_pairs_for_display(
     )
 
     def _meaningful_pre_entry_body(addr: int | None, byte_count: int, truncated: bool) -> bool:
-        return isinstance(addr, int) and isinstance(entry_addr, int) and addr < entry_addr and (truncated or byte_count > 0x20)
+        return (
+            isinstance(addr, int)
+            and isinstance(entry_addr, int)
+            and addr < entry_addr
+            and (truncated or byte_count > 0x20)
+        )
 
     def _priority(item: tuple[object, object]) -> tuple[int, int, int, int, int]:
         _cfg, function = item
@@ -1814,10 +1751,12 @@ def _rank_function_cfg_pairs_for_display(
 
     return sorted(function_cfg_pairs, key=_priority)
 
+
 def _expanded_exe_discovery_limit(limit: int | None) -> int | None:
     if limit is None or limit <= 0:
         return None
     return max(limit * 2, limit + 4)
+
 
 def _supplement_cached_seeded_recovery(
     project: angr.Project,
@@ -1831,7 +1770,9 @@ def _supplement_cached_seeded_recovery(
 ) -> tuple[list[tuple[object, object]], list[int]]:
     def _impl():
         nonlocal cached_recovered, cached_addrs
-        cached_seen = {function.addr for _cfg, function in cached_recovered if isinstance(getattr(function, "addr", None), int)}
+        cached_seen = {
+            function.addr for _cfg, function in cached_recovered if isinstance(getattr(function, "addr", None), int)
+        }
         cached_covered_ranges: list[tuple[int, int]] = []
         for _cfg, function in cached_recovered:
             cached_covered_ranges.extend(_function_covered_ranges(function))
@@ -1894,6 +1835,7 @@ def _supplement_cached_seeded_recovery(
 
     return _impl()
 
+
 def _store_catalog_address_cache(
     project: angr.Project,
     binary_path: Path,
@@ -1916,6 +1858,7 @@ def _store_catalog_address_cache(
     ]
     _store_cache_json("recovery", cache_key, {"addrs": addrs})
 
+
 def _load_catalog_address_cache(project: angr.Project, binary_path: Path) -> list[int]:
     cache_key = _recovery_cache_key(
         binary_path=binary_path,
@@ -1932,6 +1875,7 @@ def _load_catalog_address_cache(project: angr.Project, binary_path: Path) -> lis
     if not isinstance(addrs, list) or not all(isinstance(addr, int) for addr in addrs):
         return []
     return addrs
+
 
 def _supplement_functions_from_prologue_scan(
     project: angr.Project,
@@ -2021,12 +1965,11 @@ def _supplement_functions_from_prologue_scan(
             supplemental.append((function_cfg, function))
 
         if supplemental:
-            print(
-                f"/* supplemental prologue scan recovered {len(supplemental)} additional function(s) near entry. */"
-            )
+            print(f"/* supplemental prologue scan recovered {len(supplemental)} additional function(s) near entry. */")
         return supplemental
 
     return _impl()
+
 
 def _rank_gap_scan_candidate_addrs(
     project: angr.Project,
@@ -2198,6 +2141,7 @@ def _record_gap_scan_candidates_8616(
 
     return _impl()
 
+
 def _rank_prologue_scan_candidate_addrs(
     project: angr.Project,
     existing_addrs: set[int],
@@ -2248,6 +2192,7 @@ def _rank_prologue_scan_candidate_addrs(
         return [addr for _priority, _offset, addr in sorted(ranked_candidates)]
 
     return _impl()
+
 
 def _relocation_seed_targets(
     project: angr.Project,
@@ -2363,19 +2308,17 @@ def _seed_ranking_metadata_context(project: angr.Project):
         recovery_labels = _recovery_code_labels(metadata)
         signature_matched_addrs = _signature_matched_code_addrs(metadata)
         signature_source = getattr(metadata, "source_format", "")
-        allow_signature_seed = (
-            include_library_functions
-            or (
-                "signature_catalog" not in signature_source
-                and "flair_sig" not in signature_source
-            )
+        allow_signature_seed = include_library_functions or (
+            "signature_catalog" not in signature_source and "flair_sig" not in signature_source
         )
         code_ranges = getattr(metadata, "code_ranges", None) or {}
         metadata_fingerprint = {
             "source_format": getattr(metadata, "source_format", None),
             "recovery_code_addrs": sorted(recovery_labels),
             "signature_code_addrs": sorted(signature_matched_addrs),
-            "bounded_code_range_count": sum(1 for span in code_ranges.values() if span is not None and span[1] > span[0]),
+            "bounded_code_range_count": sum(
+                1 for span in code_ranges.values() if span is not None and span[1] > span[0]
+            ),
         }
     else:
         signature_matched_addrs = frozenset()
@@ -2568,9 +2511,9 @@ def _final_seed_priority_8616(
         size_rank = -metadata_span_len if metadata_span_len is not None else 0
         return (final_priority, size_rank, distance)
 
-
-
     return _impl()
+
+
 def _rank_exe_function_seeds(
     project: angr.Project,
     include_library_functions: bool | None = None,
@@ -2581,16 +2524,14 @@ def _rank_exe_function_seeds(
             return []
         lib_functions = include_library_functions
         if lib_functions is None:
-            lib_functions = bool(
-                getattr(project, "_inertia_include_library_functions", False)
-            )
+            lib_functions = bool(getattr(project, "_inertia_include_library_functions", False))
         binary_path = getattr(main_object, "binary", None)
         max_addr = getattr(main_object, "max_addr", None)
         linked_base = getattr(main_object, "linked_base", None)
         if not isinstance(max_addr, int) or not isinstance(linked_base, int):
             return []
-        metadata, recovery_labels, signature_matched_addrs, allow_signature_seed, metadata_fingerprint = _seed_ranking_metadata_context(
-            project
+        metadata, recovery_labels, signature_matched_addrs, allow_signature_seed, metadata_fingerprint = (
+            _seed_ranking_metadata_context(project)
         )
         cache_key = _seed_ranking_cache_key(
             binary_path,
@@ -2713,6 +2654,7 @@ def _rank_exe_function_seeds(
 
     return _impl()
 
+
 def _recover_fast_seed_functions(
     project: angr.Project,
     *,
@@ -2723,8 +2665,11 @@ def _recover_fast_seed_functions(
         return []
     recovered = _recover_seeded_exe_functions(project, timeout=timeout, limit=limit)
     if recovered:
-        print("/* quick function-entry scan found likely functions using call/prologue/epilogue patterns without helper metadata. */")
+        print(
+            "/* quick function-entry scan found likely functions using call/prologue/epilogue patterns without helper metadata. */"
+        )
     return recovered
+
 
 def _recover_fast_exe_catalog(
     project: angr.Project,
@@ -2782,8 +2727,11 @@ def _recover_fast_exe_catalog(
         recovered = _rank_function_cfg_pairs_for_display(project, recovered)
         if limit is not None:
             recovered = recovered[:limit]
-        print("/* quick EXE function discovery found entry/body functions without needing whole-program control-flow recovery. */")
+        print(
+            "/* quick EXE function discovery found entry/body functions without needing whole-program control-flow recovery. */"
+        )
     return recovered
+
 
 def _recover_hidden_sidecar_display_pairs(
     project: angr.Project,
@@ -2847,10 +2795,13 @@ def _recover_hidden_sidecar_display_pairs(
                 recovered,
                 limit=limit,
             )
-            print("/* hidden-sidecar EXE: using ranked direct-binary preview for the capped display set before broad CFG recovery. */")
+            print(
+                "/* hidden-sidecar EXE: using ranked direct-binary preview for the capped display set before broad CFG recovery. */"
+            )
         return recovered
 
     return _impl()
+
 
 def _rank_hidden_sidecar_pairs_for_display_throughput(
     project: angr.Project,
@@ -2908,6 +2859,7 @@ def _rank_hidden_sidecar_pairs_for_display_throughput(
         return ordered_all[:limit]
 
     return _impl()
+
 
 def _recover_cached_function_pairs(
     project: angr.Project,
@@ -2972,10 +2924,13 @@ def _recover_cached_function_pairs(
             recovered.append((function_cfg, function))
 
         if recovered:
-            print(f"/* restored {len(recovered)} previously recovered function entr{'y' if len(recovered) == 1 else 'ies'} from recovery cache. */")
+            print(
+                f"/* restored {len(recovered)} previously recovered function entr{'y' if len(recovered) == 1 else 'ies'} from recovery cache. */"
+            )
         return recovered
 
     return _impl()
+
 
 def _candidate_recovery_cache_key(
     *,
@@ -2985,6 +2940,7 @@ def _candidate_recovery_cache_key(
     region_span: int,
 ) -> tuple[int, int, int, int]:
     return (candidate_addr, image_end, project_entry, region_span)
+
 
 def _lookup_candidate_recovery_cache(
     project: angr.Project,
@@ -3005,6 +2961,7 @@ def _lookup_candidate_recovery_cache(
             region_span=region_span,
         )
     )
+
 
 def _store_candidate_recovery_cache(
     project: angr.Project,
@@ -3028,6 +2985,7 @@ def _store_candidate_recovery_cache(
         )
     ] = value
 
+
 def _persistent_recovery_attempt_cache_key(
     *,
     binary_path: Path | None,
@@ -3047,6 +3005,7 @@ def _persistent_recovery_attempt_cache_key(
             "recovery_policy": "lazy-candidate-timeout-v1",
         },
     )
+
 
 def _lookup_persistent_recovery_timeout(
     *,
@@ -3076,6 +3035,7 @@ def _lookup_persistent_recovery_timeout(
         ),
         cache_key,
     )
+
 
 def _recover_candidate_with_timeout(
     project: angr.Project,
@@ -3154,11 +3114,7 @@ def _recover_candidate_with_timeout(
             return recovered_pair
 
     timeout = max(1, int(timeout))
-    if (
-        os.name == "posix"
-        and threading.current_thread() is threading.main_thread()
-        and threading.active_count() == 1
-    ):
+    if os.name == "posix" and threading.current_thread() is threading.main_thread() and threading.active_count() == 1:
         try:
             return _run_with_timeout_in_fork(
                 _recover_once,
@@ -3255,6 +3211,7 @@ def _queue_new_seed_targets_8616(
     else:
         pending_neighbor_addrs.extend(queued_targets)
     queued_addrs.update(queued_targets)
+
 
 def _recover_seeded_exe_functions(
     project: angr.Project,
@@ -3420,14 +3377,16 @@ def _recover_seeded_exe_functions(
             print(f"/* quick function-entry scan recovered {len(recovered_addrs)} additional function(s). */")
         return (recovered, recovered_addrs) if return_addrs else recovered
 
-
     return _impl()
+
+
 def _direct_recovery_inventory_count(project: angr.Project) -> int | None:
     try:
         ranked_seeds = _rank_exe_function_seeds(project)
     except Exception:
         return None
     return len(ranked_seeds) if ranked_seeds else None
+
 
 def _fallback_entry_function(
     project: angr.Project,
@@ -3480,9 +3439,7 @@ def _fallback_entry_function(
                 for fast_window in _x86_16_fast_recovery_windows(window, low_memory=low_memory):
                     try:
                         if project.arch.name == "86_16":
-                            fast_regions = [
-                                _infer_x86_16_linear_region(project, project.entry, window=fast_window)
-                            ]
+                            fast_regions = [_infer_x86_16_linear_region(project, project.entry, window=fast_window)]
                         else:
                             fast_regions = [(project.entry, project.entry + fast_window)]
                         return _repair_recovered_entry_function(
@@ -3509,11 +3466,9 @@ def _fallback_entry_function(
                 try:
                     project._inertia_decompiler_stage = f"recovery:narrow:{candidate_window:#x}"
                     if project.arch.name == "86_16":
-                        regions = [
-                            _infer_x86_16_linear_region(project, project.entry, window=candidate_window)
-                        ]
+                        regions = [_infer_x86_16_linear_region(project, project.entry, window=candidate_window)]
                     else:
-                            regions = [(project.entry, project.entry + candidate_window)]
+                        regions = [(project.entry, project.entry + candidate_window)]
                     try:
                         return _repair_recovered_entry_function(
                             _pick_function(
@@ -3543,6 +3498,7 @@ def _fallback_entry_function(
             raise _AnalysisTimeout()
 
     return _impl()
+
 
 def _derive_lst_exact_region_8616(
     project: angr.Project,
@@ -3639,13 +3595,13 @@ def _try_rebased_exact_region_recovery_8616(
     slice_plan = plan_x86_16_exact_slice(*exact_region)
     enable_rebased_exact_slice = _env_flag_enabled_8616("INERTIA_ENABLE_REBASED_EXACT_SLICE", "1")
     use_rebased_exact_slice = (
-        enable_rebased_exact_slice
-        and slice_plan.needs_rebased_slice
-        and 0x20 <= exact_region_size <= 0x280
+        enable_rebased_exact_slice and slice_plan.needs_rebased_slice and 0x20 <= exact_region_size <= 0x280
     )
     if not use_rebased_exact_slice:
         return None
-    code = bytes(project.loader.memory.load(slice_plan.original_start, slice_plan.original_end - slice_plan.original_start))
+    code = bytes(
+        project.loader.memory.load(slice_plan.original_start, slice_plan.original_end - slice_plan.original_start)
+    )
     if code:
         nop_ratio = float(code.count(0x90)) / float(len(code))
         if nop_ratio > 0.30:
@@ -3745,8 +3701,12 @@ def _recover_lst_function(
             return rebased
         with _analysis_timeout(max(1, timeout)):
             if project.arch.name == "86_16":
-                can_run_default_lean = hasattr(project, "analyses") or _pick_function_lean is not _DEFAULT_PICK_FUNCTION_LEAN
-                fast_windows = _x86_16_fast_recovery_windows(window, low_memory=low_memory) if can_run_default_lean else ()
+                can_run_default_lean = (
+                    hasattr(project, "analyses") or _pick_function_lean is not _DEFAULT_PICK_FUNCTION_LEAN
+                )
+                fast_windows = (
+                    _x86_16_fast_recovery_windows(window, low_memory=low_memory) if can_run_default_lean else ()
+                )
                 candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
                 last_error: Exception | None = None
                 for candidate_window in fast_windows:
@@ -3909,8 +3869,9 @@ def _recover_lst_function(
             _commit_exact_region_function_to_kb_8616(project, cfg, func, exact_region)
         return cfg, func
 
-
     return _impl()
+
+
 def _recover_ranked_binary_function(
     project: angr.Project,
     addr: int,
@@ -3966,6 +3927,7 @@ def _recover_ranked_binary_function(
 
     return _impl()
 
+
 def _make_placeholder_function(project: angr.Project, addr: int, name: str):
     return SimpleNamespace(
         addr=addr,
@@ -3974,6 +3936,7 @@ def _make_placeholder_function(project: angr.Project, addr: int, name: str):
         is_plt=False,
         is_simprocedure=False,
     )
+
 
 def _is_zero_filled_region(project: angr.Project, addr: int, *, size: int = 8) -> bool:
     try:
@@ -4043,6 +4006,7 @@ def _filter_noncode_labeled_entries(
         if _is_plausible_code_seed(project, addr, metadata=metadata):
             filtered.append((addr, name))
     return filtered
+
 
 def _rank_labeled_function_entries(
     project: angr.Project,
@@ -4124,6 +4088,7 @@ def _rank_labeled_function_entries(
 
     return sorted(labeled_entries, key=_priority)
 
+
 def _sidecar_label_ranking_cache_key(
     project: angr.Project,
     labeled_entries: list[tuple[int, str]],
@@ -4152,6 +4117,7 @@ def _sidecar_label_ranking_cache_key(
     )
     return cache_key
 
+
 def _rank_labeled_function_entries_cached(
     project: angr.Project,
     labeled_entries: list[tuple[int, str]],
@@ -4179,6 +4145,7 @@ def _rank_labeled_function_entries_cached(
 
     return _impl()
 
+
 def _select_sidecar_showcase_entries(
     project: angr.Project,
     metadata: LSTMetadata,
@@ -4188,7 +4155,11 @@ def _select_sidecar_showcase_entries(
     ranked_entries: list[tuple[int, str]] | None = None,
 ) -> list[tuple[int, str]]:
     def _impl():
-        ranked = ranked_entries if ranked_entries is not None else _rank_labeled_function_entries(project, labeled_entries, metadata)
+        ranked = (
+            ranked_entries
+            if ranked_entries is not None
+            else _rank_labeled_function_entries(project, labeled_entries, metadata)
+        )
         if max_count <= 0 or not ranked:
             return []
 
@@ -4234,9 +4205,7 @@ def _select_sidecar_showcase_entries(
             _add(tiny_candidates[0][0])
 
         main_candidates = [
-            addr
-            for addr, name in ranked
-            if name.lower() in {"main", "_main"} or name.lower().endswith("main")
+            addr for addr, name in ranked if name.lower() in {"main", "_main"} or name.lower().endswith("main")
         ]
         additional_tiny_candidates = tiny_candidates[1:3]
         for addr, _name in additional_tiny_candidates:
@@ -4252,6 +4221,7 @@ def _select_sidecar_showcase_entries(
         return selected
 
     return _impl()
+
 
 def _format_sidecar_function_catalog(
     metadata: LSTMetadata,
@@ -4271,6 +4241,7 @@ def _format_sidecar_function_catalog(
         else:
             lines.append(f"/* {addr:#x} {name} */")
     return "\n".join(lines)
+
 
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
     project._inertia_decompiler_stage = "recovery:full"

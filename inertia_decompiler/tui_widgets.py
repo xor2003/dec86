@@ -15,10 +15,10 @@ from __future__ import annotations
 from textual.reactive import reactive
 from textual.widgets import Static
 
-
 # ---------------------------------------------------------------------------
 # RegisterWidget
 # ---------------------------------------------------------------------------
+
 
 class RegisterWidget(Static):
     """Display CPU registers with change highlighting."""
@@ -60,8 +60,11 @@ class RegisterWidget(Static):
                 value = self.registers[name]
                 changed = self._previous.get(name) != value
                 marker = " *" if changed else "  "
-                lines.append(f"  {marker}{name:>8s}: [bold yellow]{value:#010x}[/]" if changed
-                             else f"  {marker}{name:>8s}: {value:#010x}")
+                lines.append(
+                    f"  {marker}{name:>8s}: [bold yellow]{value:#010x}[/]"
+                    if changed
+                    else f"  {marker}{name:>8s}: {value:#010x}"
+                )
 
         return "\n".join(lines)
 
@@ -71,12 +74,45 @@ class RegisterWidget(Static):
 
     @staticmethod
     def _guess_group(name: str) -> str:
-        general = {"eax","ebx","ecx","edx","esp","ebp","esi","edi","eip",
-                   "rax","rbx","rcx","rdx","rsp","rbp","rsi","rdi","rip",
-                   "r8","r9","r10","r11","r12","r13","r14","r15",
-                   "ax","bx","cx","dx","sp","bp","si","di","ip"}
-        segment = {"cs","ss","ds","es","fs","gs"}
-        flags = {"eflags","rflags","flags"}
+        general = {
+            "eax",
+            "ebx",
+            "ecx",
+            "edx",
+            "esp",
+            "ebp",
+            "esi",
+            "edi",
+            "eip",
+            "rax",
+            "rbx",
+            "rcx",
+            "rdx",
+            "rsp",
+            "rbp",
+            "rsi",
+            "rdi",
+            "rip",
+            "r8",
+            "r9",
+            "r10",
+            "r11",
+            "r12",
+            "r13",
+            "r14",
+            "r15",
+            "ax",
+            "bx",
+            "cx",
+            "dx",
+            "sp",
+            "bp",
+            "si",
+            "di",
+            "ip",
+        }
+        segment = {"cs", "ss", "ds", "es", "fs", "gs"}
+        flags = {"eflags", "rflags", "flags"}
         if name in general:
             return "general"
         if name in segment:
@@ -90,13 +126,14 @@ class RegisterWidget(Static):
 # DisasmWidget
 # ---------------------------------------------------------------------------
 
+
 class DisasmWidget(Static):
     """Disassembly listing with current-IP highlight."""
 
-    lines = reactive([])       # list of (addr, mnemonic, operands)
+    lines = reactive([])  # list of (addr, mnemonic, operands)
     current_ip = reactive(0)
-    cs = reactive(0)           # CS segment for display
-    addr_size = reactive(2)    # 2 for 16-bit, 4 for 32/64-bit
+    cs = reactive(0)  # CS segment for display
+    addr_size = reactive(2)  # 2 for 16-bit, 4 for 32/64-bit
 
     DEFAULT_CSS = """
     DisasmWidget {
@@ -135,6 +172,7 @@ class DisasmWidget(Static):
 # MemoryWidget
 # ---------------------------------------------------------------------------
 
+
 class MemoryWidget(Static):
     """Hex memory dump viewer."""
 
@@ -165,6 +203,7 @@ class MemoryWidget(Static):
 # StackWidget
 # ---------------------------------------------------------------------------
 
+
 class StackWidget(Static):
     """Stack memory viewer."""
 
@@ -194,10 +233,11 @@ class StackWidget(Static):
 # BreakpointWidget
 # ---------------------------------------------------------------------------
 
+
 class BreakpointWidget(Static):
     """Breakpoint list."""
 
-    breakpoints = reactive({})   # addr -> {"enabled": bool, "hits": int}
+    breakpoints = reactive({})  # addr -> {"enabled": bool, "hits": int}
 
     DEFAULT_CSS = """
     BreakpointWidget {
@@ -225,6 +265,7 @@ class BreakpointWidget(Static):
 # ---------------------------------------------------------------------------
 # HelperWidget
 # ---------------------------------------------------------------------------
+
 
 class HelperWidget(Static):
     """Current helper/signature metadata."""
@@ -271,6 +312,7 @@ class HelperWidget(Static):
 # ---------------------------------------------------------------------------
 # ConsoleWidget
 # ---------------------------------------------------------------------------
+
 
 class ConsoleWidget(Static):
     """GDB console output log."""

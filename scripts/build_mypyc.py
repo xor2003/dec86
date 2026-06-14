@@ -36,8 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     modules = TARGET_MODULES + list(args.module)
 
     try:
-        from setuptools import setup
         from mypyc.build import mypycify
+        from setuptools import setup
     except Exception as exc:  # pragma: no cover
         print("mypy/mypyc is required for this build path. Install with: pip install .[mypyc]")
         print(f"Original error: {exc}")

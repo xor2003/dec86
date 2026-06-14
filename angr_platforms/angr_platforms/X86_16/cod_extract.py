@@ -139,7 +139,9 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
         def _canonical_name(name: str) -> str:
             return canonical_known_cod_object_name(name) or name
 
-        def _remember_call_source(source_text: str, call_sources: list[tuple[str, str]], seen_call_texts: set[str]) -> None:
+        def _remember_call_source(
+            source_text: str, call_sources: list[tuple[str, str]], seen_call_texts: set[str]
+        ) -> None:
             for call_name, call_text in _extract_source_call_expressions(source_text):
                 if call_name in {"if", "while", "for", "switch", "return"} or call_name.startswith("$"):
                     continue
@@ -201,7 +203,9 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
         )
         segment_registers = {"cs", "ds", "es", "ss", "fs", "gs"}
 
-        source_lines.extend(_cod_source_comment_text(line) for line in prelude_lines if line.lstrip().startswith(";|***"))
+        source_lines.extend(
+            _cod_source_comment_text(line) for line in prelude_lines if line.lstrip().startswith(";|***")
+        )
 
         for line in lines[start_index : end_index + 1]:
             if f"{proc_name}\tPROC {proc_kind}" in line:

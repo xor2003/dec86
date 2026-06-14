@@ -172,11 +172,7 @@ def _structured_slot_names_8616(value) -> tuple[str, ...]:
         attrs.extend(
             attr
             for attr in dynamic_keys
-            if (
-                isinstance(attr, str)
-                and not attr.startswith("_")
-                and attr not in _STRUCTURED_NON_CHILD_ATTRS_8616
-            )
+            if (isinstance(attr, str) and not attr.startswith("_") and attr not in _STRUCTURED_NON_CHILD_ATTRS_8616)
         )
         if not attrs:
             return ()
@@ -602,7 +598,9 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
             return lhs.op == rhs.op and _same_c_expression_8616(lhs.operand, rhs.operand)
         if isinstance(lhs, CBinaryOp):
             return (
-                lhs.op == rhs.op and _same_c_expression_8616(lhs.lhs, rhs.lhs) and _same_c_expression_8616(lhs.rhs, rhs.rhs)
+                lhs.op == rhs.op
+                and _same_c_expression_8616(lhs.lhs, rhs.lhs)
+                and _same_c_expression_8616(lhs.rhs, rhs.rhs)
             )
         if isinstance(lhs, CITE):
             return (

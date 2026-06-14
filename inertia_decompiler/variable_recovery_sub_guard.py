@@ -100,7 +100,9 @@ def _log_size_mismatch_once_8616(self: Any, expr: Any, r0: Any, r1: Any, project
     sys.stderr.flush()
 
 
-def _log_variable_recovery_guard_fallback_once_8616(self: Any, expr: Any, ex: Exception, project: Any, context_suffix) -> None:
+def _log_variable_recovery_guard_fallback_once_8616(
+    self: Any, expr: Any, ex: Exception, project: Any, context_suffix
+) -> None:
     seen = None
     if project is not None:
         seen = getattr(project, "_inertia_variable_recovery_guard_fallback_seen", None)

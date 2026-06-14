@@ -121,8 +121,12 @@ def main() -> int:
         print(f"decompiler_regen_clinic_false.codegen_present={dec_regen_clinic_false.codegen is not None}")
         print(f"decompiler_regen_clinic_false.clinic_present={clinic_b is not None}")
         print(f"upstream_hook_path={UPSTREAM_DECOMPILER_PATH}")
-        print("upstream_hook_note=no caller-visible callback exists between Clinic(...) and StructuredCodeGenerator(...)")
-        print("cache_hook_note=Decompiler(generate_code=False) followed by Decompiler(regen_clinic=False) reuses the cached clinic")
+        print(
+            "upstream_hook_note=no caller-visible callback exists between Clinic(...) and StructuredCodeGenerator(...)"
+        )
+        print(
+            "cache_hook_note=Decompiler(generate_code=False) followed by Decompiler(regen_clinic=False) reuses the cached clinic"
+        )
         print(f"clinic_object_id.generate_code_false={id(clinic_a) if clinic_a is not None else None}")
         print(f"clinic_object_id.regen_clinic_false={id(clinic_b) if clinic_b is not None else None}")
         print(f"variable_manager_id.generate_code_false={id(manager_a) if manager_a is not None else None}")

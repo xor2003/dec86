@@ -87,7 +87,9 @@ def _consume_summary_row_8616(
     return False
 
 
-def _maybe_update_current_segment_8616(stripped: str, upper: str, current_segment: str | None) -> tuple[str | None, bool]:
+def _maybe_update_current_segment_8616(
+    stripped: str, upper: str, current_segment: str | None
+) -> tuple[str | None, bool]:
     def _impl():
         segment_match = _SEGMENT_RE.match(stripped)
         if segment_match is not None:

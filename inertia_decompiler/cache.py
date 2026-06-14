@@ -5,7 +5,6 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-
 _ROOT = Path(__file__).resolve().parents[1]
 
 DECOMPILATION_CACHE_SCHEMA = 5

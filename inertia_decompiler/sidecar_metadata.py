@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from pathlib import Path
 
 import angr
@@ -62,11 +63,7 @@ def _visible_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
     if not skipped:
         return dict(code_labels)
     cod_proc_addrs = set((getattr(metadata, "cod_proc_kinds", None) or {}).keys())
-    return {
-        addr: name
-        for addr, name in code_labels.items()
-        if addr not in skipped or addr in cod_proc_addrs
-    }
+    return {addr: name for addr, name in code_labels.items() if addr not in skipped or addr in cod_proc_addrs}
 
 
 def _recovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
@@ -88,6 +85,7 @@ def _recovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
         if name is not None:
             labels[addr] = name
     return labels
+
 
 def _load_ida_map_sidecar(
     binary: Path,
@@ -139,7 +137,9 @@ def _load_lst_sidecar(
                     for offset, name in metadata.code_labels.items():
                         code_labels.setdefault(load_base_linear + offset, name)
                     for offset, span in metadata.code_ranges.items():
-                        code_ranges.setdefault(load_base_linear + offset, (load_base_linear + span[0], load_base_linear + span[1]))
+                        code_ranges.setdefault(
+                            load_base_linear + offset, (load_base_linear + span[0], load_base_linear + span[1])
+                        )
                 source_formats.append(metadata.source_format)
         except Exception as exc:
             print(f"[dbg] failed to parse source listing {lst_path}: {exc}")
@@ -197,7 +197,9 @@ def _load_codeview_or_ne_metadata(
         codeview_ranges: dict[int, tuple[int, int]] = {}
         codeview_format: str | None = None
         try:
-            codeview_code, codeview_data, codeview_ranges = _parse_codeview_nb00_metadata(binary, load_base_linear=load_base_linear)
+            codeview_code, codeview_data, codeview_ranges = _parse_codeview_nb00_metadata(
+                binary, load_base_linear=load_base_linear
+            )
             codeview_format = "codeview_nb00" if codeview_code else None
         except Exception as exc:
             print(f"[dbg] failed to parse CodeView NB00 metadata from {binary}: {exc}")
@@ -211,7 +213,9 @@ def _load_codeview_or_ne_metadata(
                 print(f"[dbg] failed to parse CodeView NB02/NB04 metadata from {binary}: {exc}")
         if not codeview_code:
             try:
-                ne_code, ne_data, ne_ranges = _parse_ne_exe_metadata(binary, load_base_linear=load_base_linear, project=project)
+                ne_code, ne_data, ne_ranges = _parse_ne_exe_metadata(
+                    binary, load_base_linear=load_base_linear, project=project
+                )
                 if ne_code or ne_data or ne_ranges:
                     codeview_code, codeview_data, codeview_ranges = ne_code, ne_data, ne_ranges
                     codeview_format = "ne_exe"
@@ -324,7 +328,9 @@ def _load_cod_mzre_flair_sidecars(
         external_mzre_map = Path("/home/xor/games/f15se2-re/map") / f"{binary.stem}.map"
         if external_mzre_map.exists():
             try:
-                mzre_code, mzre_data, mzre_ranges = _parse_mzre_map_metadata(external_mzre_map, load_base_linear=load_base_linear)
+                mzre_code, mzre_data, mzre_ranges = _parse_mzre_map_metadata(
+                    external_mzre_map, load_base_linear=load_base_linear
+                )
                 if mzre_code or mzre_data or mzre_ranges:
                     for addr, name in mzre_code.items():
                         code_labels.setdefault(addr, name)
@@ -531,11 +537,7 @@ def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[in
         span = code_ranges.get(addr)
         if span is not None:
             return span
-        containing_spans = [
-            (start, span)
-            for start, span in code_ranges.items()
-            if start <= addr < span[1]
-        ]
+        containing_spans = [(start, span) for start, span in code_ranges.items() if start <= addr < span[1]]
         if containing_spans:
             return max(containing_spans, key=lambda item: item[0])[1]
         # Fallback: derive a bounded span from ordered code labels when explicit

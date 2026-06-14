@@ -13,10 +13,7 @@ def _int21_call_replacements(
     collect_dos_int21_calls: Callable[[Any, Path | None], list[Any]],
     render_dos_int21_call: Callable[[Any, str], str],
 ) -> list[str]:
-    return [
-        render_dos_int21_call(call, api_style)
-        for call in collect_dos_int21_calls(function, binary_path)
-    ]
+    return [render_dos_int21_call(call, api_style) for call in collect_dos_int21_calls(function, binary_path)]
 
 
 def _interrupt_call_replacement_map(

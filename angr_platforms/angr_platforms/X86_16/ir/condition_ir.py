@@ -477,14 +477,14 @@ def _normalize_segmented_index_duplicate_displacement_8616(value: str) -> str:
     if call is None:
         return value
     op, args_str = call
-    args = [_normalize_segmented_index_duplicate_displacement_8616(arg) for arg in _split_fingerprint_args_8616(args_str)]
+    args = [
+        _normalize_segmented_index_duplicate_displacement_8616(arg) for arg in _split_fingerprint_args_8616(args_str)
+    ]
     if op != "Add" or len(args) < 3 or args[0] not in {"Mul(reg:ds,const:16)", "Mul(reg:es,const:16)"}:
         return f"{op}({','.join(args)})"
 
     const_positions = {
-        arg: idx
-        for idx, arg in enumerate(args[1:], start=1)
-        if isinstance(arg, str) and arg.startswith("const:")
+        arg: idx for idx, arg in enumerate(args[1:], start=1) if isinstance(arg, str) and arg.startswith("const:")
     }
     for idx, arg in enumerate(args[1:], start=1):
         inner = _split_fingerprint_call_8616(arg)
@@ -579,7 +579,11 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
                                             if inner_args[1].startswith("const:")
                                             else 0
                                         )
-                                        b = int(sub_args[1].split(":")[-1], 0) if sub_args[1].startswith("const:") else 0
+                                        b = (
+                                            int(sub_args[1].split(":")[-1], 0)
+                                            if sub_args[1].startswith("const:")
+                                            else 0
+                                        )
                                     except (ValueError, IndexError):
                                         return normalized_value
                                     c_sum = a + b

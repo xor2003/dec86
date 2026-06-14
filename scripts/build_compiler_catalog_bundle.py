@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import pickle
-from pathlib import Path
 import shutil
 import sys
 import zipfile
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -15,7 +15,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from omf_pat import load_cached_pat_regex_specs
 from signature_catalog import build_signature_catalog
-
 
 DEFAULT_COMPILERS_ROOT = Path("/home/xor/inertia_player/dos_compilers")
 DEFAULT_BUNDLE_DIR = REPO_ROOT / "signature_catalogs"

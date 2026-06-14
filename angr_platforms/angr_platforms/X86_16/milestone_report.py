@@ -75,7 +75,9 @@ def _append_uncollected_lines_8616(lines: list[str], top_uncollected_functions: 
         if label is None:
             continue
         exit_kind = item.get("exit_kind")
-        lines.append(f"uncollected {label}: {exit_kind}" if isinstance(exit_kind, str) and exit_kind else f"uncollected {label}")
+        lines.append(
+            f"uncollected {label}: {exit_kind}" if isinstance(exit_kind, str) and exit_kind else f"uncollected {label}"
+        )
 
 
 def _append_unknown_lines_8616(lines: list[str], top_unknown_functions: list[Mapping[str, object]]) -> None:
@@ -91,12 +93,16 @@ def _append_hotspot_and_family_lines_8616(
     changed_families: list[Mapping[str, object]],
 ) -> None:
     for hotspot in stage_hotspots[:2]:
-        lines.append(f"stage={hotspot.get('stage', 'unknown')} changed={hotspot.get('changed_count', 0)} rate={hotspot.get('changed_rate', 0.0)}")
+        lines.append(
+            f"stage={hotspot.get('stage', 'unknown')} changed={hotspot.get('changed_count', 0)} rate={hotspot.get('changed_rate', 0.0)}"
+        )
     for family_row in changed_families[:3]:
         family = family_row.get("family")
         if isinstance(family, str) and family:
             stages = ",".join(family_row.get("stages", ()) or ())
-            lines.append(f"family[{family_row.get('count')}] {family} functions={family_row.get('function_count')} stages={stages}")
+            lines.append(
+                f"family[{family_row.get('count')}] {family} functions={family_row.get('function_count')} stages={stages}"
+            )
 
 
 def _append_verdict_and_function_lines_8616(
@@ -556,14 +562,18 @@ def build_x86_16_milestone_report(
             family_ownership=family_ownership,
             readability_focus=readability_focus,
         )
-        readability_goal_summary = summarize_readability_goals(top_ugly_clusters, readability_clusters, family_ownership)
+        readability_goal_summary = summarize_readability_goals(
+            top_ugly_clusters, readability_clusters, family_ownership
+        )
 
         report = {
             "corpus": corpus_name,
             "corpus_slice": corpus_slice or scan_summary.get("slice", "active"),
             "scan_summary": dict(scan_summary),
             "validation_layers": [{"name": name, "default_checks": list(checks)} for name, checks in validation_layers],
-            "validation_families": [{"name": name, "default_checks": list(checks)} for name, checks in validation_families],
+            "validation_families": [
+                {"name": name, "default_checks": list(checks)} for name, checks in validation_families
+            ],
             "validation_triage": validation_triage,
             "alias_api": [
                 {"name": name, "purpose": purpose, "helpers": list(helpers)} for name, purpose, helpers in alias_api
@@ -575,10 +585,12 @@ def build_x86_16_milestone_report(
             "mixed_width_extension_surface": mixed_width_extension_surface,
             "mixed_width_instruction_surface": mixed_width_instruction_surface,
             "widening_pipeline": [
-                {"name": name, "purpose": purpose, "helpers": list(helpers)} for name, purpose, helpers in widening_pipeline
+                {"name": name, "purpose": purpose, "helpers": list(helpers)}
+                for name, purpose, helpers in widening_pipeline
             ],
             "recovery_layers": [
-                {"name": name, "purpose": purpose, "helpers": list(helpers)} for name, purpose, helpers in recovery_layers
+                {"name": name, "purpose": purpose, "helpers": list(helpers)}
+                for name, purpose, helpers in recovery_layers
             ],
             "recovery_confidence_axes": [
                 {"status": status, "meaning": meaning} for status, meaning in recovery_confidence_axes
@@ -587,7 +599,9 @@ def build_x86_16_milestone_report(
                 {"name": name, "purpose": purpose, "helpers": list(helpers)}
                 for name, purpose, helpers in object_recovery_focus
             ],
-            "projection_cleanup_rules": [{"name": name, "purpose": purpose} for name, purpose in projection_cleanup_rules],
+            "projection_cleanup_rules": [
+                {"name": name, "purpose": purpose} for name, purpose in projection_cleanup_rules
+            ],
             "readability_goals": [
                 {
                     "step": step,
@@ -649,8 +663,12 @@ def build_x86_16_milestone_report(
             "interrupt_lowering_boundary": interrupt_lowering_boundary,
             "instruction_metadata_surface": instruction_metadata_surface,
             "readability_tiers": readability_tier_counts,
-            "readability_goal_summary": [_goal_item_payload(item, include_rank=False) for item in readability_goal_summary],
-            "readability_goal_queue": [_goal_item_payload(item, include_rank=True) for item in readability_focus["goal_queue"]],
+            "readability_goal_summary": [
+                _goal_item_payload(item, include_rank=False) for item in readability_goal_summary
+            ],
+            "readability_goal_queue": [
+                _goal_item_payload(item, include_rank=True) for item in readability_focus["goal_queue"]
+            ],
             "readability_focus": {
                 "next_goal": _next_goal_payload(readability_focus.get("next_goal")),
                 "top_ugly_clusters": top_ugly_clusters,

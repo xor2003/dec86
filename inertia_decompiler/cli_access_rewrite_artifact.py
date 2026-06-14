@@ -61,9 +61,7 @@ def load_access_rewrite_artifact(
         build_stable_access_object_hints=build_stable_access_object_hints,
     )
     object_hints = _stable_object_hints_from_artifact(storage_object_artifact)
-    refusal_reasons = {
-        base_key: refusal.reason for base_key, refusal in storage_object_artifact.refusals.items()
-    }
+    refusal_reasons = {base_key: refusal.reason for base_key, refusal in storage_object_artifact.refusals.items()}
     if not object_hints and not refusal_reasons:
         return None
     artifact = AccessRewriteArtifact(

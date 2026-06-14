@@ -1431,7 +1431,7 @@ def test_ast_void_return_prune_preserves_call_side_effects_and_drops_values():
             functy=SimpleNamespace(returnty=None),
             prototype=None,
             statements=root,
-        )
+        ),
     )
 
     changed = _cli_c_ast_rewrites._prune_void_function_return_values(codegen)
@@ -1567,7 +1567,9 @@ def test_void_empty_return_guard_prunes_surplus_non_jcc_noop_if(monkeypatch):
         [
             (
                 real_cond,
-                structured_c.CStatements([structured_c.CFunctionCall("Sleep", None, [], codegen=c_codegen)], codegen=c_codegen),
+                structured_c.CStatements(
+                    [structured_c.CFunctionCall("Sleep", None, [], codegen=c_codegen)], codegen=c_codegen
+                ),
             )
         ],
         else_node=None,
@@ -1759,7 +1761,9 @@ def test_terminal_stack_arg_expr_uses_prototype_arg_offsets():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
     codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
-    proto = SimTypeFunction([SimTypeShort(False), SimTypeShort(False)], SimTypeShort(False), arg_names=["a", "b"]).with_arch(arch)
+    proto = SimTypeFunction(
+        [SimTypeShort(False), SimTypeShort(False)], SimTypeShort(False), arg_names=["a", "b"]
+    ).with_arch(arch)
     codegen.cfunc = SimpleNamespace(
         addr=0x1000,
         arg_list=(),
@@ -2026,7 +2030,9 @@ def test_decompiler_return_compat_uses_latest_ail_insn_when_c_return_has_no_ail_
     epilogue = ailment.Stmt.Assignment(8, sp, sp, ins_addr=0x100BF)
     block = SimpleNamespace(statements=[assignment, epilogue])
     function = SimpleNamespace(addr=0x1000, graph=None, info={})
-    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), _func=function, ail_graph=_FakeGraph(block), next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=arch), _func=function, ail_graph=_FakeGraph(block), next_idx=lambda _name: 1
+    )
     mask_var = SimStackVariable(-4, 2, base="bp", name="mask", region=0x1000)
     mask_cvar = structured_c.CVariable(mask_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc = SimpleNamespace(variables_in_use={mask_var: mask_cvar}, unified_local_vars={})

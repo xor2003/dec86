@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+
 def main() -> None:
     try:
         import angr
@@ -43,6 +44,7 @@ def main() -> None:
         print("[*] Trying with explicit MZ backend...")
         try:
             from angr_platforms.X86_16 import load_dos_mz  # noqa: F401
+
             proj = angr.Project(str(exe), auto_load_libs=False)
             print(f"[+] Project loaded: arch={proj.arch.name}")
         except Exception as e2:
@@ -51,7 +53,8 @@ def main() -> None:
 
     # Enable tail validation for decompilation run through this project,
     # respecting the INERTIA_ENABLE_TAIL_VALIDATION environment variable.
-    from inertia_decompiler.tail_validation import tail_validation_enabled_for_run, set_tail_validation_runtime_enabled
+    from inertia_decompiler.tail_validation import set_tail_validation_runtime_enabled, tail_validation_enabled_for_run
+
     set_tail_validation_runtime_enabled(proj, tail_validation_enabled_for_run(exe))
 
     # Start GDB RSP server

@@ -1,24 +1,17 @@
-import pprint
 import re
-from abc import abstractmethod
-from copy import deepcopy, copy
+from copy import copy
 
-import angr
+import jsonpickle
 import pyvex
+
 # pip install keystone-engine
 # from capstone import *
 from archinfo import arch
-from pyvex import IRSB, IRTypeEnv
-from pyvex.const import U32, U1, U8, U16
-from pyvex.data_ref import DataRef
-from pyvex.expr import Binop, RdTmp, Const, Get, Unop, IRExpr, Binder, VECRET, GSPTR, GetI, Qop, Triop, Load, ITE, CCall
-from pyvex.stmt import IRStmt, NoOp, IMark, AbiHint, Put, PutI, Store, CAS, LLSC, MBE, Dirty, Exit, LoadG, StoreG, WrTmp
-
-from pyvex.lifting import LibVEXLifter, lifters
-from cffi import FFI as ffi
-import jsonpickle
-
 from archinfo.arch_x86 import ArchX86
+from pyvex import IRSB, IRTypeEnv
+from pyvex.const import U1, U8, U16, U32
+from pyvex.expr import GSPTR, ITE, VECRET, Binder, Binop, CCall, Const, Get, GetI, IRExpr, Load, Qop, RdTmp, Triop, Unop
+from pyvex.stmt import CAS, LLSC, MBE, AbiHint, Dirty, Exit, IMark, IRStmt, LoadG, NoOp, Put, PutI, Store, StoreG, WrTmp
 from vextest.reprmixin import ReprMixin
 
 arch = ArchX86()
@@ -35,29 +28,52 @@ U32.__repr__ = lambda self: "U32(%d)" % self.value
 IRTypeEnv.__repr__ = lambda self: f"IRTypeEnv(self.arch, types={self.types})"
 Get.__repr__ = lambda self: f"self.get('{arch.translate_register_name(self.offset)}')"
 Put.__repr__ = lambda self: f"self.put('{arch.translate_register_name(self.offset)}',{repr(self.data)})"
-IRSB.__repr__ = lambda \
-    self: f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n" + \
-          f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n" + \
-          f"v.data_refs={repr(self.data_refs)}\nv._tyenv={repr(self._tyenv)}\n" + \
-          f"v._instructions={repr(self._instructions)}\n" + \
-          f"v._instruction_addresses={repr(self._instruction_addresses)}"
-for Class in [Unop, IRExpr, Binder, VECRET, GSPTR, GetI, Qop, Triop, Load, ITE, CCall, IRStmt, NoOp, IMark, AbiHint,
-              Put, PutI, Store, CAS, LLSC, MBE, Dirty, Exit, LoadG, StoreG]:
+IRSB.__repr__ = lambda self: (
+    f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n"
+    + f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n"
+    + f"v.data_refs={repr(self.data_refs)}\nv._tyenv={repr(self._tyenv)}\n"
+    + f"v._instructions={repr(self._instructions)}\n"
+    + f"v._instruction_addresses={repr(self._instruction_addresses)}"
+)
+for Class in [
+    Unop,
+    IRExpr,
+    Binder,
+    VECRET,
+    GSPTR,
+    GetI,
+    Qop,
+    Triop,
+    Load,
+    ITE,
+    CCall,
+    IRStmt,
+    NoOp,
+    IMark,
+    AbiHint,
+    Put,
+    PutI,
+    Store,
+    CAS,
+    LLSC,
+    MBE,
+    Dirty,
+    Exit,
+    LoadG,
+    StoreG,
+]:
     Class.__bases__ += (ReprMixin,)
-
 
 
 def assembler(lines, bitness=0) -> bytes:
     import keystone as ks
+
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
     data, count = ks_.asm(lines, as_bytes=True)
     return data
 
 
-
 class Lifter16:
-
-
     @staticmethod
     def render_vex_to_json(vex):
         vexx = copy(vex)
@@ -66,9 +82,7 @@ class Lifter16:
         return json
 
 
-
 class MyVex(IRSB):
-
     def __init__(self, addr=0):
         self.addr = addr
         self.arch = ArchX86()
@@ -100,7 +114,7 @@ class MyVex(IRSB):
 
     def add(self, size, *args):
         if size not in [8, 16, 32]:
-            raise ValueError('Invalid op size %d' % size)
+            raise ValueError("Invalid op size %d" % size)
         if len(args) == 1:
             return Unop("Iop_Add%d" % size, args)
         elif len(args) == 2:
@@ -108,11 +122,11 @@ class MyVex(IRSB):
         elif len(args) == 3:
             return Triop("Iop_Add%d" % size, args)
         else:
-            raise ValueError('Invalid number of args %s' % args)
+            raise ValueError("Invalid number of args %s" % args)
 
     def mov(self):
         self.v._size = 5
-        '''
+        """
         self.v.statements = [
             IMark(self.addr, self.v._size, 0),
             WrTmp(t2, self.get('esp')),
@@ -121,7 +135,7 @@ class MyVex(IRSB):
             WrTmp(t3, self.conv16Uto32(RdTmp(t4))),
             self.put('eax', RdTmp(t3))
         ]
-        '''
+        """
         # self.v=IRSB(None, 0, self.arch)
         t0 = self.add_tmp(32)
         t1 = self.add_tmp(32)
@@ -129,14 +143,16 @@ class MyVex(IRSB):
         t3 = self.add_tmp(32)
         t4 = self.add_tmp(32)  # movzx     eax, word ptr [esp + 4]
         t5 = self.add_tmp(16)  # movzx     eax, word ptr [esp + 4]
-        self.v.statements = [IMark(addr=self.v.addr, length=self.v._size, delta=0),
-                             WrTmp(t2, self.get('es')),
-                             WrTmp(t3, Unop(op='Iop_16Uto32', args=[RdTmp(t2)])),
-                             WrTmp(t4, Binop('Iop_Shl32', [RdTmp(t3), Const(U8(4))])),
-                             WrTmp(t1, Binop('Iop_Add32', [RdTmp(t4), Const(U32(0x2000))])),
-                             WrTmp(t5, Load(end='Iend_LE', ty='Ity_I16', addr=RdTmp(t1))),
-                             WrTmp(t0, Unop(op='Iop_16Uto32', args=[RdTmp(t5)])),
-                             self.put('eax', RdTmp(t0))]
+        self.v.statements = [
+            IMark(addr=self.v.addr, length=self.v._size, delta=0),
+            WrTmp(t2, self.get("es")),
+            WrTmp(t3, Unop(op="Iop_16Uto32", args=[RdTmp(t2)])),
+            WrTmp(t4, Binop("Iop_Shl32", [RdTmp(t3), Const(U8(4))])),
+            WrTmp(t1, Binop("Iop_Add32", [RdTmp(t4), Const(U32(0x2000))])),
+            WrTmp(t5, Load(end="Iend_LE", ty="Ity_I16", addr=RdTmp(t1))),
+            WrTmp(t0, Unop(op="Iop_16Uto32", args=[RdTmp(t5)])),
+            self.put("eax", RdTmp(t0)),
+        ]
 
         self.v.next = Const(U32(self.v.addr + self.v._size))
         self.v.jumpkind = "Ijk_Boring"
@@ -156,8 +172,9 @@ class MyVex(IRSB):
 
 # from keystone import Ks
 
+
 def resolver(symbol, value):
-    if symbol == b'abcd':
+    if symbol == b"abcd":
         value.contents.value = 0x42
         return True
     return False
@@ -167,7 +184,7 @@ def vexer(instruction):
     global arch_32
     arch_16 = ArchX86()  # get architecture
     # arch_16.bits=16
-    arch_16.reg_blacklist = ('gdt', 'ldt')  # make cs,ds valid
+    arch_16.reg_blacklist = ("gdt", "ldt")  # make cs,ds valid
     arch_16.ks_mode = _keystone.KS_MODE_16 + _keystone.KS_MODE_LITTLE_ENDIAN
     arch_16.keystone  # init keystone assembler
     arch_16._ks.sym_resolver = resolver  # set resolver
@@ -183,7 +200,7 @@ def vexer(instruction):
     # a._configure_keystone()
     arch_32._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
     addr = 1
-    instruction = re.sub(r'\b[cdefgs]s:', '', instruction)
+    instruction = re.sub(r"\b[cdefgs]s:", "", instruction)
     bytes = arch_32.asm(instruction)
     vex = pyvex.lift(bytes, addr, arch_32)
     assert vex.statements
@@ -194,8 +211,8 @@ def vexer(instruction):
     vex.next = pyvex.expr.Const(pyvex.const.U32(addr + _16bit_length))
     return vex
 
-if __name__ == '__main__':
 
+if __name__ == "__main__":
     try:
         import keystone as _keystone
     except ImportError:
@@ -206,7 +223,7 @@ if __name__ == '__main__':
     # print(pyvex.lift(a.asm('je 3'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,5\nmul ax'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,abcd'), 0, a).pp())
-    instruction = 'add ax,abcd'
+    instruction = "add ax,abcd"
     instruction = input()
     # instruction = 'mov word ptr es:[di],0x42'
     # instruction = 'inc eax'
@@ -230,7 +247,7 @@ if __name__ == '__main__':
 
     """
 
-    CODE = '''
+    CODE = """
         movzx     eax, word ptr [esp + 4]
         movzx     ecx, word ptr [esp + 8]
         shl     ecx, 4
@@ -238,8 +255,8 @@ if __name__ == '__main__':
         mov     ax, word ptr [eax + ecx]
         movzx eax,ax
         ret
-        '''
-    CODE = '''
+        """
+    CODE = """
             imul bx
             movzx     eax, word ptr [esp + 4]
             movzx     ecx, word ptr [esp + 8]
@@ -247,4 +264,4 @@ if __name__ == '__main__':
             sub ax,cx
             movzx eax,ax
             ret
-    '''
+    """

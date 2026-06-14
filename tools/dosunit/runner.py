@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import Any
-
 from pathlib import Path
+from typing import Any
 
 from tools.dosunit.kvikdos_backend import KvikdosBackendError, KvikdosSession, execute_vector
 from tools.dosunit.mapping import MappingResolutionError, apply_candidate_mapping
@@ -63,7 +62,9 @@ def record_oracle(
                 observed = _observed_from_fixture(vector, "oracle")
             elif backend in {"libkvikdos", "kvikdos"}:
                 if exe_path is None:
-                    results.append(_backend_failure_result(vector, message="--exe is required for kvikdos-backed oracle recording"))
+                    results.append(
+                        _backend_failure_result(vector, message="--exe is required for kvikdos-backed oracle recording")
+                    )
                     vectors.append(vector)
                     continue
                 try:
@@ -158,7 +159,9 @@ def compare_vectors(
                 candidate = _observed_from_fixture(vector, "candidate")
             elif backend in {"libkvikdos", "kvikdos"}:
                 if candidate_path is None:
-                    results.append(_backend_failure_result(vector, message="--candidate is required for kvikdos-backed comparison"))
+                    results.append(
+                        _backend_failure_result(vector, message="--candidate is required for kvikdos-backed comparison")
+                    )
                     continue
                 try:
                     candidate_vector = apply_candidate_mapping(

@@ -371,7 +371,11 @@ def _extract_monotonic_update_8616(stmt):
         rhs = stmt.rhs
         if not isinstance(rhs, CBinaryOp) or rhs.op not in {"Add", "Sub"}:
             return None
-        if _same_c_expression_8616(rhs.lhs, stmt.lhs) and isinstance(rhs.rhs, CConstant) and isinstance(rhs.rhs.value, int):
+        if (
+            _same_c_expression_8616(rhs.lhs, stmt.lhs)
+            and isinstance(rhs.rhs, CConstant)
+            and isinstance(rhs.rhs.value, int)
+        ):
             delta = rhs.rhs.value if rhs.op == "Add" else -rhs.rhs.value
             return stmt.lhs, delta
         if (

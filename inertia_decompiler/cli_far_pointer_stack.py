@@ -27,7 +27,9 @@ def _build_copy_aliases(
         for _ in range(3):
             changed_alias = False
             for walk_node in iter_c_nodes_deep(statements):
-                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                    walk_node.lhs, structured_c.CVariable
+                ):
                     continue
                 lhs_var = getattr(walk_node.lhs, "variable", None)
                 if lhs_var is None:
@@ -101,7 +103,9 @@ def _build_far_pointer_aliases(
     def _impl():
         groups: dict[object, dict[str, list[tuple[structured_c.CVariable, object]]]] = {}
         for walk_node in iter_c_nodes_deep(statements):
-            if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+            if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
+                walk_node.lhs, structured_c.CVariable
+            ):
                 continue
             lhs_var = getattr(walk_node.lhs, "variable", None)
             if not isinstance(lhs_var, SimStackVariable):
@@ -128,7 +132,11 @@ def _build_far_pointer_aliases(
             candidate_facts = [describe_alias_storage(expr) for expr in candidate_exprs]
             if any(facts.needs_synthesis() or facts.identity is None for facts in candidate_facts):
                 continue
-            if any(not left.can_join(right) for idx, left in enumerate(candidate_facts) for right in candidate_facts[idx + 1 :]):
+            if any(
+                not left.can_join(right)
+                for idx, left in enumerate(candidate_facts)
+                for right in candidate_facts[idx + 1 :]
+            ):
                 continue
             source_expr = None
             for cvar, rhs in sorted(parts["source"], key=lambda item: _source_score(item[0], item[1])):
@@ -226,7 +234,10 @@ def _coalesce_far_pointer_stack_expressions(
             if isinstance(offset, int):
                 resolved = resolve_stack_cvar_at_offset(codegen, offset)
                 resolved_variable = getattr(resolved, "variable", None)
-                if isinstance(resolved_variable, SimStackVariable) and getattr(resolved_variable, "size", 0) >= minimum_size:
+                if (
+                    isinstance(resolved_variable, SimStackVariable)
+                    and getattr(resolved_variable, "size", 0) >= minimum_size
+                ):
                     continue
             return False
         return True
@@ -240,7 +251,10 @@ def _coalesce_far_pointer_stack_expressions(
         if isinstance(offset, int):
             resolved = resolve_stack_cvar_at_offset(codegen, offset)
             resolved_variable = getattr(resolved, "variable", None)
-            if isinstance(resolved_variable, SimStackVariable) and getattr(resolved_variable, "size", 0) >= minimum_size:
+            if (
+                isinstance(resolved_variable, SimStackVariable)
+                and getattr(resolved_variable, "size", 0) >= minimum_size
+            ):
                 return True
         return False
 

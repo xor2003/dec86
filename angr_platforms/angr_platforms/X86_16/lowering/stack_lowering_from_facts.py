@@ -335,7 +335,9 @@ def lower_stack_accesses_from_alias_facts_8616(
                     size,
                     preferred_name=getattr(binding, "var_name", None),
                 )
-                materialized_name = getattr(getattr(cvar, "variable", None), "name", None) or getattr(cvar, "name", None)
+                materialized_name = getattr(getattr(cvar, "variable", None), "name", None) or getattr(
+                    cvar, "name", None
+                )
                 materialized_count += 1
                 materialized.append(
                     (int(offset), str(materialized_name or _stack_object_name(int(offset), codegen=codegen)))

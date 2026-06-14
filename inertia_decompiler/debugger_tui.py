@@ -10,20 +10,13 @@ Uses textual library for UI components:
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
-
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import (
-    Button,
-    Footer,
-    Header,
     Input,
     Label,
     Static,
-    TextArea,
 )
 
 
@@ -72,7 +65,7 @@ class BreakpointPane(Static):
 
         lines = ["╔════ BREAKPOINTS ════╗"]
         for i, bp in enumerate(self.breakpoints, 1):
-            status = "✓" if bp.get('enabled') else "✗"
+            status = "✓" if bp.get("enabled") else "✗"
             lines.append(f"  {i}: {status} @0x{bp.get('addr', 0):05x} (hits={bp.get('hits', 0)})")
         lines.append("╚════════════════════╝")
 
@@ -122,7 +115,7 @@ class DisassemblyPane(Static):
             return "╔════ CODE ════╗\n(no code loaded)\n╚══════════════╝"
 
         lines = ["╔════ CODE ════╗"]
-        for line in self.disassembly.split('\n')[:15]:
+        for line in self.disassembly.split("\n")[:15]:
             # Highlight current instruction
             if f"0x{self.current_ip:05x}" in line:
                 lines.append(f"→ {line}")
@@ -153,15 +146,15 @@ class DebuggerTUI(Static):
 
 class DebuggerApp:
     """Main debugger application.
-    
+
     Usage:
         app = DebuggerApp(project, gdb_port=1234)
         app.run()
     """
 
-    def __init__(self, project=None, gdb_port: int = 1234, gdb_host: str = '127.0.0.1'):
+    def __init__(self, project=None, gdb_port: int = 1234, gdb_host: str = "127.0.0.1"):
         """Initialize debugger.
-        
+
         Args:
             project: angr project
             gdb_port: GDB server port
@@ -198,16 +191,16 @@ class DebuggerApp:
     def run(self) -> None:
         """Run the debugger application (placeholder for full Textual app)."""
         print("[TUI] Debugger initialized")
-        print(f"[TUI] Create textual.app.App subclass to render full UI")
+        print("[TUI] Create textual.app.App subclass to render full UI")
         print(f"[TUI] GDB server ready on {self.gdb_host}:{self.gdb_port}")
 
 
 __all__ = [
-    'DebuggerApp',
-    'DebuggerTUI',
-    'RegisterPane',
-    'DisassemblyPane',
-    'MemoryPane',
-    'StackPane',
-    'BreakpointPane',
+    "DebuggerApp",
+    "DebuggerTUI",
+    "RegisterPane",
+    "DisassemblyPane",
+    "MemoryPane",
+    "StackPane",
+    "BreakpointPane",
 ]

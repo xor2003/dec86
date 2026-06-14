@@ -131,8 +131,12 @@ def build_x86_16_segment_state_artifact(
             if function_ssa is not None
             else {block.addr: () for block in artifact.blocks}
         )
-        entry_states = {addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr}
-        exit_states = {addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr}
+        entry_states = {
+            addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr
+        }
+        exit_states = {
+            addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr
+        }
 
         changed = True
         while changed:
@@ -157,10 +161,16 @@ def build_x86_16_segment_state_artifact(
             "block_count": len(blocks_by_addr),
             "explicit_write_count": explicit_write_count,
             "proven_register_count": sum(
-                1 for states in exit_states.values() for state in states.values() if state.origin == SegmentOrigin.PROVEN
+                1
+                for states in exit_states.values()
+                for state in states.values()
+                if state.origin == SegmentOrigin.PROVEN
             ),
             "unknown_register_count": sum(
-                1 for states in exit_states.values() for state in states.values() if state.origin == SegmentOrigin.UNKNOWN
+                1
+                for states in exit_states.values()
+                for state in states.values()
+                if state.origin == SegmentOrigin.UNKNOWN
             ),
         }
         return SegmentStateArtifact(entry_states=entry_states, exit_states=exit_states, summary=summary)

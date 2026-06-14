@@ -4,7 +4,7 @@ import re
 import angr
 import claripy
 import pyvex
-from angr.analyses import CFGFast, VariableRecoveryFast, CallingConventionAnalysis, Decompiler
+from angr.analyses import CallingConventionAnalysis, CFGFast, Decompiler, VariableRecoveryFast
 from archinfo import ArchX86
 
 from angr_platforms.angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -20,6 +20,7 @@ FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "DF": 10, "OF": 11}
 
 def assembler(lines, bitness=0) -> bytes:
     import keystone as ks
+
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
     data, count = ks_.asm(lines, as_bytes=True)
     print(data)
@@ -37,11 +38,12 @@ def step(simgr, insn_bytes):
 def prepare(arch, data):
     # Create an Angr project
     addr = 0x100  # 0x400000
-    project = angr.load_shellcode(data, arch=arch, start_offset=addr, load_address=addr, selfmodifying_code=False,
-                                  rebase_granularity=0x1000)
+    project = angr.load_shellcode(
+        data, arch=arch, start_offset=addr, load_address=addr, selfmodifying_code=False, rebase_granularity=0x1000
+    )
     # Lift the instruction to VEX
     block = pyvex.lift(data, addr, arch, max_inst=1)
-    #print(block.pp())
+    # print(block.pp())
     state = project.factory.blank_state()
     # Execute the instruction
     block = project.factory.block(state.addr, len(data))
@@ -52,12 +54,11 @@ def prepare(arch, data):
     return simgr
 
 
-
 def compare_states(instruction, state32_, state16_):
     def _impl():
         differencies = []
         for state32, state16 in zip(state32_, state16_):
-            state16.regs.eip &= 0xffff
+            state16.regs.eip &= 0xFFFF
             skip_regs = {"eflags", "d"}
             if not instruction.startswith("j") and not instruction.startswith("l"):
                 skip_regs.add("eip")
@@ -69,7 +70,7 @@ def compare_states(instruction, state32_, state16_):
                 val32 = repr(claripy.simplify(getattr(state32.regs, reg_name)))
                 try:
                     val16 = repr(claripy.simplify(getattr(state16.regs, reg_name)))
-                    #print(f"Register {reg_name}: state32={val32}, state16={val16}")
+                    # print(f"Register {reg_name}: state32={val32}, state16={val16}")
                     if val32 != val16:
                         val32 = filter_symbolic(val32)
                         val16 = filter_symbolic(val16)
@@ -78,7 +79,7 @@ def compare_states(instruction, state32_, state16_):
                 except KeyError:
                     pass
                     # print(f"Register {reg_name} not found in state")
-            #return differencies
+            # return differencies
             # To handle lazy flag calculation, print individual flags
             flags32 = {key: state32.regs.flags[bit] for key, bit in FLAGS.items()}
             flags16 = {key: state16.regs.flags[bit] for key, bit in FLAGS.items()}
@@ -87,7 +88,7 @@ def compare_states(instruction, state32_, state16_):
                     continue
                 value32 = repr(claripy.simplify(flags32[flag]))
                 value16 = repr(claripy.simplify(flags16[flag]))
-                #print(f"Flag {flag}: state32={value32}\n         state16={value16}")
+                # print(f"Flag {flag}: state32={value32}\n         state16={value16}")
 
                 if value32 != value16:
                     value32 = filter_symbolic(value32)
@@ -95,6 +96,7 @@ def compare_states(instruction, state32_, state16_):
                     print(f"Flag {flag} differs: state32={value32}\n                 state16={value16}")
                     differencies.append((flag, value32, value16))
         return differencies
+
     return _impl()
 
 
@@ -113,7 +115,7 @@ def compare_instructions_impact(instruction: str):
     simgr32 = prepare(arch_32, bytes32)
     print("~~16~~")
     bytes16 = assembler(instruction, 16)
-    #bytes16=b"\xe9\xe7\x01"
+    # bytes16=b"\xe9\xe7\x01"
     print(bytes16)
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
@@ -132,8 +134,8 @@ def compare_instructions_impact(instruction: str):
     print("~~compare impact~~")
     return compare_states(instruction, stage32, stage16)
 
-TODO = \
-"""
+
+TODO = """
 imul si,si,0x3 ; TODO cf, of
 imul si,si,0x1234 ; TODO cf, of
 jmp 0x1ea  # working. assember issue
@@ -188,7 +190,7 @@ in al,dx
 leave # wrong esp, ebp
 """
 
-LIST="""
+LIST = """
 enter 4,1
 and ax,cx
 or ax,cx
@@ -299,13 +301,15 @@ xor bp,bp
 out dx,al
 """
 
+
 def test_instructions():
     for line in filter(None, LIST.splitlines()):
         result = compare_instructions_impact(line)
         assert not result, result
     print("Success!")
 
-INSTR="""
+
+INSTR = """
 add
 adc
 and
@@ -317,6 +321,8 @@ sub
 sbb
 xchg
 """
+
+
 def test_prog():
     for instr in filter(None, INSTR.splitlines()):
         proc = f"""
@@ -330,10 +336,11 @@ def test_prog():
           pop     bp
             
         """
-        bytes16 = assembler(proc, 16) + b'\xc3'
+        bytes16 = assembler(proc, 16) + b"\xc3"
         arch_16 = Arch86_16()
-        project = angr.load_shellcode(bytes16, arch=arch_16, start_offset=0, load_address=0,
-                                      selfmodifying_code=False, rebase_granularity=0x1000)
+        project = angr.load_shellcode(
+            bytes16, arch=arch_16, start_offset=0, load_address=0, selfmodifying_code=False, rebase_granularity=0x1000
+        )
         print("After load")
 
         block = project.factory.block(project.entry, byte_string=bytes16)
@@ -356,6 +363,6 @@ def test_prog():
         print("Decompiled function %s\n%s" % (repr(func), dec.codegen.text))
 
 
-if __name__ == '__main__':
-    #test_prog()
+if __name__ == "__main__":
+    # test_prog()
     test_instructions()

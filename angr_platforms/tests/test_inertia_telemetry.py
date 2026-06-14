@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import time
+from types import SimpleNamespace
 
 import inertia_decompiler.cli_core as cli_core
 import inertia_decompiler.telemetry as telemetry

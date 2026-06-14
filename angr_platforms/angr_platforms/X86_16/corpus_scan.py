@@ -296,10 +296,22 @@ def _classify_semantic_family_from_failure(result: FunctionScanResult) -> tuple[
         if not parts:
             return None, None
         families = (
-            ("interrupt_api", "failure text points at interrupt/API lowering", ("interrupt", "int86", "intdos", "bios")),
+            (
+                "interrupt_api",
+                "failure text points at interrupt/API lowering",
+                ("interrupt", "int86", "intdos", "bios"),
+            ),
             ("string", "failure text points at string family", ("string", "rep", "cmps", "stos", "lods", "scas")),
-            ("stack_control", "failure text points at stack/control family", ("stack", "frame", "retf", "callf", "branch", "loop")),
-            ("addressing", "failure text points at addressing family", ("address", "segment", "modrm", "pointer", "width")),
+            (
+                "stack_control",
+                "failure text points at stack/control family",
+                ("stack", "frame", "retf", "callf", "branch", "loop"),
+            ),
+            (
+                "addressing",
+                "failure text points at addressing family",
+                ("address", "segment", "modrm", "pointer", "width"),
+            ),
             ("alu", "failure text points at alu family", ("flag", "shift", "rotate", "alu")),
         )
         for family, reason, markers in families:
@@ -733,7 +745,9 @@ def _scan_has_fallback_kind_8616(result: FunctionScanResult) -> bool:
 
 
 def _sorted_top_8616(counter: Counter, key_name: str) -> list[dict[str, object]]:
-    return [{key_name: key, "count": count} for key, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))]
+    return [
+        {key_name: key, "count": count} for key, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
 
 def _sorted_top_tuples_8616(counter: Counter, field_names: tuple[str, ...]) -> list[dict[str, object]]:
@@ -757,7 +771,9 @@ def _classify_scan_files_8616(results: list[FunctionScanResult]) -> tuple[list[s
     return files_zero_success, files_scan_clean, files_partial_success
 
 
-def _aggregate_scan_tail_validation_8616(results: list[FunctionScanResult]) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+def _aggregate_scan_tail_validation_8616(
+    results: list[FunctionScanResult],
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
     tail_validation_records = [
         {
             "cod_file": result.cod_file,
@@ -769,10 +785,14 @@ def _aggregate_scan_tail_validation_8616(results: list[FunctionScanResult]) -> t
         for result in results
     ]
     aggregate = build_x86_16_tail_validation_aggregate(tail_validation_records, scanned=len(results))
-    return aggregate["summary"], aggregate["surface"], {
-        "cache_key": aggregate["cache_key"],
-        "cache_hit": bool(aggregate["cache_hit"]),
-    }
+    return (
+        aggregate["summary"],
+        aggregate["surface"],
+        {
+            "cache_key": aggregate["cache_key"],
+            "cache_hit": bool(aggregate["cache_hit"]),
+        },
+    )
 
 
 def _scan_rate_8616(count: int, total: int) -> float:
@@ -787,27 +807,37 @@ def _scan_summary_counters_8616(results: list[FunctionScanResult]) -> dict[str, 
         return {
             "confidence_summaries": confidence_summaries,
             "failure_counter": Counter(result.failure_class for result in results if result.failure_class is not None),
-            "fallback_counter": Counter(result.fallback_kind for result in results if _scan_has_fallback_kind_8616(result)),
-            "stage_failure_counter": Counter(stage.stage for result in results for stage in result.stages if not stage.ok),
+            "fallback_counter": Counter(
+                result.fallback_kind for result in results if _scan_has_fallback_kind_8616(result)
+            ),
+            "stage_failure_counter": Counter(
+                stage.stage for result in results for stage in result.stages if not stage.ok
+            ),
             "timeout_stage_counter": Counter(
                 stage.stage
                 for result in results
                 for stage in result.stages
                 if not stage.ok and (stage.reason == "timeout" or result.failure_class == "timeout")
             ),
-            "failure_file_counter": Counter(result.cod_file for result in results if not result.ok and result.failure_class is not None),
+            "failure_file_counter": Counter(
+                result.cod_file for result in results if not result.ok and result.failure_class is not None
+            ),
             "failure_function_counter": Counter(
                 (result.cod_file, result.proc_name, result.proc_kind, result.failure_class)
                 for result in results
                 if not result.ok and result.failure_class is not None
             ),
-            "fallback_file_counter": Counter(result.cod_file for result in results if _scan_has_fallback_kind_8616(result)),
+            "fallback_file_counter": Counter(
+                result.cod_file for result in results if _scan_has_fallback_kind_8616(result)
+            ),
             "fallback_function_counter": Counter(
                 (result.cod_file, result.proc_name, result.proc_kind, result.fallback_kind)
                 for result in results
                 if _scan_has_fallback_kind_8616(result)
             ),
-            "family_counter": Counter(result.semantic_family for result in results if result.semantic_family is not None),
+            "family_counter": Counter(
+                result.semantic_family for result in results if result.semantic_family is not None
+            ),
             "family_failure_counter": Counter(
                 result.semantic_family for result in results if not result.ok and result.semantic_family is not None
             ),
@@ -829,10 +859,12 @@ def _scan_summary_counters_8616(results: list[FunctionScanResult]) -> dict[str, 
             ),
         }
 
-
-
     return _impl()
-def _scan_summary_totals_8616(results: list[FunctionScanResult], confidence_summaries: list[object]) -> dict[str, object]:
+
+
+def _scan_summary_totals_8616(
+    results: list[FunctionScanResult], confidence_summaries: list[object]
+) -> dict[str, object]:
     def _impl():
         fallback_results = [result for result in results if _scan_has_fallback_kind_8616(result)]
         return {
@@ -845,9 +877,15 @@ def _scan_summary_totals_8616(results: list[FunctionScanResult], confidence_summ
             "structuring_failure_count": sum(1 for result in results if result.structuring_failed),
             "regeneration_failure_count": sum(1 for result in results if result.regeneration_failed),
             "confidence_status_counter": Counter(summary.status for summary in confidence_summaries),
-            "confidence_scan_safe_counter": Counter(summary.scan_safe_classification for summary in confidence_summaries),
-            "confidence_assumption_counter": Counter(item.kind for summary in confidence_summaries for item in summary.assumptions),
-            "confidence_evidence_counter": Counter(item.kind for summary in confidence_summaries for item in summary.evidence),
+            "confidence_scan_safe_counter": Counter(
+                summary.scan_safe_classification for summary in confidence_summaries
+            ),
+            "confidence_assumption_counter": Counter(
+                item.kind for summary in confidence_summaries for item in summary.assumptions
+            ),
+            "confidence_evidence_counter": Counter(
+                item.kind for summary in confidence_summaries for item in summary.evidence
+            ),
             "confidence_diagnostic_counter": Counter(
                 diagnostic for summary in confidence_summaries for diagnostic in summary.diagnostics
             ),
@@ -858,14 +896,18 @@ def _scan_summary_totals_8616(results: list[FunctionScanResult], confidence_summ
             "fallback_only_count": sum(1 for result in fallback_results if result.ok),
             "true_failure_count": sum(1 for result in results if not result.ok),
             "unclassified_failure_count": sum(
-                1 for result in results if not result.ok and result.failure_class in {"analysis_failure", "unknown_failure"}
+                1
+                for result in results
+                if not result.ok and result.failure_class in {"analysis_failure", "unknown_failure"}
             ),
         }
 
-
-
     return _impl()
-def _scan_summary_output_8616(results: list[FunctionScanResult], mode: str, counters: dict[str, object], totals: dict[str, object]) -> dict[str, object]:
+
+
+def _scan_summary_output_8616(
+    results: list[FunctionScanResult], mode: str, counters: dict[str, object], totals: dict[str, object]
+) -> dict[str, object]:
     failure_counter = counters["failure_counter"]
     fallback_counter = counters["fallback_counter"]
     stage_failure_counter = counters["stage_failure_counter"]
@@ -907,7 +949,9 @@ def _scan_summary_output_8616(results: list[FunctionScanResult], mode: str, coun
     top_family_fallbacks = _sorted_top_8616(family_fallback_counter, "family")
     family_ugly_clusters = _sorted_top_tuples_8616(family_cluster_counter, ("family", "cluster"))
     readability_clusters = _sorted_top_8616(readability_cluster_counter, "cluster")
-    tail_validation_summary, tail_validation_surface, tail_validation_cache = _aggregate_scan_tail_validation_8616(results)
+    tail_validation_summary, tail_validation_surface, tail_validation_cache = _aggregate_scan_tail_validation_8616(
+        results
+    )
 
     return {
         "mode": mode,
@@ -992,7 +1036,11 @@ def _scan_safe_prefix_skip_result_8616(
         is_3dplanes = "3DPLANES" in str(cod_file)
         is_oversized = _should_skip_scan_safe_cfg(code_len, mode, max_cfg_bytes)
         should_skip_call_chain = is_3dplanes and is_oversized
-        if prefix_insns and not should_skip_call_chain and _should_skip_scan_safe_call_chain_from_insns(prefix_insns, mode, max_cfg_bytes):
+        if (
+            prefix_insns
+            and not should_skip_call_chain
+            and _should_skip_scan_safe_call_chain_from_insns(prefix_insns, mode, max_cfg_bytes)
+        ):
             call_count = sum(1 for insn in prefix_insns if getattr(insn, "mnemonic", "").lower() == "call")
             return _finish_scan_safe_skip(
                 result,
@@ -1028,7 +1076,10 @@ def _scan_safe_prefix_skip_result_8616(
         result.function_count = 1
         result.ok = True
         result.fallback_kind = "lift_only"
-        result.semantic_family, result.semantic_family_reason = ("addressing", "oversized function skipped before decompile")
+        result.semantic_family, result.semantic_family_reason = (
+            "addressing",
+            "oversized function skipped before decompile",
+        )
         _mark_stage(result, "lift", True, detail="bounded scan-safe prefix lift")
         _mark_stage(
             result,
@@ -1256,8 +1307,12 @@ def scan_function(
                 result.interrupt_bios_helper_count = _count_named_helper_calls(text, _INTERRUPT_BIOS_HELPER_NAMES)
                 result.interrupt_wrapper_call_count = _count_interrupt_wrapper_calls(text)
                 result.interrupt_unresolved_wrapper_count = result.interrupt_wrapper_call_count
-                result.semantic_family, result.semantic_family_reason = _classify_semantic_family_from_text(text, result)
-                result.readability_cluster, result.readability_cluster_reason = _classify_readability_cluster(result, text)
+                result.semantic_family, result.semantic_family_reason = _classify_semantic_family_from_text(
+                    text, result
+                )
+                result.readability_cluster, result.readability_cluster_reason = _classify_readability_cluster(
+                    result, text
+                )
                 result.decompiled_count = 1
                 result.ok = True
                 _mark_stage(result, "decompile", True)
@@ -1280,9 +1335,9 @@ def scan_function(
             _clear_alarm()
             signal.signal(signal.SIGALRM, old_handler)
 
-
-
     return _impl()
+
+
 def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str, object]:
     counters = _scan_summary_counters_8616(results)
     totals = _scan_summary_totals_8616(results, counters["confidence_summaries"])

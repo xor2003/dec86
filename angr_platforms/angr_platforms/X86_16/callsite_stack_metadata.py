@@ -353,7 +353,9 @@ def _expr_is_pure_stack_address_carrier_8616(
                 node.lhs, known_carriers
             ) or _expr_is_pure_stack_address_carrier_8616(node.rhs, known_carriers)
         key = _stack_carrier_key_8616(node)
-        return key is not None and (_generic_stack_carrier_name_8616(node) is not None or key in (known_carriers or set()))
+        return key is not None and (
+            _generic_stack_carrier_name_8616(node) is not None or key in (known_carriers or set())
+        )
 
     return _impl()
 

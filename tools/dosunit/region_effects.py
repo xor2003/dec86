@@ -4,9 +4,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from tools.dosunit.ir_edges import BRANCH_MNEMONICS, CAPSTONE_OP_IMM, CAPSTONE_OP_MEM, CAPSTONE_OP_REG, _load_lifter_project
+from tools.dosunit.ir_edges import (
+    BRANCH_MNEMONICS,
+    CAPSTONE_OP_IMM,
+    CAPSTONE_OP_MEM,
+    CAPSTONE_OP_REG,
+    _load_lifter_project,
+)
 from tools.dosunit.model import DosUnitError, normalize_hex, parse_int, stable_id
-
 
 READ_ACCESS = 1
 WRITE_ACCESS = 2
@@ -208,12 +213,20 @@ def _summarize_function_regions(
             block = project.factory.block(at, size=min(0x80, end - at), opt_level=0)
             _ = block.vex
         except Exception as ex:  # noqa: BLE001
-            refusals.append(_refusal(function_id, "unsupported_ir", f"lifter block failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}"))
+            refusals.append(
+                _refusal(
+                    function_id,
+                    "unsupported_ir",
+                    f"lifter block failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}",
+                )
+            )
             continue
         blocks_lifted += 1
         lifted_insns = [item.insn for item in block.capstone.insns if start <= item.insn.address < end]
         if not lifted_insns:
-            refusals.append(_refusal(function_id, "unsupported_ir", f"lifter produced no instructions at {normalize_hex(at)}"))
+            refusals.append(
+                _refusal(function_id, "unsupported_ir", f"lifter produced no instructions at {normalize_hex(at)}")
+            )
             continue
 
         region_insns = lifted_insns[:max_insns_per_region]
@@ -274,8 +287,16 @@ def _summarize_region(
 def _instruction_summary(insn: Any, *, function_base: int) -> dict[str, Any]:
     regs_read, regs_written = _regs_access(insn)
     operands = [_operand_summary(insn, operand) for operand in insn.operands]
-    memory_reads = [operand["memory"] for operand in operands if operand.get("kind") == "mem" and operand.get("access") in {"read", "readwrite"}]
-    memory_writes = [operand["memory"] for operand in operands if operand.get("kind") == "mem" and operand.get("access") in {"write", "readwrite"}]
+    memory_reads = [
+        operand["memory"]
+        for operand in operands
+        if operand.get("kind") == "mem" and operand.get("access") in {"read", "readwrite"}
+    ]
+    memory_writes = [
+        operand["memory"]
+        for operand in operands
+        if operand.get("kind") == "mem" and operand.get("access") in {"write", "readwrite"}
+    ]
     memory_reads.extend(_implicit_stack_reads(insn))
     memory_writes.extend(_implicit_stack_writes(insn))
     flags_read = sorted(reg for reg in regs_read if reg in {"flags", "eflags"})
@@ -309,7 +330,12 @@ def _operand_summary(insn: Any, operand: Any) -> dict[str, Any]:
     if operand.type == CAPSTONE_OP_REG:
         return {"kind": "reg", "name": _reg_name(insn, operand.reg), "width": width, "access": access}
     if operand.type == CAPSTONE_OP_IMM:
-        return {"kind": "imm", "value": _format_immediate(int(operand.imm), width=width), "width": width, "access": access}
+        return {
+            "kind": "imm",
+            "value": _format_immediate(int(operand.imm), width=width),
+            "width": width,
+            "access": access,
+        }
     if operand.type == CAPSTONE_OP_MEM:
         memory = _memory_operand_summary(insn, operand, access=access, width=width)
         return {"kind": "mem", "width": width, "access": access, "memory": memory}
@@ -343,7 +369,9 @@ def _regs_access(insn: Any) -> tuple[set[str], set[str]]:
     except Exception:  # noqa: BLE001
         read = getattr(insn, "regs_read", [])
         written = getattr(insn, "regs_write", [])
-    return {_normalize_reg(_reg_name(insn, reg)) for reg in read}, {_normalize_reg(_reg_name(insn, reg)) for reg in written}
+    return {_normalize_reg(_reg_name(insn, reg)) for reg in read}, {
+        _normalize_reg(_reg_name(insn, reg)) for reg in written
+    }
 
 
 def _reg_name(insn: Any, reg: int) -> str:
@@ -448,7 +476,11 @@ def _implicit_stack_writes(insn: Any) -> list[dict[str, Any]]:
 def _instruction_control(insn: Any) -> dict[str, Any]:
     mnemonic = str(insn.mnemonic).lower()
     if mnemonic in REGION_BRANCH_MNEMONICS:
-        return {"kind": "conditional_branch", "condition": REGION_BRANCH_MNEMONICS[mnemonic], "target": _direct_target(insn)}
+        return {
+            "kind": "conditional_branch",
+            "condition": REGION_BRANCH_MNEMONICS[mnemonic],
+            "target": _direct_target(insn),
+        }
     if mnemonic in {"jmp", "ljmp"}:
         return {"kind": "jump", "target": _direct_target(insn)}
     if mnemonic in {"call", "lcall"}:
@@ -466,7 +498,9 @@ def _direct_target(insn: Any) -> str | None:
     return None
 
 
-def _region_exits(insn: Any, *, segment_para: int, function_base: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _region_exits(
+    insn: Any, *, segment_para: int, function_base: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     mnemonic = str(insn.mnemonic).lower()
     next_linear = int(insn.address) + int(insn.size)
     exits: list[dict[str, Any]] = []
@@ -530,7 +564,9 @@ def _aggregate_effects(instructions: list[dict[str, Any]]) -> dict[str, Any]:
             memory_written[memory["expr"]] = memory
         control = instruction.get("control", {})
         if control.get("kind") in {"call", "interrupt"}:
-            calls.append({"kind": control.get("kind"), "target": control.get("target"), "address": instruction["address"]})
+            calls.append(
+                {"kind": control.get("kind"), "target": control.get("target"), "address": instruction["address"]}
+            )
     return {
         "regs_read": sorted(regs_read),
         "regs_written": sorted(regs_written),
@@ -561,7 +597,9 @@ def _compare_regions(oracle_region: dict[str, Any], candidate_region: dict[str, 
     oracle_insns = list(oracle_region.get("instructions", []) or [])
     candidate_insns = list(candidate_region.get("instructions", []) or [])
     if len(oracle_insns) != len(candidate_insns):
-        mismatches.append({"kind": "instruction_count_changed", "oracle": len(oracle_insns), "candidate": len(candidate_insns)})
+        mismatches.append(
+            {"kind": "instruction_count_changed", "oracle": len(oracle_insns), "candidate": len(candidate_insns)}
+        )
     for idx, (oracle_insn, candidate_insn) in enumerate(zip(oracle_insns, candidate_insns)):
         oracle_context = _instruction_context(oracle_insn)
         candidate_context = _instruction_context(candidate_insn)
@@ -578,8 +616,14 @@ def _compare_regions(oracle_region: dict[str, Any], candidate_region: dict[str, 
                     "candidate": candidate_mnemonic,
                 }
             )
-        oracle_operands = [_comparable_operand(operand, control_kind=oracle_insn.get("control", {}).get("kind")) for operand in oracle_insn.get("operands", [])]
-        candidate_operands = [_comparable_operand(operand, control_kind=candidate_insn.get("control", {}).get("kind")) for operand in candidate_insn.get("operands", [])]
+        oracle_operands = [
+            _comparable_operand(operand, control_kind=oracle_insn.get("control", {}).get("kind"))
+            for operand in oracle_insn.get("operands", [])
+        ]
+        candidate_operands = [
+            _comparable_operand(operand, control_kind=candidate_insn.get("control", {}).get("kind"))
+            for operand in candidate_insn.get("operands", [])
+        ]
         if oracle_operands != candidate_operands:
             mismatches.append(
                 {

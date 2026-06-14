@@ -806,13 +806,27 @@ def test_rewrite_ss_stack_byte_offsets_resolves_virtual_ss_linear_carrier_with_r
         variable_type=SimTypeShort(False),
         codegen=codegen,
     )
-    vvar_58 = structured_c.CVariable(SimRegisterVariable(0x40, 2, name="vvar_58"), variable_type=SimTypeShort(False), codegen=codegen)
-    vvar_1362 = structured_c.CVariable(SimRegisterVariable(0x42, 2, name="vvar_1362"), variable_type=SimTypeShort(False), codegen=codegen)
-    vvar_1363 = structured_c.CVariable(SimRegisterVariable(0x44, 2, name="vvar_1363"), variable_type=SimTypeShort(False), codegen=codegen)
-    vvar_1372 = structured_c.CVariable(SimRegisterVariable(0x46, 2, name="vvar_1372"), variable_type=SimTypeShort(False), codegen=codegen)
-    vvar_1373 = structured_c.CVariable(SimRegisterVariable(0x48, 2, name="vvar_1373"), variable_type=SimTypeShort(False), codegen=codegen)
-    vvar_1375 = structured_c.CVariable(SimRegisterVariable(0x4A, 2, name="vvar_1375"), variable_type=SimTypeShort(False), codegen=codegen)
-    sink_cvar = structured_c.CVariable(SimRegisterVariable(0x4C, 2, name="vvar_1378"), variable_type=SimTypeShort(False), codegen=codegen)
+    vvar_58 = structured_c.CVariable(
+        SimRegisterVariable(0x40, 2, name="vvar_58"), variable_type=SimTypeShort(False), codegen=codegen
+    )
+    vvar_1362 = structured_c.CVariable(
+        SimRegisterVariable(0x42, 2, name="vvar_1362"), variable_type=SimTypeShort(False), codegen=codegen
+    )
+    vvar_1363 = structured_c.CVariable(
+        SimRegisterVariable(0x44, 2, name="vvar_1363"), variable_type=SimTypeShort(False), codegen=codegen
+    )
+    vvar_1372 = structured_c.CVariable(
+        SimRegisterVariable(0x46, 2, name="vvar_1372"), variable_type=SimTypeShort(False), codegen=codegen
+    )
+    vvar_1373 = structured_c.CVariable(
+        SimRegisterVariable(0x48, 2, name="vvar_1373"), variable_type=SimTypeShort(False), codegen=codegen
+    )
+    vvar_1375 = structured_c.CVariable(
+        SimRegisterVariable(0x4A, 2, name="vvar_1375"), variable_type=SimTypeShort(False), codegen=codegen
+    )
+    sink_cvar = structured_c.CVariable(
+        SimRegisterVariable(0x4C, 2, name="vvar_1378"), variable_type=SimTypeShort(False), codegen=codegen
+    )
 
     full_linear = structured_c.CBinaryOp(
         "Add",

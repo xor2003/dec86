@@ -5,6 +5,7 @@ COM 'no_bytes_available' fallbacks as expected (status 'ok').
 
 Reads `reports/x16_decompile_report.json` and writes `reports/x16_decompile_retry.json`.
 """
+
 import json
 import subprocess
 import sys
@@ -57,7 +58,13 @@ for r in prev:
         if "Unknown opcode" in out or "Unknown opcode" in out:
             fallback_reasons.append("unknown_opcode")
         status = "ok" if not fallback_reasons else "fallback"
-        r.update({"status": status, "summary": fallback_reasons or [l for l in out.splitlines()[:6]], "snippet": "\n".join(out.splitlines()[:200])})
+        r.update(
+            {
+                "status": status,
+                "summary": fallback_reasons or [l for l in out.splitlines()[:6]],
+                "snippet": "\n".join(out.splitlines()[:200]),
+            }
+        )
         results.append(r)
     else:
         results.append(r)

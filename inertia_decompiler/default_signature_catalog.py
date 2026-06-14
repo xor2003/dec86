@@ -74,7 +74,12 @@ def default_signature_catalog_path(repo_root: Path | None = None) -> Path | None
         output_path = cache_dir / "repo_signature_catalog.pat"
         manifest_path = _catalog_manifest_path(output_path)
         tool_manifest_path = _catalog_tool_manifest_path(output_path)
-        force_refresh = os.environ.get("INERTIA_REBUILD_SIGNATURE_CATALOG", "").strip() not in {"", "0", "false", "False"}
+        force_refresh = os.environ.get("INERTIA_REBUILD_SIGNATURE_CATALOG", "").strip() not in {
+            "",
+            "0",
+            "false",
+            "False",
+        }
         tool_lines = _catalog_tool_lines(root)
         if (
             output_path.exists()

@@ -89,9 +89,7 @@ def assess_decompiled_c_text(rendered_text: str) -> DecompilationQualityAssessme
             return DecompilationQualityAssessment(reject_as_decompiled=True, markers=markers)
 
         raw_ir_line_count = sum(
-            1
-            for line in code_lines
-            if any(pattern.search(line) for pattern in _RAW_IR_LINE_PATTERNS)
+            1 for line in code_lines if any(pattern.search(line) for pattern in _RAW_IR_LINE_PATTERNS)
         )
         readable_line_count = max(len(code_lines), 1)
         reject = raw_ir_line_count >= 4 and raw_ir_line_count * 2 >= readable_line_count

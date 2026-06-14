@@ -66,11 +66,7 @@ def import_libdosbox_trace(
                     "exec_count": int(info.get("ExecCount", 0) or 0),
                     "function_id": None if function is None else function.get("id"),
                     "sources": ["libdosbox_runtime_json"],
-                    "segments": {
-                        key: info.get(key, [])
-                        for key in ("cs", "ds", "es", "ss", "fs", "gs")
-                        if key in info
-                    },
+                    "segments": {key: info.get(key, []) for key in ("cs", "ds", "es", "ss", "fs", "gs") if key in info},
                     "accessed_data": info.get("Accdat", []),
                 }
             )
@@ -178,7 +174,9 @@ def _snapshot_to_vector(snapshot: dict[str, Any], *, idx: int) -> dict[str, Any]
             "regs": sorted(exit_state.get("regs", {}).keys()) if isinstance(exit_state.get("regs"), dict) else [],
             "sregs": sorted(exit_state.get("sregs", {}).keys()) if isinstance(exit_state.get("sregs"), dict) else [],
             "flags_mask": exit_state.get("flags_mask", "0xffff"),
-            "memory": exit_state.get("memory_writes", []) if isinstance(exit_state.get("memory_writes", []), list) else [],
+            "memory": exit_state.get("memory_writes", [])
+            if isinstance(exit_state.get("memory_writes", []), list)
+            else [],
             "calls": True,
             "return": True,
         },

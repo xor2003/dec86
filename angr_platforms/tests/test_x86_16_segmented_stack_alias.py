@@ -117,9 +117,7 @@ def test_assignment_map_debug_dirty_lhs_refuses_throwing_properties(monkeypatch)
     codegen = _DummyCodegen(project)
     lhs = CDirtyExpression(_DirtyWithThrowingProperty(), codegen=codegen)
     rhs = CConstant(1, SimTypeShort(False), codegen=codegen)
-    codegen.cfunc = SimpleNamespace(
-        statements=CStatements([CAssignment(lhs, rhs, codegen=codegen)], codegen=codegen)
-    )
+    codegen.cfunc = SimpleNamespace(statements=CStatements([CAssignment(lhs, rhs, codegen=codegen)], codegen=codegen))
 
     _var_id_map, name_map, _reg_map, *_rest = _build_assignment_maps_8616(codegen)
 

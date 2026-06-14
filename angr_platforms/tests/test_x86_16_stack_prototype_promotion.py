@@ -112,7 +112,9 @@ def test_stack_prototype_promotion_collapses_existing_contained_high_byte_arg():
     func = SimpleNamespace(addr=0x1000, prototype=prototype, is_prototype_guessed=False)
     project = SimpleNamespace(
         arch=arch,
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
     )
     word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
     high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
@@ -221,7 +223,7 @@ def test_prototype_stack_layout_uses_cod_offsets_for_near_function_pointer_args(
             unified_local_vars={},
             arg_list=[],
             functy=None,
-        )
+        ),
     )
     prototype = SimTypeFunction(
         [fnptr_type, value_type],

@@ -111,7 +111,10 @@ def build_x86_16_cross_entry_grouped_units(codegen: Any) -> CrossEntryGroupedUni
                     continue
                 neighbor_ids = set(current_node.predecessor_ids) | set(current_node.successor_ids)
                 for neighbor_region_id in neighbor_ids:
-                    if neighbor_region_id in shared_region_id_set and neighbor_region_id not in component_shared_region_ids:
+                    if (
+                        neighbor_region_id in shared_region_id_set
+                        and neighbor_region_id not in component_shared_region_ids
+                    ):
                         component_worklist.append(neighbor_region_id)
 
             component_shared_region_ids_tuple = tuple(sorted(component_shared_region_ids))

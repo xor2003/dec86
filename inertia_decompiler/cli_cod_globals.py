@@ -10,7 +10,6 @@ from .cli_storage_objects import (
     storage_object_record_for_key,
 )
 
-
 StableHints: TypeAlias = dict[BaseKey, AccessTraitObjectHint]
 ReplaceCChildren: TypeAlias = Callable[[Any, Callable[[Any], Any]], bool]
 
@@ -25,7 +24,9 @@ def _coalesce_cod_word_global_loads(
     build_stable_access_object_hints: Callable[[dict[str, dict[BaseKey, object]]], StableHints],
     global_load_addr: Callable[[Any, Any], int | None],
     match_scaled_high_byte: Callable[[Any, Any], int | None],
-    synthetic_word_global_variable: Callable[[Any, Any, int, dict[int, structured_c.CVariable]], structured_c.CVariable | None],
+    synthetic_word_global_variable: Callable[
+        [Any, Any, int, dict[int, structured_c.CVariable]], structured_c.CVariable | None
+    ],
     replace_c_children: ReplaceCChildren,
 ) -> bool:
     if not synthetic_globals or getattr(codegen, "cfunc", None) is None:

@@ -54,7 +54,9 @@ def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
         if isinstance(reg_offset, int) and int(reg_offset) in REG16_OFFSET_MAP:
             reg_name = register_name_from_offset(reg_offset)
             size = _size_bytes_from_operand(value) or hinted_size
-            return IRValue(MemSpace.REG, name=reg_name, offset=reg_offset, size=size, expr=(_type_name_for_operand(value),))
+            return IRValue(
+                MemSpace.REG, name=reg_name, offset=reg_offset, size=size, expr=(_type_name_for_operand(value),)
+            )
 
         reg_name = getattr(value, "reg_name", None)
         if isinstance(reg_name, str) and reg_name:
@@ -93,7 +95,9 @@ def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
             MemSpace.TMP,
             name=type(value).__name__,
             size=_size_bytes_from_operand(value) or hinted_size,
-            expr=(str(getattr(getattr(value, "ty", None), "name", getattr(value, "ty", None) or type(value).__name__)),),
+            expr=(
+                str(getattr(getattr(value, "ty", None), "name", getattr(value, "ty", None) or type(value).__name__)),
+            ),
         )
 
     return _impl()

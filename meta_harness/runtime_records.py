@@ -59,6 +59,7 @@ FAILURE_CLASSES = {
 def iso_now() -> str:
     def _impl():
         return datetime.now().astimezone().isoformat(timespec="seconds")
+
     return _impl()
 
 
@@ -67,6 +68,7 @@ def append_jsonl(path: Path, payload: dict[str, object]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fp:
             fp.write(json.dumps(payload, sort_keys=True) + "\n")
+
     return _impl()
 
 
@@ -83,6 +85,7 @@ def load_jsonl(path: Path, limit: int = 50) -> list[dict[str, object]]:
             if isinstance(entry, dict):
                 rows.append(entry)
         return rows
+
     return _impl()
 
 
@@ -90,6 +93,7 @@ def write_json(path: Path, payload: dict[str, object]) -> None:
     def _impl():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     return _impl()
 
 
@@ -102,6 +106,7 @@ def read_json(path: Path) -> dict[str, object]:
         except json.JSONDecodeError:
             return {}
         return payload if isinstance(payload, dict) else {}
+
     return _impl()
 
 
@@ -136,6 +141,7 @@ def parse_usage_metrics(text: str) -> dict[str, object]:
             "total_tokens": total_tokens or None,
             "cost_usd": round(cost_usd, 6) if cost_usd else None,
         }
+
     return _impl()
 
 
@@ -168,6 +174,7 @@ def build_history_event(
             "failure_class": failure_class or "",
             "details": details or {},
         }
+
     return _impl()
 
 
@@ -198,6 +205,7 @@ def summarize_session_rows(rows: list[dict[str, object]]) -> dict[str, object]:
             "total_cost_usd": round(total_cost, 6) if total_cost else None,
             "by_role": roles,
         }
+
     return _impl()
 
 
@@ -233,6 +241,7 @@ def compact_runtime_signals(
                 {"item": name, "count": count} for name, count in plan_item_sessions.most_common(5)
             ],
         }
+
     return _impl()
 
 
@@ -259,6 +268,7 @@ def build_evidence_facts(
                 if isinstance(value, float):
                     return f"{value:.6g}"
                 return str(value)
+
             return _impl()
 
         def _add_fact(
@@ -290,6 +300,7 @@ def build_evidence_facts(
                         "needs_more_evidence": bounded < low_confidence_threshold,
                     }
                 )
+
             return _impl()
 
         for line_no, raw_line in enumerate(text.splitlines(), start=1):
@@ -407,7 +418,7 @@ def build_evidence_facts(
                     "confidence_pct": fact.get("confidence_pct"),
                     "reason": str(fact.get("reason", "")),
                     "line_no": fact.get("line_no"),
-            }
-            for fact in sorted(low_confidence_facts, key=lambda fact: float(fact.get("confidence", 0.0)))[:5]
-        ],
-    }
+                }
+                for fact in sorted(low_confidence_facts, key=lambda fact: float(fact.get("confidence", 0.0)))[:5]
+            ],
+        }

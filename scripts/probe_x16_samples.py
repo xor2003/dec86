@@ -5,8 +5,8 @@ that fall back to ASM or produce no decompiled code.
 
 Writes results to `reports/x16_decompile_report.json` and `reports/x16_decompile_report.txt`.
 """
+
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path

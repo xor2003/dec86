@@ -37,7 +37,9 @@ def summarize_x86_16_function(project, function) -> FunctionSummary8616 | None:
         vex_ir_summary = info.get("x86_16_vex_ir_summary", {}) if isinstance(info, dict) else {}
         condition_counts = vex_ir_summary.get("condition_counts", {}) if isinstance(vex_ir_summary, dict) else {}
         register_clobbers = vex_ir_summary.get("register_clobbers", {}) if isinstance(vex_ir_summary, dict) else {}
-        address_space_counts = vex_ir_summary.get("address_space_counts", {}) if isinstance(vex_ir_summary, dict) else {}
+        address_space_counts = (
+            vex_ir_summary.get("address_space_counts", {}) if isinstance(vex_ir_summary, dict) else {}
+        )
         stable_address_space_counts = (
             vex_ir_summary.get("stable_address_space_counts", {}) if isinstance(vex_ir_summary, dict) else {}
         )
@@ -50,7 +52,9 @@ def summarize_x86_16_function(project, function) -> FunctionSummary8616 | None:
             sorted(str(key) for key, count in address_space_counts.items() if isinstance(count, int) and count > 0)
         )
         typed_ir_stable_address_spaces = tuple(
-            sorted(str(key) for key, count in stable_address_space_counts.items() if isinstance(count, int) and count > 0)
+            sorted(
+                str(key) for key, count in stable_address_space_counts.items() if isinstance(count, int) and count > 0
+            )
         )
         return FunctionSummary8616(
             function_addr=int(getattr(function, "addr")),

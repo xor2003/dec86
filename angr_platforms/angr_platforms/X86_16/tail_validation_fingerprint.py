@@ -372,8 +372,10 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
             reg_map=reg_map,
         )
         resolved_rhs = _acceptable_validation_expr_rhs_8616(rhs)
-        if resolved_rhs is not None and resolved_rhs is not node and not _rhs_references_same_variable_8616(
-            resolved_rhs, variable
+        if (
+            resolved_rhs is not None
+            and resolved_rhs is not node
+            and not _rhs_references_same_variable_8616(resolved_rhs, variable)
         ):
             return resolved_rhs
         if rhs is None and isinstance(variable, SimRegisterVariable):
@@ -381,8 +383,10 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
             size = getattr(variable, "size", None)
             if isinstance(reg, int) and isinstance(size, int):
                 first_rhs = _acceptable_validation_expr_rhs_8616(first_reg_map.get((reg, size)))
-                if first_rhs is not None and first_rhs is not node and not _rhs_references_same_variable_8616(
-                    first_rhs, variable
+                if (
+                    first_rhs is not None
+                    and first_rhs is not node
+                    and not _rhs_references_same_variable_8616(first_rhs, variable)
                 ):
                     return first_rhs
         if isinstance(name, str):
@@ -391,8 +395,10 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
             # seed is established. Preserve the earliest explicit stack proof for
             # fingerprint canonicalization when the direct map is non-stack noise.
             first_rhs = _acceptable_validation_expr_rhs_8616(first_name_map.get(name))
-            if first_rhs is not None and first_rhs is not node and not _rhs_references_same_variable_8616(
-                first_rhs, variable
+            if (
+                first_rhs is not None
+                and first_rhs is not node
+                and not _rhs_references_same_variable_8616(first_rhs, variable)
             ):
                 return first_rhs
         return None
@@ -1380,7 +1386,9 @@ def _indexed_location_alias_or_fallback_8616(*, node, base, index_value: int, co
                 selected=offset + index_value,
                 note="indexed_location_fallback",
             )
-        return _canonical_or_unresolved_stack_fingerprint_8616(offset + index_value, codegen, source="indexed_fallback", node=node)
+        return _canonical_or_unresolved_stack_fingerprint_8616(
+            offset + index_value, codegen, source="indexed_fallback", node=node
+        )
 
     return _impl()
 
@@ -1589,9 +1597,8 @@ def _is_ss_linear_segment_term_8616(node, project) -> bool:
         return _is_register_expr_8616(node.lhs, project, "ss") and _c_constant_int_value(node.rhs) == 4
     if node.op != "Mul":
         return False
-    return (
-        (_is_register_expr_8616(node.lhs, project, "ss") and _c_constant_int_value(node.rhs) == 16)
-        or (_is_register_expr_8616(node.rhs, project, "ss") and _c_constant_int_value(node.lhs) == 16)
+    return (_is_register_expr_8616(node.lhs, project, "ss") and _c_constant_int_value(node.rhs) == 16) or (
+        _is_register_expr_8616(node.rhs, project, "ss") and _c_constant_int_value(node.lhs) == 16
     )
 
 
@@ -1645,9 +1652,7 @@ def _deref_operand_fingerprint_8616(operand, project) -> str:
     if not has_bp_stack_location:
         return _additive_terms_fingerprint_8616(terms, project)
     filtered_terms = tuple(
-        (sign, term)
-        for sign, term in terms
-        if not (sign > 0 and _is_ss_linear_segment_term_8616(term, project))
+        (sign, term) for sign, term in terms if not (sign > 0 and _is_ss_linear_segment_term_8616(term, project))
     )
     if len(filtered_terms) == len(terms):
         return _expr_fingerprint(operand, project)

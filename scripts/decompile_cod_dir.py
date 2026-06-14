@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import hashlib
 import io
 import json
-import hashlib
 import logging
 import multiprocessing as mp
 import os
@@ -54,9 +54,9 @@ from angr_platforms.X86_16.tail_validation import (
     build_x86_16_tail_validation_baseline,
     compare_x86_16_tail_validation_baseline,
 )
+
 from inertia_decompiler.cache import DECOMPILATION_CACHE_SOURCE_FILES, _cache_source_digest
 from inertia_decompiler.tail_validation import emit_tail_validation_surface_summary
-
 
 _REAL_STDOUT = sys.stdout
 _REAL_STDERR = sys.stderr
@@ -468,7 +468,9 @@ def _output_looks_like_memory_pressure(text: str) -> bool:
     )
 
 
-def _describe_returncode(returncode: int | None, stdout_text: str, stderr_text: str, *, subprocess_timed_out: bool = False) -> tuple[str, str]:
+def _describe_returncode(
+    returncode: int | None, stdout_text: str, stderr_text: str, *, subprocess_timed_out: bool = False
+) -> tuple[str, str]:
     def _impl():
         if subprocess_timed_out:
             return "subprocess_timeout", "worker-side subprocess timed out before the CLI returned"
@@ -601,8 +603,7 @@ class CodFileWriter:
             return
         self.received_count += 1
         self.pending_blocks[proc_index] = (
-            f"/* == {proc_index}/{self.proc_total} {self.cod_path.name} "
-            f":: failure == */\n{message}\n"
+            f"/* == {proc_index}/{self.proc_total} {self.cod_path.name} :: failure == */\n{message}\n"
         ).rstrip() + "\n"
         self._flush_ready()
         self.failed = True
@@ -692,13 +693,11 @@ def _filter_work_items_by_proc_names(
     filtered = [
         item
         for item in items
-        if item.proc_name is not None
-        and (item.proc_name in requested or item.proc_name.lower() in requested_lower)
+        if item.proc_name is not None and (item.proc_name in requested or item.proc_name.lower() in requested_lower)
     ]
     total = len(filtered)
     return [
-        dataclasses.replace(item, proc_index=index, proc_total=total)
-        for index, item in enumerate(filtered, start=1)
+        dataclasses.replace(item, proc_index=index, proc_total=total) for index, item in enumerate(filtered, start=1)
     ]
 
 
@@ -1211,10 +1210,7 @@ def main() -> int:
         workers = _choose_parallelism(len(work_items), args.max_memory_mb, args.max_workers)
         worker_memory_limit_mb = _determine_worker_memory_limit_mb(args.max_memory_mb, workers)
         if workers <= 1:
-            print(
-                f"/* parallelism: single worker process, "
-                f"worker-memory-limit={worker_memory_limit_mb}MB */"
-            )
+            print(f"/* parallelism: single worker process, worker-memory-limit={worker_memory_limit_mb}MB */")
         else:
             available_mb = _mem_available_mb()
             budget_mb = int(available_mb * DEFAULT_FREE_RAM_BUDGET_FRACTION) if available_mb is not None else -1
@@ -1308,7 +1304,9 @@ def main() -> int:
                 for item in batch:
                     task_counter += 1
                     print(f"[{task_counter}/{len(work_items)}] {item.cod_path} :: {item.label}")
-                    cached_result = _load_success_cache(item, timeout=args.timeout, max_memory_mb=worker_memory_limit_mb)
+                    cached_result = _load_success_cache(
+                        item, timeout=args.timeout, max_memory_mb=worker_memory_limit_mb
+                    )
                     if cached_result is not None:
                         handle_result(item, cached_result)
                         continue
@@ -1415,7 +1413,6 @@ def main() -> int:
         elapsed = time.perf_counter() - start
         print(f"done in {elapsed:.1f}s; failures={failures}/{len(work_items)}")
         return 0 if failures == 0 else 1
-
 
     if __name__ == "__main__":
         raise SystemExit(main())

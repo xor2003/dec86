@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 _ATTR_ALIASES = {
     "base_addr": "base",
     "c_target": "target",
@@ -96,10 +95,7 @@ def convert_otlp_jsonl_text(text: str) -> str:
         attrs = row.get("attrs", {})
         if not isinstance(attrs, dict):
             attrs = {}
-        lines.append(
-            f"{row.get('id')}|{parent_text}|{row.get('duration_ms')}|"
-            f"{name_text}|{_format_attrs(attrs)}"
-        )
+        lines.append(f"{row.get('id')}|{parent_text}|{row.get('duration_ms')}|{name_text}|{_format_attrs(attrs)}")
 
     return "\n".join(lines) + "\n"
 

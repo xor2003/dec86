@@ -332,7 +332,9 @@ def _parse_symbol_records(blob: bytes) -> list[CodeViewSymbol]:
                         if name_offset < len(blob):
                             name_len = blob[name_offset]
                             if name_offset + 1 + name_len <= len(blob):
-                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
+                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode(
+                                    "ascii", errors="ignore"
+                                )
                                 symbols.append(
                                     CodeViewSymbol(
                                         type_code=record_type,
@@ -352,7 +354,9 @@ def _parse_symbol_records(blob: bytes) -> list[CodeViewSymbol]:
                         if name_offset < len(blob):
                             name_len = blob[name_offset]
                             if name_offset + 1 + name_len <= len(blob):
-                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
+                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode(
+                                    "ascii", errors="ignore"
+                                )
                                 symbols.append(
                                     CodeViewSymbol(
                                         type_code=record_type,
@@ -373,7 +377,9 @@ def _parse_symbol_records(blob: bytes) -> list[CodeViewSymbol]:
                         if name_offset < len(blob):
                             name_len = blob[name_offset]
                             if name_offset + 1 + name_len <= len(blob):
-                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode("ascii", errors="ignore")
+                                name = blob[name_offset + 1 : name_offset + 1 + name_len].decode(
+                                    "ascii", errors="ignore"
+                                )
                                 symbols.append(
                                     CodeViewSymbol(
                                         type_code=record_type,

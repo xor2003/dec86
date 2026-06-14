@@ -14,10 +14,12 @@ from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_hea
 
 def _sanitize_nested_block_comments(text: str) -> str:
     """Replace /* inside /* */ block comments to prevent -Werror=comment failures."""
+
     def _fix_inner(match):
         content = match.group(1)
         content = content.replace("/*", "/ *")
         return "/*" + content + "*/"
+
     return re.sub(r"/\*(.*?)\*/", _fix_inner, text, flags=re.DOTALL)
 
 

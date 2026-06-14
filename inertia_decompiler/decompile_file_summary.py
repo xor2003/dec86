@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
-from pathlib import PureWindowsPath
+from pathlib import Path, PureWindowsPath
 from typing import Iterable, Sequence
 
 
@@ -37,10 +36,7 @@ def emit_file_decompilation_summary(
         print(_summary_comment(f"hidden signature-matched labels: {skipped_signature_labels}"))
     fallback_labels = ", ".join(fallback_family_labels) if fallback_family_labels else "none"
     print(
-        _summary_comment(
-            f"same_family_retry_stops={same_family_retry_stops} "
-            f"fallback_family_labels={fallback_labels}"
-        )
+        _summary_comment(f"same_family_retry_stops={same_family_retry_stops} fallback_family_labels={fallback_labels}")
     )
     if any((dead_setup_candidates, dead_setup_pruned, dead_setup_refused, dead_setup_escaped)):
         print(

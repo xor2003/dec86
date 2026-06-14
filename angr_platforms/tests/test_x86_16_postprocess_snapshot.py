@@ -86,12 +86,16 @@ def test_untyped_dereference_return_artifact_refuses_pointer_typed_operand():
         codegen=codegen,
     )
 
-    assert post_stage._return_expr_has_untyped_dereference_artifact_8616(
-        CUnaryOp("Dereference", temp, codegen=codegen)
-    ) is True
-    assert post_stage._return_expr_has_untyped_dereference_artifact_8616(
-        CUnaryOp("Dereference", pointer_arg, codegen=codegen)
-    ) is False
+    assert (
+        post_stage._return_expr_has_untyped_dereference_artifact_8616(CUnaryOp("Dereference", temp, codegen=codegen))
+        is True
+    )
+    assert (
+        post_stage._return_expr_has_untyped_dereference_artifact_8616(
+            CUnaryOp("Dereference", pointer_arg, codegen=codegen)
+        )
+        is False
+    )
 
 
 def test_pointer_cast_dirty_dereference_return_artifact_is_not_pointer_proof():
@@ -104,9 +108,12 @@ def test_pointer_cast_dirty_dereference_return_artifact_is_not_pointer_proof():
         codegen=codegen,
     )
 
-    assert post_stage._return_expr_has_untyped_dereference_artifact_8616(
-        CUnaryOp("Dereference", dirty_pointer_carrier, codegen=codegen)
-    ) is True
+    assert (
+        post_stage._return_expr_has_untyped_dereference_artifact_8616(
+            CUnaryOp("Dereference", dirty_pointer_carrier, codegen=codegen)
+        )
+        is True
+    )
 
 
 def test_dirty_carrier_return_artifact_detects_unlowered_expression():
@@ -623,13 +630,17 @@ def test_jcc_condition_materialization_delta_refuses_unrelated_global_write():
 def test_callsite_materialization_delta_accepts_adjacent_global_precision_churn():
     validation = _callsite_global_precision_validation(global_token="global:0xbab")
 
-    assert _is_callsite_stack_argument_materialization_delta_8616(_callsite_materialization_codegen(), validation) is True
+    assert (
+        _is_callsite_stack_argument_materialization_delta_8616(_callsite_materialization_codegen(), validation) is True
+    )
 
 
 def test_callsite_materialization_delta_refuses_unrelated_global_write():
     validation = _callsite_global_precision_validation(global_token="global:0xbc0")
 
-    assert _is_callsite_stack_argument_materialization_delta_8616(_callsite_materialization_codegen(), validation) is False
+    assert (
+        _is_callsite_stack_argument_materialization_delta_8616(_callsite_materialization_codegen(), validation) is False
+    )
 
 
 def test_callsite_materialization_delta_accepts_stack_arg_slot_alias_conditions():
@@ -817,9 +828,7 @@ def test_direct_stack_update_materialization_delta_refuses_added_raw_flags_condi
     validation = {
         "delta": {
             "conditions": {
-                "added": (
-                    "CmpEQ(CmpNE(And(reg:flags,const:128),const:0),CmpNE(And(reg:flags,const:2048),const:0))",
-                ),
+                "added": ("CmpEQ(CmpNE(And(reg:flags,const:128),const:0),CmpNE(And(reg:flags,const:2048),const:0))",),
                 "removed": (
                     "CmpLT(Dereference(Add(Mul(reg:ds,const:16),Shl(stack_slot:SS:BP-0x2:size2,const:1),const:2892)),"
                     "Dereference(Add(Mul(reg:ds,const:16),Shl(stack_slot:SS:BP-0x4:size2,const:1),const:2892)))",
@@ -863,7 +872,9 @@ def test_direct_stack_move_materialization_delta_refuses_unrelated_stack_slot_co
         }
     }
 
-    assert _is_direct_stack_move_materialization_delta_8616(_direct_stack_move_stack_slot_codegen(), validation) is False
+    assert (
+        _is_direct_stack_move_materialization_delta_8616(_direct_stack_move_stack_slot_codegen(), validation) is False
+    )
 
 
 def test_direct_stack_move_idiv_remainder_delta_accepts_insert_helper_and_ax_churn():
@@ -880,10 +891,13 @@ def test_direct_stack_move_idiv_remainder_delta_accepts_insert_helper_and_ax_chu
         }
     }
 
-    assert _is_direct_stack_move_idiv_remainder_materialization_delta_8616(
-        _direct_stack_move_idiv_codegen(),
-        validation,
-    ) is True
+    assert (
+        _is_direct_stack_move_idiv_remainder_materialization_delta_8616(
+            _direct_stack_move_idiv_codegen(),
+            validation,
+        )
+        is True
+    )
 
 
 def test_direct_stack_move_idiv_remainder_delta_accepts_combined_stack_update_delta():

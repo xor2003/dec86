@@ -141,9 +141,9 @@ def promote_stack_slots_from_instruction_widths_8616(
             codegen._inertia_stack_width_instruction_fact_count = int(
                 getattr(codegen, "_inertia_stack_width_instruction_fact_count", 0) or 0
             ) + len(widths)
-            codegen._inertia_stack_width_instruction_materialized_count = int(
-                getattr(codegen, "_inertia_stack_width_instruction_materialized_count", 0) or 0
-            ) + promoted
+            codegen._inertia_stack_width_instruction_materialized_count = (
+                int(getattr(codegen, "_inertia_stack_width_instruction_materialized_count", 0) or 0) + promoted
+            )
         except Exception:
             pass
     return changed
@@ -372,7 +372,10 @@ def _coalesce_segmented_word_store_statements(
     def _match_loaded_word_pair_expr(expr, low_var, high_var):
         if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Or":
             return False
-        candidates = ((getattr(expr, "lhs", None), getattr(expr, "rhs", None)), (getattr(expr, "rhs", None), getattr(expr, "lhs", None)))
+        candidates = (
+            (getattr(expr, "lhs", None), getattr(expr, "rhs", None)),
+            (getattr(expr, "rhs", None), getattr(expr, "lhs", None)),
+        )
         for low_expr, shifted_high in candidates:
             if not _same_c_variable(low_expr, low_var):
                 continue
@@ -504,17 +507,13 @@ def _coalesce_segmented_word_store_statements(
                         and high_store_addr is not None
                         and high_store_base is not None
                     )
-                    load_pair = (
-                        addr_exprs_are_byte_pair(low_load_addr, high_load_addr, project) if has_addrs else False
-                    )
+                    load_pair = addr_exprs_are_byte_pair(low_load_addr, high_load_addr, project) if has_addrs else False
                     store_pair = (
                         addr_exprs_are_byte_pair(low_store_addr, high_store_addr, project) if has_addrs else False
                     )
                     same_low = _same_expr(low_load_addr, low_store_addr) if has_addrs else False
                     same_high = _same_expr(high_load_addr, high_store_addr) if has_addrs else False
-                    same_rhs = (
-                        _same_expr(high_store_base, getattr(third_stmt, "rhs", None)) if has_addrs else False
-                    )
+                    same_rhs = _same_expr(high_store_base, getattr(third_stmt, "rhs", None)) if has_addrs else False
                     if debug_widening and any(
                         value is not None
                         for value in (low_load_addr, high_load_addr, low_store_addr, high_store_addr, high_store_base)
@@ -565,9 +564,18 @@ def _coalesce_segmented_word_store_statements(
                                     changed = True
                                 i += 4
                                 continue
-                            _debug("four_stmt_refused", loaded_word=_node_kind(loaded_word), store_lhs=_node_kind(store_lhs), rhs_changed=0)
+                            _debug(
+                                "four_stmt_refused",
+                                loaded_word=_node_kind(loaded_word),
+                                store_lhs=_node_kind(store_lhs),
+                                rhs_changed=0,
+                            )
                         else:
-                            _debug("four_stmt_no_lvalue", loaded_word=_node_kind(loaded_word), store_lhs=_node_kind(store_lhs))
+                            _debug(
+                                "four_stmt_no_lvalue",
+                                loaded_word=_node_kind(loaded_word),
+                                store_lhs=_node_kind(store_lhs),
+                            )
 
                 if isinstance(stmt, structured_c.CAssignment) and isinstance(next_stmt, structured_c.CAssignment):
                     replacement = None

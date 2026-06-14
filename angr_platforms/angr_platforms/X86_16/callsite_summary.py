@@ -269,7 +269,9 @@ def _block_insns_for_callsite(function, callsite_addr: int) -> tuple:
                     opt_level=0,
                 )
             except Exception as ex:
-                log.debug("callsite linear-window decode failed start=%#x callsite=%#x: %s", start_addr, callsite_addr, ex)
+                log.debug(
+                    "callsite linear-window decode failed start=%#x callsite=%#x: %s", start_addr, callsite_addr, ex
+                )
                 block = None
             insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()) if block is not None else ()
             _debug_insns(f"factory-window start={start_addr:#x}", insns)
@@ -650,11 +652,7 @@ def _source_from_bp_mem_operand_8616(insn, operand, *, address: bool) -> tuple |
         base_name = _operand_reg_name(insn, type("_SourceMemOperand", (), {"reg": base})())
         index = int(getattr(mem, "index", 0) or 0)
         if base_name == "bp" and index == 0:
-            kind = (
-                CallsitePushSourceKind8616.BP_ADDRESS
-                if address
-                else CallsitePushSourceKind8616.BP_VALUE
-            )
+            kind = CallsitePushSourceKind8616.BP_ADDRESS if address else CallsitePushSourceKind8616.BP_VALUE
             return (kind.value, int(disp))
         if base_name == "bp" and address and index != 0:
             index_name = _operand_reg_name(insn, type("_SourceMemOperand", (), {"reg": index})())
@@ -1068,9 +1066,7 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
             if mnemonic in {"inc", "dec"} and len(operands) == 1 and _operand_reg_name(insn, operands[0]) == pushed_reg:
                 ops.append(
                     (
-                        CallsitePushExprOp8616.ADD.value
-                        if mnemonic == "inc"
-                        else CallsitePushExprOp8616.SUB.value,
+                        CallsitePushExprOp8616.ADD.value if mnemonic == "inc" else CallsitePushExprOp8616.SUB.value,
                         1,
                     )
                 )
@@ -1096,9 +1092,7 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
                 operands = _instruction_operands(insn)
                 sibling_reg = _operand_reg_name(insn, operands[0]) if len(operands) == 1 else None
                 if _is_segment_register_push_8616(insn) or (
-                    pushed_reg in {"ax", "dx"}
-                    and sibling_reg in {"ax", "dx"}
-                    and sibling_reg != pushed_reg
+                    pushed_reg in {"ax", "dx"} and sibling_reg in {"ax", "dx"} and sibling_reg != pushed_reg
                 ):
                     scan -= 1
                     skipped += 1
@@ -1148,12 +1142,7 @@ def _collect_push_arg_sources_before_call(
                 skipped_transparents += 1
                 scan -= 1
                 continue
-            if (
-                sources
-                and target_total is not None
-                and total < target_total
-                and _mnemonic(insn).startswith("call")
-            ):
+            if sources and target_total is not None and total < target_total and _mnemonic(insn).startswith("call"):
                 rewound = _rewind_callee_clean_nested_call_args_8616(function, insns, scan)
                 if rewound is not None and rewound < scan:
                     scan = rewound
@@ -1494,9 +1483,7 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             window_idx = _find_call_index(window_insns, callsite_addr) if window_insns else None
             if window_idx is not None:
                 window_widths = _collect_push_args_before_call(function, window_insns, window_idx, cleanup)
-                window_sources = _collect_push_arg_sources_before_call(
-                    function, window_insns, window_idx, cleanup
-                )
+                window_sources = _collect_push_arg_sources_before_call(function, window_insns, window_idx, cleanup)
                 window_has_better_widths = sum(window_widths) > sum(raw_arg_widths)
                 window_has_same_widths_better_sources = (
                     sum(window_widths) == sum(raw_arg_widths)

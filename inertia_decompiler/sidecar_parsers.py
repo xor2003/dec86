@@ -18,14 +18,12 @@ from angr_platforms.X86_16.flair_extract import match_flair_startup_entry
 from angr_platforms.X86_16.ne_exe_parse import parse_ne_exe
 
 from inertia_decompiler.flair_paths import flair_signature_root
-
 from omf_pat import (
     CachedPatRegexSpec,
     load_cached_pat_regex_specs,
     match_pat_modules,
 )
 from signature_catalog import match_signature_catalog
-
 
 _IDA_MAP_SEGMENT_RE = re.compile(
     r"^\s*([0-9A-Fa-f]+)H\s+[0-9A-Fa-f]+H\s+[0-9A-Fa-f]+H\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*$"
@@ -200,9 +198,8 @@ def _parse_codeview_nb0204_metadata(
     load_base_linear: int,
 ) -> tuple[dict[int, str], dict[int, str], dict[int, tuple[int, int]]]:
     def _impl():
-        """
-        Parse CodeView NB02/NB04 debug information.
-    
+        """Parse CodeView NB02/NB04 debug information.
+
         Extracts:
         - Function names (from S_GPROC16, SST_PUBLIC)
         - Global/local data (from S_GDATA16, S_LDATA16)
@@ -213,23 +210,27 @@ def _parse_codeview_nb0204_metadata(
             parsed = parse_codeview_nb0204_bytes(data, load_base_linear=load_base_linear)
         except (OSError, ValueError):
             parsed = None
-    
+
         if parsed is None:
             return {}, {}, {}
-    
+
         code_labels = {addr: name for addr, name in parsed.code_labels.items() if _label_looks_like_code(name)}
         data_labels = {addr: name for addr, name in parsed.data_labels.items() if addr not in code_labels}
-    
+
         # Synthesize code ranges from procedures if available
         code_ranges: dict[int, tuple[int, int]] = {}
         for proc in parsed.procedures:
             if proc.is_procedure() and proc.name:
-                linear_start = load_base_linear + (proc.segment << 4) + proc.offset if proc.segment is not None else load_base_linear + proc.offset
+                linear_start = (
+                    load_base_linear + (proc.segment << 4) + proc.offset
+                    if proc.segment is not None
+                    else load_base_linear + proc.offset
+                )
                 if proc.length and proc.length > 0:
                     linear_end = linear_start + proc.length
                     if linear_start in code_labels:
                         code_ranges[linear_start] = (linear_start, linear_end)
-    
+
         return code_labels, data_labels, code_ranges
 
     return _impl()
@@ -241,11 +242,10 @@ def _parse_ne_exe_metadata(
     load_base_linear: int,
     project: angr.Project | None = None,
 ) -> tuple[dict[int, str], dict[int, str], dict[int, tuple[int, int]]]:
-    """
-    Parse NE (New Executable) format Windows/OS2 16-bit binaries.
-    
+    """Parse NE (New Executable) format Windows/OS2 16-bit binaries.
+
     Integrates with CLE DOSNE loader for accurate segment-to-linear address mapping.
-    
+
     Extracts:
     - Function names from resident names table
     - Entry point addresses from entry table + segment table
@@ -255,16 +255,16 @@ def _parse_ne_exe_metadata(
         ne_info = parse_ne_exe(binary, load_base_linear=load_base_linear, project=project)
     except (OSError, ValueError, struct.error):
         ne_info = None
-    
+
     if ne_info is None or not ne_info.code_labels:
         return {}, {}, {}
-    
+
     code_labels = {addr: name for addr, name in ne_info.code_labels.items() if _label_looks_like_code(name)}
     data_labels = {addr: name for addr, name in ne_info.data_labels.items() if addr not in code_labels}
-    
+
     # NE format doesn't provide code range info directly, would need debug tables
     code_ranges: dict[int, tuple[int, int]] = {}
-    
+
     return code_labels, data_labels, code_ranges
 
 
@@ -338,7 +338,10 @@ def _parse_cod_sidecar_metadata(
         if base_candidates:
             cod_linear_base = sorted(base_candidates.items(), key=lambda item: (-item[1], item[0]))[0][0]
         if delta_candidates:
-            cod_linear_base = load_base_linear + sorted(delta_candidates.items(), key=lambda item: (-item[1], abs(item[0]), item[0]))[0][0]
+            cod_linear_base = (
+                load_base_linear
+                + sorted(delta_candidates.items(), key=lambda item: (-item[1], abs(item[0]), item[0]))[0][0]
+            )
         code_labels = {cod_linear_base + offset: name.lstrip("_") for offset, name in metadata.code_labels.items()}
         code_ranges = {
             cod_linear_base + offset: (cod_linear_base + span[0], cod_linear_base + span[1])
@@ -388,7 +391,9 @@ def _reconcile_cod_listing_with_codeview(
                 filtered_ranges[addr] = cod_range
             if proc_kind is not None:
                 filtered_proc_kinds[addr] = proc_kind
-        return CODListingMetadata(code_labels=filtered_labels, code_ranges=filtered_ranges, proc_kinds=filtered_proc_kinds)
+        return CODListingMetadata(
+            code_labels=filtered_labels, code_ranges=filtered_ranges, proc_kinds=filtered_proc_kinds
+        )
 
     return _impl()
 

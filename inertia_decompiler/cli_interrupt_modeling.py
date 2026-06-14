@@ -1,243 +1,15 @@
-from __future__ import annotations
-
 # AUTO-GENERATED split from cli_runtime_shared.py
-
 from __future__ import annotations
 
-import argparse
-
-import atexit
-
-import contextlib
-
-import copy
-
-import logging
-
-import os
-
-import re
-
-import sys
-
-import threading
-
-import time
-
-from collections.abc import Mapping, Sequence
-
-from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
-
-from dataclasses import dataclass, replace
-
-from pathlib import Path
-
-from types import SimpleNamespace
+from dataclasses import dataclass
 
 import angr
 from angr.analyses.decompiler import structured_codegen
 from angr.sim_type import SimTypeShort
 from angr_platforms.X86_16.analysis_helpers import InterruptCall, collect_dos_int21_calls, interrupt_service_name
 
-from inertia_decompiler.cache import (
-    _function_decompilation_cache_key,
-    _load_cache_json,
-    _recovery_cache_key,
-    _store_cache_json,
-)
-
-from inertia_decompiler.project_loading import (
-    _build_project,
-    _build_project_cached,
-    _build_project_from_bytes,
-    _describe_exception,
-    _is_blob_only_input,
-)
-
-from inertia_decompiler.sidecar_metadata import (
-    _load_lst_metadata,
-    _lst_code_label,
-    _lst_code_region,
-    _lst_data_label,
-    _recovery_code_labels,
-    _signature_matched_code_addrs,
-    _visible_code_labels,
-)
-
-from inertia_decompiler.sidecar_parsers import _parse_ida_map_metadata
-
-from inertia_decompiler.disassembly_helpers import (
-    _format_asm_range,
-    _format_first_block_asm,
-    _infer_linear_disassembly_window,
-    _probe_lift_break,
-)
-
 from inertia_decompiler.cli_output import (
-    _RAW_PRINT,
-    _asm_fallback_pattern_note,
-    _emit_exit_marker,
-    _print_asm_fallback_text,
-    _print_diagnostic_text,
-    _timestamp_prefix,
     _timestamped_print,
-)
-
-from inertia_decompiler.cli_timeout import (
-    _AdaptivePerByteTimeoutModel,
-    _default_recovery_timeout,
-    _stdout_is_interactive,
-)
-
-from inertia_decompiler import cli_access_traits as _cli_access_traits
-
-from inertia_decompiler import cli_access_object_hints as _cli_access_object_hints
-
-from inertia_decompiler import cli_access_profiles as _cli_access_profiles
-
-from inertia_decompiler import cli_access_rewrite_artifact as _cli_access_rewrite_artifact
-
-from inertia_decompiler import cli_access_trait_rewrite as _cli_access_trait_rewrite
-
-from inertia_decompiler import cli_memory_prune as _cli_memory_prune
-
-from inertia_decompiler import cli_dead_local_prune as _cli_dead_local_prune
-
-from inertia_decompiler import cli_local_prune as _cli_local_prune
-
-from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
-
-from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
-
-from inertia_decompiler import cli_cod_globals as _cli_cod_globals
-
-from inertia_decompiler import cli_cod_global_statements as _cli_cod_global_statements
-
-from inertia_decompiler import cli_helper_modeling as _cli_helper_modeling
-
-from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
-
-from inertia_decompiler import cli_far_pointer_stack as _cli_far_pointer_stack
-
-from inertia_decompiler import cli_linear_aliases as _cli_linear_aliases
-
-from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
-
-from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
-
-from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
-
-from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
-
-from inertia_decompiler import cli_stack_byte_offsets as _cli_stack_byte_offsets
-
-from inertia_decompiler import cli_stack_locals as _cli_stack_locals
-
-from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
-
-from inertia_decompiler import cli_segmented as _cli_segmented
-
-from inertia_decompiler import cli_segmented_elision as _cli_segmented_elision
-
-from inertia_decompiler import cli_segmented_compare as _cli_segmented_compare
-
-from inertia_decompiler import cli_segmented_lowering as _cli_segmented_lowering
-
-from inertia_decompiler import cli_segmented_load_coalesce as _cli_segmented_load_coalesce
-
-from inertia_decompiler import cli_segmented_store_coalesce as _cli_segmented_store_coalesce
-
-from inertia_decompiler import cli_word_loads as _cli_word_loads
-
-from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
-
-from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
-
-from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
-
-from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
-
-from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
-
-from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
-
-from inertia_decompiler.x86_16_exact_slice import (
-    function_original_addr,
-    mark_function_original_addr,
-    non_optimized_slice_codegen_policy,
-    plan_x86_16_exact_slice,
-)
-
-from inertia_decompiler.tail_validation import (
-    TAIL_VALIDATION_ENABLE_ENV as _TAIL_VALIDATION_ENABLE_ENV,
-    emit_tail_validation_console_summary as _emit_tail_validation_console_summary,
-    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
-    parse_env_bool as _parse_env_bool,
-    set_tail_validation_runtime_enabled as _set_tail_validation_runtime_enabled,
-    tail_validation_console_cache_path as _tail_validation_console_cache_path,
-    tail_validation_detail_cache_path as _tail_validation_detail_cache_path,
-    tail_validation_enabled_for_run as _tail_validation_enabled_for_run,
-    tail_validation_fallback_allows_project_snapshot as _tail_validation_fallback_allows_project_snapshot,
-    tail_validation_runtime_enabled as _tail_validation_runtime_enabled,
-    tail_validation_snapshot_for_fallback as _tail_validation_snapshot_for_fallback,
-    tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
-)
-
-from inertia_decompiler.runtime_support import (
-    AnalysisTimeout as _AnalysisTimeout,
-    DaemonThreadPoolExecutor,
-    DECOMPILATION_PREP_LOCK,
-    FORCE_SERIAL_FUNCTION_DECOMP_ENV as _FORCE_SERIAL_FUNCTION_DECOMP_ENV,
-    JumpkindLoggingHandler,
-    apply_memory_limit as _apply_memory_limit,
-    analysis_timeout as _analysis_timeout,
-    capture_thread_output as _capture_thread_output,
-    choose_function_parallelism as _choose_function_parallelism,
-    default_exe_showcase_cap as _default_exe_showcase_cap,
-    emit_timeout_and_exit as _emit_timeout_and_exit,
-    format_address as _format_address,
-    guard_angr_ail_narrowing as _guard_angr_ail_narrowing,
-    guard_angr_clinic_stage_markers as _guard_angr_clinic_stage_markers,
-    guard_angr_peephole_expr_bitwidth_assertion as _guard_angr_peephole_expr_bitwidth_assertion,
-    guard_angr_variable_recovery_binop_sub_size_mismatch as _guard_angr_variable_recovery_binop_sub_size_mismatch,
-    install_angr_peephole_expr_bitwidth_guard as _install_angr_peephole_expr_bitwidth_guard,
-    install_angr_variable_recovery_binop_sub_size_guard as _install_angr_variable_recovery_binop_sub_size_guard,
-    log_step,
-    lower_process_priority as _lower_process_priority,
-    memory_available_mb as _memory_available_mb,
-    PreforkJobPool,
-    prefer_low_memory_path as _prefer_low_memory_path,
-    run_with_timeout_in_fork as _run_with_timeout_in_fork,
-    run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
-    raise_timeout as _raise_timeout,
-    should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
-)
-
-from inertia_decompiler.work_items import (
-    FunctionDecompileResult,
-    FunctionDecompileTask,
-    FunctionWorkItem,
-    FunctionWorkResult,
-    emit_tail_validation_for_function_run_or_uncollected as _emit_tail_validation_for_function_run_or_uncollected,
-    emit_tail_validation_snapshot_or_uncollected as _emit_tail_validation_snapshot_or_uncollected,
-    function_attempt_display_status as _function_attempt_display_status,
-    print_function_attempt_status as _print_function_attempt_status,
-    recovery_evidence_line as _recovery_evidence_line,
-    tail_validation_display_status as _tail_validation_display_status,
-)
-
-from inertia_decompiler.slice_recovery import (
-    BoundedSliceVerdict,
-    SliceRecoveryAttemptOutcome,
-    build_default_slice_recovery_attempts,
-    run_bounded_slice_recovery,
-)
-
-from inertia_decompiler.non_optimized_fallback import (
-    allows_heavy_fallbacks_for_run,
-    bounded_non_optimized_attempt_timeout,
-    describe_non_optimized_unavailable,
-    sidecar_verdict_closes_non_optimized_lane,
 )
 
 from .cli_c_ast_rewrites import _c_constant_value, _same_c_expression, _unwrap_c_casts
@@ -245,7 +17,30 @@ from .cli_c_ast_rewrites import _c_constant_value, _same_c_expression, _unwrap_c
 structured_c = structured_codegen.c
 
 print = _timestamped_print
-__all__ = ['InterruptWrapperCall', 'InterruptWrapperFieldAccess', '_normalize_interrupt_wrapper_name', '_interrupt_wrapper_call_kind', '_interrupt_wrapper_call_signature', '_interrupt_wrapper_field_path', '_interrupt_wrapper_field_role', '_interrupt_wrapper_field_access_summary', '_interrupt_wrapper_call_text', 'collect_interrupt_wrapper_calls', 'collect_interrupt_wrapper_field_accesses', '_attach_interrupt_wrapper_callees', '_interrupt_wrapper_register_state_value', '_interrupt_wrapper_record_register_write', '_interrupt_wrapper_helper_call_expr', '_interrupt_wrapper_result_helper_expr', '_interrupt_wrapper_result_extract_expr', '_interrupt_wrapper_result_replacement', '_interrupt_wrapper_result_expr_replacement', '_lower_interrupt_wrapper_result_reads', '_attach_dos_pseudo_callees']
+__all__ = [
+    "InterruptWrapperCall",
+    "InterruptWrapperFieldAccess",
+    "_normalize_interrupt_wrapper_name",
+    "_interrupt_wrapper_call_kind",
+    "_interrupt_wrapper_call_signature",
+    "_interrupt_wrapper_field_path",
+    "_interrupt_wrapper_field_role",
+    "_interrupt_wrapper_field_access_summary",
+    "_interrupt_wrapper_call_text",
+    "collect_interrupt_wrapper_calls",
+    "collect_interrupt_wrapper_field_accesses",
+    "_attach_interrupt_wrapper_callees",
+    "_interrupt_wrapper_register_state_value",
+    "_interrupt_wrapper_record_register_write",
+    "_interrupt_wrapper_helper_call_expr",
+    "_interrupt_wrapper_result_helper_expr",
+    "_interrupt_wrapper_result_extract_expr",
+    "_interrupt_wrapper_result_replacement",
+    "_interrupt_wrapper_result_expr_replacement",
+    "_lower_interrupt_wrapper_result_reads",
+    "_attach_dos_pseudo_callees",
+]
+
 
 def _iter_c_nodes(node, *, max_nodes: int = 10000):
     stack = [node]
@@ -264,7 +59,18 @@ def _iter_c_nodes(node, *, max_nodes: int = 10000):
         if isinstance(current, (list, tuple)):
             stack.extend(reversed(current))
             continue
-        for attr in ("lhs", "rhs", "operand", "condition", "condition_and_nodes", "else_node", "args", "statements", "expr", "variable"):
+        for attr in (
+            "lhs",
+            "rhs",
+            "operand",
+            "condition",
+            "condition_and_nodes",
+            "else_node",
+            "args",
+            "statements",
+            "expr",
+            "variable",
+        ):
             child = getattr(current, attr, None)
             if child is None:
                 continue
@@ -274,6 +80,7 @@ def _iter_c_nodes(node, *, max_nodes: int = 10000):
                     stack.append(cond)
             else:
                 stack.append(child)
+
 
 @dataclass(frozen=True)
 class InterruptWrapperCall:
@@ -286,16 +93,19 @@ class InterruptWrapperCall:
     outregs_arg: object | None = None
     sregs_arg: object | None = None
 
+
 @dataclass(frozen=True)
 class InterruptWrapperFieldAccess:
     base_name: str
     field_path: tuple[str, ...]
     expr: object
 
+
 def _normalize_interrupt_wrapper_name(name: str | None) -> str | None:
     if not isinstance(name, str) or not name:
         return None
     return name.lstrip("_")
+
 
 def _interrupt_wrapper_call_kind(name: str | None, args: tuple[object, ...] | None = None) -> str | None:
     canonical = _normalize_interrupt_wrapper_name(name)
@@ -310,6 +120,7 @@ def _interrupt_wrapper_call_kind(name: str | None, args: tuple[object, ...] | No
             return "int86" if first_value is not None else "intdos"
         return None
     return canonical
+
 
 def _interrupt_wrapper_call_signature(node: structured_c.CFunctionCall) -> InterruptWrapperCall | None:
     def _impl():
@@ -348,6 +159,7 @@ def _interrupt_wrapper_call_signature(node: structured_c.CFunctionCall) -> Inter
 
     return _impl()
 
+
 def _interrupt_wrapper_field_path(expr) -> InterruptWrapperFieldAccess | None:
     path: list[str] = []
     current = expr
@@ -371,6 +183,7 @@ def _interrupt_wrapper_field_path(expr) -> InterruptWrapperFieldAccess | None:
     path.reverse()
     return InterruptWrapperFieldAccess(base_name=base_name, field_path=tuple(path), expr=expr)
 
+
 def _interrupt_wrapper_field_role(base_name: str) -> str:
     if base_name == "inregs":
         return "input"
@@ -379,6 +192,7 @@ def _interrupt_wrapper_field_role(base_name: str) -> str:
     if base_name == "sregs":
         return "segment"
     return "other"
+
 
 def _interrupt_wrapper_field_access_summary(
     accesses: list[InterruptWrapperFieldAccess],
@@ -393,9 +207,11 @@ def _interrupt_wrapper_field_access_summary(
         summary.setdefault(_interrupt_wrapper_field_role(access.base_name), []).append(access)
     return summary
 
+
 def _interrupt_wrapper_call_text(sig: InterruptWrapperCall) -> str:
     args = [str(arg) for arg in sig.arguments if arg is not None]
     return f"{sig.canonical_name}({', '.join(args)})"
+
 
 def collect_interrupt_wrapper_calls(codegen) -> list[InterruptWrapperCall]:
     if getattr(codegen, "cfunc", None) is None:
@@ -410,6 +226,7 @@ def collect_interrupt_wrapper_calls(codegen) -> list[InterruptWrapperCall]:
             calls.append(sig)
     return calls
 
+
 def collect_interrupt_wrapper_field_accesses(codegen) -> list[InterruptWrapperFieldAccess]:
     if getattr(codegen, "cfunc", None) is None:
         return []
@@ -422,6 +239,7 @@ def collect_interrupt_wrapper_field_accesses(codegen) -> list[InterruptWrapperFi
         if access is not None and access.base_name in {"inregs", "outregs", "sregs"}:
             accesses.append(access)
     return accesses
+
 
 def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style: str) -> bool:
     if getattr(codegen, "cfunc", None) is None:
@@ -460,12 +278,14 @@ def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style:
 
     return changed
 
+
 def _interrupt_wrapper_register_state_value(
     state: dict[str, dict[tuple[str, ...], int]],
     base_name: str,
     field_path: tuple[str, ...],
 ) -> int | None:
     return state.get(base_name, {}).get(field_path)
+
 
 def _interrupt_wrapper_record_register_write(
     state: dict[str, dict[tuple[str, ...], int]],
@@ -522,6 +342,7 @@ def _interrupt_wrapper_record_register_write(
             regs[("h", "dl")] = value & 0xFF
 
     return _impl()
+
 
 def _interrupt_wrapper_helper_call_expr(
     sig: InterruptWrapperCall,
@@ -606,6 +427,7 @@ def _interrupt_wrapper_helper_call_expr(
 
     return _impl()
 
+
 def _interrupt_wrapper_result_helper_expr(helper_expr, codegen):
     helper_name = getattr(helper_expr, "callee_target", None)
     if not isinstance(helper_name, str):
@@ -616,6 +438,7 @@ def _interrupt_wrapper_result_helper_expr(helper_expr, codegen):
 
     helper_args = list(getattr(helper_expr, "args", ()) or ())
     return structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen)
+
 
 def _interrupt_wrapper_result_extract_expr(access: InterruptWrapperFieldAccess, helper_expr, codegen):
     def _impl():
@@ -678,6 +501,7 @@ def _interrupt_wrapper_result_extract_expr(access: InterruptWrapperFieldAccess, 
 
     return _impl()
 
+
 def _interrupt_wrapper_result_replacement(
     access: InterruptWrapperFieldAccess,
     helper_expr,
@@ -687,6 +511,7 @@ def _interrupt_wrapper_result_replacement(
     if helper_expr is None:
         return None
     return _interrupt_wrapper_result_extract_expr(access, helper_expr, codegen)
+
 
 def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str, codegen):
     def _impl():
@@ -744,6 +569,7 @@ def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str
         return None
 
     return _impl()
+
 
 def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_style: str) -> bool:
     if getattr(codegen, "cfunc", None) is None:
@@ -825,6 +651,7 @@ def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_st
 
     visit(codegen.cfunc.statements, {}, None)
     return changed
+
 
 def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_style: str) -> bool:
     def _impl():

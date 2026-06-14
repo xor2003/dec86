@@ -95,10 +95,7 @@ def test_prune_completed_plan_text_removes_done_items_and_keeps_unfinished():
 def test_prune_completed_plan_file_writes_pruned_text(tmp_path):
     plan_path = tmp_path / "PLAN.md"
     plan_path.write_text(
-        "1. Done: remove me.\n"
-        "Why now: already completed.\n\n"
-        "2. [pending] keep me.\n"
-        "Why now: still active.\n",
+        "1. Done: remove me.\nWhy now: already completed.\n\n2. [pending] keep me.\nWhy now: still active.\n",
         encoding="utf-8",
     )
 

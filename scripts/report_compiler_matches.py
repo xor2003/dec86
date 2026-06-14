@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib
 import json
@@ -12,14 +10,15 @@ import logging
 import math
 import os
 import pickle
-from pathlib import Path
 import shutil
 import sys
-import threading
 import tempfile
-from typing import Iterable
+import threading
 import zipfile
-import re
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -64,13 +63,42 @@ _MS_RUNTIME_MARKERS: tuple[tuple[str, bytes], ...] = (
 )
 
 _GENERIC_LIB_NAMES = {
-    "memcpy", "memset", "memcmp", "strlen", "strcpy", "strncpy", "strcmp", "strncmp",
-    "strcat", "strncat", "atoi", "atol", "abs", "labs", "malloc", "free", "realloc",
-    "fopen", "fclose", "fread", "fwrite", "printf", "fprintf", "sprintf", "scanf",
+    "memcpy",
+    "memset",
+    "memcmp",
+    "strlen",
+    "strcpy",
+    "strncpy",
+    "strcmp",
+    "strncmp",
+    "strcat",
+    "strncat",
+    "atoi",
+    "atol",
+    "abs",
+    "labs",
+    "malloc",
+    "free",
+    "realloc",
+    "fopen",
+    "fclose",
+    "fread",
+    "fwrite",
+    "printf",
+    "fprintf",
+    "sprintf",
+    "scanf",
 }
 
 _MSVC_HELPER_PREFIXES = (
-    "__a", "__chkstk", "__cfltcvt", "__cftof", "__ftol", "__f", "__cxtoa", "__cltoasub",
+    "__a",
+    "__chkstk",
+    "__cfltcvt",
+    "__cftof",
+    "__ftol",
+    "__f",
+    "__cxtoa",
+    "__cltoasub",
 )
 _LIB_NAME_PREFIXES = (
     "__",
@@ -323,7 +351,9 @@ def _load_flag_profiles(path: Path) -> dict[str, dict[str, float]]:
     return out
 
 
-def _score_flag_combos(function_match_counts: Counter[str], profiles: dict[str, dict[str, float]]) -> list[tuple[str, float]]:
+def _score_flag_combos(
+    function_match_counts: Counter[str], profiles: dict[str, dict[str, float]]
+) -> list[tuple[str, float]]:
     def _impl():
         if not profiles or not function_match_counts:
             return []
@@ -718,7 +748,11 @@ def _build_per_function_flag_report(
             if not _is_non_library_function_entry(entry):
                 continue
             # Prefer real function boundaries: until next function entry, bounded.
-            next_off = int(sorted_entries[idx + 1].get("offset", off + 256)) if idx + 1 < len(sorted_entries) else off + max(64, module_len, 256)
+            next_off = (
+                int(sorted_entries[idx + 1].get("offset", off + 256))
+                if idx + 1 < len(sorted_entries)
+                else off + max(64, module_len, 256)
+            )
             region = max(64, min(1024, next_off - off, module_len if module_len > 0 else 1024))
             # Skip tiny regions that tend to be stubs/thunks and add noise.
             if region < 96:
@@ -1077,7 +1111,11 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"catalog not found: {catalog_input}")
 
         catalog_path, cache_dir, preloaded_specs = _resolve_catalog_input(catalog_input)
-        profile_path = args.msc51_flag_profiles if args.msc51_flag_profiles.is_absolute() else (REPO_ROOT / args.msc51_flag_profiles)
+        profile_path = (
+            args.msc51_flag_profiles
+            if args.msc51_flag_profiles.is_absolute()
+            else (REPO_ROOT / args.msc51_flag_profiles)
+        )
         flag_profiles = _load_flag_profiles(profile_path)
 
         specs = preloaded_specs or load_cached_pat_regex_specs(catalog_path, cache_dir)
@@ -1102,7 +1140,9 @@ def main(argv: list[str] | None = None) -> int:
             matched_specs = int(cached_payload.get("matched_specs", 0))
             use_batch = bool(cached_payload.get("use_batch", False))
             compiler_match_counts = Counter({name: int(count) for name, count in compiler_items})
-            weighted_compiler_scores = Counter({name: float(score) for name, score in cached_payload.get("weighted_compiler_scores", [])})
+            weighted_compiler_scores = Counter(
+                {name: float(score) for name, score in cached_payload.get("weighted_compiler_scores", [])}
+            )
             linker_family = str(cached_payload.get("linker_family", "unknown"))
             function_match_counts = Counter({name: int(count) for name, count in function_items})
             function_compilers = defaultdict(set)
@@ -1159,7 +1199,7 @@ def main(argv: list[str] | None = None) -> int:
                 shared = max(1, len(compiler_names))
                 for compiler_name in compiler_names:
                     compiler_match_counts[compiler_name] += 1
-                    weighted_compiler_scores[compiler_name] += (weight / shared)
+                    weighted_compiler_scores[compiler_name] += weight / shared
                 if (not args.compilers_only) or args.detect_flags_msc51:
                     for name in public_names:
                         function_match_counts[name] += 1
@@ -1188,7 +1228,9 @@ def main(argv: list[str] | None = None) -> int:
                                     cur_name = str(rec.get("function", ""))
                                     new_name = str(pub.name)
                                     # Prefer non-library-like representative names for this offset.
-                                    if _is_library_like_function_name(cur_name) and not _is_library_like_function_name(new_name):
+                                    if _is_library_like_function_name(cur_name) and not _is_library_like_function_name(
+                                        new_name
+                                    ):
                                         rec["function"] = new_name
                                     if int(getattr(spec, "module_length", 0)) > int(rec.get("module_length", 0)):
                                         rec["module_length"] = int(getattr(spec, "module_length", 0))
@@ -1251,7 +1293,11 @@ def main(argv: list[str] | None = None) -> int:
             disasm_feature_count = int(cached_payload.get("disasm_feature_count", 0))
             disasm_backend_ok = bool(cached_payload.get("disasm_backend_ok", False))
 
-        alias_path = args.compiler_aliases_json if args.compiler_aliases_json.is_absolute() else (REPO_ROOT / args.compiler_aliases_json)
+        alias_path = (
+            args.compiler_aliases_json
+            if args.compiler_aliases_json.is_absolute()
+            else (REPO_ROOT / args.compiler_aliases_json)
+        )
         aliases = _load_aliases(alias_path)
         merged_weighted = _merge_counter_by_canonical(Counter(weighted_compiler_scores), aliases)
         merged_counts = _merge_counter_by_canonical(compiler_match_counts, aliases)
@@ -1313,7 +1359,9 @@ def main(argv: list[str] | None = None) -> int:
                         if vote_flag_support:
                             core = [flag for flag, prob in vote_flag_support if prob >= 0.75]
                             if core:
-                                print(f"  Core flags: {_pretty_combo_for_output(_normalize_combo_equivalences(' '.join(core)))}")
+                                print(
+                                    f"  Core flags: {_pretty_combo_for_output(_normalize_combo_equivalences(' '.join(core)))}"
+                                )
                             partial_flags: list[tuple[str, float]] = []
                             for flag, _ in vote_flag_support:
                                 share = _flag_presence_share(function_flag_report, flag, threshold=0.55)
@@ -1322,7 +1370,7 @@ def main(argv: list[str] | None = None) -> int:
                             if partial_flags:
                                 print("  Partial flag evidence (mixed across matched non-library functions):")
                                 for flag, share in partial_flags[:8]:
-                                    print(f"    {flag:>4}  {share*100.0:5.1f}%")
+                                    print(f"    {flag:>4}  {share * 100.0:5.1f}%")
                     if function_flag_report:
                         print("  Top marginal flag sets by function count:")
                         for combo, cnt in set_votes[: max(1, args.per_function_flags_top)]:
@@ -1343,10 +1391,14 @@ def main(argv: list[str] | None = None) -> int:
                         rc_path = args.rc_json if args.rc_json.is_absolute() else (REPO_ROOT / args.rc_json)
                         rc_entries = _load_rc_extract_functions(rc_path)
                         if rc_entries:
-                            shift, hits, mapped = _map_flags_to_rc_functions(function_flag_report, rc_entries, raw_bytes=raw_bytes)
+                            shift, hits, mapped = _map_flags_to_rc_functions(
+                                function_flag_report, rc_entries, raw_bytes=raw_bytes
+                            )
                             if shift is not None and mapped:
                                 print("Method 5: RC function map (precise names + shift)")
-                                print("  How: load RC extract list, auto-find address shift, map per-function flag hints by begin offset.")
+                                print(
+                                    "  How: load RC extract list, auto-find address shift, map per-function flag hints by begin offset."
+                                )
                                 print(f"  Shift: {shift:+#x} ; mapped_functions={len(mapped)} ; shift_hits={hits}")
                                 print("  Mapped functions:")
                                 for row in mapped:
@@ -1397,7 +1449,6 @@ def main(argv: list[str] | None = None) -> int:
                 compilers = ", ".join(sorted(function_compilers[function_name]))
                 print(f"  {count:6d}  {function_name}  [{compilers}]")
         return 0
-
 
     if __name__ == "__main__":
         raise SystemExit(main())

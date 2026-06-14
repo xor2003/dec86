@@ -15,31 +15,32 @@ from __future__ import annotations
 
 import asyncio
 import json
-import struct
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable, Optional
-
+from typing import Any, Callable
 
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
 
+
 class StopReason(Enum):
     """Why the target stopped."""
+
     UNKNOWN = auto()
-    SIGTRAP = auto()       # 05 – breakpoint / single-step
-    SIGINT = auto()        # 02 – interrupt
-    SIGSEGV = auto()       # 0b
-    SIGILL = auto()        # 04
-    SIGFPE = auto()        # 08
-    EXITED = auto()        # Wxx
-    SIGNALLED = auto()     # Xxx
+    SIGTRAP = auto()  # 05 – breakpoint / single-step
+    SIGINT = auto()  # 02 – interrupt
+    SIGSEGV = auto()  # 0b
+    SIGILL = auto()  # 04
+    SIGFPE = auto()  # 08
+    EXITED = auto()  # Wxx
+    SIGNALLED = auto()  # Xxx
 
 
 @dataclass
 class StopInfo:
     """Parsed stop-reply."""
+
     reason: StopReason = StopReason.UNKNOWN
     signal: int = 0
     thread: str = ""
@@ -50,9 +51,10 @@ class StopInfo:
 @dataclass
 class RegisterDef:
     """Register metadata."""
+
     name: str
-    size: int          # bytes
-    group: str = "general"   # general, float, vector, segment, flags
+    size: int  # bytes
+    group: str = "general"  # general, float, vector, segment, flags
 
 
 @dataclass
@@ -66,7 +68,7 @@ class MemoryRegion:
             chunk = self.data[i : i + width]
             hex_part = " ".join(f"{b:02x}" for b in chunk)
             ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
-            lines.append(f"  {self.address + i:08x}  {hex_part:<{width*3}}  {ascii_part}")
+            lines.append(f"  {self.address + i:08x}  {hex_part:<{width * 3}}  {ascii_part}")
         return "\n".join(lines)
 
 
@@ -75,38 +77,74 @@ class MemoryRegion:
 # ---------------------------------------------------------------------------
 
 X86_REGS: list[RegisterDef] = [
-    RegisterDef("eax", 4), RegisterDef("ecx", 4), RegisterDef("edx", 4),
-    RegisterDef("ebx", 4), RegisterDef("esp", 4), RegisterDef("ebp", 4),
-    RegisterDef("esi", 4), RegisterDef("edi", 4), RegisterDef("eip", 4),
+    RegisterDef("eax", 4),
+    RegisterDef("ecx", 4),
+    RegisterDef("edx", 4),
+    RegisterDef("ebx", 4),
+    RegisterDef("esp", 4),
+    RegisterDef("ebp", 4),
+    RegisterDef("esi", 4),
+    RegisterDef("edi", 4),
+    RegisterDef("eip", 4),
     RegisterDef("eflags", 4),
-    RegisterDef("cs", 4), RegisterDef("ss", 4), RegisterDef("ds", 4),
-    RegisterDef("es", 4), RegisterDef("fs", 4), RegisterDef("gs", 4),
+    RegisterDef("cs", 4),
+    RegisterDef("ss", 4),
+    RegisterDef("ds", 4),
+    RegisterDef("es", 4),
+    RegisterDef("fs", 4),
+    RegisterDef("gs", 4),
 ]
 
 X86_16_REGS: list[RegisterDef] = [
-    RegisterDef("ax", 2), RegisterDef("cx", 2), RegisterDef("dx", 2),
-    RegisterDef("bx", 2), RegisterDef("sp", 2), RegisterDef("bp", 2),
-    RegisterDef("si", 2), RegisterDef("di", 2),
-    RegisterDef("ip", 2), RegisterDef("flags", 2),
-    RegisterDef("cs", 2), RegisterDef("ss", 2), RegisterDef("ds", 2),
-    RegisterDef("es", 2), RegisterDef("fs", 2), RegisterDef("gs", 2),
+    RegisterDef("ax", 2),
+    RegisterDef("cx", 2),
+    RegisterDef("dx", 2),
+    RegisterDef("bx", 2),
+    RegisterDef("sp", 2),
+    RegisterDef("bp", 2),
+    RegisterDef("si", 2),
+    RegisterDef("di", 2),
+    RegisterDef("ip", 2),
+    RegisterDef("flags", 2),
+    RegisterDef("cs", 2),
+    RegisterDef("ss", 2),
+    RegisterDef("ds", 2),
+    RegisterDef("es", 2),
+    RegisterDef("fs", 2),
+    RegisterDef("gs", 2),
 ]
 
 X86_64_REGS: list[RegisterDef] = [
-    RegisterDef("rax", 8), RegisterDef("rbx", 8), RegisterDef("rcx", 8),
-    RegisterDef("rdx", 8), RegisterDef("rsi", 8), RegisterDef("rdi", 8),
-    RegisterDef("rbp", 8), RegisterDef("rsp", 8),
-    RegisterDef("r8", 8), RegisterDef("r9", 8), RegisterDef("r10", 8),
-    RegisterDef("r11", 8), RegisterDef("r12", 8), RegisterDef("r13", 8),
-    RegisterDef("r14", 8), RegisterDef("r15", 8),
-    RegisterDef("rip", 8), RegisterDef("rflags", 8),
-    RegisterDef("cs", 8), RegisterDef("ss", 8), RegisterDef("ds", 8),
-    RegisterDef("es", 8), RegisterDef("fs", 8), RegisterDef("gs", 8),
+    RegisterDef("rax", 8),
+    RegisterDef("rbx", 8),
+    RegisterDef("rcx", 8),
+    RegisterDef("rdx", 8),
+    RegisterDef("rsi", 8),
+    RegisterDef("rdi", 8),
+    RegisterDef("rbp", 8),
+    RegisterDef("rsp", 8),
+    RegisterDef("r8", 8),
+    RegisterDef("r9", 8),
+    RegisterDef("r10", 8),
+    RegisterDef("r11", 8),
+    RegisterDef("r12", 8),
+    RegisterDef("r13", 8),
+    RegisterDef("r14", 8),
+    RegisterDef("r15", 8),
+    RegisterDef("rip", 8),
+    RegisterDef("rflags", 8),
+    RegisterDef("cs", 8),
+    RegisterDef("ss", 8),
+    RegisterDef("ds", 8),
+    RegisterDef("es", 8),
+    RegisterDef("fs", 8),
+    RegisterDef("gs", 8),
 ]
 
 # ---------------------------------------------------------------------------
 # RSP packet helpers
 # ---------------------------------------------------------------------------
+
 
 def _checksum(data: str) -> str:
     return f"{sum(ord(c) for c in data) & 0xFF:02x}"
@@ -128,6 +166,7 @@ def _decode_mem(hexstr: str, nbytes: int) -> int:
 # ---------------------------------------------------------------------------
 # GDB RSP Client
 # ---------------------------------------------------------------------------
+
 
 class GDBClientError(Exception):
     pass

@@ -90,9 +90,9 @@ def _single_assignment_carrier_rhs_8616(node, codegen, seen: set[str]) -> object
     if rhs is None:
         rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, name)
     if rhs is not None:
-        codegen._inertia_runtime_segment_carrier_resolved_count_8616 = int(
-            getattr(codegen, "_inertia_runtime_segment_carrier_resolved_count_8616", 0) or 0
-        ) + 1
+        codegen._inertia_runtime_segment_carrier_resolved_count_8616 = (
+            int(getattr(codegen, "_inertia_runtime_segment_carrier_resolved_count_8616", 0) or 0) + 1
+        )
     return rhs
 
 
@@ -288,10 +288,9 @@ def _is_proven_ss_stack_access_8616(matched: SegmentedMemoryExpr, *, codegen, pr
     if not isinstance(displacement, int):
         return False
     width = max(int(matched.width_bits or 16) // 8, 1)
-    return (
-        _has_stack_alias_fact_for_displacement_8616(codegen, displacement, width)
-        or displacement in _known_bp_stack_offsets_8616(codegen)
-    )
+    return _has_stack_alias_fact_for_displacement_8616(
+        codegen, displacement, width
+    ) or displacement in _known_bp_stack_offsets_8616(codegen)
 
 
 def lower_runtime_segment_access_8616(expr, *, target: str):
@@ -467,15 +466,15 @@ def _prune_runtime_segment_address_self_assignments_8616(codegen) -> bool:
     visit(root)
     if changed and hasattr(codegen.cfunc, "body"):
         codegen.cfunc.body = codegen.cfunc.statements
-    codegen._inertia_runtime_segment_address_self_assign_candidates_8616 = int(
-        getattr(codegen, "_inertia_runtime_segment_address_self_assign_candidates_8616", 0) or 0
-    ) + candidates
-    codegen._inertia_runtime_segment_address_self_assign_pruned_8616 = int(
-        getattr(codegen, "_inertia_runtime_segment_address_self_assign_pruned_8616", 0) or 0
-    ) + pruned
-    codegen._inertia_runtime_segment_address_self_assign_refused_8616 = int(
-        getattr(codegen, "_inertia_runtime_segment_address_self_assign_refused_8616", 0) or 0
-    ) + refused
+    codegen._inertia_runtime_segment_address_self_assign_candidates_8616 = (
+        int(getattr(codegen, "_inertia_runtime_segment_address_self_assign_candidates_8616", 0) or 0) + candidates
+    )
+    codegen._inertia_runtime_segment_address_self_assign_pruned_8616 = (
+        int(getattr(codegen, "_inertia_runtime_segment_address_self_assign_pruned_8616", 0) or 0) + pruned
+    )
+    codegen._inertia_runtime_segment_address_self_assign_refused_8616 = (
+        int(getattr(codegen, "_inertia_runtime_segment_address_self_assign_refused_8616", 0) or 0) + refused
+    )
     return changed
 
 

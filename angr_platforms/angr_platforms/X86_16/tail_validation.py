@@ -718,7 +718,9 @@ def _ordered_contextual_call_pairs_8616(root, project) -> list[tuple[CFunctionCa
             else:
                 unmatched_callsites.append(callsite_addr)
 
-        remaining_nodes.extend(node for node in call_nodes if id(node) not in used_node_ids and node not in remaining_nodes)
+        remaining_nodes.extend(
+            node for node in call_nodes if id(node) not in used_node_ids and node not in remaining_nodes
+        )
         available_nodes = list(remaining_nodes)
         for callsite_addr in unmatched_callsites:
             summary = summarize_x86_16_callsite(function, callsite_addr)
@@ -746,7 +748,9 @@ def _node_boundary_fingerprint(
     def _impl():
         if node is None:
             return None
-        contextual_condition_fingerprints = getattr(project, "_inertia_tail_validation_contextual_condition_fingerprints", None)
+        contextual_condition_fingerprints = getattr(
+            project, "_inertia_tail_validation_contextual_condition_fingerprints", None
+        )
         if isinstance(contextual_condition_fingerprints, Mapping):
             condition_fingerprint = contextual_condition_fingerprints.get(id(node))
             if isinstance(condition_fingerprint, str):
@@ -920,8 +924,12 @@ def _structured_node_boundary_fingerprint_8616(
                 "ifelse",
                 tuple(
                     (
-                        _node_boundary_fingerprint(cond, project, contextual_call_fingerprints, contextual_call_summaries),
-                        _node_boundary_fingerprint(body, project, contextual_call_fingerprints, contextual_call_summaries),
+                        _node_boundary_fingerprint(
+                            cond, project, contextual_call_fingerprints, contextual_call_summaries
+                        ),
+                        _node_boundary_fingerprint(
+                            body, project, contextual_call_fingerprints, contextual_call_summaries
+                        ),
                     )
                     for cond, body in (getattr(node, "condition_and_nodes", ()) or ())
                 ),
@@ -979,7 +987,9 @@ def _structured_node_boundary_fingerprint_8616(
                 case_items = tuple(
                     (
                         _switch_case_fingerprint(case_value, project),
-                        _node_boundary_fingerprint(case_body, project, contextual_call_fingerprints, contextual_call_summaries),
+                        _node_boundary_fingerprint(
+                            case_body, project, contextual_call_fingerprints, contextual_call_summaries
+                        ),
                     )
                     for case_value, case_body in sorted(
                         cases.items(), key=lambda item: _switch_case_fingerprint(item[0], project)
@@ -1570,10 +1580,12 @@ def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scann
         function_statuses = list(summary.get("function_statuses", []) or [])
         uncollected_functions = list(summary.get("uncollected_functions", []) or [])
         unknown_functions = list(summary.get("unknown_functions", []) or [])
-        stage_rows, total_changed, total_missing, total_unknown, total_coverage = _build_tail_validation_stage_rows_8616(
-            scanned_count=scanned_count,
-            structuring=structuring,
-            postprocess=postprocess,
+        stage_rows, total_changed, total_missing, total_unknown, total_coverage = (
+            _build_tail_validation_stage_rows_8616(
+                scanned_count=scanned_count,
+                structuring=structuring,
+                postprocess=postprocess,
+            )
         )
 
         stage_hotspots = [
@@ -1685,9 +1697,9 @@ def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scann
         )
         return surface
 
-
-
     return _impl()
+
+
 def _normalized_tail_validation_baseline_entries(
     entries: Sequence[Mapping[str, object]] | None,
 ) -> list[dict[str, str]]:
@@ -2086,14 +2098,25 @@ def _is_stack_carrier_temp_assignment_8616(stmt) -> bool:
             return False
         variable = getattr(lhs, "variable", None)
         name = getattr(variable, "name", None) or getattr(lhs, "name", None)
-        if not isinstance(name, str) or not (name.startswith("vvar_") or name.startswith("ir_") or name.startswith("tmp_")):
+        if not isinstance(name, str) or not (
+            name.startswith("vvar_") or name.startswith("ir_") or name.startswith("tmp_")
+        ):
             return False
         rhs_node = rhs
         while isinstance(rhs_node, CTypeCast):
             rhs_node = rhs_node.expr
         if isinstance(rhs_node, CUnaryOp) and rhs_node.op in {"Reference", "Dereference"}:
             return True
-        return isinstance(rhs_node, CBinaryOp) and rhs_node.op in {"Add", "Sub", "Mul", "Shl", "Shr", "And", "Or", "Xor"}
+        return isinstance(rhs_node, CBinaryOp) and rhs_node.op in {
+            "Add",
+            "Sub",
+            "Mul",
+            "Shl",
+            "Shr",
+            "And",
+            "Or",
+            "Xor",
+        }
 
     return _impl()
 
@@ -2114,7 +2137,9 @@ def _expr_mentions_temp_carrier_8616(expr) -> bool:
         for node in nodes:
             variable = getattr(node, "variable", None)
             name = getattr(variable, "name", None) or getattr(node, "name", None)
-            if isinstance(name, str) and (name.startswith("vvar_") or name.startswith("ir_") or name.startswith("tmp_")):
+            if isinstance(name, str) and (
+                name.startswith("vvar_") or name.startswith("ir_") or name.startswith("tmp_")
+            ):
                 return True
             if node.__class__.__name__ == "CDirtyExpression":
                 dirty = getattr(node, "dirty", None)
@@ -2216,9 +2241,7 @@ def _prunable_live_out_segment_write_ids_8616(
                 if isinstance(summary_obj, Mapping):
                     push_arg_sources = summary_obj.get("push_arg_sources", push_arg_sources)
                 push_arg_source_count = (
-                    len(push_arg_sources)
-                    if isinstance(push_arg_sources, (tuple, list)) and push_arg_sources
-                    else 0
+                    len(push_arg_sources) if isinstance(push_arg_sources, (tuple, list)) and push_arg_sources else 0
                 )
                 explicit_arg_count = len(tuple(getattr(call, "args", ()) or ()))
                 carrier_backed_args = any(
@@ -2419,7 +2442,9 @@ def _process_control_flow_node_8616(
             return True
         if isinstance(node, CWhileLoop):
             cond = getattr(node, "condition", None)
-            cond_fp = normalized_loop_conditions.get(id(node), contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project)))
+            cond_fp = normalized_loop_conditions.get(
+                id(node), contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
+            )
             control_flow_effects.add(f"while:{cond_fp}")
             _record_loop_body_writes("while", cond_fp, getattr(node, "body", None))
             if mode == "live_out":
@@ -2519,7 +2544,9 @@ def _process_tail_validation_node_8616(
                 if mode == "coarse" or location in observed_locations:
                     register_writes.add(location)
             elif location.startswith(("stack:", "stack_slot:")):
-                if include_x86_16_tail_validation_stack_write(location, mode=mode, observed_locations=observed_locations):
+                if include_x86_16_tail_validation_stack_write(
+                    location, mode=mode, observed_locations=observed_locations
+                ):
                     stack_writes.add(location)
             elif location.startswith("global:"):
                 global_writes.add(location)
@@ -2816,7 +2843,9 @@ def _suppress_global_linear_ds_write_precision_delta_8616(diff: dict[str, object
                 for location in segmented_values
                 if _tail_validation_linear_ds_write_offset_8616(location) in {base, base + 1}
             }
-            if not any(_tail_validation_linear_ds_write_offset_8616(location) == base for location in matching_segmented):
+            if not any(
+                _tail_validation_linear_ds_write_offset_8616(location) == base for location in matching_segmented
+            ):
                 continue
             global_values.remove(global_location)
             segmented_values.difference_update(matching_segmented)

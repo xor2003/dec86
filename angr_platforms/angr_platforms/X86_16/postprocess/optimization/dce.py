@@ -833,7 +833,9 @@ def _dead_code_elimination_8616(codegen) -> bool:
             reads.update(_collect_stmt_reads(node))
         return reads
 
-    def _collect_read_counts_by_block(root) -> tuple[dict[tuple[str, int | str], int], dict[int, dict[tuple[str, int | str], int]]]:
+    def _collect_read_counts_by_block(
+        root,
+    ) -> tuple[dict[tuple[str, int | str], int], dict[int, dict[tuple[str, int | str], int]]]:
         total_reads: dict[tuple[str, int | str], int] = {}
         block_reads: dict[int, dict[tuple[str, int | str], int]] = {}
         for block in _iter_statement_blocks(root):
@@ -887,7 +889,11 @@ def _dead_code_elimination_8616(codegen) -> bool:
         project = getattr(codegen, "project", None)
         func_addr = getattr(cfunc_obj, "addr", None)
         metadata_by_addr = getattr(project, "_inertia_cod_metadata_by_func_addr_8616", None)
-        metadata = metadata_by_addr.get(func_addr) if isinstance(metadata_by_addr, dict) and isinstance(func_addr, int) else None
+        metadata = (
+            metadata_by_addr.get(func_addr)
+            if isinstance(metadata_by_addr, dict) and isinstance(func_addr, int)
+            else None
+        )
         stack_aliases = getattr(metadata, "stack_aliases", None)
         if isinstance(stack_aliases, dict):
             for offset, name in stack_aliases.items():
@@ -914,7 +920,13 @@ def _dead_code_elimination_8616(codegen) -> bool:
         ):
             evidence = getattr(codegen, attr, ()) or ()
             for item in evidence:
-                pairs = tuple(item.items()) if isinstance(item, dict) else tuple(item) if isinstance(item, (tuple, list)) else ()
+                pairs = (
+                    tuple(item.items())
+                    if isinstance(item, dict)
+                    else tuple(item)
+                    if isinstance(item, (tuple, list))
+                    else ()
+                )
                 for pair in pairs:
                     if not isinstance(pair, (tuple, list)) or len(pair) != 2:
                         continue
@@ -964,12 +976,10 @@ def _dead_code_elimination_8616(codegen) -> bool:
             return False
         dirty = _safe_attr(rhs, "dirty", None)
         has_register_provenance = any(
-            isinstance(_safe_attr(dirty, attr, None), int)
-            for attr in ("reg", "reg_offset", "parameter_reg_offset")
+            isinstance(_safe_attr(dirty, attr, None), int) for attr in ("reg", "reg_offset", "parameter_reg_offset")
         )
         has_stack_provenance = any(
-            isinstance(_safe_attr(dirty, attr, None), int)
-            for attr in ("stack_offset", "parameter_stack_offset")
+            isinstance(_safe_attr(dirty, attr, None), int) for attr in ("stack_offset", "parameter_stack_offset")
         )
         return has_register_provenance and not has_stack_provenance
 
@@ -1119,11 +1129,12 @@ def _dead_code_elimination_8616(codegen) -> bool:
             flush=True,
         )
         if os.environ.get("INERTIA_DEBUG_OPTIMIZATION_PATHS", "").strip().lower() in {"1", "true", "yes", "on"}:
+
             def _expr_debug_label_8616(expr: object) -> str:
                 if isinstance(expr, CVariable):
                     return _var_name(expr)
                 if isinstance(expr, CBinaryOp):
-                    return f"({ _expr_debug_label_8616(getattr(expr, 'lhs', None)) } {getattr(expr, 'op', '?')} { _expr_debug_label_8616(getattr(expr, 'rhs', None)) })"
+                    return f"({_expr_debug_label_8616(getattr(expr, 'lhs', None))} {getattr(expr, 'op', '?')} {_expr_debug_label_8616(getattr(expr, 'rhs', None))})"
                 if type(expr).__name__ == "CDirtyExpression":
                     return "dirty"
                 value = getattr(expr, "value", None)
@@ -1210,17 +1221,15 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 live.update(_collect_stmt_reads(stmt))
                 new_rev.append(stmt)
                 continue
-            if (
-                _same_c_expression_8616(lhs, rhs)
-                and not _is_observable_lvalue(lhs)
-                and not _rhs_has_side_effects(rhs)
-            ):
+            if _same_c_expression_8616(lhs, rhs) and not _is_observable_lvalue(lhs) and not _rhs_has_side_effects(rhs):
                 setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
                 setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
                 changed = True
                 block_changed = True
                 continue
-            outside_reads = 0 if key[0] in {"dirty", "dirty_expr"} else int(total_reads.get(key, 0)) - int(local_reads.get(key, 0))
+            outside_reads = (
+                0 if key[0] in {"dirty", "dirty_expr"} else int(total_reads.get(key, 0)) - int(local_reads.get(key, 0))
+            )
             if _is_function_argument_lvalue_8616(lhs, key, name_key):
                 setattr(
                     codegen,
@@ -1321,10 +1330,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
                     and outside_reads <= 0
                     and key not in protected
                     and (name_key is None or name_key not in protected)
-                    and (
-                        _same_c_expression_8616(lhs, rhs)
-                        or _callsite_materialization_proven_complete_8616()
-                    )
+                    and (_same_c_expression_8616(lhs, rhs) or _callsite_materialization_proven_complete_8616())
                 ):
                     setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
                     setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
@@ -1397,10 +1403,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
                     if removable
                     else "keep_observable"
                     if _is_observable_lvalue(lhs)
-                    or (
-                        lhs_var_for_observable is not None
-                        and _is_observable_lvalue(lhs_var_for_observable)
-                    )
+                    or (lhs_var_for_observable is not None and _is_observable_lvalue(lhs_var_for_observable))
                     else "keep_side_effect"
                     if _rhs_has_side_effects(rhs)
                     else "keep_protected"

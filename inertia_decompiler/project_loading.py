@@ -15,7 +15,6 @@ from angr_platforms.X86_16.compiler_helpers import hook_x86_16_known_compiler_he
 
 from inertia_decompiler.telemetry import trace_function
 
-
 _IDA_BASE_ADDRESS_RE = re.compile(r"Base Address:\s*([0-9A-Fa-f]+)h", re.IGNORECASE)
 
 
@@ -213,29 +212,33 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
 
         _debug_print(f"[dbg] build_project: path={path} suffix={suffix} force_blob={force_blob}")
         if force_blob or _is_blob_only_input(path):
-            return _finalize_x86_16_project(angr.Project(
-                path,
-                auto_load_libs=False,
-                main_opts={
-                    "backend": "blob",
-                    "arch": Arch86_16(),
-                    "base_addr": base_addr,
-                    "entry_point": entry_point,
-                },
-            ))
+            return _finalize_x86_16_project(
+                angr.Project(
+                    path,
+                    auto_load_libs=False,
+                    main_opts={
+                        "backend": "blob",
+                        "arch": Arch86_16(),
+                        "base_addr": base_addr,
+                        "entry_point": entry_point,
+                    },
+                )
+            )
 
         if suffix == ".com":
-            return _finalize_x86_16_project(angr.Project(
-                path,
-                auto_load_libs=False,
-                main_opts={
-                    "backend": "blob",
-                    "arch": Arch86_16(),
-                    "base_addr": base_addr,
-                    "entry_point": entry_point,
-                },
-                simos="DOS",
-            ))
+            return _finalize_x86_16_project(
+                angr.Project(
+                    path,
+                    auto_load_libs=False,
+                    main_opts={
+                        "backend": "blob",
+                        "arch": Arch86_16(),
+                        "base_addr": base_addr,
+                        "entry_point": entry_point,
+                    },
+                    simos="DOS",
+                )
+            )
 
         packed_exe = _detect_packed_mz_executable(path)
         if packed_exe and suffix == ".exe":
@@ -252,9 +255,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                 simos="DOS",
             )
             project._inertia_packed_exe = packed_exe
-            _debug_print(
-                f"[dbg] unpacked {packed_exe}: entry={hex(unpacked.entry_point)} size={len(unpacked.code)}"
-            )
+            _debug_print(f"[dbg] unpacked {packed_exe}: entry={hex(unpacked.entry_point)} size={len(unpacked.code)}")
             return _finalize_x86_16_project(project)
 
         if suffix == ".exe":
@@ -274,14 +275,18 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                 _debug_print(f"[dbg] project built: arch={proj.arch.name} entry={hex(proj.entry)}")
                 return _finalize_x86_16_project(proj)
             except Exception as ex:
-                _debug_print(f"[dbg] explicit {exe_backend} load failed at {hex(explicit_base)}: {_describe_exception(ex)}")
+                _debug_print(
+                    f"[dbg] explicit {exe_backend} load failed at {hex(explicit_base)}: {_describe_exception(ex)}"
+                )
 
         try:
             proj = angr.Project(path, auto_load_libs=False)
         except Exception as ex:
             if suffix == ".exe" and "Position-DEPENDENT object" in str(ex):
                 explicit_base = _probe_ida_base_linear(path, base_addr << 4 if base_addr < 0x10000 else base_addr)
-                _debug_print(f"[dbg] retrying DOS MZ load with explicit base_addr={hex(explicit_base)} after {type(ex).__name__}")
+                _debug_print(
+                    f"[dbg] retrying DOS MZ load with explicit base_addr={hex(explicit_base)} after {type(ex).__name__}"
+                )
                 proj = angr.Project(
                     path,
                     auto_load_libs=False,
@@ -319,14 +324,16 @@ def _build_project_cached(
 def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) -> angr.Project:
     arch = Arch86_16()
     arch.bits = max(arch.bits, 32)
-    return _finalize_x86_16_project(angr.Project(
-        io.BytesIO(code),
-        auto_load_libs=False,
-        main_opts={
-            "backend": "blob",
-            "arch": arch,
-            "base_addr": base_addr,
-            "entry_point": entry_point,
-        },
-        simos="DOS",
-    ))
+    return _finalize_x86_16_project(
+        angr.Project(
+            io.BytesIO(code),
+            auto_load_libs=False,
+            main_opts={
+                "backend": "blob",
+                "arch": arch,
+                "base_addr": base_addr,
+                "entry_point": entry_point,
+            },
+            simos="DOS",
+        )
+    )

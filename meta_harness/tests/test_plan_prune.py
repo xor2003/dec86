@@ -16,10 +16,7 @@ def _make_cfg(monkeypatch, tmp_path: Path) -> tuple[RuntimeConfig, LlmConfig]:
 def test_reviewer_step_prunes_completed_plan_items(monkeypatch, tmp_path):
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
-        "1. Done: remove me.\n"
-        "Why now: already completed.\n\n"
-        "2. [pending] keep me.\n"
-        "Why now: still active.\n",
+        "1. Done: remove me.\nWhy now: already completed.\n\n2. [pending] keep me.\nWhy now: still active.\n",
         encoding="utf-8",
     )
 
@@ -28,9 +25,7 @@ def test_reviewer_step_prunes_completed_plan_items(monkeypatch, tmp_path):
 
     def fake_run_role(role: str, model: str, prompt: str, *, resume: bool = False, resume_context: str = "") -> Path:
         log_file.write_text(
-            "Task packet status: done\n"
-            "Remaining steps: 1\n"
-            "Green level: focused-item-green\n",
+            "Task packet status: done\nRemaining steps: 1\nGreen level: focused-item-green\n",
             encoding="utf-8",
         )
         return log_file

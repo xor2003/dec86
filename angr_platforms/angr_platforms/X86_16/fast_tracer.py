@@ -77,7 +77,9 @@ def trace_16bit_seed_candidates(
         except Exception:
             disasm = None
         if disasm is None:
-            return FastTraceResult(entries=tuple(), call_targets=tuple(), jump_targets=tuple(), returns=tuple(), scores={})
+            return FastTraceResult(
+                entries=tuple(), call_targets=tuple(), jump_targets=tuple(), returns=tuple(), scores={}
+            )
 
         align_bytes = {0x00, 0x90, 0xCC}
         for window_start, window_end in windows:

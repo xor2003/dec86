@@ -6,7 +6,6 @@ import re
 import sys
 import time
 
-
 _RAW_PRINT = _builtins.print
 
 
@@ -48,11 +47,7 @@ def _timestamped_print(*args, **kwargs):
             if lines and all((not line.strip()) or _looks_like_diagnostic_line(line) for line in lines):
                 target = sys.stderr
                 stamped = "\n".join(
-                    (
-                        line
-                        if re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s+", line.lstrip())
-                        else f"{_timestamp_prefix()} {line}"
-                    )
+                    (line if re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s+", line.lstrip()) else f"{_timestamp_prefix()} {line}")
                     if line.strip()
                     else line
                     for line in lines

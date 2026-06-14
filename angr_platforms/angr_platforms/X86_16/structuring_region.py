@@ -527,7 +527,11 @@ def _compute_fixpoint_dominators(graph: RegionGraph, all_regions: list[Region]) 
             if region == graph.entry:
                 continue
             preds = graph.predecessors(region)
-            new_dom = {region} if not preds else {region} | set.intersection(*(dominators.get(p, set(all_regions)) for p in preds))
+            new_dom = (
+                {region}
+                if not preds
+                else {region} | set.intersection(*(dominators.get(p, set(all_regions)) for p in preds))
+            )
             if new_dom != dominators[region]:
                 dominators[region] = new_dom
                 changed = True
@@ -547,7 +551,11 @@ def _compute_fixpoint_post_dominators(
             if region in exit_nodes:
                 continue
             succs = graph.successors(region)
-            new_pdom = {region} if not succs else {region} | set.intersection(*(post_dominators.get(s, set(all_regions)) for s in succs))
+            new_pdom = (
+                {region}
+                if not succs
+                else {region} | set.intersection(*(post_dominators.get(s, set(all_regions)) for s in succs))
+            )
             if new_pdom != post_dominators[region]:
                 post_dominators[region] = new_pdom
                 changed = True

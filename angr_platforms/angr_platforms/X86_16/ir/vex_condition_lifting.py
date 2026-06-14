@@ -370,7 +370,10 @@ def _condition_op_from_flag_predicate(pred: _FlagPredicate) -> str | None:
             return "ult"
         if pred.kind == _FlagPredicateKind.BIT_CLEAR and pred.bit == _FlagBit.CF:
             return "uge"
-        if pred.kind == _FlagPredicateKind.BITS_NOT_EQUAL and {pred.left_bit, pred.right_bit} == {_FlagBit.SF, _FlagBit.OF}:
+        if pred.kind == _FlagPredicateKind.BITS_NOT_EQUAL and {pred.left_bit, pred.right_bit} == {
+            _FlagBit.SF,
+            _FlagBit.OF,
+        }:
             return "slt"
         if pred.kind == _FlagPredicateKind.BITS_EQUAL and {pred.left_bit, pred.right_bit} == {_FlagBit.SF, _FlagBit.OF}:
             return "sge"
@@ -389,7 +392,10 @@ def _condition_op_from_flag_predicate(pred: _FlagPredicate) -> str | None:
             if {pred.left.kind, pred.right.kind} == {_FlagPredicateKind.BIT_SET, _FlagPredicateKind.BITS_NOT_EQUAL}:
                 bit_pred = pred.left if pred.left.kind == _FlagPredicateKind.BIT_SET else pred.right
                 cmp_pred = pred.right if bit_pred is pred.left else pred.left
-                if bit_pred.bit == _FlagBit.ZF and {cmp_pred.left_bit, cmp_pred.right_bit} == {_FlagBit.SF, _FlagBit.OF}:
+                if bit_pred.bit == _FlagBit.ZF and {cmp_pred.left_bit, cmp_pred.right_bit} == {
+                    _FlagBit.SF,
+                    _FlagBit.OF,
+                }:
                     return "sle"
         if pred.kind == _FlagPredicateKind.AND and pred.left is not None and pred.right is not None:
             if {
@@ -403,7 +409,10 @@ def _condition_op_from_flag_predicate(pred: _FlagPredicate) -> str | None:
             if {pred.left.kind, pred.right.kind} == {_FlagPredicateKind.BIT_CLEAR, _FlagPredicateKind.BITS_EQUAL}:
                 bit_pred = pred.left if pred.left.kind == _FlagPredicateKind.BIT_CLEAR else pred.right
                 cmp_pred = pred.right if bit_pred is pred.left else pred.left
-                if bit_pred.bit == _FlagBit.ZF and {cmp_pred.left_bit, cmp_pred.right_bit} == {_FlagBit.SF, _FlagBit.OF}:
+                if bit_pred.bit == _FlagBit.ZF and {cmp_pred.left_bit, cmp_pred.right_bit} == {
+                    _FlagBit.SF,
+                    _FlagBit.OF,
+                }:
                     return "sgt"
         return None
 
@@ -456,11 +465,25 @@ def _try_expr_to_condition(
             lowered = op.lower()
             if "and" in lowered:
                 return _logical_condition(
-                    "and", args[0], args[1], tmps, conditions, expr_to_value=expr_to_value, source=op, tmp_exprs=tmp_exprs
+                    "and",
+                    args[0],
+                    args[1],
+                    tmps,
+                    conditions,
+                    expr_to_value=expr_to_value,
+                    source=op,
+                    tmp_exprs=tmp_exprs,
                 )
             if "or" in lowered:
                 return _logical_condition(
-                    "or", args[0], args[1], tmps, conditions, expr_to_value=expr_to_value, source=op, tmp_exprs=tmp_exprs
+                    "or",
+                    args[0],
+                    args[1],
+                    tmps,
+                    conditions,
+                    expr_to_value=expr_to_value,
+                    source=op,
+                    tmp_exprs=tmp_exprs,
                 )
             left = expr_to_value(args[0], tmps, conditions)
             right = expr_to_value(args[1], tmps, conditions)
@@ -523,7 +546,9 @@ def expr_to_condition(
                 cond = build_condition_from_binop(op, left, right)
                 if cond is not None:
                     return cond
-                logical = _try_expr_to_condition(expr, tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs)
+                logical = _try_expr_to_condition(
+                    expr, tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs
+                )
                 if logical is not None:
                     return logical
                 if "And" in op:

@@ -70,6 +70,7 @@ def discover_signature_inputs(
                 seen.add(resolved)
                 inputs.append(resolved)
         return tuple(inputs)
+
     return _impl()
 
 
@@ -121,7 +122,9 @@ def build_signature_catalog(
             ),
         )
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
-        resolved_output.write_text("".join(f"{format_pat_module_line(module)}\n" for module in ordered_modules) + "---\n")
+        resolved_output.write_text(
+            "".join(f"{format_pat_module_line(module)}\n" for module in ordered_modules) + "---\n"
+        )
         return SignatureCatalogBuildResult(
             output_path=resolved_output,
             input_count=len(selected_inputs),
@@ -130,6 +133,7 @@ def build_signature_catalog(
             duplicate_module_count=duplicate_module_count,
             source_paths=selected_inputs,
         )
+
     return _impl()
 
 
@@ -218,6 +222,7 @@ def match_signature_catalog(
         if cache_key is not None:
             _store_cache_json("signature_catalog_match", cache_key, _encode_signature_catalog_match(result))
         return result
+
     return _impl()
 
 
@@ -278,6 +283,7 @@ def _decode_signature_catalog_match(payload: dict[str, object] | None) -> LocalP
         source_formats = tuple(value for value in raw_formats if isinstance(value, str))
         matched_compiler_names = tuple(value for value in raw_compilers if isinstance(value, str))
         return LocalPatMatchResult(code_labels, code_ranges, source_formats, matched_compiler_names)
+
     return _impl()
 
 
@@ -305,4 +311,5 @@ def _filter_specs_by_compiler_names(
             ):
                 filtered.append(spec)
         return tuple(filtered)
+
     return _impl()

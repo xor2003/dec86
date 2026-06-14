@@ -10,8 +10,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler.monkeytype_tools import DEFAULT_MONKEYTYPE_TEST_TARGETS, MONKEYTYPE_DB_PATH, ensure_monkeytype_dirs
-
+from inertia_decompiler.monkeytype_tools import (
+    DEFAULT_MONKEYTYPE_TEST_TARGETS,
+    MONKEYTYPE_DB_PATH,
+    ensure_monkeytype_dirs,
+)
 
 PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 
@@ -22,7 +25,9 @@ def _python() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run pytest targets under MonkeyType tracing.")
-    parser.add_argument("--reset-db", action="store_true", help="Remove the existing MonkeyType sqlite DB before tracing.")
+    parser.add_argument(
+        "--reset-db", action="store_true", help="Remove the existing MonkeyType sqlite DB before tracing."
+    )
     parser.add_argument(
         "--pytest-target",
         action="append",

@@ -527,15 +527,21 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
                 _publish_segmented_memory_evidence_8616(codegen, summary, lowering)
                 codegen._inertia_segmented_memory_stats = {
                     "segment_assignments": len(assignments),
-                    "associations_built": sum(len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")),
+                    "associations_built": sum(
+                        len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")
+                    ),
                     "far_pointers_detected": 0,
                 }
             else:
-                _publish_segmented_memory_evidence_8616(codegen, {
-                    "stable": {},
-                    "over_associated": {},
-                    "unknown": {},
-                }, {})
+                _publish_segmented_memory_evidence_8616(
+                    codegen,
+                    {
+                        "stable": {},
+                        "over_associated": {},
+                        "unknown": {},
+                    },
+                    {},
+                )
 
             changed = False
             target = str(

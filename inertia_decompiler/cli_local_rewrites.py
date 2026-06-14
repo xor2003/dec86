@@ -7,7 +7,6 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeBottom
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-
 _STACK_BP_PLACEHOLDER_RE = re.compile(
     r"<[^>\n]*\|Stack\s+(?P<base>bp)(?P<sign>[+-])0x(?P<offset>[0-9A-Fa-f]+),\s*(?P<size>\d+)\s*B>"
 )
@@ -396,9 +395,9 @@ def _materialize_missing_stack_local_declarations(
                 iter_c_nodes_deep=iter_c_nodes_deep,
             ):
                 changed_ref["changed"] = True
-                codegen._inertia_stack_declaration_name_synced_count_8616 = int(
-                    getattr(codegen, "_inertia_stack_declaration_name_synced_count_8616", 0) or 0
-                ) + 1
+                codegen._inertia_stack_declaration_name_synced_count_8616 = (
+                    int(getattr(codegen, "_inertia_stack_declaration_name_synced_count_8616", 0) or 0) + 1
+                )
         if _prune_dead_placeholder_variables(
             cfunc=cfunc,
             variables_in_use=variables_in_use,
@@ -591,15 +590,18 @@ def _materialize_missing_register_local_declarations(
                 identity = stack_slot_identity_for_variable(variable)
                 if identity is not None:
                     return ("stack", identity.base, getattr(identity, "offset", None), getattr(variable, "size", None))
-                return ("stack", getattr(variable, "base", None), getattr(variable, "offset", None), getattr(variable, "size", None))
+                return (
+                    "stack",
+                    getattr(variable, "base", None),
+                    getattr(variable, "offset", None),
+                    getattr(variable, "size", None),
+                )
             if isinstance(variable, SimRegisterVariable):
                 return ("reg", getattr(variable, "reg", None), getattr(variable, "size", None))
             return None
 
         existing_identities = {
-            identity
-            for variable in unified_locals
-            if (identity := _local_identity(variable)) is not None
+            identity for variable in unified_locals if (identity := _local_identity(variable)) is not None
         }
 
         desired_segment_regs = {"cs", "ds", "es", "ss", "fs", "gs", "flags"}
@@ -714,7 +716,9 @@ def _prune_void_function_return_values(codegen, *, iter_c_nodes_deep):
                 rewritten.append(stmt)
             local_changed = True
         if local_changed:
-            container.statements = rewritten if isinstance(getattr(container, "statements", None), list) else tuple(rewritten)
+            container.statements = (
+                rewritten if isinstance(getattr(container, "statements", None), list) else tuple(rewritten)
+            )
             changed = True
 
     return changed

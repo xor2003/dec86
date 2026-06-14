@@ -411,7 +411,9 @@ def _simulate_manual_control_flow(case: dict[str, Any], state, insn_bytes: bytes
         if opcode == 0xCA:
             state.regs.ip = _pop16_concrete(state)
             state.regs.cs = _pop16_concrete(state)
-            state.regs.sp = (state.solver.eval(state.regs.sp) + (insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8))) & 0xFFFF
+            state.regs.sp = (
+                state.solver.eval(state.regs.sp) + (insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8))
+            ) & 0xFFFF
             return True
 
         if opcode == 0xCF:
@@ -683,7 +685,9 @@ def verify_case(
                 iterations = 1
                 max_iterations = max(1, repeat_limit)
                 while (
-                    state.addr == start_addr and iterations < max_iterations and _repeat_should_continue(state, insn_bytes)
+                    state.addr == start_addr
+                    and iterations < max_iterations
+                    and _repeat_should_continue(state, insn_bytes)
                 ):
                     state = _step_with_lock_retry(project, state, insn_bytes, advance_ip_for_stripped_lock=False)
                     iterations += 1

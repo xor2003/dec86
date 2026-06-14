@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from tools.dosunit.model import DosUnitError, normalize_hex, stable_id
-
 
 _MZRE_SEGMENT_RE = re.compile(r"^([A-Za-z_]\w*)\s+(CODE|DATA|STACK)\s+([0-9A-Fa-f]+)$", re.IGNORECASE)
 _MZRE_ROUTINE_RE = re.compile(
@@ -27,9 +26,7 @@ _LINK_SEGMENT_RE = re.compile(
     r"^\s*(?P<start>[0-9A-Fa-f]+)H\s+(?P<stop>[0-9A-Fa-f]+)H\s+"
     r"(?P<length>[0-9A-Fa-f]+)H\s+(?P<name>\S+)\s+(?P<class>\S+)\s*$"
 )
-_LINK_PUBLIC_RE = re.compile(
-    r"^\s*(?P<seg>[0-9A-Fa-f]{4}):(?P<off>[0-9A-Fa-f]{4})\s+(?P<name>\S+)\s*$"
-)
+_LINK_PUBLIC_RE = re.compile(r"^\s*(?P<seg>[0-9A-Fa-f]{4}):(?P<off>[0-9A-Fa-f]{4})\s+(?P<name>\S+)\s*$")
 _LINK_GROUP_RE = re.compile(r"^\s*(?P<seg>[0-9A-Fa-f]{4}):(?P<off>[0-9A-Fa-f]+)\s+(?P<name>\S+)\s*$")
 _COD_PROC_RE = re.compile(r"^\s*(?P<name>[A-Za-z_$?@][\w$?@]*)\s+PROC\s+(?P<kind>[A-Za-z]+)\b", re.IGNORECASE)
 _COD_ENDP_RE = re.compile(r"^\s*(?P<name>[A-Za-z_$?@][\w$?@]*)\s+ENDP\b", re.IGNORECASE)
@@ -474,7 +471,7 @@ def _cod_instruction_mask(data: bytes, text: str) -> list[bool]:
     mask = [True] * len(data)
     if not data:
         return mask
-    mnemonic = (text.split(None, 1)[0].lower() if text.strip() else "")
+    mnemonic = text.split(None, 1)[0].lower() if text.strip() else ""
     if mnemonic == "call" and data[0] in {0x9A, 0xE8}:
         for idx in range(1, len(mask)):
             mask[idx] = False

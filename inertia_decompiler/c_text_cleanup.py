@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 _RAW_REGISTER_FRAGMENT_RE = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\{r\d+\|\d+b\}")
 _CALLEE_NAMESPACE_RE = re.compile(r"::0x[0-9a-fA-F]+::(?P<name>[A-Za-z_]\w*)")
 _PLACEHOLDER_RE = re.compile(r"<(?P<body>0x[^>\n]+)>")
@@ -108,7 +107,6 @@ def _dedupe_local_declarations(c_text: str) -> str:
 
 def normalize_unresolved_c_text(c_text: str) -> str:
     """Normalize still-structured decompiler output into valid-ish C identifiers."""
-
     normalized = _CALLEE_NAMESPACE_RE.sub(lambda match: match.group("name"), c_text)
     normalized = _RAW_REGISTER_FRAGMENT_RE.sub(lambda match: match.group("name"), normalized)
     normalized = _normalize_concat_insert_artifacts(normalized)
@@ -139,10 +137,7 @@ def _rewrite_unresolved_ellipsis_assignments(c_text: str) -> str:
 def _rewrite_unresolved_missing_label_gotos(c_text: str) -> str:
     # Normalize synthetic unresolved goto targets that were not materialized
     # into labels, keeping generated C compilable under strict compilers.
-    defined_labels = {
-        m.group("label")
-        for m in re.finditer(r"(?m)^\s*(?P<label>LABEL_0x[0-9a-fA-F]+)\s*:\s*$", c_text)
-    }
+    defined_labels = {m.group("label") for m in re.finditer(r"(?m)^\s*(?P<label>LABEL_0x[0-9a-fA-F]+)\s*:\s*$", c_text)}
 
     def _replace(match: re.Match[str]) -> str:
         label = match.group("label")
@@ -161,9 +156,7 @@ def _rewrite_unresolved_missing_label_gotos(c_text: str) -> str:
 def _rewrite_unresolved_for_updates(c_text: str) -> str:
     # Recover the common unresolved loop update form: `for (...; ...; i = ...)`
     # into a stable update that preserves forward loop progress.
-    pattern = re.compile(
-        r"for\s*\((?P<head>[^;]*;[^;]*;)\s*(?P<var>[A-Za-z_]\w*)\s*=\s*\.\.\.\s*\)"
-    )
+    pattern = re.compile(r"for\s*\((?P<head>[^;]*;[^;]*;)\s*(?P<var>[A-Za-z_]\w*)\s*=\s*\.\.\.\s*\)")
     return pattern.sub(lambda m: f"for ({m.group('head')} {m.group('var')}++)", c_text)
 
 
@@ -179,9 +172,7 @@ def _rewrite_unresolved_boolean_ellipsis_conditions(c_text: str) -> str:
     if not lines:
         return c_text
 
-    cond_re = re.compile(
-        r"^(?P<indent>\s*)if\s*\(\s*\(\s*\.\.\.\s*\?\s*0\s*:\s*1\s*\)\s*\)\s*$"
-    )
+    cond_re = re.compile(r"^(?P<indent>\s*)if\s*\(\s*\(\s*\.\.\.\s*\?\s*0\s*:\s*1\s*\)\s*\)\s*$")
     assign_re = re.compile(r"^\s*(?P<dst>[A-Za-z_]\w*)\s*=\s*(?P<src>[^;]+?)\s*;\s*$")
     byte_re = re.compile(r"^(?P<lo>[A-Za-z_]\w*)\s*\|\s*(?P<hi>[A-Za-z_]\w*)\s*\*\s*0x100$")
 
@@ -328,18 +319,10 @@ def _rewrite_linear_segment_word_dereferences(c_text: str) -> str:
         re.compile(
             r"\*\s*\(\s*\(\s*(?:unsigned\s+|signed\s+)?(?:short|int|long)\s*\*\s*\)\s*\(\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*<<\s*4\s*\)\s*\+\s*(?P<off>[^)]+?)\s*\)\s*\)"
         ),
-        re.compile(
-            r"\*\s*\(\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*\*\s*16\s*\)\s*\+\s*(?P<off>[^)]+?)\s*\)"
-        ),
-        re.compile(
-            r"\*\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*\*\s*16\s*\+\s*(?P<off>[^)]+?)\s*\)"
-        ),
-        re.compile(
-            r"\*\s*\(\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*<<\s*4\s*\)\s*\+\s*(?P<off>[^)]+?)\s*\)"
-        ),
-        re.compile(
-            r"\*\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*<<\s*4\s*\+\s*(?P<off>[^)]+?)\s*\)"
-        ),
+        re.compile(r"\*\s*\(\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*\*\s*16\s*\)\s*\+\s*(?P<off>[^)]+?)\s*\)"),
+        re.compile(r"\*\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*\*\s*16\s*\+\s*(?P<off>[^)]+?)\s*\)"),
+        re.compile(r"\*\s*\(\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*<<\s*4\s*\)\s*\+\s*(?P<off>[^)]+?)\s*\)"),
+        re.compile(r"\*\s*\(\s*(?P<seg>[A-Za-z_]\w*)\s*<<\s*4\s*\+\s*(?P<off>[^)]+?)\s*\)"),
     ]
     out = c_text
     for pat in patterns:
@@ -387,7 +370,13 @@ def _prune_unreachable_after_return(c_text: str) -> str:
             opens = line.count("{")
             closes = line.count("}")
             indent = len(line) - len(line.lstrip(" \t"))
-            if saw_return and return_indent is not None and stripped and not stripped.startswith("}") and indent <= return_indent:
+            if (
+                saw_return
+                and return_indent is not None
+                and stripped
+                and not stripped.startswith("}")
+                and indent <= return_indent
+            ):
                 saw_return = False
                 return_indent = None
             if saw_return and brace_depth > 0 and stripped and not stripped.startswith(("}", "/*", "*", "//")):

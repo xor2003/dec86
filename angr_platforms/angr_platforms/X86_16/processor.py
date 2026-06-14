@@ -263,7 +263,9 @@ class Processor(Eflags, CR):
             if isinstance(n, reg8_t):
                 base = self.get_gpreg(self._reg8_base(n))
                 if self._reg8_is_high(n):
-                    return (base >> 8).cast_to(Type.int_8) if self.lifter_instruction is not None else (base >> 8) & 0xFF
+                    return (
+                        (base >> 8).cast_to(Type.int_8) if self.lifter_instruction is not None else (base >> 8) & 0xFF
+                    )
                 return base.cast_to(Type.int_8) if self.lifter_instruction is not None else base & 0xFF
             if self.lifter_instruction is not None:
                 if self.vex_offsets is None:

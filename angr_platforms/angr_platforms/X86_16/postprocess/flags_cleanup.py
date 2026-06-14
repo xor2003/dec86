@@ -495,7 +495,9 @@ def _recover_combined_signed_flag_condition_8616(node, flag_var, flag_expr, code
             return None
         lhs_op, lhs_cmp_lhs, lhs_cmp_rhs = lhs_info
         rhs_op, rhs_cmp_lhs, rhs_cmp_rhs = rhs_info
-        if not _same_c_expression_8616(lhs_cmp_lhs, rhs_cmp_lhs) or not _same_c_expression_8616(lhs_cmp_rhs, rhs_cmp_rhs):
+        if not _same_c_expression_8616(lhs_cmp_lhs, rhs_cmp_lhs) or not _same_c_expression_8616(
+            lhs_cmp_rhs, rhs_cmp_rhs
+        ):
             return None
 
         ordered_ops = {lhs_op, rhs_op}

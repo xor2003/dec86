@@ -60,7 +60,12 @@ def _format_ir_condition_hint_8616(condition: IRCondition) -> str | None:
             if inner is None:
                 return None
             return f"!({inner})"
-        if op in {"and", "or"} and len(args) == 2 and isinstance(args[0], IRCondition) and isinstance(args[1], IRCondition):
+        if (
+            op in {"and", "or"}
+            and len(args) == 2
+            and isinstance(args[0], IRCondition)
+            and isinstance(args[1], IRCondition)
+        ):
             left = _format_ir_condition_hint_8616(args[0])
             right = _format_ir_condition_hint_8616(args[1])
             if left is None or right is None:

@@ -14,13 +14,11 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
-import signal
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -36,6 +34,7 @@ PROJECT_VENV_PYTHON = WORKSPACE_PATH / ".venv" / "bin" / "python"
 # ---------------------------------------------------------------------------
 # Backend detection
 # ---------------------------------------------------------------------------
+
 
 def find_libdosbox_binary() -> Path | None:
     """Find the compiled libdosbox binary with GDB support."""
@@ -58,10 +57,7 @@ def has_libdosbox_gdb_support() -> bool:
         return False
     # Check if binary has debug symbols and GDB-related strings
     try:
-        result = subprocess.run(
-            ["strings", str(binary)],
-            capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["strings", str(binary)], capture_output=True, text=True, timeout=5)
         output = result.stdout
         return "gdb" in output.lower() or "debug" in output.lower()
     except Exception:
@@ -72,9 +68,11 @@ def has_libdosbox_gdb_support() -> bool:
 # GDB Server launchers
 # ---------------------------------------------------------------------------
 
+
 def find_free_port(host: str = "127.0.0.1") -> int:
     """Find a free TCP port."""
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, 0))
         return s.getsockname()[1]
@@ -86,8 +84,14 @@ def start_angr_gdb_server(exe_path: str, port: int, host: str) -> subprocess.Pop
     if port == 0:
         port = find_free_port(host)
     cmd = [
-        sys.executable, "-m", "inertia_decompiler.debug_dos",
-        exe_path, "--port", str(port), "--host", host,
+        sys.executable,
+        "-m",
+        "inertia_decompiler.debug_dos",
+        exe_path,
+        "--port",
+        str(port),
+        "--host",
+        host,
     ]
     print(f"[*] Starting angr GDB server on {host}:{port}: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=str(WORKSPACE_PATH))
@@ -104,11 +108,15 @@ def start_dosbox_gdb_server(exe_path: str, port: int, host: str) -> subprocess.P
     # libdosbox typically uses -debug or -gdb flags
     cmd = [
         str(binary),
-        "-c", f"mount c {Path(exe_path).parent}",
-        "-c", f"c:",
-        "-c", Path(exe_path).name,
+        "-c",
+        f"mount c {Path(exe_path).parent}",
+        "-c",
+        "c:",
+        "-c",
+        Path(exe_path).name,
         "-debug",
-        "-gdbport", str(port),
+        "-gdbport",
+        str(port),
     ]
     print(f"[*] Starting libdosbox GDB server: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=str(WORKSPACE_PATH))
@@ -168,6 +176,7 @@ def wait_for_server(host: str, port: int, proc: subprocess.Popen, timeout: float
 # TUI launcher
 # ---------------------------------------------------------------------------
 
+
 def launch_tui(host: str, port: int, arch: str) -> None:
     """Launch the Textual TUI client."""
     from inertia_decompiler.gdb_tui import GDBTUIApp
@@ -179,6 +188,7 @@ def launch_tui(host: str, port: int, arch: str) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     def _impl():
@@ -198,7 +208,9 @@ def main() -> None:
         parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="GDB server port (0 = auto)")
         parser.add_argument("--host", default=DEFAULT_HOST, help="GDB server host")
         parser.add_argument("--arch", choices=["x86_16", "x86", "x86_64"], default="x86_16", help="Target architecture")
-        parser.add_argument("--backend", choices=["angr", "dosbox", "gdbserver"], default=None, help="Simulator backend")
+        parser.add_argument(
+            "--backend", choices=["angr", "dosbox", "gdbserver"], default=None, help="Simulator backend"
+        )
         parser.add_argument("--connect", metavar="HOST:PORT", help="Connect TUI to existing GDB server")
         parser.add_argument("--list-backends", action="store_true", help="List available backends")
         parser.add_argument("--tui-only", action="store_true", help="Only launch TUI (no server)")
@@ -212,7 +224,9 @@ def main() -> None:
             print(f"  angr:    {'available' if WORKSPACE_PATH / 'angr_platforms' else 'not found'}")
             dosbox_bin = find_libdosbox_binary()
             print(f"  dosbox:  {'available ({})'.format(dosbox_bin) if dosbox_bin else 'not found'}")
-            print(f"  gdbserver: {'available' if subprocess.run(['which', 'gdbserver'], capture_output=True).returncode == 0 else 'not found'}")
+            print(
+                f"  gdbserver: {'available' if subprocess.run(['which', 'gdbserver'], capture_output=True).returncode == 0 else 'not found'}"
+            )
             return
 
         # Connect mode (TUI only)
@@ -271,10 +285,10 @@ def main() -> None:
                 if not module_available("textual"):
                     print("Error: missing Python module 'textual' required for the TUI")
                     sys.exit(1)
-                print(f"[*] Launching TUI...")
+                print("[*] Launching TUI...")
                 launch_tui(args.host, server_port, args.arch)
             else:
-                print(f"[*] Server running. Connect with:")
+                print("[*] Server running. Connect with:")
                 print(f"    python {__file__} --connect {args.host}:{server_port}")
                 # Wait for server to exit
                 server_proc.wait()
@@ -290,6 +304,7 @@ def main() -> None:
                 except subprocess.TimeoutExpired:
                     server_proc.kill()
             print("[*] Debugger exited")
+
     return _impl()
 
 

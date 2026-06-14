@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
 import time
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Callable, Sequence
-
 
 SliceRecoverCallable = Callable[[Any], tuple[Any, Any]]
 SliceRecoveryRunner = Callable[
@@ -229,10 +228,14 @@ def run_bounded_slice_recovery(
                 payload=f"{attempt_name} bounded attempt returned no outcome",
             )
         trace = outcome.attempt_trace if outcome.attempt_trace is not None else _trace_snapshot()
-        verdict = outcome.verdict if outcome.verdict is not None else _build_bounded_slice_verdict(
-            trace,
-            status=outcome.status,
-            partial_payload=outcome.partial_payload,
+        verdict = (
+            outcome.verdict
+            if outcome.verdict is not None
+            else _build_bounded_slice_verdict(
+                trace,
+                status=outcome.status,
+                partial_payload=outcome.partial_payload,
+            )
         )
         outcome = replace(
             outcome,

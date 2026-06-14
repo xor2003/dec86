@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import shlex
-import subprocess
-import os
-import json
 import signal
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +18,6 @@ except ImportError:  # pragma: no cover
 
 from .config import LlmConfig
 from .procguard import register_child_process, unregister_child_process
-
 
 SESSION_RE = re.compile(r"session id:\s*(\S+)", re.IGNORECASE)
 LOCAL_BAD_PATTERNS = (
@@ -33,12 +32,14 @@ LOCAL_BAD_PATTERNS = (
 def backend_supports_sessions(provider: str) -> bool:
     def _impl():
         return provider == "codex"
+
     return _impl()
 
 
 def is_local_provider(provider: str) -> bool:
     def _impl():
         return provider in {"ollama", "llamacpp"}
+
     return _impl()
 
 
@@ -46,12 +47,14 @@ def extract_session_id(text: str) -> str:
     def _impl():
         match = SESSION_RE.search(text)
         return match.group(1) if match else ""
+
     return _impl()
 
 
 def _timestamp() -> str:
     def _impl():
         return datetime.now().astimezone().isoformat(timespec="seconds")
+
     return _impl()
 
 
@@ -67,7 +70,9 @@ def _build_codex_memory_preexec_fn(memory_limit_mb: int) -> Callable[[], None] |
                 resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
                 if hasattr(resource, "RLIMIT_DATA"):
                     resource.setrlimit(resource.RLIMIT_DATA, (limit_bytes, limit_bytes))
+
             return _impl()
+
     return _impl()
 
     return _set_limits
@@ -80,6 +85,7 @@ def _provider_env(config: LlmConfig) -> dict[str, str]:
         existing = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = f"{root}:{existing}" if existing else root
         return env
+
     return _impl()
 
 
@@ -105,6 +111,7 @@ def build_effective_prompt(
         if previous_log_path:
             extra.append(f"- Previous {key} log for continuity: {previous_log_path}")
         return base_prompt + "\n" + "\n".join(extra) + "\n"
+
     return _impl()
 
 
@@ -115,7 +122,9 @@ def validate_output(key: str, provider: str, log_path: Path, config: LlmConfig) 
         if not log_path.exists() or log_path.stat().st_size < config.local_model_min_output_bytes:
             return False
         text = log_path.read_text(encoding="utf-8", errors="replace")
-        if key in {"planner", "checker", "worker", "reviewer"} and not re.search(r"Global Remaining steps:\s*\d+", text):
+        if key in {"planner", "checker", "worker", "reviewer"} and not re.search(
+            r"Global Remaining steps:\s*\d+", text
+        ):
             return False
         if key in {"planner", "checker", "reviewer"}:
             lowered = text.lower()
@@ -127,6 +136,7 @@ def validate_output(key: str, provider: str, log_path: Path, config: LlmConfig) 
         if key == "planner" and not config.plan_path.exists():
             return False
         return True
+
     return _impl()
 
 
@@ -135,6 +145,7 @@ def _append_to_logs(outputs: tuple[object, ...], text: str) -> None:
         for out in outputs:
             out.write(text)
             out.flush()
+
     return _impl()
 
 
@@ -144,6 +155,7 @@ def _file_size(path: Path) -> int:
             return path.stat().st_size
         except OSError:
             return 0
+
     return _impl()
 
 
@@ -153,6 +165,7 @@ def _agent_no_output_restart_secs() -> int:
             return max(0, int(os.environ.get("AGENT_NO_OUTPUT_RESTART_SECS", "180")))
         except ValueError:
             return 180
+
     return _impl()
 
 
@@ -162,6 +175,7 @@ def _agent_no_output_max_restarts() -> int:
             return max(0, int(os.environ.get("AGENT_NO_OUTPUT_MAX_RESTARTS", "1")))
         except ValueError:
             return 1
+
     return _impl()
 
 
@@ -181,6 +195,7 @@ def _terminate_process(proc: subprocess.Popen[str]) -> None:
         except (OSError, ProcessLookupError):
             proc.kill()
         proc.wait()
+
     return _impl()
 
 
@@ -241,6 +256,7 @@ def _stream_process_output(
                 )
                 _terminate_process(proc)
                 return 124, True
+
     return _impl()
 
 
@@ -262,7 +278,9 @@ def _run_and_mirror_output(
             idle_timeout_secs = _agent_no_output_restart_secs()
             max_restarts = _agent_no_output_max_restarts()
             for attempt in range(max_restarts + 1):
-                attempt_header = header if attempt == 0 else header.replace("] start ", f"] restart={attempt} start ", 1)
+                attempt_header = (
+                    header if attempt == 0 else header.replace("] start ", f"] restart={attempt} start ", 1)
+                )
                 _append_to_logs(outputs, attempt_header)
                 if stdin is not None and hasattr(stdin, "seek"):
                     stdin.seek(0)
@@ -279,7 +297,9 @@ def _run_and_mirror_output(
                     errors="replace",
                     bufsize=1,
                 )
-                register_child_process(config.status_file.parent, proc.pid, proc_name, str(config.root_dir), _timestamp())
+                register_child_process(
+                    config.status_file.parent, proc.pid, proc_name, str(config.root_dir), _timestamp()
+                )
                 try:
                     rc, idle_restart = _stream_process_output(
                         proc,
@@ -296,6 +316,7 @@ def _run_and_mirror_output(
         with log_file.open("a", encoding="utf-8") as out, config.last_log_file.open("a", encoding="utf-8") as mirror:
             _append_to_logs((out, mirror), footer)
         return rc
+
     return _impl()
 
 
@@ -406,7 +427,10 @@ def run_provider_once(
                 raise ValueError(f"Mock provider mode mismatch: expected {mode}, got {entry_mode}")
             session_hint = str(entry.get("session_id", "") or "")
             config.last_log_file.parent.mkdir(parents=True, exist_ok=True)
-            with log_file.open("w", encoding="utf-8") as out, config.last_log_file.open("w", encoding="utf-8") as mirror:
+            with (
+                log_file.open("w", encoding="utf-8") as out,
+                config.last_log_file.open("w", encoding="utf-8") as mirror,
+            ):
                 outputs = (out, mirror)
                 _append_to_logs(outputs, header)
                 if session_hint:
@@ -414,8 +438,12 @@ def run_provider_once(
                 if output:
                     _append_to_logs(outputs, output if output.endswith("\n") else output + "\n")
             footer = f"[{_timestamp()}] end rc={exit_code}\n"
-            with log_file.open("a", encoding="utf-8") as out, config.last_log_file.open("a", encoding="utf-8") as mirror:
+            with (
+                log_file.open("a", encoding="utf-8") as out,
+                config.last_log_file.open("a", encoding="utf-8") as mirror,
+            ):
                 _append_to_logs((out, mirror), footer)
             return exit_code
         raise ValueError(f"Unsupported provider: {provider}")
+
     return _impl()

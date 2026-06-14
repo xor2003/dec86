@@ -9,7 +9,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -111,7 +110,12 @@ def _parse_tail_stats(output: str) -> tuple[TailVerdict, int, int, int, int, int
         for m in _TAIL_COVERAGE_RE.finditer(output):
             total = max(total, int(m.group(1)))
             missing = max(missing, int(m.group(2)))
-            unknown = max(unknown, int(m.group(3),))
+            unknown = max(
+                unknown,
+                int(
+                    m.group(3),
+                ),
+            )
 
         if total == 0:
             # fallback estimate from verdict counts
@@ -188,7 +192,9 @@ def _run_iteration(cfg: LoopConfig, iteration: int) -> IterationStats:
     output = proc.stdout or ""
     log_path.write_text(output, encoding="utf-8")
 
-    verdict, tail_total, tail_clean, tail_failed, tail_unknown, tail_uncollected, tail_missing = _parse_tail_stats(output)
+    verdict, tail_total, tail_clean, tail_failed, tail_unknown, tail_uncollected, tail_missing = _parse_tail_stats(
+        output
+    )
     dead_setup_candidates, dead_setup_pruned, dead_setup_refused, dead_setup_escaped = _parse_dead_setup_summary(output)
     stats = IterationStats(
         iteration=iteration,
@@ -270,7 +276,9 @@ def _print_status(stats: IterationStats, best: IterationStats | None, stagnation
     print(f"[loop] report={stats.report_path} log={stats.log_path}")
 
 
-def _write_marker(marker_path: Path, reason: StopReason, best: IterationStats | None, last: IterationStats | None) -> None:
+def _write_marker(
+    marker_path: Path, reason: StopReason, best: IterationStats | None, last: IterationStats | None
+) -> None:
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "stop_reason": reason.value,
@@ -325,12 +333,21 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Auto-run decompilation quality loop until tail-validation goals are met.")
     p.add_argument("binary", type=Path, help="Binary path (for example SORTDEMO.EXE).")
     p.add_argument("--timeout", type=int, default=60, help="Per decompile.py run timeout seconds.")
-    p.add_argument("--include-library-functions", action="store_true", help="Run whole sweep including library functions.")
+    p.add_argument(
+        "--include-library-functions", action="store_true", help="Run whole sweep including library functions."
+    )
     p.add_argument("--max-functions", type=int, default=0, help="Pass-through max functions (0 = all).")
     p.add_argument("--max-iterations", type=int, default=200, help="Hard cap for loop iterations.")
-    p.add_argument("--stagnation-limit", type=int, default=20, help="Stop if no quality improvement across N iterations.")
+    p.add_argument(
+        "--stagnation-limit", type=int, default=20, help="Stop if no quality improvement across N iterations."
+    )
     p.add_argument("--sleep-sec", type=float, default=0.5, help="Sleep between iterations.")
-    p.add_argument("--out-dir", type=Path, default=Path("angr_platforms/.cache/auto_decomp_loop"), help="Output directory for logs/reports.")
+    p.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("angr_platforms/.cache/auto_decomp_loop"),
+        help="Output directory for logs/reports.",
+    )
     p.add_argument(
         "--marker-file",
         type=Path,
@@ -363,7 +380,11 @@ def main() -> int:
     )
     reason = run_loop(cfg)
     print(f"[loop] stop_reason={reason.value} marker={cfg.marker_file}")
-    return 0 if reason in (StopReason.GOALS_MET, StopReason.STOP_FILE, StopReason.MAX_ITERATIONS, StopReason.STAGNATED) else 2
+    return (
+        0
+        if reason in (StopReason.GOALS_MET, StopReason.STOP_FILE, StopReason.MAX_ITERATIONS, StopReason.STAGNATED)
+        else 2
+    )
 
 
 if __name__ == "__main__":

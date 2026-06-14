@@ -54,10 +54,13 @@ where = ["angr_platforms"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-include = [
-    "angr_platforms/angr_platforms/X86_16/*.py",
-    "angr_platforms/tests/test_x86_16*.py",
-    "angr_platforms/tests/conftest.py",
+extend-exclude = [
+    ".venv",
+    "angr_platforms/vextest_x86_16.egg-info",
+    "build",
+    "dist",
+    "examples/build_msc6",
+    "examples/build_msc6_tiny",
 ]
 
 [tool.ruff.lint]
@@ -77,6 +80,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "angr_platforms/tests/*.py" = ["ANN", "D", "E402"]
+"scripts/*.py" = ["D"]
 
 [tool.mypy]
 python_version = "3.11"

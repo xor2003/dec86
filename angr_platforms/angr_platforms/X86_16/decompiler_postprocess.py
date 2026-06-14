@@ -190,8 +190,7 @@ def _attach_project_cod_source_annotations_if_missing_8616(project, func_addr: i
     changed = True
     if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
         print(
-            "[dbg-x87-proto] "
-            f"attach_project_cod_source wrote func={func_addr!r} source_lines={len(source_lines)}",
+            f"[dbg-x87-proto] attach_project_cod_source wrote func={func_addr!r} source_lines={len(source_lines)}",
             file=sys.stderr,
             flush=True,
         )
@@ -1161,7 +1160,9 @@ def _promote_positive_bp_stack_slots_to_args_8616(project: SimpleNamespace, code
         arg_types.append(arg_type)
         arg_names.append(name if isinstance(name, str) and name else f"arg_{index}")
     existing_args = list(getattr(cfunc, "arg_list", ()) or ())
-    if len(existing_args) != len(desired_args) or any(existing is not desired for existing, desired in zip(existing_args, desired_args)):
+    if len(existing_args) != len(desired_args) or any(
+        existing is not desired for existing, desired in zip(existing_args, desired_args)
+    ):
         cfunc.arg_list = desired_args
         changed = True
     current_proto = getattr(cfunc, "functy", None) or getattr(cfunc, "prototype", None)
@@ -1220,9 +1221,9 @@ def _promote_positive_bp_stack_slots_to_args_8616(project: SimpleNamespace, code
                     del unified[variable]
                     changed = True
     if changed:
-        codegen._inertia_positive_bp_args_materialized_8616 = (
-            int(getattr(codegen, "_inertia_positive_bp_args_materialized_8616", 0) or 0) + len(desired_args)
-        )
+        codegen._inertia_positive_bp_args_materialized_8616 = int(
+            getattr(codegen, "_inertia_positive_bp_args_materialized_8616", 0) or 0
+        ) + len(desired_args)
     return changed
 
 
@@ -1274,7 +1275,9 @@ def _sync_arg_list_from_prototype_stack_layout_8616(
         offset = 4
         annotated_offsets: tuple[int, ...] = ()
         if len(annotated_args) == len(proto_args):
-            candidate_offsets = tuple(offset for offset, _name in annotated_args if isinstance(offset, int) and offset > 0)
+            candidate_offsets = tuple(
+                offset for offset, _name in annotated_args if isinstance(offset, int) and offset > 0
+            )
             if len(candidate_offsets) == len(proto_args) and tuple(sorted(candidate_offsets)) == candidate_offsets:
                 annotated_offsets = candidate_offsets
         changed = False
@@ -1344,7 +1347,9 @@ def _sync_arg_list_from_prototype_stack_layout_8616(
                     changed = True
 
         existing_args = list(getattr(cfunc, "arg_list", ()) or ())
-        if len(existing_args) != len(desired_args) or any(existing is not desired for existing, desired in zip(existing_args, desired_args)):
+        if len(existing_args) != len(desired_args) or any(
+            existing is not desired for existing, desired in zip(existing_args, desired_args)
+        ):
             cfunc.arg_list = desired_args
             changed = True
         active_prototype = prototype
@@ -1562,7 +1567,9 @@ def _is_simple_reg_indirect_operand_8616(insn, operand, reg_name: str) -> bool:
     return not (isinstance(index_reg, int) and index_reg) and (disp is None or disp == 0)
 
 
-def _collect_pointer_arg_indirect_facts_8616(project, function, pointer_arg_offsets: set[int]) -> tuple[PointerArgIndirectFact8616, ...]:
+def _collect_pointer_arg_indirect_facts_8616(
+    project, function, pointer_arg_offsets: set[int]
+) -> tuple[PointerArgIndirectFact8616, ...]:
     if project is None or function is None or not pointer_arg_offsets:
         return ()
 
@@ -1592,8 +1599,12 @@ def _collect_pointer_arg_indirect_facts_8616(project, function, pointer_arg_offs
                 continue
 
             dst, src = operands
-            dst_reg = _operand_reg_name_from_capstone_8616(insn, dst) if getattr(dst, "type", None) == X86_OP_REG else None
-            src_reg = _operand_reg_name_from_capstone_8616(insn, src) if getattr(src, "type", None) == X86_OP_REG else None
+            dst_reg = (
+                _operand_reg_name_from_capstone_8616(insn, dst) if getattr(dst, "type", None) == X86_OP_REG else None
+            )
+            src_reg = (
+                _operand_reg_name_from_capstone_8616(insn, src) if getattr(src, "type", None) == X86_OP_REG else None
+            )
 
             if dst_reg is not None:
                 src_bp_disp = _bp_memory_displacement_from_capstone_8616(insn, src)
@@ -1749,7 +1760,9 @@ def _candidate_functions_for_pointer_arg_fact_scan_8616(project, codegen, func):
     original_project = getattr(project, "_inertia_original_project", None)
     if isinstance(delta, int) and original_project is not None and isinstance(cfunc_addr, int):
         with contextlib.suppress(Exception):
-            yield from add(original_project, original_project.kb.functions.function(addr=cfunc_addr + delta, create=False))
+            yield from add(
+                original_project, original_project.kb.functions.function(addr=cfunc_addr + delta, create=False)
+            )
 
 
 def _materialize_pointer_arg_indirect_loads_8616(project, codegen, func) -> bool:
@@ -1780,8 +1793,7 @@ def _materialize_pointer_arg_indirect_loads_8616(project, codegen, func) -> bool
     setattr(codegen, "_inertia_pointer_arg_indirect_load_fact_count_8616", len(load_facts))
     if debug_pointer_indirect:
         print(
-            "[dbg-pointer-indirect] "
-            f"pointer_offsets={sorted(pointer_args_by_offset)} load_facts={load_facts!r}",
+            f"[dbg-pointer-indirect] pointer_offsets={sorted(pointer_args_by_offset)} load_facts={load_facts!r}",
             file=sys.stderr,
             flush=True,
         )
@@ -1838,8 +1850,7 @@ def _materialize_pointer_arg_indirect_loads_8616(project, codegen, func) -> bool
         stmt.rhs = _make_zero_indexed_pointer_arg_8616(codegen, pointer_args_by_offset[offset])
         if debug_pointer_indirect:
             print(
-                "[dbg-pointer-indirect] materialized "
-                f"offset={offset} fact={load_facts[fact_index]!r}",
+                f"[dbg-pointer-indirect] materialized offset={offset} fact={load_facts[fact_index]!r}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -1925,7 +1936,9 @@ def _promote_from_annotated_args_8616(
         target_arg_count = len(annotated_args)
         new_args = list(getattr(prototype, "args", ()) or ())
         if len(new_args) < target_arg_count:
-            new_args.extend(SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(new_args)))
+            new_args.extend(
+                SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(new_args))
+            )
         elif len(new_args) > target_arg_count:
             new_args = new_args[:target_arg_count]
         desired_names = []
@@ -1945,7 +1958,9 @@ def _promote_from_annotated_args_8616(
         x87_scalar_arg_types = _x87_scalar_stack_arg_types_8616(project, func, codegen=codegen)
         for index in range(target_arg_count):
             annotated_offset = annotated_args[index][0] if index < len(annotated_args) else None
-            resolved_arg = existing_args[index] if index < len(existing_args) else stack_cvars_by_offset.get(annotated_offset)
+            resolved_arg = (
+                existing_args[index] if index < len(existing_args) else stack_cvars_by_offset.get(annotated_offset)
+            )
             resolved_args.append(resolved_arg)
             scalar_type = x87_scalar_arg_types.get(annotated_offset)
             if scalar_type is not None:
@@ -2003,9 +2018,9 @@ def _promote_from_annotated_args_8616(
             codegen.cfunc.arg_list = [resolved_arg for resolved_arg in resolved_args if resolved_arg is not None]
         return True
 
-
-
     return _impl()
+
+
 def _promote_from_fallback_args_8616(
     *,
     project,
@@ -2023,7 +2038,9 @@ def _promote_from_fallback_args_8616(
         target_arg_count = len(fallback_args)
         new_args = list(getattr(current_proto, "args", ()) or ())
         if len(new_args) < target_arg_count:
-            new_args.extend(SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(new_args)))
+            new_args.extend(
+                SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(new_args))
+            )
         elif len(new_args) > target_arg_count:
             new_args = new_args[:target_arg_count]
         pointer_promoted = False
@@ -2159,7 +2176,9 @@ def _promote_from_legacy_arg_names_8616(*, project, codegen, func, prototype, ar
             target_arg_count = max(len(existing_args), max(((offset - 2) // 2) for offset in offsets))
             if target_arg_count > len(existing_args):
                 new_args = list(existing_args)
-                new_args.extend(SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(existing_args)))
+                new_args.extend(
+                    SimTypeShort(False).with_arch(project.arch) for _ in range(target_arg_count - len(existing_args))
+                )
             else:
                 new_args = list(existing_args)
             normalized_names = _normalize_arg_names_8616(getattr(prototype, "arg_names", None), len(new_args))
@@ -2204,8 +2223,7 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             project=project,
         )
         if (
-            os.environ.get("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "").strip().lower()
-            not in {"1", "true", "yes", "on"}
+            os.environ.get("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "").strip().lower() not in {"1", "true", "yes", "on"}
             and not source_decl_is_void
         ):
             return False
@@ -2299,7 +2317,9 @@ def _collect_source_return_annotation_8616(func, project=None) -> tuple[tuple[st
         if isinstance(annotations, dict):
             source_return_lines = tuple(annotations.get("source_return_lines", ()) or ())
             source_lines = tuple(annotations.get("source_lines", ()) or ())
-    source_decl = _source_decl_from_cod_source_lines(source_lines, getattr(func, "name", None)) if source_lines else None
+    source_decl = (
+        _source_decl_from_cod_source_lines(source_lines, getattr(func, "name", None)) if source_lines else None
+    )
     if not (isinstance(source_decl, str) and source_decl):
         return source_return_lines, source_lines, _local_source_return_decl_is_void_8616(func, project=project)
     try:
@@ -2474,7 +2494,9 @@ def _apply_annotations_8616(project, codegen) -> bool:
         source_decl = _source_decl_from_project_cod_metadata_8616(project, func_addr)
         source_proto_applied = False
         opaque_source_types = (
-            _c_decl_requires_opaque_typedefs_8616(source_decl) if isinstance(source_decl, str) and source_decl else False
+            _c_decl_requires_opaque_typedefs_8616(source_decl)
+            if isinstance(source_decl, str) and source_decl
+            else False
         )
         if isinstance(source_decl, str) and source_decl and opaque_source_types:
             with contextlib.suppress(Exception):
@@ -2586,8 +2608,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
                 return False
             return (
                 isinstance(normalized, str)
-                and re.fullmatch(r"(?:arg_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", normalized)
-                is not None
+                and re.fullmatch(r"(?:arg_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", normalized) is not None
             )
 
         def _stack_candidate_score(variable, cvar, *, exact: bool) -> tuple[int, int, int, int, int]:
@@ -2626,8 +2647,11 @@ def _apply_annotations_8616(project, codegen) -> bool:
 
         materialized_stack_cvars: dict[int, CVariable] = {}
         positive_stack_spec_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
-        positive_specs_are_normalized = _positive_stack_specs_are_normalized_for_codegen_8616(stack_specs, codegen) and (
-            not stack_vars_by_offset or any((offset + 2) in stack_vars_by_offset for offset in positive_stack_spec_offsets)
+        positive_specs_are_normalized = _positive_stack_specs_are_normalized_for_codegen_8616(
+            stack_specs, codegen
+        ) and (
+            not stack_vars_by_offset
+            or any((offset + 2) in stack_vars_by_offset for offset in positive_stack_spec_offsets)
         )
 
         def _stack_spec_for_offset(offset: int):
@@ -2873,9 +2897,9 @@ def _rename_stack_variables_from_specs_8616(
                 changed = True
         return changed
 
-
-
     return _impl()
+
+
 def _sync_arg_list_from_annotations_8616(
     *,
     codegen,
@@ -2967,8 +2991,7 @@ def _sync_arg_list_from_annotations_8616(
             )
         if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
             print(
-                "[dbg-x87-proto] "
-                f"sync_annotations source_pointer_flags={source_pointer_flags!r}",
+                f"[dbg-x87-proto] sync_annotations source_pointer_flags={source_pointer_flags!r}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -2984,8 +3007,10 @@ def _sync_arg_list_from_annotations_8616(
                     new_args[index] = scalar_type
                     scalar_materialized = True
                 continue
-            if index < len(source_pointer_flags) and source_pointer_flags[index] is False and isinstance(
-                new_args[index], SimTypePointer
+            if (
+                index < len(source_pointer_flags)
+                and source_pointer_flags[index] is False
+                and isinstance(new_args[index], SimTypePointer)
             ):
                 arch = getattr(project, "arch", None)
                 scalar_type = SimTypeShort(False).with_arch(arch) if arch is not None else SimTypeShort(False)
@@ -3044,9 +3069,9 @@ def _sync_arg_list_from_annotations_8616(
             setattr(codegen, "_inertia_codegen_decl_refresh_required_8616", True)
         return True
 
-
-
     return _impl()
+
+
 def _apply_annotation_rewrites_8616(
     *,
     project,
@@ -3216,11 +3241,16 @@ def _apply_helper_signature_annotation_8616(project, codegen, func_addr: int, fu
                 and getattr(func, "name", None) != stripped_name
             ):
                 func.name = stripped_name
-                if getattr(codegen, "cfunc", None) is not None and getattr(codegen.cfunc, "name", None) != stripped_name:
+                if (
+                    getattr(codegen, "cfunc", None) is not None
+                    and getattr(codegen.cfunc, "name", None) != stripped_name
+                ):
                     codegen.cfunc.name = stripped_name
                 changed = True
                 func_name = stripped_name
-            stripped_decl = preferred_known_helper_signature_decl(stripped_name) if isinstance(stripped_name, str) else None
+            stripped_decl = (
+                preferred_known_helper_signature_decl(stripped_name) if isinstance(stripped_name, str) else None
+            )
             if isinstance(stripped_decl, str) and stripped_decl:
                 existing = tuple(getattr(codegen, "_inertia_callsite_prototype_decls", ()) or ())
                 if stripped_decl not in existing:
@@ -3252,9 +3282,9 @@ def _apply_helper_signature_annotation_8616(project, codegen, func_addr: int, fu
                     cvar.name = arg_name
         return True, func
 
-
-
     return _impl()
+
+
 def _prune_unused_unnamed_memory_declarations_8616(codegen) -> bool:
     def _impl():
         if getattr(codegen, "cfunc", None) is None:

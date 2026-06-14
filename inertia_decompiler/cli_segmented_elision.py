@@ -50,7 +50,9 @@ def _elide_redundant_segment_pointer_dereferences(
                 if c_constant_value(inner) is not None:
                     continue
 
-                if isinstance(inner, structured_c.CVariable) and isinstance(getattr(inner, "variable", None), SimRegisterVariable):
+                if isinstance(inner, structured_c.CVariable) and isinstance(
+                    getattr(inner, "variable", None), SimRegisterVariable
+                ):
                     base_terms.append(inner)
                     continue
 
@@ -75,7 +77,9 @@ def _elide_redundant_segment_pointer_dereferences(
             node = unwrap_c_casts(node)
             if c_constant_value(node) is not None:
                 return True
-            if isinstance(node, structured_c.CVariable) and isinstance(getattr(node, "variable", None), SimRegisterVariable):
+            if isinstance(node, structured_c.CVariable) and isinstance(
+                getattr(node, "variable", None), SimRegisterVariable
+            ):
                 return True
             if isinstance(node, structured_c.CUnaryOp) and node.op in {"Neg", "BitNot"}:
                 return _check(node.operand)

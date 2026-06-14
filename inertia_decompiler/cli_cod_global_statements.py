@@ -19,10 +19,9 @@ def _same_expr(left: Any, right: Any) -> bool:
             right_var = getattr(right, "variable", None)
             if left_var is right_var:
                 return True
-            return (
-                getattr(left, "name", None) == getattr(right, "name", None)
-                and getattr(left_var, "name", None) == getattr(right_var, "name", None)
-            )
+            return getattr(left, "name", None) == getattr(right, "name", None) and getattr(
+                left_var, "name", None
+            ) == getattr(right_var, "name", None)
         if isinstance(left, structured_c.CBinaryOp):
             return (
                 getattr(left, "op", None) == getattr(right, "op", None)
@@ -77,10 +76,16 @@ def _coalesce_cod_word_global_statements(
                     next_stmt = node.statements[i + 1]
                     base_addr = global_memory_addr(stmt.lhs)
                     next_addr = high_byte_store_addr(next_stmt.lhs, project)
-                    word_global = synthetic_word_global_variable(codegen, synthetic_globals, base_addr) if base_addr is not None else None
+                    word_global = (
+                        synthetic_word_global_variable(codegen, synthetic_globals, base_addr)
+                        if base_addr is not None
+                        else None
+                    )
 
                     if base_addr is not None and next_addr == base_addr + 1 and word_global is not None:
-                        if isinstance(stmt.rhs, structured_c.CConstant) and isinstance(next_stmt.rhs, structured_c.CConstant):
+                        if isinstance(stmt.rhs, structured_c.CConstant) and isinstance(
+                            next_stmt.rhs, structured_c.CConstant
+                        ):
                             value = (stmt.rhs.value & 0xFF) | ((next_stmt.rhs.value & 0xFF) << 8)
                             new_statements.append(
                                 structured_c.CAssignment(

@@ -237,7 +237,12 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
         candidate_count += 1
         rhs = getattr(node, "rhs", None)
         if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
-            _log.warning("[virtual-inline] def keys=%r lhs=%s rhs=%s", keys, _debug_c_repr_8616(node.lhs), _debug_c_repr_8616(rhs))
+            _log.warning(
+                "[virtual-inline] def keys=%r lhs=%s rhs=%s",
+                keys,
+                _debug_c_repr_8616(node.lhs),
+                _debug_c_repr_8616(rhs),
+            )
         if not _pure_virtual_inline_rhs_8616(rhs) or any(_expr_contains_virtual_key_8616(rhs, key) for key in keys):
             for key in keys:
                 definitions[key] = None
@@ -254,12 +259,12 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     replacements = {key: rhs for key, rhs in definitions.items() if rhs is not None}
     if not replacements:
         if candidate_count:
-            codegen._inertia_virtual_inline_candidates = int(
-                getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0
-            ) + candidate_count
-            codegen._inertia_virtual_inline_refused = int(
-                getattr(codegen, "_inertia_virtual_inline_refused", 0) or 0
-            ) + refused_count
+            codegen._inertia_virtual_inline_candidates = (
+                int(getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0) + candidate_count
+            )
+            codegen._inertia_virtual_inline_refused = (
+                int(getattr(codegen, "_inertia_virtual_inline_refused", 0) or 0) + refused_count
+            )
         return False
 
     changed = False
@@ -348,9 +353,9 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
 
     _transform(root)
     if protected_refused_count:
-        codegen._inertia_virtual_inline_protected_address_refused = int(
-            getattr(codegen, "_inertia_virtual_inline_protected_address_refused", 0) or 0
-        ) + protected_refused_count
+        codegen._inertia_virtual_inline_protected_address_refused = (
+            int(getattr(codegen, "_inertia_virtual_inline_protected_address_refused", 0) or 0) + protected_refused_count
+        )
 
     def _collect_virtual_key_use_counts_8616(
         node,
@@ -471,18 +476,18 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     if changed:
         pruned_defs = _prune_consumed_virtual_definitions_8616(root)
         if pruned_defs:
-            codegen._inertia_virtual_inline_pruned_defs = int(
-                getattr(codegen, "_inertia_virtual_inline_pruned_defs", 0) or 0
-            ) + pruned_defs
-        codegen._inertia_virtual_inline_candidates = int(
-            getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0
-        ) + candidate_count
+            codegen._inertia_virtual_inline_pruned_defs = (
+                int(getattr(codegen, "_inertia_virtual_inline_pruned_defs", 0) or 0) + pruned_defs
+            )
+        codegen._inertia_virtual_inline_candidates = (
+            int(getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0) + candidate_count
+        )
         codegen._inertia_virtual_inline_materialized = int(
             getattr(codegen, "_inertia_virtual_inline_materialized", 0) or 0
         ) + len(replacements)
-        codegen._inertia_virtual_inline_refused = int(
-            getattr(codegen, "_inertia_virtual_inline_refused", 0) or 0
-        ) + refused_count
+        codegen._inertia_virtual_inline_refused = (
+            int(getattr(codegen, "_inertia_virtual_inline_refused", 0) or 0) + refused_count
+        )
     return changed
 
 
@@ -1035,23 +1040,23 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         if isinstance(node, CBinaryOp) and node.op in {"Or", "Add"}:
             folded_seg_word = _fold_runtime_seg_u8_pair_8616(node)
             if folded_seg_word is not None:
-                codegen._inertia_runtime_seg_u8_pair_folded_count_8616 = int(
-                    getattr(codegen, "_inertia_runtime_seg_u8_pair_folded_count_8616", 0) or 0
-                ) + 1
+                codegen._inertia_runtime_seg_u8_pair_folded_count_8616 = (
+                    int(getattr(codegen, "_inertia_runtime_seg_u8_pair_folded_count_8616", 0) or 0) + 1
+                )
                 return folded_seg_word
             folded_global_word = _fold_global_byte_deref_pair_8616(node)
             if folded_global_word is not None:
-                codegen._inertia_global_byte_pair_folded_count_8616 = int(
-                    getattr(codegen, "_inertia_global_byte_pair_folded_count_8616", 0) or 0
-                ) + 1
+                codegen._inertia_global_byte_pair_folded_count_8616 = (
+                    int(getattr(codegen, "_inertia_global_byte_pair_folded_count_8616", 0) or 0) + 1
+                )
                 return folded_global_word
 
         if isinstance(node, (CBinaryOp, CUnaryOp)):
             folded_constant = _pure_constant_expr_value_8616(node)
             if folded_constant is not None:
-                codegen._inertia_pure_constant_folded_count_8616 = int(
-                    getattr(codegen, "_inertia_pure_constant_folded_count_8616", 0) or 0
-                ) + 1
+                codegen._inertia_pure_constant_folded_count_8616 = (
+                    int(getattr(codegen, "_inertia_pure_constant_folded_count_8616", 0) or 0) + 1
+                )
                 return CConstant(
                     folded_constant,
                     _constant_result_type_8616(node, folded_constant),
@@ -1129,9 +1134,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     )
 
         if isinstance(node, CITE) and _same_c_expression_8616(node.iftrue, node.iffalse):
-            codegen._inertia_same_arm_cite_simplified_count_8616 = int(
-                getattr(codegen, "_inertia_same_arm_cite_simplified_count_8616", 0) or 0
-            ) + 1
+            codegen._inertia_same_arm_cite_simplified_count_8616 = (
+                int(getattr(codegen, "_inertia_same_arm_cite_simplified_count_8616", 0) or 0) + 1
+            )
             return node.iftrue
 
         simplified = _simplify_zero_flag_comparison_8616(node)
@@ -1209,7 +1214,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                 return []
             return [f"{key}={_debug_c_repr_8616(value)}" for key, value in sorted(aliases.items(), key=str)]
 
-        def _resolve_copy_alias_expr_8616(expr, aliases: dict[tuple[str, object], object], used: set[tuple[str, object]]):
+        def _resolve_copy_alias_expr_8616(
+            expr, aliases: dict[tuple[str, object], object], used: set[tuple[str, object]]
+        ):
             expr = _unwrap_expr_8616(expr)
             keys = _virtual_expr_keys_8616(expr)
             if not keys:
@@ -1274,7 +1281,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         return True
                     if isinstance(item, tuple):
                         for subitem in item:
-                            if _structured_codegen_node_8616(subitem) and _contains_unresolved_virtual_expr_8616(subitem):
+                            if _structured_codegen_node_8616(subitem) and _contains_unresolved_virtual_expr_8616(
+                                subitem
+                            ):
                                 return True
             return False
 
@@ -1331,26 +1340,32 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
             for maybe_base, maybe_delta in _arithmetic_candidates_8616(update_expr):
                 low_used = set(used)
-                if _match_joined_stack_word_base_8616(
-                    maybe_base,
-                    word_target,
-                    high_target,
-                    aliases,
-                    low_used,
-                ) is None:
+                if (
+                    _match_joined_stack_word_base_8616(
+                        maybe_base,
+                        word_target,
+                        high_target,
+                        aliases,
+                        low_used,
+                    )
+                    is None
+                ):
                     continue
                 delta = _resolve_copy_alias_expr_8616(maybe_delta, aliases, low_used)
                 matched_high = False
                 matched_used: set[tuple[str, object]] = set(low_used)
                 for high_base, high_delta in _arithmetic_candidates_8616(high_update_expr):
                     high_used = set(low_used)
-                    if _match_joined_stack_word_base_8616(
-                        high_base,
-                        word_target,
-                        high_target,
-                        aliases,
-                        high_used,
-                    ) is None:
+                    if (
+                        _match_joined_stack_word_base_8616(
+                            high_base,
+                            word_target,
+                            high_target,
+                            aliases,
+                            high_used,
+                        )
+                        is None
+                    ):
                         continue
                     resolved_high_delta = _resolve_copy_alias_expr_8616(high_delta, aliases, high_used)
                     if not _same_c_expression_8616(delta, resolved_high_delta):
@@ -1430,7 +1445,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     if shifted is None:
                         continue
                     high_expr = _resolve_copy_alias_expr_8616(shifted, aliases, candidate_used)
-                    if _same_c_expression_8616(low_expr, word_target) and _same_c_expression_8616(high_expr, word_target):
+                    if _same_c_expression_8616(low_expr, word_target) and _same_c_expression_8616(
+                        high_expr, word_target
+                    ):
                         matched_base = True
                         break
                 if not matched_base:
@@ -1546,16 +1563,16 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                                 next_stmt.rhs, stmt.lhs, next_stmt.lhs
                             )
                         try:
-                            codegen._inertia_word_or_update_candidates = int(
-                                getattr(codegen, "_inertia_word_or_update_candidates", 0) or 0
-                            ) + 1
+                            codegen._inertia_word_or_update_candidates = (
+                                int(getattr(codegen, "_inertia_word_or_update_candidates", 0) or 0) + 1
+                            )
                         except Exception:
                             pass
                 if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
                     try:
-                        codegen._inertia_word_arithmetic_shift_candidates = int(
-                            getattr(codegen, "_inertia_word_arithmetic_shift_candidates", 0) or 0
-                        ) + 1
+                        codegen._inertia_word_arithmetic_shift_candidates = (
+                            int(getattr(codegen, "_inertia_word_arithmetic_shift_candidates", 0) or 0) + 1
+                        )
                     except Exception:
                         pass
                     duplicate_shift = _match_duplicate_word_arithmetic_shift_8616(
@@ -1574,9 +1591,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         )
                         new_statements.append(CAssignment(stmt.lhs, replacement_rhs, codegen=codegen))
                         try:
-                            codegen._inertia_word_arithmetic_shift_materialized_count = int(
-                                getattr(codegen, "_inertia_word_arithmetic_shift_materialized_count", 0) or 0
-                            ) + 1
+                            codegen._inertia_word_arithmetic_shift_materialized_count = (
+                                int(getattr(codegen, "_inertia_word_arithmetic_shift_materialized_count", 0) or 0) + 1
+                            )
                         except Exception:
                             pass
                         changed_local = True
@@ -1589,9 +1606,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     and _stack_word_contains_high_byte_8616(replacement_lhs, next_stmt.lhs)
                 ):
                     try:
-                        codegen._inertia_word_arithmetic_update_candidates = int(
-                            getattr(codegen, "_inertia_word_arithmetic_update_candidates", 0) or 0
-                        ) + 1
+                        codegen._inertia_word_arithmetic_update_candidates = (
+                            int(getattr(codegen, "_inertia_word_arithmetic_update_candidates", 0) or 0) + 1
+                        )
                     except Exception:
                         pass
                     arithmetic_update = _match_stack_word_arithmetic_update_8616(
@@ -1612,9 +1629,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         )
                         new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
                         try:
-                            codegen._inertia_word_arithmetic_update_materialized_count = int(
-                                getattr(codegen, "_inertia_word_arithmetic_update_materialized_count", 0) or 0
-                            ) + 1
+                            codegen._inertia_word_arithmetic_update_materialized_count = (
+                                int(getattr(codegen, "_inertia_word_arithmetic_update_materialized_count", 0) or 0) + 1
+                            )
                         except Exception:
                             pass
                         changed_local = True
@@ -1629,9 +1646,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     )
                     new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
                     try:
-                        codegen._inertia_word_or_update_materialized_count = int(
-                            getattr(codegen, "_inertia_word_or_update_materialized_count", 0) or 0
-                        ) + 1
+                        codegen._inertia_word_or_update_materialized_count = (
+                            int(getattr(codegen, "_inertia_word_or_update_materialized_count", 0) or 0) + 1
+                        )
                     except Exception:
                         pass
                     changed_local = True
@@ -1663,9 +1680,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                             term_debug,
                         )
                     try:
-                        codegen._inertia_word_or_update_refused = int(
-                            getattr(codegen, "_inertia_word_or_update_refused", 0) or 0
-                        ) + 1
+                        codegen._inertia_word_or_update_refused = (
+                            int(getattr(codegen, "_inertia_word_or_update_refused", 0) or 0) + 1
+                        )
                     except Exception:
                         pass
                 visit(stmt)

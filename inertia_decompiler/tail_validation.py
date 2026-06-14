@@ -4,8 +4,8 @@ import hashlib
 import json
 import os
 import sys
-from enum import Enum
 from collections.abc import Mapping, Sequence
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -15,13 +15,11 @@ from angr_platforms.X86_16.milestone_report import (
 )
 from angr_platforms.X86_16.tail_validation import (
     build_x86_16_tail_validation_aggregate,
-    build_x86_16_tail_validation_verdict,
     extract_x86_16_tail_validation_snapshot,
-    format_x86_16_tail_validation_diff,
     x86_16_tail_validation_snapshot_passed,
 )
-from inertia_decompiler.telemetry import annotate_current_span, trace_function
 
+from inertia_decompiler.telemetry import annotate_current_span, trace_function
 
 ROOT = Path(__file__).resolve().parents[1]
 TAIL_VALIDATION_STDERR_PREFIX = "[tail-validation] "
@@ -29,9 +27,7 @@ TAIL_VALIDATION_METADATA_ENV = "INERTIA_TAIL_VALIDATION_STDERR_JSON"
 TAIL_VALIDATION_METADATA_PREFIX = "@@INERTIA_TAIL_VALIDATION@@ "
 TAIL_VALIDATION_CONSOLE_CACHE_DIR = ROOT / "angr_platforms" / ".cache" / "decompile_cli"
 TAIL_VALIDATION_DETAIL_CACHE_DIR = ROOT / "angr_platforms" / ".cache" / "tail_validation_details"
-TAIL_VALIDATION_FALLBACK_PROJECT_SNAPSHOT_KINDS = frozenset(
-    {"sidecar_slice", "partial_timeout"}
-)
+TAIL_VALIDATION_FALLBACK_PROJECT_SNAPSHOT_KINDS = frozenset({"sidecar_slice", "partial_timeout"})
 TAIL_VALIDATION_ENABLE_ENV = "INERTIA_ENABLE_TAIL_VALIDATION"
 
 
@@ -304,8 +300,7 @@ def emit_tail_validation_console_summary(
     summary = dict(aggregate.get("summary", {}) or {})
     surface = dict(aggregate.get("surface", {}) or {})
     acceptance_validation_failed = any(
-        str(getattr(result, "status", "")).strip().lower() == "validation_failed"
-        for result in result_map.values()
+        str(getattr(result, "status", "")).strip().lower() == "validation_failed" for result in result_map.values()
     )
     if acceptance_validation_failed and str(surface.get("severity", "")).strip().lower() == "clean":
         # Acceptance gates are part of semantic validation policy; if they fail,

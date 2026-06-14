@@ -12,25 +12,26 @@ import select
 import signal
 import sys
 import threading
-import traceback
 import time
+import traceback
 import weakref
-from collections.abc import Callable
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures.thread import _threads_queues, _worker
 from datetime import datetime
+
 try:
     from _pytest.capture import EncodedFile
 except Exception:  # pragma: no cover - fallback when pytest is unavailable
     EncodedFile = io.TextIOBase
 
+import typing
+
 from .variable_recovery_sub_guard import (
     build_guarded_handle_binop_mul_8616,
     build_guarded_handle_binop_sub_8616,
 )
-import typing
-
 
 DEFAULT_FREE_RAM_BUDGET_FRACTION = 0.45
 DEFAULT_WORKER_MEMORY_FLOOR_MB = 1536
@@ -384,11 +385,12 @@ def guard_angr_variable_recovery_binop_sub_size_mismatch(project=None):
 @contextlib.contextmanager
 def guard_angr_clinic_stage_markers(project):
     import time as _time
+
     from angr.ailment.expression import Tmp as AILTmp
-    from angr.analyses.decompiler.block_simplifier import BlockSimplifier
-    from angr.analyses.decompiler.ail_simplifier import AILSimplifier
-    from angr.analyses.decompiler.clinic import Clinic
     from angr.analyses.decompiler import utils as decompiler_utils
+    from angr.analyses.decompiler.ail_simplifier import AILSimplifier
+    from angr.analyses.decompiler.block_simplifier import BlockSimplifier
+    from angr.analyses.decompiler.clinic import Clinic
     from angr.analyses.decompiler.utils import peephole_optimize_multistmts, peephole_optimize_stmts
     from angr.knowledge_plugins.key_definitions.atoms import Tmp as AtomTmp
 
@@ -459,8 +461,7 @@ def guard_angr_clinic_stage_markers(project):
                 self.variable_kb = getattr(self, "kb", None)
             if _emit_stage_logs:
                 print(
-                    "[dbg] clinic:skip-recover-variables-full"
-                    f"{_project_current_function_context_suffix(project)}",
+                    f"[dbg] clinic:skip-recover-variables-full{_project_current_function_context_suffix(project)}",
                     file=sys.stderr,
                 )
                 sys.stderr.flush()
@@ -516,11 +517,12 @@ def guard_angr_clinic_stage_markers(project):
                 return block
             raise
         _simplify_total[0] += _time.perf_counter() - _t_start
-        if (
-            (timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"))
-            and _simplify_count[0] % 20 == 0
-        ):
-            print(f"[dbg] stage-time: simplify_block x{_simplify_count[0]} cumulative={_simplify_total[0]:.2f}s (peephole x{_peephole_count[0]} cumulative={_peephole_total[0]:.2f}s)")
+        if (timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR")) and _simplify_count[
+            0
+        ] % 20 == 0:
+            print(
+                f"[dbg] stage-time: simplify_block x{_simplify_count[0]} cumulative={_simplify_total[0]:.2f}s (peephole x{_peephole_count[0]} cumulative={_peephole_total[0]:.2f}s)"
+            )
             sys.stderr.flush()
         return result
 
@@ -1005,7 +1007,11 @@ def run_with_timeout_in_fork(
                 return f"exitcode={os.WEXITSTATUS(status)}"
             if os.WIFSIGNALED(status):
                 sig = os.WTERMSIG(status)
-                sig_name = getattr(signal, "Signals", lambda x: f"SIG={x}")(sig) if hasattr(signal, "strsignal") else f"SIG={sig}"
+                sig_name = (
+                    getattr(signal, "Signals", lambda x: f"SIG={x}")(sig)
+                    if hasattr(signal, "strsignal")
+                    else f"SIG={sig}"
+                )
                 try:
                     sig_name = signal.strsignal(sig)  # type: ignore[attr-defined]
                 except Exception:
@@ -1039,7 +1045,9 @@ def run_with_timeout_in_fork(
                 data.extend(chunk)
             _pid, _status = os.waitpid(pid, 0)
             if len(data) != expected:
-                raise RuntimeError(f"fork child returned incomplete result (expected={expected}B got={len(data)}B {_child_exit_detail(pid, _status)})")
+                raise RuntimeError(
+                    f"fork child returned incomplete result (expected={expected}B got={len(data)}B {_child_exit_detail(pid, _status)})"
+                )
             payload = pickle.loads(bytes(data))
             if not isinstance(payload, tuple) or not payload:
                 raise RuntimeError(f"fork child returned invalid payload ({_child_exit_detail(pid, _status)})")
@@ -1150,20 +1158,14 @@ class PreforkJobPool:
 
             _dispatch_available()
             while remaining > 0:
-                ready_fds = [
-                    int(worker["result_read"])
-                    for worker in self._workers
-                    if worker["busy"]
-                ]
+                ready_fds = [int(worker["result_read"]) for worker in self._workers if worker["busy"]]
                 if not ready_fds:
                     break
                 ready, _, _ = select.select(ready_fds, [], [], poll_timeout)
                 if not ready:
                     continue
                 for fd in ready:
-                    worker = next(
-                        worker for worker in self._workers if int(worker["result_read"]) == fd
-                    )
+                    worker = next(worker for worker in self._workers if int(worker["result_read"]) == fd)
                     payload = _read_framed_pickle(fd)
                     worker["busy"] = False
                     worker["job_id"] = None
@@ -1273,9 +1275,9 @@ def guard_angr_structurer_codegen_timing(project):
         return
     import time as _time
 
-    from angr.analyses.decompiler.structuring.recursive_structurer import RecursiveStructurer
     from angr.analyses.decompiler.region_simplifiers.region_simplifier import RegionSimplifier
     from angr.analyses.decompiler.structured_codegen.c import CStructuredCodeGenerator
+    from angr.analyses.decompiler.structuring.recursive_structurer import RecursiveStructurer
 
     orig_rs_init = RecursiveStructurer.__init__
     orig_ri_init = RegionSimplifier.__init__
@@ -1283,7 +1285,7 @@ def guard_angr_structurer_codegen_timing(project):
 
     def _timed_rs_init(self, *args, **kwargs):  # noqa: ANN001
         _t0 = _time.perf_counter()
-        print(f"[dbg] stage-time: structurer:recursive start")
+        print("[dbg] stage-time: structurer:recursive start")
         sys.stderr.flush()
         try:
             return orig_rs_init(self, *args, **kwargs)
@@ -1294,7 +1296,7 @@ def guard_angr_structurer_codegen_timing(project):
 
     def _timed_ri_init(self, *args, **kwargs):  # noqa: ANN001
         _t0 = _time.perf_counter()
-        print(f"[dbg] stage-time: region_simplifier start")
+        print("[dbg] stage-time: region_simplifier start")
         sys.stderr.flush()
         try:
             return orig_ri_init(self, *args, **kwargs)
@@ -1305,7 +1307,7 @@ def guard_angr_structurer_codegen_timing(project):
 
     def _timed_codegen_init(self, *args, **kwargs):  # noqa: ANN001
         _t0 = _time.perf_counter()
-        print(f"[dbg] stage-time: codegen:C start")
+        print("[dbg] stage-time: codegen:C start")
         sys.stderr.flush()
         try:
             return orig_codegen_init(self, *args, **kwargs)
@@ -1334,8 +1336,8 @@ def guard_angr_tail_validation_collection_timing():
     import time as _time
 
     from angr_platforms.X86_16.tail_validation import (
-        fingerprint_x86_16_tail_validation_boundary,
         collect_x86_16_tail_validation_summary,
+        fingerprint_x86_16_tail_validation_boundary,
     )
 
     orig_fingerprint = fingerprint_x86_16_tail_validation_boundary
@@ -1343,7 +1345,7 @@ def guard_angr_tail_validation_collection_timing():
 
     def _timed_fingerprint(project, codegen, *, mode):  # noqa: ANN001
         _t0 = _time.perf_counter()
-        print(f"[dbg] stage-time: tail_validation:fingerprint:before start")
+        print("[dbg] stage-time: tail_validation:fingerprint:before start")
         sys.stderr.flush()
         try:
             return orig_fingerprint(project, codegen, mode=mode)
@@ -1354,7 +1356,7 @@ def guard_angr_tail_validation_collection_timing():
 
     def _timed_collect(project, codegen, *, mode):  # noqa: ANN001
         _t0 = _time.perf_counter()
-        print(f"[dbg] stage-time: tail_validation:collect:before start")
+        print("[dbg] stage-time: tail_validation:collect:before start")
         sys.stderr.flush()
         try:
             return orig_collect(project, codegen, mode=mode)
@@ -1380,6 +1382,7 @@ def guard_angr_structuring_codegen_internal_timing():
     """Emit timing for internal steps of _structuring_codegen_8616 before the pass loop."""
     emit_timing = timing_output_enabled()
     import time as _time
+
     import angr_platforms.X86_16.decompiler_structuring_stage as _ds_mod
     import angr_platforms.X86_16.pipeline.contracts as _contracts_mod
 
@@ -1389,7 +1392,7 @@ def guard_angr_structuring_codegen_internal_timing():
     def _timed_alias_complete(codegen):  # noqa: ANN001
         _t0 = _time.perf_counter()
         if emit_timing:
-            print(f"[dbg] stage-time: x86_16:_assert_alias_complete start")
+            print("[dbg] stage-time: x86_16:_assert_alias_complete start")
             sys.stderr.flush()
         try:
             return orig_alias(codegen)
@@ -1402,7 +1405,7 @@ def guard_angr_structuring_codegen_internal_timing():
     def _timed_contracts(codegen):  # noqa: ANN001
         _t0 = _time.perf_counter()
         if emit_timing:
-            print(f"[dbg] stage-time: x86_16:assert_pipeline_contracts start")
+            print("[dbg] stage-time: x86_16:assert_pipeline_contracts start")
             sys.stderr.flush()
         try:
             return orig_contracts(codegen)
@@ -1425,14 +1428,16 @@ def guard_angr_structuring_codegen_internal_timing():
     _rml_timed_out = [False]  # mutable cell so _timed_rml closure can write
     try:
         import angr_platforms.X86_16.lowering.real_mode_linear as _rml_mod
+
         _orig_rml = _rml_mod.lower_stable_ss_linear_stack_dereferences_8616
         _BOUNDED_STAGE_SECONDS = 30
+
         def _timed_rml(codegen, **kwargs):  # noqa: ANN001
             if _rml_timed_out[0]:
                 return False
             _t0 = _time.perf_counter()
             if emit_timing:
-                print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack start")
+                print("[dbg] stage-time: x86_16:lower_ss_linear_stack start")
                 sys.stderr.flush()
             try:
                 with analysis_timeout(int(_BOUNDED_STAGE_SECONDS)):
@@ -1441,29 +1446,37 @@ def guard_angr_structuring_codegen_internal_timing():
                 _rml_timed_out[0] = True
                 if emit_timing:
                     _elapsed = _time.perf_counter() - _t0
-                    print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack TIMEOUT elapsed={_elapsed:.2f}s budget={_BOUNDED_STAGE_SECONDS}s", file=sys.stderr, flush=True)
+                    print(
+                        f"[dbg] stage-time: x86_16:lower_ss_linear_stack TIMEOUT elapsed={_elapsed:.2f}s budget={_BOUNDED_STAGE_SECONDS}s",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 return False
             finally:
                 if emit_timing:
                     _elapsed = _time.perf_counter() - _t0
                     print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack done elapsed={_elapsed:.2f}s")
                     sys.stderr.flush()
+
         _rml_mod.lower_stable_ss_linear_stack_dereferences_8616 = _timed_rml
         # Also patch the import-time reference in stack_lowering.py that
         # bypasses the module-level monkey-patch (see issue with
         # "from .real_mode_linear import lower_stable_ss..." at module load).
         import angr_platforms.X86_16.lowering.stack_lowering as _sl_mod
+
         _orig_rml_sl = _sl_mod.lower_stable_ss_linear_stack_dereferences_8616
         _sl_mod.lower_stable_ss_linear_stack_dereferences_8616 = _timed_rml
     except Exception:
         pass
     try:
         import angr_platforms.X86_16.lowering.stack_lowering_from_facts as _slf_mod
+
         _orig_slf = _slf_mod.lower_stack_accesses_from_alias_facts_8616
+
         def _timed_slf(codegen, *args, **kwargs):  # noqa: ANN001
             _t0 = _time.perf_counter()
             if emit_timing:
-                print(f"[dbg] stage-time: x86_16:lower_stack_from_facts start")
+                print("[dbg] stage-time: x86_16:lower_stack_from_facts start")
                 sys.stderr.flush()
             try:
                 return _orig_slf(codegen, *args, **kwargs)
@@ -1472,6 +1485,7 @@ def guard_angr_structuring_codegen_internal_timing():
                     _elapsed = _time.perf_counter() - _t0
                     print(f"[dbg] stage-time: x86_16:lower_stack_from_facts done elapsed={_elapsed:.2f}s")
                     sys.stderr.flush()
+
         _slf_mod.lower_stack_accesses_from_alias_facts_8616 = _timed_slf
     except Exception:
         pass

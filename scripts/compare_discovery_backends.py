@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import time
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,11 +15,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler.project_loading import _build_project
 from inertia_decompiler.cli_function_discovery import (
     _recover_fast_exe_catalog,
     _recover_seeded_exe_functions,
 )
+from inertia_decompiler.project_loading import _build_project
 from inertia_decompiler.rizin_discovery import discover_rizin_function_entries
 from inertia_decompiler.sidecar_metadata import _load_lst_metadata
 
@@ -525,7 +525,10 @@ def main() -> None:
             for backend_name, payload in run["backends"].items():
                 _print_backend_result(
                     backend_name,
-                    [FunctionRecord(int(entry["addr"], 16), entry["size"], entry["name"], entry["source"]) for entry in payload["records"]],
+                    [
+                        FunctionRecord(int(entry["addr"], 16), entry["size"], entry["name"], entry["source"])
+                        for entry in payload["records"]
+                    ],
                     payload["metric"].get("time_sec", 0.0),
                     payload["metric"].get("detail", ""),
                 )

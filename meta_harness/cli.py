@@ -11,11 +11,16 @@ from .webui import launch_web_ui
 
 def build_parser() -> argparse.ArgumentParser:
     def _impl():
-        parser = argparse.ArgumentParser(description="Python orchestration harness for iterative repository improvement.")
+        parser = argparse.ArgumentParser(
+            description="Python orchestration harness for iterative repository improvement."
+        )
         parser.add_argument("--resume", action="store_true", help="Resume the latest incomplete cycle if one exists.")
         parser.add_argument("--fresh", action="store_true", help="Ignore any incomplete cycle and start a new one.")
-        parser.add_argument("task", nargs="*", help="Optional operator task to convert into PLAN.md execution-spec steps.")
+        parser.add_argument(
+            "task", nargs="*", help="Optional operator task to convert into PLAN.md execution-spec steps."
+        )
         return parser
+
     return _impl()
 
 
@@ -75,4 +80,5 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     reason = "terminated" if exit_code in (124, 143) else "interrupted"
                 harness.finalize_run(reason, exit_code)
+
     return _impl()

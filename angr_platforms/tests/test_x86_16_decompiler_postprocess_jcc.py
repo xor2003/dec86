@@ -2873,14 +2873,16 @@ def test_translate_cmp_jcc_guard_decodes_call_return_from_previous_linear_block(
         0x5020: block_lo,
     }
     project.factory = SimpleNamespace(
-        block=lambda addr, num_inst=None, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=blocks.get(addr, ())))
+        block=lambda addr, num_inst=None, opt_level=0: SimpleNamespace(
+            capstone=SimpleNamespace(insns=blocks.get(addr, ()))
+        )
     )
     project.loader = SimpleNamespace(main_object=SimpleNamespace(min_addr=0x4FFA), min_addr=0x4FFA)
     project.kb = SimpleNamespace(
         functions=SimpleNamespace(
-            function=lambda addr, create=False: SimpleNamespace(name="clock", prototype=SimpleNamespace(args=()))
-            if addr == 0x6000
-            else None
+            function=lambda addr, create=False: (
+                SimpleNamespace(name="clock", prototype=SimpleNamespace(args=())) if addr == 0x6000 else None
+            )
         )
     )
     codegen._inertia_jcc_function_insns_8616 = (*block_hi, *block_mid, *block_lo)

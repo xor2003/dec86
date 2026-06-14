@@ -102,7 +102,10 @@ def generate_vectors(
 
     seed = _solve_entry_seed()
     for function in functions:
-        if len([v for v in vectors if v.get("function", {}).get("name") == function.get("names", [""])[0]]) >= max_vectors_per_function:
+        if (
+            len([v for v in vectors if v.get("function", {}).get("name") == function.get("names", [""])[0]])
+            >= max_vectors_per_function
+        ):
             continue
         counters["functions_attempted"] += 1
         counters["paths_attempted"] += 1
@@ -238,7 +241,9 @@ def _generate_edge_vectors(
                 }
             )
         counters["refusals_by_reason"] = {"unsupported_ir": len(refusals)}
-        return _generation_document(exe_path=exe_path, strategy="edge", vectors=vectors, refusals=refusals, counters=counters)
+        return _generation_document(
+            exe_path=exe_path, strategy="edge", vectors=vectors, refusals=refusals, counters=counters
+        )
 
     if max_loop_unroll != 0:
         for function in functions:
@@ -254,7 +259,9 @@ def _generate_edge_vectors(
                 }
             )
         counters["refusals_by_reason"] = {"unsupported_ir": len(refusals)}
-        return _generation_document(exe_path=exe_path, strategy="edge", vectors=vectors, refusals=refusals, counters=counters)
+        return _generation_document(
+            exe_path=exe_path, strategy="edge", vectors=vectors, refusals=refusals, counters=counters
+        )
 
     try:
         discovered = discover_branch_targets(
@@ -273,7 +280,9 @@ def _generate_edge_vectors(
                 }
             )
         counters["refusals_by_reason"] = {"unsupported_ir": len(refusals)}
-        return _generation_document(exe_path=exe_path, strategy="edge", vectors=vectors, refusals=refusals, counters=counters)
+        return _generation_document(
+            exe_path=exe_path, strategy="edge", vectors=vectors, refusals=refusals, counters=counters
+        )
 
     refusals.extend(discovered.refusals)
     counters["edge_sources"] = discovered.source_counts
@@ -339,7 +348,9 @@ def _generate_edge_vectors(
                 break
 
     counters["refusals_by_reason"] = _refusal_counts(refusals)
-    return _generation_document(exe_path=exe_path, strategy="edge", vectors=vectors, refusals=refusals, counters=counters)
+    return _generation_document(
+        exe_path=exe_path, strategy="edge", vectors=vectors, refusals=refusals, counters=counters
+    )
 
 
 def _vector_from_solved_edge(

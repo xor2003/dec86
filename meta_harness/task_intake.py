@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 PENDING_TASK_FILE = Path(".codex_automation") / "requested_task.md"
 
 

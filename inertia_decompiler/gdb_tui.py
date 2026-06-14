@@ -34,9 +34,9 @@ from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, Header, Input, Label, Static
+from textual.widgets import Footer, Header, Input, Label
 
-from inertia_decompiler.gdb_client import GDBClient, GDBClientError, MemoryRegion, StopInfo, StopReason
+from inertia_decompiler.gdb_client import GDBClient, GDBClientError, StopInfo, StopReason
 from inertia_decompiler.tui_widgets import (
     BreakpointWidget,
     ConsoleWidget,
@@ -47,16 +47,16 @@ from inertia_decompiler.tui_widgets import (
     StackWidget,
 )
 
-
 # ---------------------------------------------------------------------------
 # Capstone disassembler
 # ---------------------------------------------------------------------------
 
 try:
-    from capstone import Cs, CS_ARCH_X86, CS_MODE_32, CS_MODE_64, CS_MODE_16
+    from capstone import CS_ARCH_X86, CS_MODE_16, CS_MODE_32, CS_MODE_64, Cs
 except ModuleNotFoundError:
     Cs = None
     CS_ARCH_X86 = CS_MODE_32 = CS_MODE_64 = CS_MODE_16 = None
+
 
 def _make_cs(arch: str) -> Cs:
     """Create a Capstone Cs handle for the given architecture."""
@@ -73,8 +73,7 @@ def disasm_x86(data: bytes, addr: int, count: int = 20, arch: str = "x86") -> li
     """Disassemble with Capstone. Returns [(addr, mnemonic, operands)]."""
     if Cs is None:
         return [
-            (addr + index, "db", f"0x{byte:02x}")
-            for index, byte in enumerate(data[: max(1, min(count, len(data)))])
+            (addr + index, "db", f"0x{byte:02x}") for index, byte in enumerate(data[: max(1, min(count, len(data)))])
         ]
     md = _make_cs(arch)
     md.detail = False
@@ -87,6 +86,7 @@ def disasm_x86(data: bytes, addr: int, count: int = 20, arch: str = "x86") -> li
 # ---------------------------------------------------------------------------
 # Main App
 # ---------------------------------------------------------------------------
+
 
 class GDBTUIApp(App):
     """GDB client TUI – insight.124 inspired layout."""
@@ -409,9 +409,7 @@ class GDBTUIApp(App):
                 next_ip = lines[0][0] + len(mem.data)  # rough estimate
                 # Better: decode actual length
                 ip_name = "rip" if self._arch == "x86_64" else "eip"
-                reg_num = self._client._reg_defs.index(
-                    next(r for r in self._client._reg_defs if r.name == ip_name)
-                )
+                reg_num = self._client._reg_defs.index(next(r for r in self._client._reg_defs if r.name == ip_name))
                 # Just step and let the user handle it
                 self._append_console("Skip: use F7 step instead for now")
         except GDBClientError:
@@ -665,6 +663,7 @@ class GDBTUIApp(App):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="GDB Client TUI (insight.124 inspired)")

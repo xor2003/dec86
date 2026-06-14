@@ -223,7 +223,10 @@ def test_cfg_selector_return_delta_accepts_raw_stack_slot_consumed_as_source_arg
     arg_b = CVariable(arg_b_var, codegen=dummy_codegen)
     cond = _const(1, dummy_codegen)
     body = CStatements(statements=[CReturn(arg_b, codegen=dummy_codegen)], codegen=dummy_codegen)
-    root = CStatements(statements=[CIfElse([(cond, body)], else_node=None, cstyle_ifs=True, codegen=dummy_codegen)], codegen=dummy_codegen)
+    root = CStatements(
+        statements=[CIfElse([(cond, body)], else_node=None, cstyle_ifs=True, codegen=dummy_codegen)],
+        codegen=dummy_codegen,
+    )
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(arg_list=(arg_b,), statements=root),
         _inertia_return_expr_chain_materialized_8616=True,

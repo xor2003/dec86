@@ -173,7 +173,9 @@ class LinearRecurrenceState:
                     return left_base, left_delta + right_delta
                 return expr, 0
             if left_base is not None:
-                return (left_base, left_delta + right_delta) if expr.op == "Add" else (left_base, left_delta - right_delta)
+                return (
+                    (left_base, left_delta + right_delta) if expr.op == "Add" else (left_base, left_delta - right_delta)
+                )
             if right_base is not None:
                 return (right_base, left_delta + right_delta) if expr.op == "Add" else (expr, 0)
             return (None, left_delta + right_delta) if expr.op == "Add" else (None, left_delta - right_delta)
@@ -211,7 +213,9 @@ class LinearRecurrenceState:
         )
         return rebuilt if rebuilt is not None else base_expr
 
-    def inline_known_linear_defs(self, expr, seen_vars: set[int] | None = None, seen_exprs: set[int] | None = None, depth: int = 0):
+    def inline_known_linear_defs(
+        self, expr, seen_vars: set[int] | None = None, seen_exprs: set[int] | None = None, depth: int = 0
+    ):
         def _impl():
             nonlocal expr, seen_vars, seen_exprs
             expr = self.unwrap_c_casts(expr)
@@ -230,7 +234,11 @@ class LinearRecurrenceState:
                 variable = getattr(expr, "variable", None)
                 if variable is not None:
                     var_id = id(variable)
-                    if var_id in self.dereferenced_variable_ids or var_id in self.protected_linear_alias_ids or var_id in seen_vars:
+                    if (
+                        var_id in self.dereferenced_variable_ids
+                        or var_id in self.protected_linear_alias_ids
+                        or var_id in seen_vars
+                    ):
                         return expr
                     seen_vars.add(var_id)
                     alias = self.expr_aliases.get(var_id)
@@ -245,7 +253,12 @@ class LinearRecurrenceState:
                         return expr
                     if self.expr_contains_stack_base_carrier(base_expr):
                         return expr
-                    if self.match_duplicate_word_base_expr(self.resolve_known_copy_alias_expr(base_expr), self.resolve_known_copy_alias_expr) is not None:
+                    if (
+                        self.match_duplicate_word_base_expr(
+                            self.resolve_known_copy_alias_expr(base_expr), self.resolve_known_copy_alias_expr
+                        )
+                        is not None
+                    ):
                         return expr
                     return self.build_linear_expr(base_expr, delta)
                 return expr
@@ -293,7 +306,14 @@ class LinearRecurrenceState:
     def alias_storage_key(self, expr):
         return self.describe_alias_storage(expr).identity
 
-    def resolve_known_copy_alias_expr(self, expr, active_expr_ids: set[int] | None = None, seen_var_ids: set[int] | None = None, seen_storage: set[object] | None = None, depth: int = 0):
+    def resolve_known_copy_alias_expr(
+        self,
+        expr,
+        active_expr_ids: set[int] | None = None,
+        seen_var_ids: set[int] | None = None,
+        seen_storage: set[object] | None = None,
+        depth: int = 0,
+    ):
         def _impl():
             nonlocal expr, active_expr_ids, seen_var_ids, seen_storage
             expr = self.unwrap_c_casts(expr)
@@ -336,20 +356,28 @@ class LinearRecurrenceState:
                     break
                 expr = self.unwrap_c_casts(alias)
             if isinstance(expr, structured_c.CTypeCast):
-                inner = self.resolve_known_copy_alias_expr(expr.expr, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
+                inner = self.resolve_known_copy_alias_expr(
+                    expr.expr, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1
+                )
                 active_expr_ids.discard(expr_id)
                 if inner is not expr.expr:
                     return structured_c.CTypeCast(None, expr.type, inner, codegen=getattr(expr, "codegen", None))
                 return self.canonicalize_stack_cvar_expr(expr, self.codegen)
             if isinstance(expr, structured_c.CUnaryOp):
-                operand = self.resolve_known_copy_alias_expr(expr.operand, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
+                operand = self.resolve_known_copy_alias_expr(
+                    expr.operand, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1
+                )
                 active_expr_ids.discard(expr_id)
                 if operand is not expr.operand:
                     return structured_c.CUnaryOp(expr.op, operand, codegen=getattr(expr, "codegen", None))
                 return self.canonicalize_stack_cvar_expr(expr, self.codegen)
             if isinstance(expr, structured_c.CBinaryOp):
-                lhs = self.resolve_known_copy_alias_expr(expr.lhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
-                rhs = self.resolve_known_copy_alias_expr(expr.rhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1)
+                lhs = self.resolve_known_copy_alias_expr(
+                    expr.lhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1
+                )
+                rhs = self.resolve_known_copy_alias_expr(
+                    expr.rhs, active_expr_ids, seen_var_ids.copy(), seen_storage.copy(), depth + 1
+                )
                 active_expr_ids.discard(expr_id)
                 if lhs is not expr.lhs or rhs is not expr.rhs:
                     rebuilt = self.build_binary_op_or_none(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
@@ -378,7 +406,9 @@ class LinearRecurrenceState:
                 active_expr_ids.discard(expr_id)
                 return result
             if isinstance(expr, structured_c.CBinaryOp):
-                result = self.expr_contains_dereference(expr.lhs, active_expr_ids) or self.expr_contains_dereference(expr.rhs, active_expr_ids)
+                result = self.expr_contains_dereference(expr.lhs, active_expr_ids) or self.expr_contains_dereference(
+                    expr.rhs, active_expr_ids
+                )
                 active_expr_ids.discard(expr_id)
                 return result
             if isinstance(expr, structured_c.CTypeCast):
@@ -386,7 +416,9 @@ class LinearRecurrenceState:
                 active_expr_ids.discard(expr_id)
                 return result
             if isinstance(expr, structured_c.CFunctionCall):
-                result = any(self.expr_contains_dereference(arg, active_expr_ids) for arg in getattr(expr, "args", ()) or ())
+                result = any(
+                    self.expr_contains_dereference(arg, active_expr_ids) for arg in getattr(expr, "args", ()) or ()
+                )
                 active_expr_ids.discard(expr_id)
                 return result
             active_expr_ids.discard(expr_id)
@@ -395,7 +427,9 @@ class LinearRecurrenceState:
         return _impl()
 
     def match_linear_word_delta_expr(self, expr):
-        analysis = self.analyze_widening_expr(expr, self.resolve_known_copy_alias_expr, self.match_high_byte_projection_base)
+        analysis = self.analyze_widening_expr(
+            expr, self.resolve_known_copy_alias_expr, self.match_high_byte_projection_base
+        )
         if analysis is None or analysis.kind != "linear":
             return None
         resolved_base = self.resolve_known_copy_alias_expr(analysis.base_expr)
@@ -424,9 +458,9 @@ class LinearRecurrenceState:
         self.recurrence_bound_to_materialized_local += 1
         debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
         if isinstance(debug_stats, dict):
-            debug_stats["recurrence_bound_to_materialized_local"] = int(
-                debug_stats.get("recurrence_bound_to_materialized_local", 0) or 0
-            ) + 1
+            debug_stats["recurrence_bound_to_materialized_local"] = (
+                int(debug_stats.get("recurrence_bound_to_materialized_local", 0) or 0) + 1
+            )
         setattr(self.codegen, "_inertia_has_rebound_materialized_recurrence", True)
 
     def is_materialized_stack_local(self, cvar) -> bool:

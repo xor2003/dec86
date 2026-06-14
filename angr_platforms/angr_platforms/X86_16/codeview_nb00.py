@@ -257,7 +257,9 @@ def _read_leaf(record: bytes, offset: int) -> tuple[CodeViewNB00TypeLeaf, int]:
             strlen = record[offset + 1]
             end = offset + 2 + strlen
             if end <= len(record):
-                return CodeViewNB00TypeLeaf("string", record[offset + 2 : end].decode("ascii", errors="ignore")), 2 + strlen
+                return CodeViewNB00TypeLeaf(
+                    "string", record[offset + 2 : end].decode("ascii", errors="ignore")
+                ), 2 + strlen
         if tag == 0x83 and offset + 3 <= len(record):
             return CodeViewNB00TypeLeaf("index", struct.unpack_from("<H", record, offset + 1)[0]), 3
         if tag in {0x8B, 0x8C, 0x8E, 0x8F, 0x92, 0x94}:

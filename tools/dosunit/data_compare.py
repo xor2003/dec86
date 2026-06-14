@@ -128,7 +128,9 @@ def load_mz_image(path: Path, *, load_base_para: int = 0, min_size: int = 0) -> 
         current = int.from_bytes(memory[linear : linear + 2], "little")
         memory[linear : linear + 2] = ((current + load_base_para) & 0xFFFF).to_bytes(2, "little")
         relocs.append((off, seg))
-    return LoadedMzImage(memory=bytes(memory), image_size=len(image), load_base_para=load_base_para, relocs=tuple(relocs))
+    return LoadedMzImage(
+        memory=bytes(memory), image_size=len(image), load_base_para=load_base_para, relocs=tuple(relocs)
+    )
 
 
 def _parse_range_spec(spec: str) -> DataRange:
@@ -216,7 +218,9 @@ def _required_sizes(
         candidate_size = max(candidate_size, _segment_linear_end(candidate_catalog, item.candidate_segment, item.end))
     for item in normalizations:
         oracle_size = max(oracle_size, _segment_linear_end(oracle_catalog, item.oracle_segment, item.oracle_offset + 2))
-        candidate_size = max(candidate_size, _segment_linear_end(candidate_catalog, item.candidate_segment, item.candidate_offset + 2))
+        candidate_size = max(
+            candidate_size, _segment_linear_end(candidate_catalog, item.candidate_segment, item.candidate_offset + 2)
+        )
     return oracle_size, candidate_size
 
 
@@ -252,8 +256,12 @@ def _evaluate_code_pointer_normalizations(
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for item in normalizations:
-        oracle_value = _read_u16(oracle_image.memory, _segment_linear(oracle_catalog, item.oracle_segment, item.oracle_offset))
-        candidate_value = _read_u16(candidate_image.memory, _segment_linear(candidate_catalog, item.candidate_segment, item.candidate_offset))
+        oracle_value = _read_u16(
+            oracle_image.memory, _segment_linear(oracle_catalog, item.oracle_segment, item.oracle_offset)
+        )
+        candidate_value = _read_u16(
+            candidate_image.memory, _segment_linear(candidate_catalog, item.candidate_segment, item.candidate_offset)
+        )
         oracle_symbol = _function_by_name(oracle_catalog, item.symbol)
         candidate_symbol = _function_by_name(candidate_catalog, item.symbol)
         oracle_expected = _function_offset(oracle_symbol)
@@ -332,7 +340,14 @@ def _normalization_skip_pairs(normalizations: list[CodePointerNormalization]) ->
     pairs: set[tuple[str, int, str, int]] = set()
     for item in normalizations:
         for delta in range(2):
-            pairs.add((item.oracle_segment.upper(), item.oracle_offset + delta, item.candidate_segment.upper(), item.candidate_offset + delta))
+            pairs.add(
+                (
+                    item.oracle_segment.upper(),
+                    item.oracle_offset + delta,
+                    item.candidate_segment.upper(),
+                    item.candidate_offset + delta,
+                )
+            )
     return pairs
 
 

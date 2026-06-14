@@ -617,8 +617,7 @@ def main() -> int:
         return 1
 
     print(
-        f"[runtime-gate] example={example.name} rebuilt={rebuilt_exe} "
-        f"run_exit={args.expected_exit_code} status=passed"
+        f"[runtime-gate] example={example.name} rebuilt={rebuilt_exe} run_exit={args.expected_exit_code} status=passed"
     )
     return 0
 

@@ -7,7 +7,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 CORE_EVIDENCE_INPUT_FILES = [
     "cod/BIOSFUNC.COD",
     "cod/DOSFUNC.COD",
@@ -34,9 +33,9 @@ F14_EVIDENCE_INPUT_FILES = [
     "cod/f14/VDI.COD",
 ]
 
-DEFAULT_EVIDENCE_INPUT_FILES = CORE_EVIDENCE_INPUT_FILES + F14_EVIDENCE_INPUT_FILES[
-    :max(1, math.ceil(len(F14_EVIDENCE_INPUT_FILES) * 0.10))
-]
+DEFAULT_EVIDENCE_INPUT_FILES = (
+    CORE_EVIDENCE_INPUT_FILES + F14_EVIDENCE_INPUT_FILES[: max(1, math.ceil(len(F14_EVIDENCE_INPUT_FILES) * 0.10))]
+)
 
 
 def _split_env_lines(name: str, default: list[str]) -> list[str]:
@@ -229,9 +228,7 @@ class LlmConfig:
             checker_provider=env.get("CHECKER_PROVIDER", env.get("LLM_PROVIDER", "codex")),
             worker_provider=env.get("WORKER_PROVIDER", env.get("LLM_PROVIDER", "codex")),
             reviewer_provider=env.get("REVIEWER_PROVIDER", env.get("LLM_PROVIDER", "codex")),
-            crash_reviewer_provider=env.get(
-                "CRASH_REVIEWER_PROVIDER", env.get("LLM_PROVIDER", "codex")
-            ),
+            crash_reviewer_provider=env.get("CRASH_REVIEWER_PROVIDER", env.get("LLM_PROVIDER", "codex")),
             default_provider=env.get("LLM_PROVIDER", "codex"),
             ollama_cmd=env.get("OLLAMA_CMD", "ollama"),
             llamacpp_cmd=env.get("LLAMACPP_CMD", "llama-cli"),
@@ -375,8 +372,7 @@ class RuntimeConfig:
             maintenance_compaction_limit=int(env.get("MAINTENANCE_COMPACTION_LIMIT", "200")),
             scheduled_maintenance_interval_cycles=int(env.get("SCHEDULED_MAINTENANCE_INTERVAL_CYCLES", "3")),
             compact_prompts=env.get("COMPACT_PROMPTS", "1").strip().lower() not in {"0", "false", "no"},
-            delta_resume_prompts=env.get("DELTA_RESUME_PROMPTS", "1").strip().lower()
-            not in {"0", "false", "no"},
+            delta_resume_prompts=env.get("DELTA_RESUME_PROMPTS", "1").strip().lower() not in {"0", "false", "no"},
             codex_memory_limit_mb=int(env.get("CODEX_MEMORY_LIMIT_MB", "6144")),
             keep_log_count=int(env.get("KEEP_LOG_COUNT", "40")),
             min_free_disk_mb=int(env.get("MIN_FREE_DISK_MB", "8192")),

@@ -7,7 +7,6 @@ from typing import Any
 from tools.dosunit.ir_edges import BranchTarget, ConditionIR, Operand
 from tools.dosunit.model import normalize_hex
 
-
 REG8_PARENT = {
     "al": ("ax", 0),
     "cl": ("cx", 0),

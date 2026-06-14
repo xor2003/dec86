@@ -16,7 +16,6 @@ from urllib.parse import parse_qs, urlparse
 from .config import LlmConfig, RuntimeConfig
 from .runtime_records import load_jsonl, parse_usage_metrics, read_json, summarize_session_rows, write_json
 
-
 HTML_PAGE = """<!doctype html>
 <html lang="en">
 <head>
@@ -803,9 +802,14 @@ HTML_PAGE = """<!doctype html>
 def append_chat_entry(path: Path, role: str, message: str, *, at: str | None = None) -> None:
     def _impl():
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"role": role, "message": message, "at": at or datetime.now().astimezone().isoformat(timespec="seconds")}
+        payload = {
+            "role": role,
+            "message": message,
+            "at": at or datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
         with path.open("a", encoding="utf-8") as fp:
             fp.write(json.dumps(payload, sort_keys=True) + "\n")
+
     return _impl()
 
 
@@ -820,6 +824,7 @@ def _parse_kv_file(path: Path) -> dict[str, str]:
             key, value = raw_line.split("=", 1)
             data[key.strip()] = value.strip()
         return data
+
     return _impl()
 
 
@@ -832,6 +837,7 @@ def _tail_text(path: Path, max_bytes: int = 64 * 1024) -> str:
             size = fp.tell()
             fp.seek(max(0, size - max_bytes))
             return fp.read().decode("utf-8", errors="replace")
+
     return _impl()
 
 
@@ -843,6 +849,7 @@ def _load_json(path: Path) -> dict[str, object] | list[object] | None:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
+
     return _impl()
 
 
@@ -865,6 +872,7 @@ def _load_chat(path: Path, limit: int = 50) -> list[dict[str, str]]:
                     }
                 )
         return messages
+
     return _impl()
 
 
@@ -880,6 +888,7 @@ def _role_log_stats(log_dir: Path) -> dict[str, dict[str, int]]:
         for role in ("checker", "planner", "worker", "reviewer", "crash-reviewer"):
             stats.setdefault(role, {"count": 0, "total_bytes": 0, "max_bytes": 0})
         return dict(stats)
+
     return _impl()
 
 
@@ -896,6 +905,7 @@ def _free_disk_mb(root_dir: Path) -> int | None:
             return int(lines[1].split()[3])
         except (IndexError, ValueError):
             return None
+
     return _impl()
 
 
@@ -908,6 +918,7 @@ def _free_ram_mb() -> int | None:
         except OSError:
             return None
         return None
+
     return _impl()
 
 
@@ -923,18 +934,21 @@ def _state_dir_mb(state_dir: Path) -> int | None:
             return int(result.stdout.split()[0])
         except (IndexError, ValueError):
             return None
+
     return _impl()
 
 
 def _read_text(path: Path) -> str:
     def _impl():
         return path.read_text(encoding="utf-8", errors="replace").strip() if path.exists() else ""
+
     return _impl()
 
 
 def _remaining_steps_for_role(state_dir: Path, role: str) -> str:
     def _impl():
         return _read_text(state_dir / f"{role}.remaining")
+
     return _impl()
 
 
@@ -942,6 +956,7 @@ def _latest_log_for_role(state_dir: Path, role: str) -> Path | None:
     def _impl():
         text = _read_text(state_dir / f"{role}.lastlog")
         return Path(text) if text else None
+
     return _impl()
 
 
@@ -995,6 +1010,7 @@ def _role_activity(
                 }
             )
         return roles
+
     return _impl()
 
 
@@ -1041,12 +1057,14 @@ def _usage_summary(log_dir: Path) -> dict[str, object]:
             "cost_usd": round(cost_usd, 6) if cost_usd else None,
             "sources_scanned": sources_scanned,
         }
+
     return _impl()
 
 
 def _html_escape(value: object) -> str:
     def _impl():
         return html.escape("" if value is None else str(value))
+
     return _impl()
 
 
@@ -1055,6 +1073,7 @@ def _status_class(status: object) -> str:
         text = str(status or "unknown").lower()
         cleaned = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
         return f"status-{cleaned or 'unknown'}"
+
     return _impl()
 
 
@@ -1074,6 +1093,7 @@ def _pretty_bytes(bytes_value: object) -> str:
         if value >= 10 or unit == 0:
             return f"{value:.0f} {units[unit]}"
         return f"{value:.1f} {units[unit]}"
+
     return _impl()
 
 
@@ -1086,7 +1106,12 @@ def _render_stat_cards(data: dict[str, object]) -> str:
             ("Step", data.get("status", {}).get("step", "-") if isinstance(data.get("status"), dict) else "-"),
             ("Status", data.get("status", {}).get("status", "-") if isinstance(data.get("status"), dict) else "-"),
             ("Green", data.get("current_green_level") or "-"),
-            ("Last Log", _pretty_bytes(data.get("console", {}).get("size_bytes")) if isinstance(data.get("console"), dict) else "-"),
+            (
+                "Last Log",
+                _pretty_bytes(data.get("console", {}).get("size_bytes"))
+                if isinstance(data.get("console"), dict)
+                else "-",
+            ),
             ("Pending Msgs", "yes" if data.get("pending_comments") else "no"),
             ("Worker Logs", f"{worker_stats.get('count', 0)} / {_pretty_bytes(worker_stats.get('total_bytes'))}"),
         ]
@@ -1094,6 +1119,7 @@ def _render_stat_cards(data: dict[str, object]) -> str:
             f'<div class="stat"><div class="label">{_html_escape(label)}</div><div class="value">{_html_escape(value)}</div></div>'
             for label, value in stats
         )
+
     return _impl()
 
 
@@ -1102,20 +1128,37 @@ def _render_task_packet_html(packet: dict[str, object], packet_status: str) -> s
         rows = [
             ("Item", packet.get("item_id", "-"), packet.get("objective", "")),
             ("Status", packet_status or "-", ""),
-            ("Targets", " ".join(packet.get("target_files", [])) if isinstance(packet.get("target_files"), list) else "-", " ".join(packet.get("target_refs", [])) if isinstance(packet.get("target_refs"), list) else ""),
-            ("Tests", " | ".join(packet.get("acceptance_tests", [])) if isinstance(packet.get("acceptance_tests"), list) else "-", ""),
-            ("Done", " | ".join(packet.get("done_conditions", [])) if isinstance(packet.get("done_conditions"), list) else "-", ""),
+            (
+                "Targets",
+                " ".join(packet.get("target_files", [])) if isinstance(packet.get("target_files"), list) else "-",
+                " ".join(packet.get("target_refs", [])) if isinstance(packet.get("target_refs"), list) else "",
+            ),
+            (
+                "Tests",
+                " | ".join(packet.get("acceptance_tests", []))
+                if isinstance(packet.get("acceptance_tests"), list)
+                else "-",
+                "",
+            ),
+            (
+                "Done",
+                " | ".join(packet.get("done_conditions", []))
+                if isinstance(packet.get("done_conditions"), list)
+                else "-",
+                "",
+            ),
         ]
         return "".join(
             '<div class="step"><div><strong>'
             + _html_escape(label)
             + '</strong><div class="meta">'
             + _html_escape(meta)
-            + '</div></div><div>'
+            + "</div></div><div>"
             + _html_escape(value)
             + "</div></div>"
             for label, value, meta in rows
         )
+
     return _impl()
 
 
@@ -1131,11 +1174,12 @@ def _render_policy_html(policy: dict[str, object], green_level: str) -> str:
             + _html_escape(label)
             + '</strong><div class="meta">'
             + _html_escape(meta)
-            + '</div></div><div>'
+            + "</div></div><div>"
             + _html_escape(value)
             + "</div></div>"
             for label, value, meta in rows
         )
+
     return _impl()
 
 
@@ -1162,6 +1206,7 @@ def _render_steps_html(state: dict[str, object]) -> str:
                 + "</div></div>"
             )
         return "".join(items)
+
     return _impl()
 
 
@@ -1183,15 +1228,28 @@ def _render_processes_html(processes: object) -> str:
                 + '</div></div><div class="status-running">active</div></div>'
             )
         return "".join(items) or '<div class="hint">No registered subprocesses.</div>'
+
     return _impl()
 
 
 def _render_resources_html(resources: dict[str, object]) -> str:
     def _impl():
         rows = [
-            ("Free Disk", f"{resources.get('free_disk_mb')} MB" if resources.get("free_disk_mb") is not None else "-", resources.get("disk_note", "")),
-            ("Free RAM", f"{resources.get('free_ram_mb')} MB" if resources.get("free_ram_mb") is not None else "unknown", resources.get("ram_note", "")),
-            ("State Dir", f"{resources.get('state_dir_mb')} MB" if resources.get("state_dir_mb") is not None else "-", resources.get("state_note", "")),
+            (
+                "Free Disk",
+                f"{resources.get('free_disk_mb')} MB" if resources.get("free_disk_mb") is not None else "-",
+                resources.get("disk_note", ""),
+            ),
+            (
+                "Free RAM",
+                f"{resources.get('free_ram_mb')} MB" if resources.get("free_ram_mb") is not None else "unknown",
+                resources.get("ram_note", ""),
+            ),
+            (
+                "State Dir",
+                f"{resources.get('state_dir_mb')} MB" if resources.get("state_dir_mb") is not None else "-",
+                resources.get("state_note", ""),
+            ),
             ("Active Procs", resources.get("active_process_count", 0), ""),
         ]
         return "".join(
@@ -1199,11 +1257,12 @@ def _render_resources_html(resources: dict[str, object]) -> str:
             + _html_escape(label)
             + '</strong><div class="meta">'
             + _html_escape(meta)
-            + '</div></div><div>'
+            + "</div></div><div>"
             + _html_escape(value)
             + "</div></div>"
             for label, value, meta in rows
         )
+
     return _impl()
 
 
@@ -1217,7 +1276,11 @@ def _render_usage_html(usage: dict[str, object]) -> str:
             )
         rows = [
             ("Prompt Tokens", usage.get("prompt_tokens", "-"), f"{usage.get('sources_scanned', 0)} logs scanned"),
-            ("Completion Tokens", usage.get("completion_tokens", "-"), "aggregated from structured telemetry" if usage.get("cost_usd") is not None else ""),
+            (
+                "Completion Tokens",
+                usage.get("completion_tokens", "-"),
+                "aggregated from structured telemetry" if usage.get("cost_usd") is not None else "",
+            ),
             ("Total Tokens", usage.get("total_tokens", "-"), ""),
             ("Spend", f"${float(usage.get('cost_usd')):.4f}" if usage.get("cost_usd") is not None else "-", ""),
         ]
@@ -1226,11 +1289,12 @@ def _render_usage_html(usage: dict[str, object]) -> str:
             + _html_escape(label)
             + '</strong><div class="meta">'
             + _html_escape(meta)
-            + '</div></div><div>'
+            + "</div></div><div>"
             + _html_escape(value)
             + "</div></div>"
             for label, value, meta in rows
         )
+
     return _impl()
 
 
@@ -1238,12 +1302,16 @@ def _render_preflight_html(preflight: dict[str, object]) -> str:
     def _impl():
         commands = preflight.get("commands", {})
         providers = preflight.get("providers", {})
-        command_text = " ".join(
-            f"{name}:{'ok' if ok else 'missing'}" for name, ok in commands.items()
-        ) if isinstance(commands, dict) else "-"
-        provider_text = " ".join(
-            f"{name}:{'ok' if ok else 'missing'}" for name, ok in providers.items()
-        ) if isinstance(providers, dict) else "-"
+        command_text = (
+            " ".join(f"{name}:{'ok' if ok else 'missing'}" for name, ok in commands.items())
+            if isinstance(commands, dict)
+            else "-"
+        )
+        provider_text = (
+            " ".join(f"{name}:{'ok' if ok else 'missing'}" for name, ok in providers.items())
+            if isinstance(providers, dict)
+            else "-"
+        )
         rows = [
             ("Ready", "yes" if preflight.get("ready") else "no", f"updated {preflight.get('updated_at', '-') or '-'}"),
             ("Python", "ok" if preflight.get("python_ok") else "missing", preflight.get("python_bin", "")),
@@ -1260,23 +1328,30 @@ def _render_preflight_html(preflight: dict[str, object]) -> str:
             + _html_escape(label)
             + '</strong><div class="meta">'
             + _html_escape(meta)
-            + '</div></div><div>'
+            + "</div></div><div>"
             + _html_escape(value)
             + "</div></div>"
             for label, value, meta in rows
         )
+
     return _impl()
 
 
 def _render_sessions_html(summary: dict[str, object]) -> str:
     def _impl():
         by_role = summary.get("by_role", {})
-        by_role_text = " ".join(f"{name}:{count}" for name, count in by_role.items()) if isinstance(by_role, dict) else "-"
+        by_role_text = (
+            " ".join(f"{name}:{count}" for name, count in by_role.items()) if isinstance(by_role, dict) else "-"
+        )
         rows = [
             ("Sessions", summary.get("total_sessions", 0), ""),
             ("Duration", f"{summary.get('total_duration_secs', 0)}s", ""),
             ("Tokens", summary.get("total_tokens", "-"), ""),
-            ("Spend", f"${float(summary.get('total_cost_usd')):.4f}" if summary.get("total_cost_usd") is not None else "-", ""),
+            (
+                "Spend",
+                f"${float(summary.get('total_cost_usd')):.4f}" if summary.get("total_cost_usd") is not None else "-",
+                "",
+            ),
             ("By Role", by_role_text or "-", ""),
         ]
         return "".join(
@@ -1284,11 +1359,12 @@ def _render_sessions_html(summary: dict[str, object]) -> str:
             + _html_escape(label)
             + '</strong><div class="meta">'
             + _html_escape(meta)
-            + '</div></div><div>'
+            + "</div></div><div>"
             + _html_escape(value)
             + "</div></div>"
             for label, value, meta in rows
         )
+
     return _impl()
 
 
@@ -1321,6 +1397,7 @@ def _render_roles_html(roles: object) -> str:
                 + "</div></div>"
             )
         return "".join(items) or '<div class="hint">No role activity yet.</div>'
+
     return _impl()
 
 
@@ -1344,6 +1421,7 @@ def _render_chat_html(chat: object) -> str:
                 + "</div></div>"
             )
         return "".join(items) or '<div class="hint">No messages yet.</div>'
+
     return _impl()
 
 
@@ -1368,6 +1446,7 @@ def _history_events(path: Path, limit: int = 20) -> list[dict[str, object]]:
                 }
             )
         return events
+
     return _impl()
 
 
@@ -1387,11 +1466,13 @@ def _render_history_html(history: object) -> str:
                 + '</div><div class="meta">'
                 + _html_escape(
                     " ".join(
-                        part for part in (
+                        part
+                        for part in (
                             str(event.get("event", "") or ""),
                             str(event.get("status", "") or ""),
                             str(event.get("failure_class", "") or ""),
-                        ) if part
+                        )
+                        if part
                     )
                 )
                 + '</div><div class="meta">'
@@ -1403,13 +1484,17 @@ def _render_history_html(history: object) -> str:
                 + "</div></div>"
             )
         return "".join(items) or '<div class="hint">No recent events yet.</div>'
+
     return _impl()
 
 
 def _operator_actions(history: list[dict[str, object]], limit: int = 10) -> list[dict[str, object]]:
     def _impl():
-        rows = [event for event in history if isinstance(event, dict) and event.get("event") == "operator.action_requested"]
+        rows = [
+            event for event in history if isinstance(event, dict) and event.get("event") == "operator.action_requested"
+        ]
         return rows[-limit:]
+
     return _impl()
 
 
@@ -1435,6 +1520,7 @@ def _render_actions_html(actions: object) -> str:
                 + "</div></div>"
             )
         return "".join(items) or '<div class="hint">No operator actions recorded yet.</div>'
+
     return _impl()
 
 
@@ -1458,13 +1544,18 @@ def _render_blockers_html(blockers: object) -> str:
                 + "</div></div>"
             )
         return "".join(items) or '<div class="hint">No blockers or recovery activity recorded.</div>'
+
     return _impl()
 
 
 def _render_autonomy_html(autonomy: dict[str, object]) -> str:
     def _impl():
         rows = [
-            ("Closeout", autonomy.get("last_closeout_action", "-"), "auto-commit enabled" if autonomy.get("auto_commit_enabled") else "auto-commit disabled"),
+            (
+                "Closeout",
+                autonomy.get("last_closeout_action", "-"),
+                "auto-commit enabled" if autonomy.get("auto_commit_enabled") else "auto-commit disabled",
+            ),
             ("Branch", autonomy.get("branch_name", "-"), autonomy.get("branch_note", "")),
             ("Maintenance", autonomy.get("maintenance_updated_at", "-"), autonomy.get("maintenance_note", "")),
             ("Compaction", autonomy.get("compaction_note", "-"), ""),
@@ -1475,11 +1566,12 @@ def _render_autonomy_html(autonomy: dict[str, object]) -> str:
             + _html_escape(label)
             + '</strong><div class="meta">'
             + _html_escape(meta)
-            + '</div></div><div>'
+            + "</div></div><div>"
             + _html_escape(value)
             + "</div></div>"
             for label, value, meta in rows
         )
+
     return _impl()
 
 
@@ -1510,6 +1602,7 @@ def _current_blockers(history: list[dict[str, object]]) -> list[dict[str, object
             if len(blockers) >= 6:
                 break
         return list(reversed(blockers))
+
     return _impl()
 
 
@@ -1521,6 +1614,7 @@ def _safe_bootstrap_json(payload: dict[str, object]) -> str:
             .replace("\u2028", "\\u2028")
             .replace("\u2029", "\\u2029")
         )
+
     return _impl()
 
 
@@ -1541,6 +1635,7 @@ class HarnessWebUI:
                     "sources_scanned": 0,
                 },
             }
+
         return _impl()
 
     def _usage_marker(self) -> str:
@@ -1560,6 +1655,7 @@ class HarnessWebUI:
                     continue
                 parts.append(f"{path.name}:{stat.st_size}:{int(stat.st_mtime)}")
             return "|".join(parts)
+
         return _impl()
 
     def _cached_usage_summary(self) -> dict[str, object]:
@@ -1584,6 +1680,7 @@ class HarnessWebUI:
             payload = _usage_summary(self.cfg.log_dir)
             self._usage_cache = {"marker": marker, "payload": payload}
             return payload
+
         return _impl()
 
     def _render_html_page(self, payload: dict[str, object]) -> str:
@@ -1610,23 +1707,38 @@ class HarnessWebUI:
             html_page = html_page.replace("__STATS_HTML__", _render_stat_cards(payload))
             html_page = html_page.replace("__STEPS_HTML__", _render_steps_html(payload))
             html_page = html_page.replace("__PROCESSES_HTML__", _render_processes_html(payload.get("child_processes")))
-            html_page = html_page.replace("__TASK_PACKET_HTML__", _render_task_packet_html(payload.get("current_task_packet", {}), str(payload.get("current_task_packet_status", ""))))
-            html_page = html_page.replace("__POLICY_HTML__", _render_policy_html(payload.get("last_policy_decision", {}), str(payload.get("current_green_level", ""))))
+            html_page = html_page.replace(
+                "__TASK_PACKET_HTML__",
+                _render_task_packet_html(
+                    payload.get("current_task_packet", {}), str(payload.get("current_task_packet_status", ""))
+                ),
+            )
+            html_page = html_page.replace(
+                "__POLICY_HTML__",
+                _render_policy_html(
+                    payload.get("last_policy_decision", {}), str(payload.get("current_green_level", ""))
+                ),
+            )
             html_page = html_page.replace("__RESOURCES_HTML__", _render_resources_html(payload.get("resources", {})))
             html_page = html_page.replace("__USAGE_HTML__", _render_usage_html(payload.get("usage", {})))
             html_page = html_page.replace("__PREFLIGHT_HTML__", _render_preflight_html(payload.get("preflight", {})))
-            html_page = html_page.replace("__SESSIONS_HTML__", _render_sessions_html(payload.get("session_summary", {})))
+            html_page = html_page.replace(
+                "__SESSIONS_HTML__", _render_sessions_html(payload.get("session_summary", {}))
+            )
             html_page = html_page.replace("__ROLES_HTML__", _render_roles_html(payload.get("roles")))
             html_page = html_page.replace("__HISTORY_HTML__", _render_history_html(payload.get("history")))
             html_page = html_page.replace("__ACTIONS_HTML__", _render_actions_html(payload.get("actions")))
             html_page = html_page.replace("__BLOCKERS_HTML__", _render_blockers_html(payload.get("blockers")))
             html_page = html_page.replace("__AUTONOMY_HTML__", _render_autonomy_html(payload.get("autonomy", {})))
             console = payload.get("console", {}) if isinstance(payload.get("console"), dict) else {}
-            console_meta = f"{console.get('path', '-') or '-'} | {_pretty_bytes(console.get('size_bytes'))} | tailing live"
+            console_meta = (
+                f"{console.get('path', '-') or '-'} | {_pretty_bytes(console.get('size_bytes'))} | tailing live"
+            )
             html_page = html_page.replace("__CONSOLE_META__", _html_escape(console_meta))
             html_page = html_page.replace("__CONSOLE_TEXT__", _html_escape(console.get("text", "")))
             html_page = html_page.replace("__CHAT_HTML__", _render_chat_html(payload.get("chat")))
             return html_page
+
         return _impl()
 
     def _state_payload(self) -> dict[str, object]:
@@ -1673,10 +1785,14 @@ class HarnessWebUI:
                     "auto_commit_enabled": self.cfg.auto_commit_enabled,
                     "branch_name": cycle_state.get("branch_name", ""),
                     "branch_note": branch_note,
-                    "maintenance_updated_at": maintenance.get("updated_at", "") if isinstance(maintenance, dict) else "",
+                    "maintenance_updated_at": maintenance.get("updated_at", "")
+                    if isinstance(maintenance, dict)
+                    else "",
                     "maintenance_note": maintenance.get("reason", "") if isinstance(maintenance, dict) else "",
                     "compaction_note": compaction_note,
-                    "top_recommendation": recommendations[0] if isinstance(recommendations, list) and recommendations else "",
+                    "top_recommendation": recommendations[0]
+                    if isinstance(recommendations, list) and recommendations
+                    else "",
                 }
             return {
                 "project_name": self.cfg.project_name,
@@ -1684,16 +1800,26 @@ class HarnessWebUI:
                 "status": status,
                 "step_order": list(("full-sweep", "checker", "planner", "worker", "reviewer")),
                 "cycle_steps": cycle_steps,
-                "current_task_packet": cycle_state.get("current_task_packet", {}) if isinstance(cycle_state, dict) else {},
-                "current_task_packet_status": cycle_state.get("current_task_packet_status", "") if isinstance(cycle_state, dict) else "",
-                "current_green_level": cycle_state.get("current_green_level", "") if isinstance(cycle_state, dict) else "",
-                "last_policy_decision": cycle_state.get("last_policy_decision", {}) if isinstance(cycle_state, dict) else {},
+                "current_task_packet": cycle_state.get("current_task_packet", {})
+                if isinstance(cycle_state, dict)
+                else {},
+                "current_task_packet_status": cycle_state.get("current_task_packet_status", "")
+                if isinstance(cycle_state, dict)
+                else "",
+                "current_green_level": cycle_state.get("current_green_level", "")
+                if isinstance(cycle_state, dict)
+                else "",
+                "last_policy_decision": cycle_state.get("last_policy_decision", {})
+                if isinstance(cycle_state, dict)
+                else {},
                 "console": {
                     "path": str(self.cfg.last_log_file),
                     "size_bytes": self.cfg.last_log_file.stat().st_size if self.cfg.last_log_file.exists() else 0,
                     "text": _tail_text(self.cfg.last_log_file),
                 },
-                "pending_comments": self.cfg.operator_comments_file.read_text(encoding="utf-8", errors="replace").strip()
+                "pending_comments": self.cfg.operator_comments_file.read_text(
+                    encoding="utf-8", errors="replace"
+                ).strip()
                 if self.cfg.operator_comments_file.exists()
                 else "",
                 "chat": _load_chat(self.cfg.chat_log_file),
@@ -1724,6 +1850,7 @@ class HarnessWebUI:
                 "session_summary": summarize_session_rows(session_rows),
                 "usage": self._cached_usage_summary(),
             }
+
         return _impl()
 
     def _write_operator_comment(self, message: str) -> None:
@@ -1734,6 +1861,7 @@ class HarnessWebUI:
             new_text = f"{existing}\n\n{message}".strip() if existing else message
             self.cfg.operator_comments_file.write_text(new_text + "\n", encoding="utf-8")
             append_chat_entry(self.cfg.chat_log_file, "operator", message)
+
         return _impl()
 
     def _apply_action(self, action: str) -> dict[str, object]:
@@ -1772,7 +1900,11 @@ class HarnessWebUI:
                 state_path = cycle_dir / "cycle.state.json" if cycle_dir is not None else None
                 payload = read_json(state_path) if state_path is not None else {}
                 if not payload:
-                    return {"ok": False, "error": "no-active-cycle", "message": "no active cycle state for worker override"}
+                    return {
+                        "ok": False,
+                        "error": "no-active-cycle",
+                        "message": "no active cycle state for worker override",
+                    }
                 payload["manual_worker_model_override"] = self.cfg.worker_stall_model
                 payload["manual_worker_failure_limit_override"] = self.cfg.worker_stall_failure_limit
                 if state_path is not None:
@@ -1781,8 +1913,13 @@ class HarnessWebUI:
             if action == "run-maintenance":
                 if harness is not None and hasattr(harness, "run_background_maintenance"):
                     return harness.run_background_maintenance()
-                return {"ok": False, "error": "maintenance-unavailable", "message": "live maintenance requires active harness"}
+                return {
+                    "ok": False,
+                    "error": "maintenance-unavailable",
+                    "message": "live maintenance requires active harness",
+                }
             return {"ok": False, "error": "unknown-action", "message": f"unknown action: {action}"}
+
         return _impl()
 
     def _build_handler(self):
@@ -1793,6 +1930,7 @@ class HarnessWebUI:
                 def log_message(self, _format: str, *_args: object) -> None:
                     def _impl():
                         return
+
                     return _impl()
 
                 def _send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -1805,6 +1943,7 @@ class HarnessWebUI:
                         self.send_header("Content-Length", str(len(body)))
                         self.end_headers()
                         self.wfile.write(body)
+
                     return _impl()
 
                 def _send_html(self, body: str) -> None:
@@ -1817,6 +1956,7 @@ class HarnessWebUI:
                         self.send_header("Content-Length", str(len(data)))
                         self.end_headers()
                         self.wfile.write(data)
+
                     return _impl()
 
                 def do_GET(self) -> None:
@@ -1834,12 +1974,15 @@ class HarnessWebUI:
                             self._send_json(
                                 {
                                     "path": str(outer.cfg.last_log_file),
-                                    "size_bytes": outer.cfg.last_log_file.stat().st_size if outer.cfg.last_log_file.exists() else 0,
+                                    "size_bytes": outer.cfg.last_log_file.stat().st_size
+                                    if outer.cfg.last_log_file.exists()
+                                    else 0,
                                     "text": _tail_text(outer.cfg.last_log_file, max_bytes=max_bytes),
                                 }
                             )
                             return
                         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
                     return _impl()
 
                 def do_POST(self) -> None:
@@ -1870,6 +2013,7 @@ class HarnessWebUI:
                             )
                             return
                         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
                     return _impl()
 
         return Handler
@@ -1892,6 +2036,7 @@ class HarnessWebUI:
                 except Exception:
                     pass
             return self.url
+
         return _impl()
 
     def stop(self) -> None:
@@ -1902,6 +2047,7 @@ class HarnessWebUI:
             self.server.server_close()
             if self.thread is not None:
                 self.thread.join(timeout=2)
+
         return _impl()
 
 
@@ -1912,4 +2058,5 @@ def launch_web_ui(cfg: RuntimeConfig, harness: object | None = None) -> HarnessW
         ui = HarnessWebUI(cfg, harness=harness)
         ui.start()
         return ui
+
     return _impl()

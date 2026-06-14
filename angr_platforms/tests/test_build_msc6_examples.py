@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 
+from scripts import verify_msc_example_runtime_gate as runtime_gate
 from scripts.build_msc6_examples import (
     COMPARE16_HARNESS_MAIN,
     COMPARE32_HARNESS_MAIN,
@@ -13,15 +14,14 @@ from scripts.build_msc6_examples import (
     _build_from_function_decompiles,
     _child_trace_path,
     _decompile_and_validate,
+    _decompile_function_with_options,
     _extract_decompiled_function_definition,
     _focused_decompile_process_timeout,
     _is_decompile_output_acceptable,
     _make_decompile_env,
-    _parse_decompile_profile,
-    _decompile_function_with_options,
     _normalize_extracted_function_arg_placeholders,
+    _parse_decompile_profile,
 )
-from scripts import verify_msc_example_runtime_gate as runtime_gate
 
 
 def test_extract_decompiled_function_definition_handles_multiline_header():
@@ -217,7 +217,9 @@ def test_explicit_function_fallback_failure_does_not_probe_whole_binary(monkeypa
     def fail_whole_decompile(*_args, **_kwargs):
         raise AssertionError("whole-binary decompile should not run after explicit fallback failure")
 
-    monkeypatch.setattr("scripts.build_msc6_examples._build_from_function_decompiles", fake_build_from_function_decompiles)
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._build_from_function_decompiles", fake_build_from_function_decompiles
+    )
     monkeypatch.setattr("scripts.build_msc6_examples._decompile", fail_whole_decompile)
 
     result = _decompile_and_validate(

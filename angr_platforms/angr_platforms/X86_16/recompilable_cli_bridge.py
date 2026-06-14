@@ -190,14 +190,18 @@ def _decompile_corpus_case(
         shape_ok_evidence_text = evidence_c_text or _load_shape_ok_evidence_c_text(case)
         fallback_evidence_text = shape_ok_evidence_text or _load_evidence_c_text(case)
         fallback_shape = (
-            check_recompilable_c_text_shape(fallback_evidence_text, case) if fallback_evidence_text is not None else None
+            check_recompilable_c_text_shape(fallback_evidence_text, case)
+            if fallback_evidence_text is not None
+            else None
         )
         if case.name == "loadprog_real" and shape_ok_evidence_text is not None:
             evidence_path = _evidence_dec_path(case)
             return shape_ok_evidence_text, {
                 "c_text_source": "shape_ok_evidence",
                 "used_shape_ok_evidence": True,
-                "c_text_source_path": (str(evidence_path.relative_to(_REPO_ROOT)) if evidence_path is not None else None),
+                "c_text_source_path": (
+                    str(evidence_path.relative_to(_REPO_ROOT)) if evidence_path is not None else None
+                ),
                 "decompile_path": "shape_ok_evidence",
                 "decompile_bounded": True,
                 "decompile_timeout_s": _corpus_decompile_timeout(case),

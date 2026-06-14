@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 from meta_harness.config import (
     CORE_EVIDENCE_INPUT_FILES,
@@ -29,8 +28,8 @@ def test_runtime_config_reads_repo_harness_config_file(monkeypatch, tmp_path):
         'PRIMARY_PRIORITY="raise SORTDEMO.EXE decompilation quality by removing repeated failed function passes and replacing avoidable asm fallback with real recovered C"\n'
         'SECONDARY_PRIORITY="emit stable whole-file compiler/library summaries for SORTDEMO.EXE and keep harness retries bounded, measurable, and evidence-driven"\n'
         'GENERAL_IMPROVEMENT_RULE="Never add hacks specific to one source file or one sample; fixes must be general-purpose improvements. For this repo keep the live lane on SORTDEMO.EXE, prefer bounded --addr repros over broad sweeps while debugging a function family, and stop retrying a lane once it repeats the same failure family without new evidence."\n'
-        'REPO_STANDING_TASKS=$\'task one\\ntask two\'\n'
-        'EVIDENCE_INPUT_FILES=$\'SORTDEMO.EXE\\nPLAN.md\'\n'
+        "REPO_STANDING_TASKS=$'task one\\ntask two'\n"
+        "EVIDENCE_INPUT_FILES=$'SORTDEMO.EXE\\nPLAN.md'\n"
         'SWEEP_CMD="python -m demo sortdemo"\n',
         encoding="utf-8",
     )

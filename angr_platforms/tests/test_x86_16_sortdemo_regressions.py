@@ -194,9 +194,7 @@ def test_sortdemo_percolateup_materializes_parent_once_and_preserves_calls():
     assert "gcc syntax check failed:" not in combined
     final_body = "void PercolateUp" + result.stdout.rsplit("void PercolateUp", 1)[-1]
     executable_lines = tuple(
-        line.strip()
-        for line in final_body.splitlines()
-        if line.startswith("        ") or line.startswith("    ")
+        line.strip() for line in final_body.splitlines() if line.startswith("        ") or line.startswith("    ")
     )
     assert "local_2 = (short)i / 2;" in executable_lines
     assert executable_lines.count("g_0BAA += 1;") == 1
