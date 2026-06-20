@@ -307,6 +307,32 @@ def test_location_fingerprint_matches_constant_indexed_global_to_direct_addr():
     assert _expr_fingerprint(indexed, project) == _expr_fingerprint(raw, project)
 
 
+def test_expr_fingerprint_matches_variable_indexed_global_to_ds_linear_deref():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    ds = _reg(project, "ds", codegen)
+    index = _stack(-6, codegen)
+    base = CVariable(SimMemoryVariable(0x56, 2, name="g_demo_len"), codegen=codegen)
+    indexed = CIndexedVariable(base, index, variable_type=SimTypeShort(False), codegen=codegen)
+    raw = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp(
+                "Add",
+                CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen),
+                _const(0x56, codegen),
+                codegen=codegen,
+            ),
+            CBinaryOp("Shl", index, _const(1, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(indexed, project) == _expr_fingerprint(raw, project)
+
+
 def test_expr_fingerprint_normalizes_global_word_pair_with_shifted_high_byte():
     codegen = _DummyCodegen()
     project = codegen.project

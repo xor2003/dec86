@@ -55,7 +55,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION = 10
+TAIL_VALIDATION_FINGERPRINT_VERSION = 11
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 50000
@@ -1901,6 +1901,9 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
         indexed_global_location = _global_indexed_location_fingerprint_8616(node)
         if indexed_global_location is not None:
             return _cached(indexed_global_location)
+        indexed_global_deref = _global_indexed_ds_deref_fingerprint_8616(node, project, _child_seen())
+        if indexed_global_deref is not None:
+            return _cached(indexed_global_deref)
         indexed_stack_location = _stack_indexed_location_fingerprint_8616(node, project)
         if indexed_stack_location is not None:
             return _cached(indexed_stack_location)
@@ -2387,6 +2390,38 @@ def _global_indexed_location_fingerprint_8616(node) -> str | None:
     if addr < 0 or elem_size <= 0:
         return None
     return f"global:{(addr + index_value * elem_size) & 0xFFFF:#x}"
+
+
+def _global_indexed_ds_deref_fingerprint_8616(node, project, child_seen: set[int]) -> str | None:
+    node = _strip_validation_casts(node)
+    if not isinstance(node, CIndexedVariable):
+        return None
+    base = _strip_validation_casts(getattr(node, "variable", None))
+    index = _strip_validation_casts(getattr(node, "index", None))
+    if isinstance(base, CUnaryOp) and base.op == "Reference":
+        base = _strip_validation_casts(base.operand)
+    if not isinstance(base, CVariable):
+        return None
+    variable = getattr(base, "variable", None)
+    if not isinstance(variable, SimMemoryVariable):
+        return None
+    addr = getattr(variable, "addr", None)
+    elem_size = getattr(variable, "size", None)
+    if not isinstance(addr, int) or not isinstance(elem_size, int):
+        return None
+    if addr < 0 or elem_size <= 0:
+        return None
+    if isinstance(_c_constant_int_value(index), int):
+        return None
+    index_fp = _expr_fingerprint(index, project, child_seen)
+    if elem_size == 1:
+        scaled_index = index_fp
+    elif elem_size > 0 and elem_size & (elem_size - 1) == 0:
+        shift = elem_size.bit_length() - 1
+        scaled_index = f"Shl({index_fp},const:{shift})"
+    else:
+        scaled_index = f"Mul({index_fp},const:{elem_size})"
+    return f"Dereference(Add(Mul(reg:ds,const:16),{scaled_index},const:{addr & 0xFFFF}))"
 
 
 def _deref_location_fingerprint_8616(node, project) -> str | None:
