@@ -6,6 +6,66 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
+class DebugTypeMemberEvidence:
+    name: str
+    offset: int | None = None
+    owner_type_index: int | None = None
+    type_index: int | None = None
+    leaf_index: int | None = None
+    attributes: int | None = None
+    source: str = ""
+
+
+@dataclass(frozen=True)
+class DebugTypeReferenceEvidence:
+    name: str
+    type_index: int
+    symbol_class: str = ""
+    source: str = ""
+
+
+@dataclass(frozen=True)
+class DebugSymbolEvidence:
+    name: str
+    symbol_class: str = ""
+    storage: str = ""
+    offset: int | None = None
+    signed_offset: int | None = None
+    segment: int | None = None
+    linear_addr: int | None = None
+    length: int | None = None
+    type_index: int | None = None
+    owner_name: str = ""
+    attributes: tuple[tuple[str, str], ...] = ()
+    source: str = ""
+
+
+@dataclass(frozen=True)
+class DebugTypeDescriptorEvidence:
+    type_index: int
+    kind: str
+    name: str = ""
+    size: int | None = None
+    base_type_index: int | None = None
+    target_type_index: int | None = None
+    return_type_index: int | None = None
+    call_kind: int | None = None
+    attributes: int | None = None
+    lower_bound: int | None = None
+    upper_bound: int | None = None
+    source: str = ""
+
+
+@dataclass(frozen=True)
+class DebugEnumMemberEvidence:
+    name: str
+    value: int
+    owner_type_index: int | None = None
+    attributes: int | None = None
+    source: str = ""
+
+
+@dataclass(frozen=True)
 class LSTMetadata:
     data_labels: dict[int, str]
     code_labels: dict[int, str]
@@ -14,6 +74,15 @@ class LSTMetadata:
     absolute_addrs: bool = False
     source_format: str = "generic_lst"
     struct_names: tuple[str, ...] = ()
+    debug_source_files: tuple[str, ...] = ()
+    debug_type_names: tuple[str, ...] = ()
+    debug_type_descriptors: tuple[DebugTypeDescriptorEvidence, ...] = ()
+    debug_type_references: tuple[DebugTypeReferenceEvidence, ...] = ()
+    debug_symbols: tuple[DebugSymbolEvidence, ...] = ()
+    debug_type_members: tuple[DebugTypeMemberEvidence, ...] = ()
+    debug_enum_members: tuple[DebugEnumMemberEvidence, ...] = ()
+    debug_identifiers: tuple[str, ...] = ()
+    debug_line_map: dict[int, tuple[int, int]] = field(default_factory=dict)
     cod_path: str | None = None
     cod_proc_kinds: dict[int, str] = field(default_factory=dict)
 

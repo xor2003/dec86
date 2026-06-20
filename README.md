@@ -219,7 +219,7 @@ Rule defining which pipeline layer is responsible for a semantic transformation.
 
 - **Real-mode x86 support in angr**: in-tree `x86-16` arch, lifter, SimOS, DOS MZ loader, and DOS NE loader
 - **Decompiler CLI that works on real DOS inputs**: whole-binary or single-function recovery from `.COM`, `.EXE`, raw blobs, and `.COD`
-- **Sidecar-aware recovery**: `.COD`, `.LST`, `.MAP`, CodeView, and TDINFO metadata improve labels, ranges, and emitted C
+- **Sidecar-aware recovery**: `.COD`, `.LST`, `.MAP`, CodeView, and TDInfo metadata improve labels, ranges, type evidence, and emitted C
 - **Evidence-backed fallback modes**: timeouts and lift failures stay visible instead of being silently replaced with guessed output
 - **Library signature support**: import `.pat`, OMF `.obj`, and OMF `.lib` into a deduplicated PAT catalog
 - **Tail validation**: semantic checks on late pipeline output instead of trusting cleanup blindly
@@ -245,9 +245,16 @@ Rule defining which pipeline layer is responsible for a semantic transformation.
 | `.COD` listings | procedure slicing, local naming, source-backed annotations |
 | `.LST` listings | labels, ranges, segment-aware metadata |
 | `.MAP` files | code/data layout and public symbol recovery |
-| CodeView NB00 / NB02 / NB04 | symbol/type/debug metadata when embedded |
-| TDINFO | Borland/Turbo Debugger symbol metadata |
+| CodeView NB00 | embedded module records, publics, labels, code ranges, source files, line maps, type names, and simple member-offset evidence |
+| CodeView NB02 / NB04 / NB08 / NB09 | embedded CV2/CV4/CV5 symbols, procedures, stack variables, source files, line maps, type names, and CV4 member records |
+| TDInfo | Borland/Turbo Debugger symbols, source files, stack/register/constant symbols, type references, compact type descriptors, struct/union members, and enum members |
 | `.pat` / OMF `.obj` / OMF `.lib` | library signature matching via deduplicated PAT catalogs |
+
+Debug metadata can also be inspected directly:
+
+```bash
+./dump_debug_info.py PROGRAM.EXE
+```
 
 ## CLI
 

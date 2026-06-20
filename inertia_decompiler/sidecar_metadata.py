@@ -3,11 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 
 import angr
-from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
+from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00
+from angr_platforms.X86_16.codeview_nb02_nb04 import parse_codeview_nb0204
+from angr_platforms.X86_16.lst_extract import (
+    DebugEnumMemberEvidence,
+    DebugSymbolEvidence,
+    DebugTypeDescriptorEvidence,
+    DebugTypeMemberEvidence,
+    DebugTypeReferenceEvidence,
+    LSTMetadata,
+    extract_lst_metadata,
+)
 from angr_platforms.X86_16.turbo_debug_tdinfo import parse_tdinfo_exe
 
 from inertia_decompiler.project_loading import _probe_ida_base_linear
 from inertia_decompiler.sidecar_cache import (
+    _attach_debug_evidence_attrs,
     apply_cached_sidecar_metadata,
     emit_sidecar_metadata_debug,
     load_cached_sidecar_metadata,
@@ -190,17 +201,50 @@ def _load_codeview_or_ne_metadata(
     project: angr.Project,
     *,
     load_base_linear: int,
-) -> tuple[dict[int, str], dict[int, str], dict[int, tuple[int, int]], str | None]:
+) -> tuple[
+    dict[int, str],
+    dict[int, str],
+    dict[int, tuple[int, int]],
+    str | None,
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[DebugSymbolEvidence, ...],
+    tuple[DebugTypeMemberEvidence, ...],
+    dict[int, tuple[int, int]],
+]:
     def _impl():
         codeview_code: dict[int, str] = {}
         codeview_data: dict[int, str] = {}
         codeview_ranges: dict[int, tuple[int, int]] = {}
         codeview_format: str | None = None
+        debug_source_files: tuple[str, ...] = ()
+        debug_type_names: tuple[str, ...] = ()
+        debug_symbols: tuple[DebugSymbolEvidence, ...] = ()
+        debug_type_members: tuple[DebugTypeMemberEvidence, ...] = ()
+        debug_identifiers: tuple[str, ...] = ()
+        debug_line_map: dict[int, tuple[int, int]] = {}
         try:
             codeview_code, codeview_data, codeview_ranges = _parse_codeview_nb00_metadata(
                 binary, load_base_linear=load_base_linear
             )
-            codeview_format = "codeview_nb00" if codeview_code else None
+            if codeview_code:
+                codeview_format = "codeview_nb00"
+                parsed_nb00 = parse_codeview_nb00(binary, load_base_linear=load_base_linear)
+                if parsed_nb00 is not None:
+                    debug_source_files = parsed_nb00.source_files
+                    debug_type_names = parsed_nb00.type_record_names
+                    debug_symbols = _nb00_publics_to_symbol_evidence(
+                        parsed_nb00.publics,
+                        load_base_linear=load_base_linear,
+                        source="codeview_nb00",
+                    )
+                    debug_type_members = _codeview_type_members_to_evidence(
+                        parsed_nb00.type_members,
+                        source="codeview_nb00",
+                    )
+                    debug_identifiers = parsed_nb00.debug_identifiers
+                    debug_line_map = dict(parsed_nb00.line_map)
         except Exception as exc:
             print(f"[dbg] failed to parse CodeView NB00 metadata from {binary}: {exc}")
         if not codeview_code:
@@ -209,6 +253,22 @@ def _load_codeview_or_ne_metadata(
                 if cv_code or cv_data or cv_ranges:
                     codeview_code, codeview_data, codeview_ranges = cv_code, cv_data, cv_ranges
                     codeview_format = "codeview_nb0204"
+                    parsed_nb0204 = parse_codeview_nb0204(binary, load_base_linear=load_base_linear)
+                    if parsed_nb0204 is not None:
+                        debug_source_files = parsed_nb0204.source_files
+                        debug_type_names = parsed_nb0204.type_record_names
+                        debug_symbols = _nb0204_symbols_to_evidence(
+                            parsed_nb0204.procedures,
+                            parsed_nb0204.stack_variables,
+                            load_base_linear=load_base_linear,
+                            source="codeview_nb0204",
+                        )
+                        debug_type_members = _codeview_type_members_to_evidence(
+                            parsed_nb0204.type_members,
+                            source="codeview_nb0204",
+                        )
+                        debug_identifiers = parsed_nb0204.debug_identifiers
+                        debug_line_map = dict(parsed_nb0204.line_map)
             except Exception as exc:
                 print(f"[dbg] failed to parse CodeView NB02/NB04 metadata from {binary}: {exc}")
         if not codeview_code:
@@ -221,7 +281,18 @@ def _load_codeview_or_ne_metadata(
                     codeview_format = "ne_exe"
             except Exception as exc:
                 print(f"[dbg] failed to parse NE format metadata from {binary}: {exc}")
-        return codeview_code, codeview_data, codeview_ranges, codeview_format
+        return (
+            codeview_code,
+            codeview_data,
+            codeview_ranges,
+            codeview_format,
+            debug_source_files,
+            debug_type_names,
+            debug_symbols,
+            debug_type_members,
+            debug_identifiers,
+            debug_line_map,
+        )
 
     return _impl()
 
@@ -232,6 +303,14 @@ def _load_tdinfo_sidecar(
     load_base_linear: int,
     code_labels: dict[int, str],
     data_labels: dict[int, str],
+    debug_source_files: list[str],
+    debug_type_names: list[str],
+    debug_type_descriptors: list[DebugTypeDescriptorEvidence],
+    debug_type_references: list[DebugTypeReferenceEvidence],
+    debug_symbols: list[DebugSymbolEvidence],
+    debug_type_members: list[DebugTypeMemberEvidence],
+    debug_enum_members: list[DebugEnumMemberEvidence],
+    debug_identifiers: list[str],
     source_formats: list[str],
 ) -> None:
     try:
@@ -239,13 +318,223 @@ def _load_tdinfo_sidecar(
     except Exception as exc:
         print(f"[dbg] failed to parse Turbo Debug TDInfo metadata from {binary}: {exc}")
         return
-    if tdinfo is None or not (tdinfo.code_labels or tdinfo.data_labels):
+    if tdinfo is None:
+        return
+    if not (
+        tdinfo.code_labels
+        or tdinfo.data_labels
+        or tdinfo.source_files
+        or tdinfo.type_names
+        or tdinfo.candidate_identifiers
+    ):
         return
     for addr, name in tdinfo.code_labels.items():
         code_labels.setdefault(addr, name)
     for addr, name in tdinfo.data_labels.items():
         data_labels.setdefault(addr, name)
+    debug_source_files.extend(tdinfo.source_files)
+    debug_type_names.extend(tdinfo.type_names)
+    for descriptor in tdinfo.type_descriptors:
+        debug_type_descriptors.append(
+            DebugTypeDescriptorEvidence(
+                type_index=descriptor.type_index,
+                kind=descriptor.kind.name,
+                name=descriptor.name,
+                size=descriptor.size,
+                base_type_index=descriptor.base_type_index,
+                target_type_index=descriptor.target_type_index,
+                return_type_index=descriptor.return_type_index,
+                call_kind=descriptor.call_kind,
+                attributes=descriptor.attributes,
+                lower_bound=descriptor.lower_bound,
+                upper_bound=descriptor.upper_bound,
+                source="turbo_debug_tdinfo",
+            )
+        )
+    for ref in tdinfo.type_references:
+        debug_type_references.append(
+            DebugTypeReferenceEvidence(
+                name=ref.name,
+                type_index=ref.type_index,
+                symbol_class=ref.symbol_class.name,
+                source="turbo_debug_tdinfo",
+            )
+        )
+    debug_symbols.extend(
+        _tdinfo_symbols_to_evidence(
+            tdinfo.named_symbols,
+            load_base_linear=load_base_linear,
+            source="turbo_debug_tdinfo",
+        )
+    )
+    for member in tdinfo.type_members:
+        debug_type_members.append(
+            DebugTypeMemberEvidence(
+                name=member.name,
+                offset=member.offset,
+                owner_type_index=member.owner_type_index,
+                type_index=member.type_index,
+                attributes=member.attributes,
+                source="turbo_debug_tdinfo",
+            )
+        )
+    for member in tdinfo.enum_members:
+        debug_enum_members.append(
+            DebugEnumMemberEvidence(
+                name=member.name,
+                value=member.value,
+                owner_type_index=member.owner_type_index,
+                attributes=member.attributes,
+                source="turbo_debug_tdinfo",
+            )
+        )
+    debug_identifiers.extend(tdinfo.candidate_identifiers)
     source_formats.append("turbo_debug_tdinfo")
+
+
+def _codeview_type_members_to_evidence(
+    members: tuple[object, ...],
+    *,
+    source: str,
+) -> tuple[DebugTypeMemberEvidence, ...]:
+    evidence: list[DebugTypeMemberEvidence] = []
+    for member in members:
+        name = str(getattr(member, "name", "")).strip()
+        if not name:
+            continue
+        offset = getattr(member, "offset", None)
+        owner_type_index = getattr(member, "owner_type_index", None)
+        type_index = getattr(member, "type_index", None)
+        leaf_index = getattr(member, "leaf_index", None)
+        evidence.append(
+            DebugTypeMemberEvidence(
+                name=name,
+                offset=int(offset) if offset is not None else None,
+                owner_type_index=int(owner_type_index) if owner_type_index is not None else None,
+                type_index=int(type_index) if type_index is not None else None,
+                leaf_index=int(leaf_index) if leaf_index is not None else None,
+                source=source,
+            )
+        )
+    return tuple(evidence)
+
+
+def _attrs_from_mapping(mapping: dict[object, object]) -> tuple[tuple[str, str], ...]:
+    return tuple((str(key), str(value)) for key, value in sorted(mapping.items(), key=lambda item: str(item[0])))
+
+
+def _nb00_publics_to_symbol_evidence(
+    publics: tuple[object, ...],
+    *,
+    load_base_linear: int,
+    source: str,
+) -> tuple[DebugSymbolEvidence, ...]:
+    evidence: list[DebugSymbolEvidence] = []
+    for public in publics:
+        name = str(getattr(public, "name", "")).strip()
+        if not name:
+            continue
+        offset = getattr(public, "offset", None)
+        segment = getattr(public, "segment", None)
+        type_index = getattr(public, "type_index", None)
+        evidence.append(
+            DebugSymbolEvidence(
+                name=name,
+                symbol_class="PUBLIC",
+                storage="public",
+                offset=int(offset) if offset is not None else None,
+                segment=int(segment) if segment is not None else None,
+                linear_addr=public.linear_addr(load_base_linear=load_base_linear),
+                type_index=int(type_index) if type_index is not None else None,
+                source=source,
+            )
+        )
+    return tuple(evidence)
+
+
+def _nb0204_symbols_to_evidence(
+    procedures: tuple[object, ...],
+    stack_variables: dict[str, list[object]],
+    *,
+    load_base_linear: int,
+    source: str,
+) -> tuple[DebugSymbolEvidence, ...]:
+    evidence: list[DebugSymbolEvidence] = []
+    for symbol in procedures:
+        name = str(getattr(symbol, "name", "")).strip()
+        if not name:
+            continue
+        segment = getattr(symbol, "segment", None)
+        offset = getattr(symbol, "offset", None)
+        type_index = getattr(symbol, "data_type", None)
+        evidence.append(
+            DebugSymbolEvidence(
+                name=name,
+                symbol_class=f"0x{int(getattr(symbol, 'type_code', 0)):04x}",
+                storage="procedure",
+                offset=int(offset) if offset is not None else None,
+                segment=int(segment) if segment is not None else None,
+                linear_addr=load_base_linear + (int(segment) << 4) + int(offset)
+                if segment is not None and offset is not None
+                else None,
+                length=int(symbol.length) if getattr(symbol, "length", None) is not None else None,
+                type_index=int(type_index) if type_index is not None else None,
+                attributes=_attrs_from_mapping(getattr(symbol, "extra", {}) or {}),
+                source=source,
+            )
+        )
+    for owner_name, symbols in stack_variables.items():
+        for symbol in symbols:
+            name = str(getattr(symbol, "name", "")).strip()
+            if not name:
+                continue
+            offset = getattr(symbol, "offset", None)
+            type_index = getattr(symbol, "data_type", None)
+            evidence.append(
+                DebugSymbolEvidence(
+                    name=name,
+                    symbol_class=f"0x{int(getattr(symbol, 'type_code', 0)):04x}",
+                    storage="stack",
+                    offset=int(offset) if offset is not None else None,
+                    signed_offset=int(offset) if offset is not None else None,
+                    type_index=int(type_index) if type_index is not None else None,
+                    owner_name=str(owner_name),
+                    attributes=_attrs_from_mapping(getattr(symbol, "extra", {}) or {}),
+                    source=source,
+                )
+            )
+    return tuple(evidence)
+
+
+def _tdinfo_symbols_to_evidence(
+    named_symbols: tuple[object, ...],
+    *,
+    load_base_linear: int,
+    source: str,
+) -> tuple[DebugSymbolEvidence, ...]:
+    evidence: list[DebugSymbolEvidence] = []
+    for named in named_symbols:
+        name = str(getattr(named, "name", "")).strip()
+        record = getattr(named, "record", None)
+        if not name or record is None:
+            continue
+        symbol_class = getattr(record, "symbol_class", None)
+        symbol_class_name = getattr(symbol_class, "name", str(symbol_class))
+        evidence.append(
+            DebugSymbolEvidence(
+                name=name,
+                symbol_class=symbol_class_name,
+                storage=str(symbol_class_name).lower(),
+                offset=int(record.offset),
+                signed_offset=int(record.signed_offset),
+                segment=int(record.segment),
+                linear_addr=record.linear_addr(load_base_linear=load_base_linear),
+                type_index=int(record.type_index),
+                attributes=(("record_index", str(record.index)),),
+                source=source,
+            )
+        )
+    return tuple(evidence)
 
 
 def _load_cod_mzre_flair_sidecars(
@@ -387,6 +676,15 @@ def _load_lst_metadata(
         signature_code_addrs: set[int] = set()
         cod_proc_kinds: dict[int, str] = {}
         struct_names: list[str] = []
+        debug_source_files: list[str] = []
+        debug_type_names: list[str] = []
+        debug_type_descriptors: list[DebugTypeDescriptorEvidence] = []
+        debug_type_references: list[DebugTypeReferenceEvidence] = []
+        debug_symbols: list[DebugSymbolEvidence] = []
+        debug_type_members: list[DebugTypeMemberEvidence] = []
+        debug_enum_members: list[DebugEnumMemberEvidence] = []
+        debug_identifiers: list[str] = []
+        debug_line_map: dict[int, tuple[int, int]] = {}
         source_formats: list[str] = []
         cod_path: Path | None = None
         segment_offsets = _load_ida_map_sidecar(
@@ -412,11 +710,28 @@ def _load_lst_metadata(
             struct_names=struct_names,
             source_formats=source_formats,
         )
-        codeview_code, codeview_data, codeview_ranges, codeview_format = _load_codeview_or_ne_metadata(
+        (
+            codeview_code,
+            codeview_data,
+            codeview_ranges,
+            codeview_format,
+            codeview_source_files,
+            codeview_type_names,
+            codeview_symbols,
+            codeview_type_members,
+            codeview_identifiers,
+            codeview_line_map,
+        ) = _load_codeview_or_ne_metadata(
             binary,
             project,
             load_base_linear=load_base_linear,
         )
+        debug_source_files.extend(codeview_source_files)
+        debug_type_names.extend(codeview_type_names)
+        debug_symbols.extend(codeview_symbols)
+        debug_type_members.extend(codeview_type_members)
+        debug_identifiers.extend(codeview_identifiers)
+        debug_line_map.update(codeview_line_map)
 
         if codeview_code or codeview_data or codeview_ranges:
             code_labels.update(codeview_code)
@@ -428,6 +743,14 @@ def _load_lst_metadata(
             load_base_linear=load_base_linear,
             code_labels=code_labels,
             data_labels=data_labels,
+            debug_source_files=debug_source_files,
+            debug_type_names=debug_type_names,
+            debug_type_descriptors=debug_type_descriptors,
+            debug_type_references=debug_type_references,
+            debug_symbols=debug_symbols,
+            debug_type_members=debug_type_members,
+            debug_enum_members=debug_enum_members,
+            debug_identifiers=debug_identifiers,
             source_formats=source_formats,
         )
         cod_path, signature_code_addrs = _load_cod_mzre_flair_sidecars(
@@ -445,7 +768,20 @@ def _load_lst_metadata(
             cod_proc_kinds=cod_proc_kinds,
         )
 
-        if not code_labels and not data_labels and not struct_names:
+        if (
+            not code_labels
+            and not data_labels
+            and not struct_names
+            and not debug_source_files
+            and not debug_type_names
+            and not debug_type_descriptors
+            and not debug_type_references
+            and not debug_symbols
+            and not debug_type_members
+            and not debug_enum_members
+            and not debug_identifiers
+            and not debug_line_map
+        ):
             return None
 
         for addr, name in data_labels.items():
@@ -466,10 +802,20 @@ def _load_lst_metadata(
             absolute_addrs=True,
             source_format="+".join(dict.fromkeys(source_formats)) or "sidecars",
             struct_names=tuple(dict.fromkeys(struct_names)),
+            debug_source_files=tuple(dict.fromkeys(debug_source_files)),
+            debug_type_names=tuple(dict.fromkeys(debug_type_names)),
+            debug_type_descriptors=tuple(dict.fromkeys(debug_type_descriptors)),
+            debug_type_references=tuple(dict.fromkeys(debug_type_references)),
+            debug_symbols=tuple(dict.fromkeys(debug_symbols)),
+            debug_type_members=tuple(dict.fromkeys(debug_type_members)),
+            debug_enum_members=tuple(dict.fromkeys(debug_enum_members)),
+            debug_identifiers=tuple(dict.fromkeys(debug_identifiers)),
+            debug_line_map=debug_line_map,
             cod_path=str(cod_path) if cod_path is not None else None,
             cod_proc_kinds=cod_proc_kinds,
         )
         project._inertia_lst_metadata = metadata
+        _attach_debug_evidence_attrs(project, metadata)
         store_cached_sidecar_metadata(cache_key=sidecar_cache_key, metadata=metadata, project=project)
         emit_sidecar_metadata_debug(project, metadata)
         return metadata
@@ -487,6 +833,7 @@ def attach_lst_metadata_to_project(project: angr.Project | None, metadata: LSTMe
     if project is None or metadata is None:
         return False
     changed = False
+    _attach_debug_evidence_attrs(project, metadata)
     if getattr(project, "_inertia_lst_metadata", None) is not metadata:
         project._inertia_lst_metadata = metadata
         changed = True

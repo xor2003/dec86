@@ -61,6 +61,11 @@ class CodeViewNB00Info:
     modules: tuple[CodeViewNB00Module, ...]
     publics: tuple[CodeViewNB00PublicSymbol, ...]
     type_definitions: tuple["CodeViewNB00TypeDefinition", ...] = ()
+    type_record_names: tuple[str, ...] = ()
+    type_members: tuple["CodeViewNB00TypeMember", ...] = ()
+    source_files: tuple[str, ...] = ()
+    line_map: dict[int, tuple[int, int]] = field(default_factory=dict)
+    debug_identifiers: tuple[str, ...] = ()
     code_labels: dict[int, str] = field(default_factory=dict)
     data_labels: dict[int, str] = field(default_factory=dict)
     code_ranges: dict[int, tuple[int, int]] = field(default_factory=dict)
@@ -70,6 +75,14 @@ class CodeViewNB00Info:
 class CodeViewNB00TypeLeaf:
     kind: str
     value: object
+
+
+@dataclass(frozen=True)
+class CodeViewNB00TypeMember:
+    name: str
+    offset: int
+    owner_type_index: int
+    leaf_index: int
 
 
 @dataclass(frozen=True)
@@ -108,6 +121,9 @@ def parse_codeview_nb00_bytes(data: bytes, *, load_base_linear: int = 0) -> Code
     modules: dict[int, CodeViewNB00Module] = {}
     publics: list[CodeViewNB00PublicSymbol] = []
     type_definitions: list[CodeViewNB00TypeDefinition] = []
+    source_files: list[str] = []
+    line_map: dict[int, tuple[int, int]] = {}
+    debug_identifiers: list[str] = []
     for entry in directory_entries:
         blob = data[debug_base + entry.data_offset : debug_base + entry.data_offset + entry.data_size]
         if entry.subsection_type == CodeViewSubsectionType.MODULES:
@@ -117,6 +133,16 @@ def parse_codeview_nb00_bytes(data: bytes, *, load_base_linear: int = 0) -> Code
             publics.extend(_parse_publics_subsection(entry.module_index, blob))
         elif entry.subsection_type == CodeViewSubsectionType.TYPE:
             type_definitions.extend(_parse_type_subsection(blob))
+        elif entry.subsection_type == CodeViewSubsectionType.SYMBOLS:
+            debug_identifiers.extend(_parse_symbol_names_subsection(blob))
+        elif entry.subsection_type in {CodeViewSubsectionType.SRCLINES, CodeViewSubsectionType.SRCLNSEG}:
+            parsed_files, parsed_lines = _parse_source_lines_subsection(
+                blob,
+                modules.get(entry.module_index),
+                load_base_linear=load_base_linear,
+            )
+            source_files.extend(parsed_files)
+            line_map.update(parsed_lines)
 
     code_ranges = _synthesize_code_ranges(tuple(modules.values()), tuple(publics), load_base_linear=load_base_linear)
     code_labels: dict[int, str] = {}
@@ -140,6 +166,11 @@ def parse_codeview_nb00_bytes(data: bytes, *, load_base_linear: int = 0) -> Code
         modules=tuple(sorted(modules.values(), key=lambda item: item.module_index)),
         publics=tuple(publics),
         type_definitions=tuple(type_definitions),
+        type_record_names=_collect_type_record_names(tuple(type_definitions)),
+        type_members=_collect_type_members(tuple(type_definitions)),
+        source_files=tuple(dict.fromkeys(source_files)),
+        line_map=line_map,
+        debug_identifiers=tuple(dict.fromkeys(debug_identifiers)),
         code_labels=code_labels,
         data_labels=data_labels,
         code_ranges=code_ranges,
@@ -262,11 +293,142 @@ def _read_leaf(record: bytes, offset: int) -> tuple[CodeViewNB00TypeLeaf, int]:
                 ), 2 + strlen
         if tag == 0x83 and offset + 3 <= len(record):
             return CodeViewNB00TypeLeaf("index", struct.unpack_from("<H", record, offset + 1)[0]), 3
+        if tag == 0x82 and offset + 2 <= len(record):
+            strlen = record[offset + 1]
+            end = offset + 2 + strlen
+            if end <= len(record):
+                return CodeViewNB00TypeLeaf(
+                    "string", record[offset + 2 : end].decode("ascii", errors="ignore")
+                ), 2 + strlen
+        if tag == 0x88 and offset + 2 <= len(record):
+            return CodeViewNB00TypeLeaf("uint8", record[offset + 1]), 2
         if tag in {0x8B, 0x8C, 0x8E, 0x8F, 0x92, 0x94}:
             return CodeViewNB00TypeLeaf(f"leaf_{tag:02x}", None), 1
         return CodeViewNB00TypeLeaf(f"unknown_{tag:02x}", None), 1
 
     return _impl()
+
+
+def _collect_type_record_names(
+    type_definitions: tuple[CodeViewNB00TypeDefinition, ...],
+) -> tuple[str, ...]:
+    names: list[str] = []
+    for definition in type_definitions:
+        for leaf in definition.leaves:
+            if leaf.kind == "string" and isinstance(leaf.value, str) and leaf.value:
+                names.append(leaf.value)
+    return tuple(dict.fromkeys(names))
+
+
+def _collect_type_members(
+    type_definitions: tuple[CodeViewNB00TypeDefinition, ...],
+) -> tuple[CodeViewNB00TypeMember, ...]:
+    members: list[CodeViewNB00TypeMember] = []
+    seen: set[tuple[int, str, int]] = set()
+    for definition in type_definitions:
+        leaves = definition.leaves
+        for leaf_index, leaf in enumerate(leaves[:-1]):
+            if leaf.kind != "string" or not isinstance(leaf.value, str) or not leaf.value:
+                continue
+            offset_leaf = leaves[leaf_index + 1]
+            if offset_leaf.kind not in {"uint8", "uint16", "uint32"} or not isinstance(offset_leaf.value, int):
+                continue
+            offset = int(offset_leaf.value)
+            key = (definition.index, leaf.value, offset)
+            if key in seen:
+                continue
+            seen.add(key)
+            members.append(
+                CodeViewNB00TypeMember(
+                    name=leaf.value,
+                    offset=offset,
+                    owner_type_index=definition.index,
+                    leaf_index=leaf_index,
+                )
+            )
+    return tuple(members)
+
+
+def _parse_source_lines_subsection(
+    blob: bytes,
+    module: CodeViewNB00Module | None,
+    *,
+    load_base_linear: int,
+) -> tuple[list[str], dict[int, tuple[int, int]]]:
+    source_files: list[str] = []
+    line_map: dict[int, tuple[int, int]] = {}
+    if not blob:
+        return source_files, line_map
+
+    search_start = 0
+    if blob[0] and 1 + blob[0] <= len(blob):
+        name_length = blob[0]
+        name_start = 1
+        name_end = name_start + name_length
+        filename = blob[name_start:name_end].decode("ascii", errors="ignore")
+        if filename:
+            source_files.append(filename)
+        search_start = name_end
+
+    count_offset = _find_source_line_count_offset(blob, search_start)
+    if count_offset is None:
+        return source_files, line_map
+
+    pair_count = struct.unpack_from("<H", blob, count_offset)[0]
+    pair_offset = count_offset + 2
+    segment_base = load_base_linear
+    if module is not None:
+        segment_base += module.cs_base << 4
+
+    try:
+        for _ in range(pair_count):
+            source_line, code_offset = struct.unpack_from("<HH", blob, pair_offset)
+            pair_offset += 4
+            if source_line:
+                line_map[segment_base + code_offset] = (source_line, 0)
+    except (struct.error, ValueError):
+        return source_files, line_map
+
+    return source_files, line_map
+
+
+def _find_source_line_count_offset(blob: bytes, search_start: int) -> int | None:
+    for candidate in range(search_start, min(len(blob) - 1, search_start + 16)):
+        pair_count = struct.unpack_from("<H", blob, candidate)[0]
+        if pair_count == 0 or pair_count > 0x4000:
+            continue
+        if candidate + 2 + pair_count * 4 <= len(blob):
+            return candidate
+    return None
+
+
+def _parse_symbol_names_subsection(blob: bytes) -> tuple[str, ...]:
+    names: list[str] = []
+    for offset, name_length in enumerate(blob):
+        if name_length == 0 or name_length > 80:
+            continue
+        name_start = offset + 1
+        name_end = name_start + name_length
+        if name_end > len(blob):
+            continue
+        try:
+            name = blob[name_start:name_end].decode("ascii")
+        except UnicodeDecodeError:
+            continue
+        if _is_debug_identifier_name(name):
+            names.append(name)
+    return tuple(dict.fromkeys(names))
+
+
+def _is_debug_identifier_name(name: str) -> bool:
+    if not name:
+        return False
+    allowed_extra = "_$?@"
+    if not all(ch.isalnum() or ch in allowed_extra for ch in name):
+        return False
+    if not any(ch.isalpha() or ch == "_" for ch in name):
+        return False
+    return True
 
 
 def _public_is_code_symbol(
