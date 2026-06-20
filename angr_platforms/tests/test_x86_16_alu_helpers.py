@@ -29,6 +29,9 @@ class _AluEmu:
     def update_eflags_sub(self, lhs, rhs):
         self.last_flags = ("sub", lhs, rhs)
 
+    def update_eflags_sbb(self, lhs, rhs, carry):
+        self.last_flags = ("sbb", lhs, rhs, carry)
+
     def update_eflags_and(self, lhs, rhs):
         self.last_flags = ("and", lhs, rhs)
 
@@ -99,6 +102,33 @@ def test_binary_operation_with_carry_accepts_plain_booleans():
 
     assert state["result"] == 5
     assert state["flags"] == (2, 3, 0)
+
+
+def test_binary_operation_with_carry_records_typed_condition_for_sbb():
+    emu = _AluEmu(carry=True)
+    state = {}
+
+    binary_operation_with_carry(
+        emu,
+        lambda: 2,
+        lambda: 3,
+        lambda value: state.setdefault("result", value),
+        emu.update_eflags_sbb,
+        lambda lhs, rhs, carry: lhs - rhs - carry,
+        width_bits=16,
+    )
+
+    assert state["result"] == -2
+    assert emu.last_flags == ("sbb", 2, 3, True)
+    assert emu.last_condition == IRCondition(
+        op="carry_compare",
+        args=(
+            IRValue(MemSpace.CONST, const=2, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=3, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=1, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_sbb",),
+    )
 
 
 def test_compare_operation_only_updates_flags():

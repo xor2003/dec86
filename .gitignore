@@ -13,6 +13,7 @@ __pycache__/
 .tmp_*
 .understand-anything/
 examples/build_msc6/
+examples/build_msc6_tiny/
 SORTDEMO_full*.log
 *.log
 

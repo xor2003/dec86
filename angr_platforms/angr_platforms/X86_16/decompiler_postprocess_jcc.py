@@ -1,3 +1,26 @@
+"""Legacy JCC cleanup bridge; do not add new semantic recovery here.
+
+This module is intentionally a late, temporary consumer of branch-condition
+evidence. The permanent owner for 16-bit x86 condition semantics is the early
+pipeline: lift/IR records the flag-producing operation, ConditionIR carries the
+branch meaning, condition transfer/lowering preserves it, and structuring emits
+explicit conditions.
+
+Allowed work in this file:
+- consume already-collected evidence and replace leaked raw flag carriers;
+- prune duplicate raw if-breaks after an explicit condition is present;
+- keep validation/reporting honest while older pipeline stages still leak state.
+
+Do not add fresh semantic decoding here for cmp/test/sub/dec/jcc, polarity,
+operand-width recovery, Capstone instruction windows, or reconstructed compare
+operands. If behavior is proven here, migrate it earlier and delete the late
+case. Any short-lived bridge must be narrow, evidence-backed,
+validation-gated, deterministic, and documented as migration debt.
+
+Project rule reminder: semantics early, rewrite late; no text-based recovery;
+validation is the source of truth.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -28,13 +51,15 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from .annotations import ANNOTATION_KEY
 from .decompiler_postprocess_flags import _c_expr_uses_register_8616
+from .decompiler_postprocess_typed_conditions import _build_c_condition_expr
 from .decompiler_postprocess_utils import (
     _iter_c_nodes_deep_8616,
     _replace_c_children_8616,
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
-from .ir.condition_ir import JCC_TO_COND_8616
+from .ir.condition_ir import JCC_TO_COND_8616, ConditionIR
+from .ir.core import IRValue
 from .lowering.real_mode_linear import RealModeLinearStackAccess8616, stack_cvar_for_stable_ss_linear_access_8616
 from .lowering.segmented_memory_lowering import lower_runtime_segment_access_8616
 from .tail_validation_fingerprint import _expr_fingerprint
@@ -715,12 +740,17 @@ def _stack_slot_key_8616(insn) -> tuple[int, int] | None:
 
 
 def _memory_load_expr_8616(project, codegen, ds_var, base_expr, disp: int, size: int):
-    if base_expr is None:
+    if ds_var is None:
         return None
+    offset_expr = (
+        _const_8616(disp, codegen)
+        if base_expr is None
+        else CBinaryOp("Add", base_expr, _const_8616(disp, codegen), codegen=codegen)
+    )
     addr_expr = CBinaryOp(
         "Add",
         CBinaryOp("Shl", ds_var, _const_8616(4, codegen), codegen=codegen),
-        CBinaryOp("Add", base_expr, _const_8616(disp, codegen), codegen=codegen),
+        offset_expr,
         codegen=codegen,
     )
     pointee = (SimTypeChar() if int(size) == 1 else SimTypeShort(False)).with_arch(project.arch)
@@ -1420,11 +1450,22 @@ def _resolve_cmp_operand_expr_8616(
                 if base_reg_name == "bp":
                     return _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operand, "size", 0) or 2))
                 base_expr = reg_state.get(base_reg_name)
+                if base_expr is None:
+                    return None
                 return _memory_load_expr_8616(
                     project,
                     codegen,
                     ds_var,
                     base_expr,
+                    int(mem.disp),
+                    int(getattr(operand, "size", 0) or 2),
+                )
+            if not getattr(mem, "index", 0):
+                return _memory_load_expr_8616(
+                    project,
+                    codegen,
+                    ds_var,
+                    None,
                     int(mem.disp),
                     int(getattr(operand, "size", 0) or 2),
                 )
@@ -1641,7 +1682,6 @@ def _decode_test_jcc_guard_8616(project, codegen, test_insn, jcc_mnemonic: str, 
         if len(operands) != 2:
             return None
         reg_state: dict[str, object] = {}
-        stack_slots: dict[tuple[int, int], object] = {}
         lhs = _resolve_cmp_operand_expr_8616(
             project,
             codegen,
@@ -1664,9 +1704,11 @@ def _decode_test_jcc_guard_8616(project, codegen, test_insn, jcc_mnemonic: str, 
         )
         if lhs is None or rhs is None:
             return None
-        if mnemonic in {"or", "and"} and not _same_c_expression_8616(lhs, rhs):
-            return None
-        tested = lhs if _same_c_expression_8616(lhs, rhs) else CBinaryOp("And", lhs, rhs, codegen=codegen)
+        if _same_c_expression_8616(lhs, rhs):
+            tested = lhs
+        else:
+            tested_op = "Or" if mnemonic == "or" else "And"
+            tested = CBinaryOp(tested_op, lhs, rhs, codegen=codegen)
         return _DecodedCmpGuard8616(
             lhs=tested,
             rhs=_const_8616(0, codegen),
@@ -1795,9 +1837,97 @@ def _apply_cmp_state_update_8616(project, codegen, insn, reg_state, stack_slots,
     return _impl()
 
 
+def _bind_typed_condition_register_operand_8616(project, codegen, operand, expr, reg_exprs, ds_var, producer_insn: int):
+    if not isinstance(operand, IRValue) or operand.space.name != "REG" or not isinstance(operand.name, str):
+        return expr
+    if not _expr_is_register_8616(project, expr, operand.name):
+        return expr
+    bound = _stateful_register_expr_before_insn_8616(
+        project,
+        codegen,
+        producer_insn,
+        operand.name,
+        max(1, int(operand.size or 2)),
+        reg_exprs,
+        ds_var,
+    )
+    return bound if bound is not None else expr
+
+
+def _bind_typed_condition_expr_operands_8616(project, codegen, cond: ConditionIR, expr):
+    if not isinstance(expr, CBinaryOp):
+        return expr
+    producer_insn = getattr(cond, "producer_insn", None)
+    if not isinstance(producer_insn, int):
+        return expr
+    reg_exprs = _register_exprs_by_ins_addr_8616(codegen, project)
+    ds_offset = _reg_offset_8616(project, "ds")
+    ds_var = CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen) if ds_offset is not None else None
+
+    lhs_operand = cond.lhs
+    rhs_operand = cond.rhs
+    expr.lhs = _bind_typed_condition_register_operand_8616(
+        project, codegen, lhs_operand, expr.lhs, reg_exprs, ds_var, producer_insn
+    )
+    expr.rhs = _bind_typed_condition_register_operand_8616(
+        project, codegen, rhs_operand, expr.rhs, reg_exprs, ds_var, producer_insn
+    )
+    return expr
+
+
+def _typed_condition_is_reg_const_jcc_bridge_8616(cond: ConditionIR) -> bool:
+    lhs = cond.lhs
+    rhs = cond.rhs
+    return (
+        isinstance(lhs, IRValue)
+        and lhs.space.name == "REG"
+        and isinstance(rhs, IRValue)
+        and rhs.space.name == "CONST"
+    )
+
+
+def _typed_condition_bridge_expr_is_plain_variable_compare_8616(expr) -> bool:
+    return (
+        isinstance(expr, CBinaryOp)
+        and isinstance(getattr(expr, "lhs", None), CVariable)
+        and isinstance(getattr(expr, "rhs", None), CConstant)
+    )
+
+
+def _translated_typed_condition_guard_8616(project, codegen, block_addr: int, jcc_addr: int):
+    # Early ConditionIR facts are available here, but applying them in this
+    # rewrite pass can still perturb whole-tail control-flow fingerprints for
+    # RunMenu switch-ladder exits. Keep this disabled until structuring owns
+    # the polarity/CFG proof; postprocess must not rescue it by guessing.
+    return None
+    conditions = getattr(codegen, "_inertia_typed_conditions", None)
+    if not isinstance(conditions, (list, tuple)):
+        return None
+    for cond in conditions:
+        if not isinstance(cond, ConditionIR):
+            continue
+        if cond.src_insn != int(jcc_addr) or cond.block_addr != int(block_addr):
+            continue
+        if not _typed_condition_is_reg_const_jcc_bridge_8616(cond):
+            continue
+        expr = _build_c_condition_expr(project, cond, codegen)
+        if expr is None:
+            return None
+        expr = _bind_typed_condition_expr_operands_8616(project, codegen, cond, expr)
+        if not _typed_condition_bridge_expr_is_plain_variable_compare_8616(expr):
+            continue
+        return _DecodedCmpGuard8616(lhs=None, rhs=None, op=str(getattr(expr, "op", "")), expr=expr)
+    return None
+
+
 def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: int) -> _DecodedCmpGuard8616 | None:
     def _impl():
         debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
+        typed_decoded = _translated_typed_condition_guard_8616(project, codegen, block_addr, jcc_addr)
+        if typed_decoded is not None:
+            if debug_jcc:
+                _log.warning("[jcc-rewrite] consumed typed condition block=%#x jcc=%#x", block_addr, jcc_addr)
+            return typed_decoded
         insns, jcc_index = _decode_block_and_jcc_index_8616(project, block_addr, jcc_addr, debug_jcc)
         if insns is None or jcc_index is None:
             return None
@@ -2937,6 +3067,16 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 )
             if not (isinstance(ins_addr, int) and isinstance(block_addr, int)):
                 return None
+            if (
+                isinstance(cond, CBinaryOp)
+                and str(getattr(cond, "op", "")).startswith("Cmp")
+                and not _c_expr_uses_register_8616(cond, flags_offset)
+                and any(
+                    isinstance(child, CBinaryOp) and getattr(child, "op", None) == "And"
+                    for child in _iter_c_nodes_deep_8616(cond)
+                )
+            ):
+                return None
             if key in key_conflicts:
                 if debug_jcc:
                     _log.warning("[jcc-rewrite] key conflict detected key=%r skip", key)
@@ -2996,6 +3136,14 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 and getattr(decoded, "expr", None) is None
                 and not _decoded_guard_contains_real_call_8616(decoded)
             ):
+                if isinstance(cond, CITE) and body is not None:
+                    if debug_jcc:
+                        _log.warning("[jcc-rewrite] direct inverted CITE supplies polarity key=%r", key)
+                    replacement = _build_rewrite_8616(cond, decoded, key, polarity_evidence=polarity_evidence)
+                    if replacement is None:
+                        return None
+                    _record_jcc_decoded_condition_fingerprint_8616(replacement)
+                    return replacement
                 should_count_refusal = True
                 if isinstance(key, tuple):
                     should_count_refusal = key not in unknown_polarity_refused_keys
@@ -3291,14 +3439,20 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 return _JccDuplicateGuardDecision8616.PRUNE_PREVIOUS_RAW_DUPLICATE
             return _JccDuplicateGuardDecision8616.KEEP_UNKNOWN
 
-        def _prune_duplicate_raw_jcc_ifbreaks_8616(root) -> bool:
+        def _prune_duplicate_raw_jcc_ifbreaks_8616(root, seen: set[int] | None = None) -> bool:
             if root is None:
                 return False
+            if seen is None:
+                seen = set()
+            marker = id(root)
+            if marker in seen:
+                return False
+            seen.add(marker)
             local_changed = False
             if isinstance(root, CStatements):
                 rebuilt = []
                 for stmt in tuple(getattr(root, "statements", ()) or ()):
-                    if _prune_duplicate_raw_jcc_ifbreaks_8616(stmt):
+                    if _prune_duplicate_raw_jcc_ifbreaks_8616(stmt, seen):
                         local_changed = True
                     if rebuilt:
                         codegen._inertia_jcc_duplicate_guard_candidates_8616 = (
@@ -3329,14 +3483,14 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 child = getattr(root, attr, None)
                 if child is None:
                     continue
-                if _prune_duplicate_raw_jcc_ifbreaks_8616(child):
+                if _prune_duplicate_raw_jcc_ifbreaks_8616(child, seen):
                     local_changed = True
             cond_pairs = getattr(root, "condition_and_nodes", None)
             if isinstance(cond_pairs, (list, tuple)):
                 new_pairs = []
                 pair_changed = False
                 for cond, body in tuple(cond_pairs):
-                    if _prune_duplicate_raw_jcc_ifbreaks_8616(body):
+                    if _prune_duplicate_raw_jcc_ifbreaks_8616(body, seen):
                         pair_changed = True
                     new_pairs.append((cond, body))
                 if pair_changed:

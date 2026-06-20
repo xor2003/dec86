@@ -15,9 +15,13 @@ from inertia_decompiler.cli_c_text_postprocess import (
     _normalize_boolean_conditions,
     _normalize_integer_dereference_stores_text,
     _normalize_portable_flat_main_signature_text,
+    _coalesce_redundant_split_global_incdec_text,
+    _prune_invalid_simple_function_prototypes_text,
     _prune_non_lvalue_arithmetic_assignments,
+    _prune_standalone_memory_helper_reads_text,
     _prune_parameter_shadow_declarations_text,
     _prune_standalone_stack_probe_calls_text,
+    _prune_undefined_fragment_carrier_assignments_text,
     _prune_unused_local_declarations_text,
     _prune_unused_staging_assignments,
     _prune_void_call_assignments_text,
@@ -116,6 +120,50 @@ short apply_twice(unsigned short (*arg)(unsigned short), unsigned short value)
 
     assert "unsigned short v6;" not in rewritten
     assert "value = arg(value);" in rewritten
+
+
+def test_coalesce_redundant_split_global_incdec_prunes_quicksort_high_byte_carrier():
+    c_text = """\
+extern unsigned short g_baa;
+void QuickSort(void)
+{
+    unsigned short v12;
+    unsigned short v13;
+    char mem_0BAB;  // [0xbab]
+    v12 = g_baa;
+    v13 = mem_0BAB;
+    g_baa = (v12 | v13 * 0x100) + 1;
+    mem_0BAB = (v12 | v13 * 0x100) + 1 >> 8;
+}
+"""
+
+    rewritten = _coalesce_redundant_split_global_incdec_text(c_text)
+    rewritten = _prune_unused_staging_assignments(rewritten)
+    rewritten = _prune_unused_local_declarations_text(rewritten)
+
+    assert "g_baa += 1;" in rewritten
+    assert "mem_0BAB" not in rewritten
+    assert "v12" not in rewritten
+    assert "v13" not in rewritten
+
+
+def test_coalesce_redundant_split_global_incdec_prunes_for_initializer_high_byte_projection():
+    c_text = """\
+void QuickSort(void)
+{
+    unsigned short v19;
+    g_baa += 1;
+    for (SEG_U8(v19, 2987) = SEG_U16(v19, 2986) + 1 >> 8; i < j; i += 1)
+    {
+    }
+}
+"""
+
+    rewritten = _coalesce_redundant_split_global_incdec_text(c_text)
+
+    assert "SEG_U8" not in rewritten
+    assert "SEG_U16" not in rewritten
+    assert "for (; i < j; i += 1)" in rewritten
 
 
 def test_missing_generic_local_declarations_materializes_tmp_temps():
@@ -481,6 +529,35 @@ LABEL_114d:
     assert "LABEL_114d:\n    }" not in rewritten
 
 
+def test_normalize_boolean_conditions_materializes_empty_if_else_gap():
+    c_text = """void f(void)
+{
+    if (x)
+    else
+    call();
+}
+"""
+
+    rewritten = _normalize_boolean_conditions(c_text)
+
+    assert "if (x)\n    else" not in rewritten
+    assert "if (x)\n    {\n    }\n    else\n    {\n    }\n    call();" in rewritten
+
+
+def test_normalize_boolean_conditions_preserves_empty_true_branch_with_else_body():
+    c_text = """void f(void)
+{
+    if (x)
+    else
+        call();
+}
+"""
+
+    rewritten = _normalize_boolean_conditions(c_text)
+
+    assert "if (x);\n    else\n        call();" in rewritten
+
+
 def test_normalize_boolean_conditions_simplifies_negated_zero_one_ternary_for_loop():
     c_text = """void f(void)
 {
@@ -572,6 +649,26 @@ int demo(int i)
     assert "char tmp_2;" not in rewritten
     assert "unsigned short tmp;" in rewritten
     assert "return tmp;" in rewritten
+
+
+def test_prune_unused_local_declarations_text_removes_unused_local_number_placeholders():
+    c_text = """
+int cmp_i16(int a, int b)
+{
+    unsigned short local_4;  // [bp-0x4]
+    unsigned short local_2;  // [bp-0x2]
+
+    if (b > a)
+        return -1;
+    return 0;
+}
+"""
+
+    rewritten = _prune_unused_local_declarations_text(c_text)
+
+    assert "unsigned short local_4;" not in rewritten
+    assert "unsigned short local_2;" not in rewritten
+    assert "return -1;" in rewritten
 
 
 def test_prune_parameter_shadow_declarations_text_keeps_return_of_parameter_name():
@@ -698,6 +795,46 @@ int select_and_apply(int which, int value)
     assert "extern unsigned short dec_one" not in rewritten
 
 
+def test_materialize_synthetic_globals_ignores_invalid_metadata_identifier_candidates():
+    c_text = """
+int DrawTime(void)
+{
+    sprintf();
+}
+"""
+    metadata = SimpleNamespace(
+        source_lines=("void (*fn)(void);", "fn = _sprintf;"),
+        global_names=("_ sprintf",),
+    )
+
+    rewritten = _materialize_missing_synthetic_global_declarations_text(c_text, metadata)
+
+    assert "int _ sprintf();" not in rewritten
+    assert "extern unsigned short _ sprintf;" not in rewritten
+
+
+def test_prune_invalid_simple_function_prototypes_removes_split_identifier_decls():
+    c_text = """
+int _sprintf(char *buf, const char *fmt, ...);
+int _ sprintf();
+int sprintf();
+
+void f(void)
+{
+    sprintf();
+    clFinish = clock();
+}
+"""
+
+    rewritten = _prune_invalid_simple_function_prototypes_text(c_text)
+
+    assert "int _ sprintf();" not in rewritten
+    assert "int _sprintf(char *buf, const char *fmt, ...);" in rewritten
+    assert "int sprintf();" in rewritten
+    assert "    sprintf();" in rewritten
+    assert "    clFinish = clock();" in rewritten
+
+
 def test_materialize_synthetic_globals_declares_generated_scalar_hex_global_without_metadata():
     c_text = """
 int f(void)
@@ -710,6 +847,92 @@ int f(void)
 
     assert "extern unsigned short g_ba4;" in rewritten
     assert rewritten.index("extern unsigned short g_ba4;") < rewritten.index("int f(void)")
+
+
+def test_materialize_synthetic_globals_declares_source_backed_scalar_condition_global():
+    c_text = """
+clock_t clock(void);
+
+void ReInitBars()
+{
+    unsigned int iRow;
+    for (iRow = 0; cRow > iRow; iRow += 1)
+    {
+    }
+}
+"""
+    metadata = SimpleNamespace(
+        source_lines=(
+            "void ReInitBars( clock_t wait )",
+            "{",
+            "    clock_t goal;",
+            "    int iRow;",
+            "    for( iRow = 0; iRow < cRow; iRow++ )",
+            "    {",
+            "    }",
+            "}",
+        ),
+        global_names=(),
+    )
+
+    rewritten = _materialize_missing_synthetic_global_declarations_text(c_text, metadata)
+
+    assert "extern unsigned short cRow;" in rewritten
+    assert "extern unsigned short iRow;" not in rewritten
+    assert "extern unsigned short clock_t;" not in rewritten
+    assert rewritten.index("extern unsigned short cRow;") < rewritten.index("void ReInitBars()")
+
+
+def test_materialize_synthetic_globals_ignores_comment_only_field_mentions():
+    c_text = """
+/*/ if( abarWork[iChild + 1].len > abarWork[iChild].len ) */
+void PercolateDown(void)
+{
+    if (abarWork[local_2] >= abarWork[local_4])
+        return;
+}
+"""
+    metadata = SimpleNamespace(source_lines=(), global_names=("abarWork",))
+
+    rewritten = _materialize_missing_synthetic_global_declarations_text(c_text, metadata)
+
+    assert "struct _inertia_global_abarWork" not in rewritten
+    assert "extern unsigned short abarWork[1];" in rewritten
+
+
+def test_materialize_synthetic_globals_keeps_executable_field_mentions_struct_backed():
+    c_text = """
+void PercolateDown(void)
+{
+    if (abarWork[local_2].len >= abarWork[local_4].len)
+        return;
+}
+"""
+    metadata = SimpleNamespace(source_lines=(), global_names=("abarWork",))
+
+    rewritten = _materialize_missing_synthetic_global_declarations_text(c_text, metadata)
+
+    assert "struct _inertia_global_abarWork" in rewritten
+    assert "unsigned short len;" in rewritten
+    assert "extern struct _inertia_global_abarWork abarWork[1];" in rewritten
+
+
+def test_materialize_synthetic_globals_declares_scalar_condition_global_without_metadata():
+    c_text = """
+void ReInitBars()
+{
+    unsigned short local_2;
+    for (local_2 = 0; cRow > local_2; local_2 += 1)
+    {
+    }
+}
+"""
+
+    rewritten = _materialize_missing_synthetic_global_declarations_text(c_text)
+
+    assert "extern unsigned short cRow;" in rewritten
+    assert "extern unsigned short local_2;" not in rewritten
+    assert rewritten.index("extern unsigned short cRow;") < rewritten.index("void ReInitBars()")
 
 
 def test_source_function_prototype_decls_from_cod_source_lines_extracts_simple_prototypes():
@@ -768,6 +991,97 @@ int main(void)
 
     assert "vvar_20 = &s_8;" not in rewritten
     assert "vvar_24 = vvar_20 - 2 + -2;" not in rewritten
+
+
+def test_prune_unused_staging_assignments_drops_dead_generated_v_memory_load_chain():
+    c_text = """
+void PercolateUp(int iMaxLevel)
+{
+    unsigned short v12;
+    unsigned short v13;
+    char v14;
+    char v15;
+    char mem_0B4C;
+    unsigned short local_0;
+    unsigned short local_2;
+
+    v12 = local_2;
+    v13 = local_0;
+    v14 = local_0 & 0xff00 | *(&mem_0B4C + v13 * 2);
+    v15 = *(&mem_0B4C + v12 * 2);
+    if (abarWork[iMaxLevel] <= abarWork[local_2])
+        return;
+}
+"""
+
+    rewritten = _prune_unused_staging_assignments(c_text)
+
+    assert "v12 = local_2;" not in rewritten
+    assert "v13 = local_0;" not in rewritten
+    assert "v14 =" not in rewritten
+    assert "v15 =" not in rewritten
+    assert "mem_0B4C" in rewritten
+    assert "abarWork[iMaxLevel] <= abarWork[local_2]" in rewritten
+
+
+def test_prune_standalone_memory_helper_reads_drops_pure_generated_read():
+    c_text = """
+void ReInitBars(void)
+{
+    char mem_08F0;
+    unsigned short local_0;
+
+    MEM_U16(&mem_08F0 + local_0 * 2);
+    abarWork[local_0] = MEM_U16(&mem_08F0 + local_0 * 2);
+    DrawBar(local_0);
+}
+"""
+
+    rewritten = _prune_standalone_memory_helper_reads_text(c_text)
+
+    assert "    MEM_U16(&mem_08F0 + local_0 * 2);" not in rewritten
+    assert "abarWork[local_0] = MEM_U16(&mem_08F0 + local_0 * 2);" in rewritten
+    assert "DrawBar(local_0);" in rewritten
+
+
+def test_prune_standalone_memory_helper_reads_keeps_nested_call_argument():
+    c_text = """
+void f(void)
+{
+    MEM_U16(next_ptr());
+}
+"""
+
+    rewritten = _prune_standalone_memory_helper_reads_text(c_text)
+
+    assert "MEM_U16(next_ptr());" in rewritten
+
+
+def test_prune_undefined_fragment_carriers_drops_dead_arithmetic_chain_and_decls():
+    c_text = """
+void main(void)
+{
+    unsigned short vvar_31;
+    unsigned short vvar_27;
+    unsigned short vvar_40;
+    unsigned short vvar_44;
+    clearscreen(0);
+    vvar_31 = vvar_27 - 4;
+    displaycursor(0);
+    vvar_40 = vvar_27 - 4 - 6;
+    RunMenu();
+    vvar_44 = vvar_27 - 4 - 6 - 4;
+    return setvideomode(65535);
+}
+"""
+
+    rewritten = _prune_undefined_fragment_carrier_assignments_text(c_text)
+
+    assert "vvar_" not in rewritten
+    assert "clearscreen(0);" in rewritten
+    assert "displaycursor(0);" in rewritten
+    assert "RunMenu();" in rewritten
+    assert "return setvideomode(65535);" in rewritten
 
 
 def test_prune_unused_staging_assignments_keeps_unused_call_result_side_effects():
@@ -889,3 +1203,23 @@ void DrawBar(int iRow)
     rewritten = _prune_weaker_conflicting_prototypes_text(c_text)
     assert "int memset();" in rewritten
     assert "void *memset(void *dst, int ch, unsigned long count);" not in rewritten
+
+
+def test_prune_weaker_conflicting_prototypes_text_keeps_return_call_statement():
+    c_text = """\
+int apply_twice();
+
+int select_and_apply(int which, int value)
+{
+    unsigned int fn;
+    if (which)
+        fn = inc_one;
+    else
+        fn = dec_one;
+    return apply_twice(fn, value);
+}
+"""
+    rewritten = _prune_weaker_conflicting_prototypes_text(c_text)
+
+    assert "int apply_twice();" in rewritten
+    assert "return apply_twice(fn, value);" in rewritten

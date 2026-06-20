@@ -46,6 +46,30 @@ def test_prune_dead_local_assignments_keeps_side_effecting_rhs() -> None:
     assert len(codegen.cfunc.statements.statements) == 1
 
 
+def test_prune_dead_local_assignments_drops_unread_generated_memory_helper_rhs() -> None:
+    codegen = _FakeCodegen()
+    local_var = SimStackVariable(-2, 2, base="bp", name="local", region=0x1000)
+    local_cvar = structured_c.CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    helper_read = structured_c.CFunctionCall(
+        "MEM_U8",
+        SimTypeShort(False),
+        args=(structured_c.CConstant(0x1234, SimTypeShort(False), codegen=codegen),),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements(
+            [structured_c.CAssignment(local_cvar, helper_read, codegen=codegen)],
+            codegen=codegen,
+        ),
+        variables_in_use={local_var: local_cvar},
+    )
+
+    changed = decompile._prune_dead_local_assignments(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+
+
 def test_prune_dead_local_assignments_drops_duplicate_call_before_return() -> None:
     codegen = _FakeCodegen()
     arg_var = SimRegisterVariable(0, 2, name="arg")
@@ -166,6 +190,31 @@ def test_dce_prunes_unread_pure_stack_base_dirty_carrier() -> None:
     assert changed is True
     assert codegen.cfunc.statements.statements == []
     assert codegen.dce_deleted == 1
+
+
+def test_dce_prunes_unread_generated_memory_helper_rhs() -> None:
+    codegen = _FakeCodegen()
+    local_var = SimStackVariable(-2, 2, base="bp", name="local", region=0x1000)
+    local_cvar = structured_c.CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    helper_read = structured_c.CFunctionCall(
+        "MEM_U8",
+        SimTypeShort(False),
+        args=(structured_c.CConstant(0x1234, SimTypeShort(False), codegen=codegen),),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements(
+            [structured_c.CAssignment(local_cvar, helper_read, codegen=codegen)],
+            codegen=codegen,
+        ),
+        variables_in_use={local_var: local_cvar},
+    )
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    assert codegen.dce_dead_memory_read_deleted == 1
 
 
 def test_dce_keeps_read_stack_base_dirty_carrier() -> None:

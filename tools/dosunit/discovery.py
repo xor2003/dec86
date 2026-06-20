@@ -22,6 +22,17 @@ _IDA_PROC_RE = re.compile(
     r"(?P<name>[A-Za-z_$?@][\w$?@]*)\s+proc\s+(?P<kind>near|far)\b",
     re.IGNORECASE,
 )
+_IDA_ENDP_RE = re.compile(
+    r"^(?P<seg>[A-Za-z_]\w*):(?P<off>[0-9A-Fa-f]{4,5})\s+"
+    r"(?P<name>[A-Za-z_$?@][\w$?@]*)\s+endp\b",
+    re.IGNORECASE,
+)
+_IDA_FUNCTION_CHUNK_AT_RE = re.compile(
+    r"^(?P<owner_seg>[A-Za-z_]\w*):(?P<owner_off>[0-9A-Fa-f]{4,5})\s+;\s+"
+    r"FUNCTION\s+CHUNK\s+AT\s+(?P<seg>[A-Za-z_]\w*):(?P<off>[0-9A-Fa-f]{4,5})\s+"
+    r"SIZE\s+(?P<size>[0-9A-Fa-f]{8})\s+BYTES\b",
+    re.IGNORECASE,
+)
 _LINK_SEGMENT_RE = re.compile(
     r"^\s*(?P<start>[0-9A-Fa-f]+)H\s+(?P<stop>[0-9A-Fa-f]+)H\s+"
     r"(?P<length>[0-9A-Fa-f]+)H\s+(?P<name>\S+)\s+(?P<class>\S+)\s*$"
@@ -151,6 +162,35 @@ def _merge_entry(existing: dict[str, Any], incoming: dict[str, Any]) -> None:
     entry = existing.setdefault("entry", {})
     for key, value in incoming.get("entry", {}).items():
         entry.setdefault(key, value)
+    ranges = existing.setdefault("ranges", [])
+    if not isinstance(ranges, list):
+        ranges = []
+        existing["ranges"] = ranges
+    seen_ranges = {
+        (
+            item.get("kind"),
+            item.get("segment"),
+            item.get("offset"),
+            item.get("size"),
+            item.get("end_offset"),
+        )
+        for item in ranges
+        if isinstance(item, dict)
+    }
+    for item in incoming.get("ranges", ()) or ():
+        if not isinstance(item, dict):
+            continue
+        key = (
+            item.get("kind"),
+            item.get("segment"),
+            item.get("offset"),
+            item.get("size"),
+            item.get("end_offset"),
+        )
+        if key in seen_ranges:
+            continue
+        ranges.append(dict(item))
+        seen_ranges.add(key)
 
 
 def parse_mzre_segments(map_path: Path) -> list[dict[str, Any]]:
@@ -524,32 +564,54 @@ def _code_segment_for_linear(linear: int, code_segments: list[dict[str, Any]]) -
 def parse_ida_listing(listing_path: Path, *, module: str) -> list[dict[str, Any]]:
     segment_classes: dict[str, str] = {}
     entries: list[dict[str, Any]] = []
+    current_entry: dict[str, Any] | None = None
     for line in listing_path.read_text(errors="ignore").splitlines():
-        segment_match = _IDA_SEGMENT_RE.match(line.strip())
+        stripped = line.strip()
+        segment_match = _IDA_SEGMENT_RE.match(stripped)
         if segment_match is not None:
             segment_classes[segment_match.group("name")] = segment_match.group("class").upper()
             continue
-        proc_match = _IDA_PROC_RE.match(line.strip())
+        endp_match = _IDA_ENDP_RE.match(stripped)
+        if endp_match is not None:
+            current_entry = None
+            continue
+        chunk_match = _IDA_FUNCTION_CHUNK_AT_RE.match(stripped)
+        if chunk_match is not None and current_entry is not None:
+            chunk_offset = int(chunk_match.group("off"), 16)
+            chunk_size = int(chunk_match.group("size"), 16)
+            if chunk_size > 0:
+                current_entry.setdefault("ranges", []).append(
+                    {
+                        "kind": "function_chunk",
+                        "segment": chunk_match.group("seg"),
+                        "offset": normalize_hex(chunk_offset, width=4),
+                        "size": chunk_size,
+                        "end_offset": normalize_hex(chunk_offset + chunk_size - 1, width=4),
+                        "source": "ida_lst",
+                    }
+                )
+            continue
+        proc_match = _IDA_PROC_RE.match(stripped)
         if proc_match is None:
             continue
         segment = proc_match.group("seg")
         segment_class = segment_classes.get(segment)
         if segment_class is not None and segment_class != "CODE":
+            current_entry = None
             continue
         offset = int(proc_match.group("off"), 16)
         name = _normalize_symbol_name(proc_match.group("name"))
         confidence = "medium" if segment_class == "CODE" else "low"
-        entries.append(
-            _catalog_entry(
-                module=module,
-                name=name,
-                segment=segment,
-                offset=offset,
-                return_kind=proc_match.group("kind").lower(),
-                source="ida_lst",
-                confidence=confidence,
-            )
+        current_entry = _catalog_entry(
+            module=module,
+            name=name,
+            segment=segment,
+            offset=offset,
+            return_kind=proc_match.group("kind").lower(),
+            source="ida_lst",
+            confidence=confidence,
         )
+        entries.append(current_entry)
     return entries
 
 

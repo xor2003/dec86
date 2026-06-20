@@ -89,6 +89,7 @@ class ConditionIR:
     source: tuple[str, ...] = ()
     src_insn: int | None = None
     block_addr: int | None = None
+    producer_insn: int | None = None
 
     @property
     def is_comparison(self) -> bool:
@@ -141,6 +142,7 @@ def build_condition_from_cmp_8616(
     width_bits: int = 16,
     src_insn: int | None = None,
     block_addr: int | None = None,
+    producer_insn: int | None = None,
 ) -> ConditionResult:
     """Build a ConditionIR from CMP operands + JCC mnemonic.
 
@@ -162,6 +164,7 @@ def build_condition_from_cmp_8616(
         source=("cmp", jcc),
         src_insn=src_insn,
         block_addr=block_addr,
+        producer_insn=producer_insn,
     )
 
 
@@ -172,6 +175,7 @@ def build_condition_from_test_8616(
     width_bits: int = 16,
     src_insn: int | None = None,
     block_addr: int | None = None,
+    producer_insn: int | None = None,
 ) -> ConditionResult:
     """Build a ConditionIR from TEST/OR/AND self-test + JCC mnemonic.
 
@@ -187,6 +191,7 @@ def build_condition_from_test_8616(
             source=("test", jcc),
             src_insn=src_insn,
             block_addr=block_addr,
+            producer_insn=producer_insn,
         )
     if jcc in {"jne", "jnz"}:
         return ConditionIR(
@@ -196,6 +201,7 @@ def build_condition_from_test_8616(
             source=("test", jcc),
             src_insn=src_insn,
             block_addr=block_addr,
+            producer_insn=producer_insn,
         )
     return ConditionFailure(
         "unsupported_test_jcc",
@@ -213,6 +219,7 @@ def build_condition_from_compare_8616(
     source: tuple[str, ...] = (),
     src_insn: int | None = None,
     block_addr: int | None = None,
+    producer_insn: int | None = None,
 ) -> ConditionIR:
     """Direct ConditionIR constructor from known op and operands."""
     return ConditionIR(
@@ -223,6 +230,7 @@ def build_condition_from_compare_8616(
         source=source,
         src_insn=src_insn,
         block_addr=block_addr,
+        producer_insn=producer_insn,
     )
 
 
@@ -236,9 +244,22 @@ class ConditionSource:
     kind: str  # "cmp" or "test"
     lhs: Any | None = None
     rhs: Any | None = None
+    semantics: tuple[Any, ...] | None = None
+    fallthrough_from_jcc: str | None = None
     width_bits: int = 16
     addr: int | None = None
     block_addr: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionEdgeEvidence:
+    """Typed condition evidence for a control-flow edge, not an AST guard yet."""
+
+    edge_block_addr: int
+    condition: ConditionIR
+    edge_kind: str
+    source_jcc: str
+    producer_insn: int | None = None
 
 
 # ── Condition sorting/deduplication ──
@@ -249,6 +270,7 @@ def condition_sort_key_8616(cond: ConditionIR) -> tuple:
     return (
         cond.block_addr if isinstance(cond.block_addr, int) else -1,
         cond.src_insn if isinstance(cond.src_insn, int) else -1,
+        cond.producer_insn if isinstance(cond.producer_insn, int) else -1,
         "".join(cond.source),
         cond.op,
         str(cond.lhs) if cond.lhs is not None else "",

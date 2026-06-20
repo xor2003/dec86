@@ -1,24 +1,23 @@
-from __future__ import annotations
+"""Render ConditionIR to C-like strings.
 
-"""Layer: Structuring
+Layer: Structuring.
 Responsibility: render ConditionIR to C-like strings.
-
 AGENTS rule: No flag-based conditions, no tmp-based conditions.
 If signedness cannot be expressed safely in C, use explicit helper form
 (e.g. ``s16_lt(lhs, rhs)``, ``u16_lt(lhs, rhs)``).
 """
 
+from __future__ import annotations
+
 from ..ir.condition_ir import ConditionIR
 
 
 def render_condition_ir_8616(cond: ConditionIR) -> str | None:
-    def _impl():
-        """Render a ConditionIR to a C-like condition string.
+    """Render a ConditionIR to a C-like condition string."""
 
-        Returns None if the condition cannot be rendered (unhandled op).
-        """
-        lhs_str = _format_operand(cond.lhs)
-        rhs_str = _format_operand(cond.rhs) if cond.rhs is not None else None
+    def _impl() -> str | None:
+        lhs_str = render_condition_operand_8616(cond.lhs)
+        rhs_str = render_condition_operand_8616(cond.rhs) if cond.rhs is not None else None
 
         op = cond.op
 
@@ -62,8 +61,8 @@ def render_condition_ir_native_8616(cond: ConditionIR) -> str | None:
 
     This is for use when type analysis has proven signedness.
     """
-    lhs_str = _format_operand(cond.lhs)
-    rhs_str = _format_operand(cond.rhs) if cond.rhs is not None else None
+    lhs_str = render_condition_operand_8616(cond.lhs)
+    rhs_str = render_condition_operand_8616(cond.rhs) if cond.rhs is not None else None
 
     op = cond.op
 
@@ -96,7 +95,7 @@ def render_condition_ir_native_8616(cond: ConditionIR) -> str | None:
     return None
 
 
-def _format_operand(value) -> str:
+def render_condition_operand_8616(value: object) -> str:
     """Format an operand value to a string representation."""
     if value is None:
         return "0"

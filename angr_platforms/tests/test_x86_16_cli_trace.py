@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from inertia_decompiler.cli_decompilation import _emit_c_stage_trace, _get_layer_dump_state
+from inertia_decompiler.cli_decompilation import (
+    _emit_c_stage_trace,
+    _get_layer_dump_state,
+    _materialize_codegen_global_externs_text_8616,
+)
 
 
 def test_emit_c_stage_trace_prints_labeled_snapshot(capsys):
@@ -52,6 +56,16 @@ def test_emit_c_stage_trace_writes_layer_dump(tmp_path):
     manifest_line = manifest_path.read_text().splitlines()[-1]
     assert '"layer": "post-structured-codegen"' in manifest_line
     assert (manifest_root / "0x1234_demo_01" / "0001_post-structured-codegen.c").exists()
+
+
+def test_materialize_codegen_global_externs_inserts_used_scalar():
+    codegen = SimpleNamespace(_inertia_global_declaration_specs_8616=(("unsigned short", "cRow", None),))
+    c_text = "void ReInitBars()\\n{\\n    for (; cRow > iRow; iRow += 1) {\\n    }\\n}\\n"
+
+    updated = _materialize_codegen_global_externs_text_8616(c_text, codegen)
+
+    assert "extern unsigned short cRow;" in updated
+    assert updated.index("extern unsigned short cRow;") < updated.index("void ReInitBars()")
 
 
 def test_dump_layer_state_uses_next_attempt_when_present(tmp_path):

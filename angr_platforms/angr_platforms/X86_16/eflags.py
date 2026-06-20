@@ -246,19 +246,16 @@ class Eflags:
 
     def update_eflags_neg(self, v2):
         flags = self.get_gpreg(reg16_t.FLAGS)
-        result = (v2 * -1).cast_to(Type.int_16)
         size = v2.width
+        zero = self.constant(0, v2.ty)
+        result = (zero - v2).cast_to(v2.ty)
 
         flags = self.set_carry(flags, v2 != 0)
         flags = self.set_parity(flags, self.chk_parity(result))
-        flags = self.set_flag(flags, 4, self._adjust_flag(self.constant(0, v2.ty), v2, result))
+        flags = self.set_flag(flags, 4, self._adjust_flag(zero, v2, result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
-        flags = self.set_overflow(
-            flags,
-            ~(~v2[size - 1] | (~(v2 * -1).cast_to(Type.int_16))[size - 1]),
-        )
-        # v2 == (self.constant(1 << (size - 1), v2.ty))
+        flags = self.set_overflow(flags, v2 == self.constant(1 << (size - 1), v2.ty))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_dec(self, v1):

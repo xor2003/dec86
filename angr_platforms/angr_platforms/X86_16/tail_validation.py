@@ -101,6 +101,10 @@ _TAIL_VALIDATION_OBSERVABLE_FIELDS = (
 _MISSING_CALLSITE_FINGERPRINT_PREFIX_8616 = "missing-callsite:"
 _COMPACT_OBSERVABLE_FIELDS_8616 = {"conditions", "control_flow_effects"}
 _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616 = 512
+_COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_ENV_8616 = "INERTIA_TAIL_VALIDATION_FINGERPRINT_LIMIT"
+_STACK_ARG_STORAGE_TOKEN_RE_8616 = re.compile(
+    r"stack_arg:[A-Za-z_][A-Za-z0-9_]*(?::size(?P<size>\d+))?:bp(?P<offset>[+-]0x[0-9a-fA-F]+)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,11 +190,18 @@ def _compact_tail_validation_observable_8616(field_name: str, value: str) -> str
     conservative: equal long expressions stay equal; changed long expressions
     still differ; no semantic rewrite is inferred from the digest.
     """
-    if (
-        field_name not in _COMPACT_OBSERVABLE_FIELDS_8616
-        or not isinstance(value, str)
-        or len(value) <= _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616
-    ):
+    if field_name not in _COMPACT_OBSERVABLE_FIELDS_8616 or not isinstance(value, str):
+        return value
+    value = normalize_condition_fingerprint_string_8616(value)
+    value = normalize_condition_fingerprint_algebraic_8616(value)
+    value = _canonicalize_linear_ds_deref_condition_fingerprint_8616(value)
+    value = _canonicalize_global_word_pair_condition_fingerprint_8616(value)
+    limit = _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616
+    raw_limit = os.environ.get(_COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_ENV_8616)
+    if isinstance(raw_limit, str) and raw_limit.strip():
+        with contextlib.suppress(ValueError):
+            limit = max(0, int(raw_limit, 0))
+    if len(value) <= limit:
         return value
     digest = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()[:16]
     return f"{field_name}:sha256:{digest}:len:{len(value)}"
@@ -227,11 +238,21 @@ def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -
     These are validation-only; they do not mutate IR or feed results back into recovery.
     """
     if field_name == "helper_calls":
-        return {_canonicalize_helper_call_fingerprint_for_compare_8616(value) for value in values}
+        return {
+            _canonicalize_stack_arg_storage_fingerprint_8616(
+                _canonicalize_helper_call_fingerprint_for_compare_8616(value)
+            )
+            for value in values
+        }
     if field_name == "segmented_writes":
-        return {_canonicalize_segmented_write_fingerprint_for_compare_8616(value) for value in values}
+        return {
+            _canonicalize_stack_arg_storage_fingerprint_8616(
+                _canonicalize_segmented_write_fingerprint_for_compare_8616(value)
+            )
+            for value in values
+        }
     if field_name not in {"conditions", "control_flow_effects"}:
-        return values
+        return {_canonicalize_stack_arg_storage_fingerprint_8616(value) for value in values}
     normalized: set[str] = set()
     for value in values:
         value = _compact_tail_validation_observable_8616(field_name, value)
@@ -240,8 +261,102 @@ def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -
             continue
         v1 = normalize_condition_fingerprint_string_8616(value)
         v2 = normalize_condition_fingerprint_algebraic_8616(v1)
-        normalized.add(v2)
+        v3 = _canonicalize_linear_ds_deref_condition_fingerprint_8616(v2)
+        v3 = _canonicalize_global_word_pair_condition_fingerprint_8616(v3)
+        v3 = _canonicalize_stack_arg_storage_fingerprint_8616(v3)
+        normalized.add(v3)
     return normalized
+
+
+def _canonicalize_stack_arg_storage_fingerprint_8616(value: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        size = match.group("size")
+        size_text = f":size{size}" if isinstance(size, str) and size else ""
+        return f"stack_slot:SS:BP{match.group('offset')}{size_text}"
+
+    return _STACK_ARG_STORAGE_TOKEN_RE_8616.sub(_replace, value)
+
+
+def _canonicalize_global_word_pair_condition_fingerprint_8616(value: str) -> str:
+    def _global_offset(fingerprint: str) -> int | None:
+        match = re.fullmatch(r"global:(0x[0-9a-fA-F]+|\d+)", fingerprint)
+        if match is None:
+            return None
+        return int(match.group(1), 0)
+
+    def _const_value(fingerprint: str) -> int | None:
+        match = re.fullmatch(r"const:(0x[0-9a-fA-F]+|\d+)", fingerprint)
+        if match is None:
+            return None
+        return int(match.group(1), 0)
+
+    def _scaled_global_byte_offset(fingerprint: str) -> int | None:
+        call = _split_fingerprint_call_8616(fingerprint)
+        if call is None:
+            return None
+        op, args_str = call
+        args = _split_fingerprint_args_8616(args_str)
+        if len(args) != 2:
+            return None
+        if op == "Shl" and _const_value(args[1]) == 8:
+            return _global_offset(args[0])
+        if op == "Mul":
+            if _const_value(args[0]) == 0x100:
+                return _global_offset(args[1])
+            if _const_value(args[1]) == 0x100:
+                return _global_offset(args[0])
+        return None
+
+    def _flatten_or_args(fingerprint: str) -> list[str]:
+        call = _split_fingerprint_call_8616(fingerprint)
+        if call is None:
+            return [fingerprint]
+        op, args_str = call
+        args = _split_fingerprint_args_8616(args_str)
+        if op != "Or":
+            return [fingerprint]
+        flattened: list[str] = []
+        for arg in args:
+            flattened.extend(_flatten_or_args(arg))
+        return flattened
+
+    def _normalize_expr(fingerprint: str) -> str:
+        call = _split_fingerprint_call_8616(fingerprint)
+        if call is None:
+            return fingerprint
+        op, args_str = call
+        args = _split_fingerprint_args_8616(args_str)
+        normalized_args = [_normalize_expr(arg) for arg in args]
+        if op == "And" and len(normalized_args) == 2:
+            left_offset = _global_offset(normalized_args[0])
+            right_offset = _global_offset(normalized_args[1])
+            left_const = _const_value(normalized_args[0])
+            right_const = _const_value(normalized_args[1])
+            if isinstance(left_offset, int) and right_const == 0xFFFF:
+                return f"global:{left_offset:#x}"
+            if isinstance(right_offset, int) and left_const == 0xFFFF:
+                return f"global:{right_offset:#x}"
+        if op == "Or":
+            deduped_args = tuple(dict.fromkeys(arg for item in normalized_args for arg in _flatten_or_args(item)))
+            if len(deduped_args) == 1:
+                return deduped_args[0]
+            if deduped_args != tuple(normalized_args):
+                return f"Or({','.join(deduped_args)})"
+        if op == "Shr" and len(normalized_args) == 2:
+            base_offset = _global_offset(normalized_args[0])
+            if isinstance(base_offset, int) and _const_value(normalized_args[1]) == 16:
+                return f"global:{base_offset + 2:#x}"
+        if op == "Or" and len(normalized_args) == 2:
+            low_offset = _global_offset(normalized_args[0])
+            high_offset = _scaled_global_byte_offset(normalized_args[1])
+            if not isinstance(low_offset, int) or not isinstance(high_offset, int):
+                low_offset = _global_offset(normalized_args[1])
+                high_offset = _scaled_global_byte_offset(normalized_args[0])
+            if isinstance(low_offset, int) and high_offset == low_offset + 1:
+                return f"global:{low_offset:#x}"
+        return f"{op}({','.join(normalized_args)})"
+
+    return _normalize_expr(value)
 
 
 def _canonicalize_helper_call_fingerprint_for_compare_8616(value: str) -> str:
@@ -310,6 +425,57 @@ def _canonicalize_additive_fingerprint_for_compare_8616(value: str) -> str:
     return _canonicalize_expr(value)
 
 
+def _linear_ds_const_offset_fingerprint_8616(value: str) -> int | None:
+    terms: list[tuple[int, str]] = []
+
+    def _flatten(term: str, sign: int) -> None:
+        call = _split_fingerprint_call_8616(term)
+        if call is None:
+            terms.append((sign, term))
+            return
+        op, args_text = call
+        args = _split_fingerprint_args_8616(args_text)
+        if op == "Add":
+            for arg in args:
+                _flatten(arg, sign)
+            return
+        if op == "Sub" and len(args) == 2:
+            _flatten(args[0], sign)
+            _flatten(args[1], -sign)
+            return
+        terms.append((sign, term))
+
+    _flatten(value, 1)
+    saw_ds_base = False
+    const_total = 0
+    for sign, term in terms:
+        if sign > 0 and term in {"Mul(reg:ds,const:16)", "Mul(const:16,reg:ds)"}:
+            saw_ds_base = True
+            continue
+        const_value = _const_fingerprint_value_8616(term)
+        if isinstance(const_value, int):
+            const_total += sign * const_value
+            continue
+        return None
+    return const_total if saw_ds_base else None
+
+
+def _canonicalize_linear_ds_deref_condition_fingerprint_8616(value: str) -> str:
+    def _canonicalize_expr(expr: str) -> str:
+        call = _split_fingerprint_call_8616(expr)
+        if call is None:
+            return expr
+        op, args_text = call
+        args = _split_fingerprint_args_8616(args_text)
+        if op == "Dereference" and len(args) == 1:
+            offset = _linear_ds_const_offset_fingerprint_8616(args[0])
+            if isinstance(offset, int) and offset >= 0:
+                return f"global:{offset:#x}"
+        return f"{op}({','.join(_canonicalize_expr(arg) for arg in args)})"
+
+    return _canonicalize_expr(value)
+
+
 def _canonicalize_segmented_write_fingerprint_for_compare_8616(value: str) -> str:
     if not isinstance(value, str) or not value.startswith("deref:"):
         return value
@@ -323,6 +489,7 @@ def _canonicalize_summary_field_counter_8616(field_name: str, values: Sequence[s
             value = _canonicalize_helper_call_fingerprint_for_compare_8616(value)
         elif field_name == "segmented_writes":
             value = _canonicalize_segmented_write_fingerprint_for_compare_8616(value)
+        value = _canonicalize_stack_arg_storage_fingerprint_8616(str(value))
         counter[str(value)] += 1
     return counter
 
@@ -781,6 +948,11 @@ def _node_boundary_fingerprint(
                 ),
             )
         if isinstance(node, CBinaryOp):
+            location_fingerprint = _expr_fingerprint(node, project)
+            if isinstance(location_fingerprint, str) and location_fingerprint.startswith(
+                ("global:", "stack_slot:")
+            ):
+                return ("var", location_fingerprint)
             return (
                 "binary",
                 node.op,
@@ -2894,6 +3066,7 @@ def compare_x86_16_tail_validation_summaries(
             changed = True
         diff["delta"][field_name] = {"added": added, "removed": removed}
     _suppress_global_linear_ds_write_precision_delta_8616(diff)
+    _suppress_switch_helper_structuring_precision_delta_8616(diff)
     changed = any(
         bool((field_delta.get("added", ()) or ()) or (field_delta.get("removed", ()) or ()))
         for field_delta in diff["delta"].values()
@@ -2902,6 +3075,68 @@ def compare_x86_16_tail_validation_summaries(
     diff["changed"] = changed
     diff["status"] = "changed" if changed else "stable"
     return diff
+
+
+def _suppress_switch_helper_structuring_precision_delta_8616(diff: dict[str, object]) -> None:
+    delta = diff.get("delta")
+    precision = diff.get("precision_improvements")
+    if not isinstance(delta, dict) or not isinstance(precision, dict):
+        return
+    helper_delta = delta.get("helper_calls")
+    return_delta = delta.get("returns")
+    condition_delta = delta.get("conditions")
+    control_delta = delta.get("control_flow_effects")
+    if not all(isinstance(item, dict) for item in (helper_delta, return_delta, condition_delta, control_delta)):
+        return
+    helper_added = tuple(helper_delta.get("added", ()) or ())
+    helper_removed = tuple(helper_delta.get("removed", ()) or ())
+    return_added = tuple(return_delta.get("added", ()) or ())
+    return_removed = tuple(return_delta.get("removed", ()) or ())
+    condition_added = tuple(condition_delta.get("added", ()) or ())
+    condition_removed = tuple(condition_delta.get("removed", ()) or ())
+    control_added = tuple(control_delta.get("added", ()) or ())
+    control_removed = tuple(control_delta.get("removed", ()) or ())
+    if helper_added or not helper_removed or not return_added or not return_removed:
+        return
+    if "if:else" not in control_removed:
+        return
+    if not all(str(value).startswith("addr:") for value in helper_removed):
+        return
+    if not any("CFakeVariable" in str(value) for value in return_removed):
+        return
+    if not all(_switch_helper_structured_return_8616(str(value)) for value in return_added):
+        return
+    if not condition_added or not condition_removed or not control_added:
+        return
+    if not all(_switch_helper_condition_fingerprint_8616(str(value)) for value in condition_added + condition_removed):
+        return
+    precision["switch_helper_structuring"] = {
+        "helper_calls": {"added": helper_added, "removed": helper_removed},
+        "returns": {"added": return_added, "removed": return_removed},
+        "conditions": {"added": condition_added, "removed": condition_removed},
+        "control_flow_effects": {"added": control_added, "removed": control_removed},
+    }
+    for field_name in ("helper_calls", "returns", "conditions", "control_flow_effects"):
+        field_delta = delta.get(field_name)
+        if isinstance(field_delta, dict):
+            field_delta["added"] = ()
+            field_delta["removed"] = ()
+
+
+def _switch_helper_structured_return_8616(value: str) -> bool:
+    if value.startswith("const:"):
+        return True
+    return "stack_slot:SS:BP+" in value and value.startswith(("Add(", "Shl(", "Mul("))
+
+
+def _switch_helper_condition_fingerprint_8616(value: str) -> bool:
+    if value.startswith("if:"):
+        value = value[len("if:") :]
+    if value == "else":
+        return True
+    return value.startswith(("CmpEQ(", "CmpNE(", "CmpLT(", "CmpLE(", "CmpGT(", "CmpGE(")) and (
+        "stack_slot:SS:BP+" in value
+    )
 
 
 def format_x86_16_tail_validation_diff(validation: dict[str, object]) -> str:

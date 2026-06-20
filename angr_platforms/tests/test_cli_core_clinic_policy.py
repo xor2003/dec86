@@ -152,6 +152,16 @@ def test_direct_addr_wall_clock_budget_adds_wrapper_overhead_for_explicit_timeou
     assert _direct_addr_wall_clock_budget(60, explicit_timeout=True) >= 92
 
 
+def test_direct_addr_wall_clock_budget_uses_effective_timeout_for_explicit_mid_sized_function(monkeypatch):
+    monkeypatch.delenv("INERTIA_MAX_FUNCTION_TIMEOUT", raising=False)
+
+    raw_budget = _direct_addr_wall_clock_budget(12, explicit_timeout=True)
+    shaped_budget = _direct_addr_wall_clock_budget(12, effective_timeout=24, explicit_timeout=True)
+
+    assert raw_budget < shaped_budget
+    assert shaped_budget >= 52
+
+
 def test_direct_addr_wall_clock_budget_respects_explicit_env_cap(monkeypatch):
     monkeypatch.setenv("INERTIA_MAX_FUNCTION_TIMEOUT", "70")
 

@@ -180,7 +180,7 @@ def test_location_fingerprint_ignores_nested_casts_on_segmented_dereference():
     assert _location_fingerprint(cast_wrapped, project) == "deref:ds:0x1234"
 
 
-def test_location_fingerprint_canonicalizes_source_backed_stack_arguments_by_name():
+def test_location_fingerprint_canonicalizes_source_backed_stack_arguments_by_offset():
     arch = Arch86_16()
     prototype = SimTypeFunction(
         [SimTypeShort(False).with_arch(arch), SimTypeShort(False).with_arch(arch)],
@@ -210,8 +210,8 @@ def test_location_fingerprint_canonicalizes_source_backed_stack_arguments_by_nam
         codegen=codegen,
     )
 
-    assert _location_fingerprint(shifted, project) == "stack_arg:frequency:size2"
-    assert _location_fingerprint(shifted, project) == _location_fingerprint(canonical, project)
+    assert _location_fingerprint(shifted, project) == "stack_arg:duration:size2:bp+0x6"
+    assert _location_fingerprint(canonical, project) == "stack_arg:frequency:size2:bp+0x4"
 
     shifted_without_codegen = CVariable(
         SimStackVariable(6, 2, base="bp", name="frequency", region=0x1000),
@@ -219,7 +219,7 @@ def test_location_fingerprint_canonicalizes_source_backed_stack_arguments_by_nam
         codegen=codegen,
     )
     shifted_without_codegen.codegen = None
-    assert _location_fingerprint(shifted_without_codegen, project) == "stack_arg:frequency:size2"
+    assert _location_fingerprint(shifted_without_codegen, project) == "stack_arg:duration:size2:bp+0x6"
 
     incomplete_codegen = _DummyCodegen()
     incomplete_codegen.project = project
@@ -228,7 +228,7 @@ def test_location_fingerprint_canonicalizes_source_backed_stack_arguments_by_nam
         variable_type=SimTypeShort(False).with_arch(arch),
         codegen=incomplete_codegen,
     )
-    assert _location_fingerprint(shifted_with_incomplete_codegen, project) == "stack_arg:frequency:size2"
+    assert _location_fingerprint(shifted_with_incomplete_codegen, project) == "stack_arg:duration:size2:bp+0x6"
 
     raw_first_arg = CVariable(
         SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000),
@@ -240,11 +240,11 @@ def test_location_fingerprint_canonicalizes_source_backed_stack_arguments_by_nam
         variable_type=SimTypeShort(False).with_arch(arch),
         codegen=incomplete_codegen,
     )
-    assert _location_fingerprint(raw_first_arg, project) == "stack_arg:frequency:size2"
-    assert _location_fingerprint(raw_second_arg, project) == "stack_arg:duration:size2"
+    assert _location_fingerprint(raw_first_arg, project) == "stack_arg:frequency:size2:bp+0x4"
+    assert _location_fingerprint(raw_second_arg, project) == "stack_arg:duration:size2:bp+0x6"
 
 
-def test_location_fingerprint_prefers_current_cfunc_stack_arg_name_over_stale_prototype():
+def test_location_fingerprint_prefers_source_offset_over_current_cfunc_stack_arg_name():
     arch = Arch86_16()
     prototype = SimTypeFunction(
         [SimTypeShort(False).with_arch(arch)],
@@ -274,7 +274,7 @@ def test_location_fingerprint_prefers_current_cfunc_stack_arg_name_over_stale_pr
         codegen=codegen,
     )
 
-    assert _location_fingerprint(raw_arg, project) == "stack_arg:current_name:size2"
+    assert _location_fingerprint(raw_arg, project) == "stack_arg:stale_name:size2:bp+0x4"
 
 
 def test_project_segmented_lowering_evidence_matches_ds_deref_to_global():

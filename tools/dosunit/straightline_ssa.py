@@ -5,11 +5,13 @@ import hashlib
 import os
 import pickle
 import re
+import signal
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
+from tools.dosunit.data_compare import load_mz_image
 from tools.dosunit.ir_edges import _load_lifter_project
 from tools.dosunit.model import DosUnitError, canonical_json_bytes, normalize_hex, parse_int, stable_id
 
@@ -28,6 +30,7 @@ REG_BY_OFFSET = {
     22: ("ds", 16),
     24: ("es", 16),
     30: ("ss", 16),
+    32: ("dflag", 32),
 }
 RAW_OUTPUT_REGS = ("ax", "bx", "cx", "dx", "si", "di", "bp", "sp")
 ABI_OUTPUT_REGS = {
@@ -37,8 +40,9 @@ ABI_OUTPUT_REGS = {
 DEFAULT_ABI = "msc16-near"
 DEFAULT_OUTPUT_REGS = ABI_OUTPUT_REGS[DEFAULT_ABI]
 SUPPORTED_SOURCE_IRS = {"vex", "ail"}
-LIFTER_CACHE_SCHEMA = "dosunit.lifter_cache.v2"
+LIFTER_CACHE_SCHEMA = "dosunit.lifter_cache.v3"
 CALL_TARGET_PREVIEW_INSTRUCTION_LIMIT = 4
+BINARY_CALL_TARGET_SIGNATURE_BYTES = 32
 CONTROL_MNEMONICS = {
     "call",
     "lcall",
@@ -89,6 +93,7 @@ CONNECTIVITY_IMPLICIT_STATE = {
     "es",
     "ss",
     "flags",
+    "mem",
     "memory",
 }
 CONNECTIVITY_OPTIONALLY_IMPLICIT_STATE = {
@@ -142,6 +147,18 @@ class LowerFailure(Exception):
     message: str
 
 
+@dataclass
+class _VexDeps:
+    temps: set[int]
+    regs: set[str]
+    memory: bool = False
+
+    def update(self, other: "_VexDeps") -> None:
+        self.temps.update(other.temps)
+        self.regs.update(other.regs)
+        self.memory = self.memory or other.memory
+
+
 @dataclass(frozen=True)
 class LiftedBlock:
     irsb: Any
@@ -161,10 +178,13 @@ def lower_straightline_ssa_document(
     scan_limit: int = 0x100,
     cache_dir: Path | None = None,
     follow_call_fallthrough: bool = True,
+    max_lift_block_ms: int = 10000,
+    max_function_ms: int = 60000,
 ) -> dict[str, Any]:
     if source_ir not in SUPPORTED_SOURCE_IRS:
         raise DosUnitError(f"unsupported SSA source IR: {source_ir}")
     functions = list(functions_catalog.get("functions", []) or [])
+    segment_paragraphs = _catalog_segment_paragraphs(functions_catalog)
     project = _load_lifter_project(exe_path)
     linked_base = int(getattr(project.loader.main_object, "linked_base", 0))
     exe_digest = _file_sha256(exe_path)
@@ -190,22 +210,30 @@ def lower_straightline_ssa_document(
 
     for function in functions:
         counters["functions_attempted"] += 1
-        results, function_refusals, blocks_lifted = _lower_function(
-            project=project,
-            linked_base=linked_base,
-            exe_path=exe_path,
-            exe_digest=exe_digest,
-            cache_document=cache_document,
-            cache_stats=cache_stats,
-            function=function,
-            output_regs=output_regs,
-            source_ir=source_ir,
-            max_blocks_per_function=max_blocks_per_function,
-            max_insns_per_function=max_insns_per_function,
-            max_assignments_per_function=max_assignments_per_function,
-            scan_limit=scan_limit,
-            follow_call_fallthrough=follow_call_fallthrough,
-        )
+        try:
+            with _timeout_alarm(max_function_ms, message=f"SSA function lowering exceeded timeout for {function.get('id', '<unknown>')}"):
+                results, function_refusals, blocks_lifted = _lower_function(
+                    project=project,
+                    linked_base=linked_base,
+                    exe_path=exe_path,
+                    exe_digest=exe_digest,
+                    cache_document=cache_document,
+                    cache_stats=cache_stats,
+                    function=function,
+                    segment_paragraphs=segment_paragraphs,
+                    output_regs=output_regs,
+                    source_ir=source_ir,
+                    max_blocks_per_function=max_blocks_per_function,
+                    max_insns_per_function=max_insns_per_function,
+                    max_assignments_per_function=max_assignments_per_function,
+                    scan_limit=scan_limit,
+                    follow_call_fallthrough=follow_call_fallthrough,
+                    max_lift_block_ms=max_lift_block_ms,
+                )
+        except TimeoutError as ex:
+            results = []
+            function_refusals = [_refusal(function, "timeout", f"{ex} after {max_function_ms} ms")]
+            blocks_lifted = 0
         counters["lifter_blocks_lifted"] += blocks_lifted
         if not results:
             counters["functions_refused"] += 1
@@ -261,6 +289,8 @@ def compare_ssa_documents(
     *,
     oracle: dict[str, Any],
     candidate: dict[str, Any],
+    oracle_index_document: dict[str, Any] | None = None,
+    candidate_index_document: dict[str, Any] | None = None,
     mapping_document: dict[str, Any] | None = None,
     include_unmapped: bool = True,
     timeout_ms: int = 60000,
@@ -274,23 +304,54 @@ def compare_ssa_documents(
     enable_region_equality: bool = True,
     enable_connectivity: bool = True,
     max_region_loop_unroll: int = 0,
+    max_rss_mb: int = 0,
 ) -> dict[str, Any]:
-    oracle_functions = list(oracle.get("functions", []) or [])
-    candidate_functions = list(candidate.get("functions", []) or [])
-    candidate_by_key = _functions_by_name_and_part(list(candidate.get("functions", []) or []))
-    candidate_by_id = _functions_by_id_and_part(list(candidate.get("functions", []) or []))
-    candidate_by_key_delta = _functions_by_name_and_delta(list(candidate.get("functions", []) or []))
-    candidate_by_id_delta = _functions_by_id_and_delta(list(candidate.get("functions", []) or []))
+    oracle_functions_all = list(oracle.get("functions", []) or [])
+    candidate_functions_all = list(candidate.get("functions", []) or [])
+    oracle_index_source = oracle_index_document if isinstance(oracle_index_document, dict) else oracle
+    candidate_index_source = candidate_index_document if isinstance(candidate_index_document, dict) else candidate
+    oracle_index_functions_all = list(oracle_index_source.get("functions", []) or [])
+    candidate_index_functions_all = list(candidate_index_source.get("functions", []) or [])
+    oracle_functions, oracle_external_functions = _partition_declared_body_ssa_parts(oracle_functions_all)
+    candidate_functions, candidate_external_functions = _partition_declared_body_ssa_parts(candidate_functions_all)
+    candidate_by_key = _functions_by_name_and_part(candidate_functions)
+    candidate_by_id = _functions_by_id_and_part(candidate_functions)
+    candidate_by_key_delta = _functions_by_name_and_delta(candidate_functions)
+    candidate_by_id_delta = _functions_by_id_and_delta(candidate_functions)
+    candidate_by_key_exact_signature = _functions_by_name_and_exact_block_signature(
+        candidate_functions
+    )
+    candidate_by_id_exact_signature = _functions_by_id_and_exact_block_signature(
+        candidate_functions
+    )
+    candidate_by_key_signature = _functions_by_name_and_block_signature(candidate_functions)
+    candidate_by_id_signature = _functions_by_id_and_block_signature(candidate_functions)
+    candidate_all_by_key_delta = _functions_by_name_and_delta(candidate_functions_all)
+    candidate_all_by_id_delta = _functions_by_id_and_delta(candidate_functions_all)
+    candidate_all_by_key = _functions_by_name_and_part(candidate_functions_all)
+    candidate_all_by_id = _functions_by_id_and_part(candidate_functions_all)
+    candidate_all_by_key_exact_signature = _functions_by_name_and_exact_block_signature(candidate_functions_all)
+    candidate_all_by_id_exact_signature = _functions_by_id_and_exact_block_signature(candidate_functions_all)
+    candidate_all_by_key_signature = _functions_by_name_and_block_signature(candidate_functions_all)
+    candidate_all_by_id_signature = _functions_by_id_and_block_signature(candidate_functions_all)
     mapped_candidates = _ssa_candidate_mapping(mapping_document) if mapping_document is not None else {}
-    oracle_index = _ssa_function_index(oracle_functions)
-    candidate_index = _ssa_function_index(candidate_functions)
+    oracle_index = _ssa_function_index(oracle_index_functions_all)
+    candidate_index = _ssa_function_index(candidate_index_functions_all)
+    _attach_binary_signature_context(oracle_index, oracle_index_source, oracle_index_functions_all)
+    _attach_binary_signature_context(candidate_index, candidate_index_source, candidate_index_functions_all)
     ordinals: dict[str, int] = defaultdict(int)
     results: list[dict[str, Any]] = []
     pending_callee_proofs: list[tuple[int, dict[str, Any]]] = []
     proof_cache = _SemanticEqualityCache() if enable_callee_lemmas else None
     solver_time_ms = 0
     skipped_unmapped = 0
+    aborted: dict[str, Any] | None = None
     for oracle_function in oracle_functions:
+        memory_limit = _compare_memory_limit_status(max_rss_mb)
+        if memory_limit is not None:
+            aborted = _compare_memory_abort("ssa_pair", memory_limit)
+            results.append(_memory_limit_compare_result(aborted))
+            break
         function = oracle_function.get("function", {}) if isinstance(oracle_function, dict) else {}
         function_id = str(function.get("id", ""))
         function_name = str(function.get("name", function_id))
@@ -309,13 +370,44 @@ def compare_ssa_documents(
                 if part_delta:
                     candidate_function = candidate_by_id_delta.get((str(mapped.get("candidate_id")), part_delta))
                 if candidate_function is None:
+                    exact_signature = _ssa_exact_block_signature(oracle_function)
+                    if exact_signature is not None:
+                        candidate_function = candidate_by_id_exact_signature.get(
+                            (str(mapped.get("candidate_id")), exact_signature)
+                        )
+                if candidate_function is None:
+                    signature = _ssa_block_signature(oracle_function)
+                    if signature is not None:
+                        candidate_function = candidate_by_id_signature.get((str(mapped.get("candidate_id")), signature))
+                if candidate_function is None and not part_delta:
                     candidate_function = candidate_by_id.get((str(mapped.get("candidate_id")), part_index))
                 if candidate_function is None:
                     candidate_name = str(mapped.get("candidate_name", ""))
                     if part_delta:
                         candidate_function = candidate_by_key_delta.get((candidate_name, part_delta))
                     if candidate_function is None:
+                        exact_signature = _ssa_exact_block_signature(oracle_function)
+                        if exact_signature is not None:
+                            candidate_function = candidate_by_key_exact_signature.get((candidate_name, exact_signature))
+                    if candidate_function is None:
+                        signature = _ssa_block_signature(oracle_function)
+                        if signature is not None:
+                            candidate_function = candidate_by_key_signature.get((candidate_name, signature))
+                    if candidate_function is None and not part_delta:
                         candidate_function = candidate_by_key.get((candidate_name, part_index))
+                if candidate_function is None:
+                    candidate_function = _candidate_for_mapped_part_across_body_boundary(
+                        oracle_function,
+                        mapped=mapped,
+                        candidate_by_id_delta=candidate_all_by_id_delta,
+                        candidate_by_key_delta=candidate_all_by_key_delta,
+                        candidate_by_id_part=candidate_all_by_id,
+                        candidate_by_key_part=candidate_all_by_key,
+                        candidate_by_id_exact_signature=candidate_all_by_id_exact_signature,
+                        candidate_by_key_exact_signature=candidate_all_by_key_exact_signature,
+                        candidate_by_id_signature=candidate_all_by_id_signature,
+                        candidate_by_key_signature=candidate_all_by_key_signature,
+                    )
         else:
             function_key = function_name or function_id
             part_index = _ssa_part_index(oracle_function)
@@ -324,12 +416,36 @@ def compare_ssa_documents(
             if part_delta:
                 candidate_function = candidate_by_key_delta.get((function_key, part_delta))
             if candidate_function is None:
-                candidate_function = candidate_by_key.get((function_key, part_index))
+                exact_signature = _ssa_exact_block_signature(oracle_function)
+                if exact_signature is not None:
+                    candidate_function = candidate_by_key_exact_signature.get((function_key, exact_signature))
             if candidate_function is None:
+                signature = _ssa_block_signature(oracle_function)
+                if signature is not None:
+                    candidate_function = candidate_by_key_signature.get((function_key, signature))
+            if candidate_function is None and not part_delta:
+                candidate_function = candidate_by_key.get((function_key, part_index))
+            if candidate_function is None and not part_delta:
                 ordinal = ordinals[function_key]
                 ordinals[function_key] += 1
                 candidate_function = candidate_by_key.get((function_key, ordinal))
+            if candidate_function is None:
+                candidate_function = _candidate_for_mapped_part_across_body_boundary(
+                    oracle_function,
+                    mapped={"candidate_id": function_id, "candidate_name": function_key},
+                    candidate_by_id_delta=candidate_all_by_id_delta,
+                    candidate_by_key_delta=candidate_all_by_key_delta,
+                    candidate_by_id_part=candidate_all_by_id,
+                    candidate_by_key_part=candidate_all_by_key,
+                    candidate_by_id_exact_signature=candidate_all_by_id_exact_signature,
+                    candidate_by_key_exact_signature=candidate_all_by_key_exact_signature,
+                    candidate_by_id_signature=candidate_all_by_id_signature,
+                    candidate_by_key_signature=candidate_all_by_key_signature,
+                )
         if candidate_function is None:
+            if mapped is not None and _ssa_part_outside_declared_body(oracle_function):
+                skipped_external_oracle_parts += 1
+                continue
             missing_reason = "mapping_missing" if mapped is None else "candidate_ssa_missing"
             missing_detail = (
                 "no candidate mapping for oracle SSA function"
@@ -369,6 +485,7 @@ def compare_ssa_documents(
             max_solver_inputs=max_solver_inputs,
             max_solver_memory_stores=max_solver_memory_stores,
             skip_binary_equal=skip_binary_equal,
+            max_rss_mb=max_rss_mb,
         )
         solver_time_ms += elapsed
         result_index = len(results)
@@ -396,11 +513,16 @@ def compare_ssa_documents(
             candidate_index=candidate_index,
             allow_aliased_call_targets=allow_aliased_call_targets,
             proof_cache=proof_cache,
+            max_rss_mb=max_rss_mb,
         )
         solver_time_ms += int(region_equality.get("solver_time_ms", 0))
         _apply_region_equality_gate(results, region_equality)
+        if region_equality.get("aborted"):
+            aborted = region_equality.get("aborted") if isinstance(region_equality.get("aborted"), dict) else None
 
     for _pass_index in range(max(0, int(semantic_proof_passes) - 1)):
+        if aborted is not None:
+            break
         if not pending_callee_proofs:
             break
         changed = False
@@ -418,6 +540,7 @@ def compare_ssa_documents(
                 max_solver_inputs=max_solver_inputs,
                 max_solver_memory_stores=max_solver_memory_stores,
                 skip_binary_equal=skip_binary_equal,
+                max_rss_mb=max_rss_mb,
             )
             solver_time_ms += elapsed
             results[result_index] = result
@@ -436,16 +559,52 @@ def compare_ssa_documents(
     if enable_region_equality:
         _apply_region_equality_gate(results, region_equality)
     connectivity = _empty_connectivity_report(enabled=False)
-    if enable_connectivity:
+    if enable_connectivity and aborted is None:
         connectivity = _apply_ssa_connectivity_gate(
             results,
             region_exempt_functions=_region_passed_function_keys(region_equality),
             oracle_functions=oracle_functions,
-            candidate_functions=candidate_functions,
+            candidate_functions=candidate_functions_all,
             timeout_ms=timeout_ms,
+            max_rss_mb=max_rss_mb,
         )
+        if connectivity.get("aborted"):
+            aborted = connectivity.get("aborted") if isinstance(connectivity.get("aborted"), dict) else None
+    elif enable_connectivity:
+        connectivity = _memory_limited_connectivity_report(aborted)
+    if aborted is None:
+        external_parts = _compare_external_oracle_parts(
+            oracle_external_functions=oracle_external_functions,
+            candidate_functions=candidate_functions_all,
+            mapping_document=mapping_document,
+            oracle_index=oracle_index,
+            candidate_index=candidate_index,
+            allow_aliased_call_targets=allow_aliased_call_targets,
+            proof_cache=proof_cache,
+            timeout_ms=timeout_ms,
+            max_solver_assignments=max_solver_assignments,
+            max_solver_inputs=max_solver_inputs,
+            max_solver_memory_stores=max_solver_memory_stores,
+            skip_binary_equal=skip_binary_equal,
+            max_rss_mb=max_rss_mb,
+        )
+        if external_parts.get("aborted"):
+            aborted = external_parts.get("aborted") if isinstance(external_parts.get("aborted"), dict) else None
+    else:
+        external_parts = _memory_limited_external_parts_report(aborted)
+    solver_time_ms += int(external_parts.get("solver_time_ms", 0) or 0)
+    _apply_external_successor_edge_coverage(connectivity, external_parts)
+    if enable_region_equality:
+        _apply_connectivity_region_coverage(region_equality, results, connectivity)
+        _apply_region_equality_gate(results, region_equality)
     loop_scc = _apply_loop_scc_gate(results, region_exempt_functions=_region_passed_function_keys(region_equality))
     call_scc = _apply_call_scc_gate(results)
+    candidate_only_parts = _candidate_only_ssa_parts(
+        candidate_functions_all,
+        results=results,
+        external_parts=external_parts,
+        enabled=not _ssa_document_is_batch(oracle),
+    )
     summary = {
         "total": len(results),
         "passed": sum(1 for result in results if result.get("status") == "passed"),
@@ -454,8 +613,19 @@ def compare_ssa_documents(
         "skipped_unmapped": skipped_unmapped,
         "semantic_proof_facts": 0 if proof_cache is None else proof_cache.count,
         "pending_callee_proofs": len(pending_callee_proofs),
+        "external_oracle_parts_total": len(oracle_external_functions),
+        "external_candidate_parts_total": len(candidate_external_functions),
+        "external_oracle_parts_checked": external_parts.get("total", 0),
+        "external_oracle_parts_passed": external_parts.get("passed", 0),
+        "skipped_external_oracle_parts": external_parts.get("unproved", 0),
+        "candidate_parts_total": candidate_only_parts.get("candidate_parts_total", 0),
+        "candidate_parts_referenced": candidate_only_parts.get("candidate_parts_referenced", 0),
+        "candidate_only_parts": candidate_only_parts.get("total", 0),
+        "candidate_alias_only_parts": candidate_only_parts.get("alias_total", 0),
         "solver_time_ms": solver_time_ms,
     }
+    if aborted is not None:
+        summary["aborted"] = aborted
     document_without_id = {
         "schema": "dosunit.ssa_compare.v1",
         "oracle": oracle.get("exe"),
@@ -472,9 +642,12 @@ def compare_ssa_documents(
             "max_solver_inputs": max_solver_inputs,
             "max_solver_memory_stores": max_solver_memory_stores,
             "max_region_loop_unroll": max_region_loop_unroll,
+            "max_rss_mb": max_rss_mb,
         },
         "region_equality": region_equality,
         "connectivity": connectivity,
+        "external_parts": external_parts,
+        "candidate_only_parts": candidate_only_parts,
         "loop_scc": loop_scc,
         "call_scc": call_scc,
         "skip_binary_equal": skip_binary_equal,
@@ -486,6 +659,102 @@ def compare_ssa_documents(
     return document
 
 
+def _ssa_document_is_batch(document: dict[str, Any]) -> bool:
+    counters = document.get("counters") if isinstance(document.get("counters"), dict) else {}
+    return "functions_in_batch" in counters or "ssa_parts_in_batch" in counters
+
+
+def _candidate_only_ssa_parts(
+    candidate_functions: list[dict[str, Any]],
+    *,
+    results: list[dict[str, Any]],
+    external_parts: dict[str, Any],
+    enabled: bool,
+) -> dict[str, Any]:
+    referenced = _referenced_candidate_ssa_ids(results, external_parts)
+    if not enabled:
+        return {
+            "enabled": False,
+            "reason": "batched_child_compare",
+            "candidate_parts_total": len(candidate_functions),
+            "candidate_parts_referenced": len(referenced),
+            "total": 0,
+            "alias_total": 0,
+            "parts": [],
+            "alias_parts": [],
+        }
+    referenced_alias_keys = {
+        key
+        for function in candidate_functions
+        if str(function.get("id") or "") in referenced
+        for key in [_candidate_part_alias_key(function)]
+        if key is not None
+    }
+    parts: list[dict[str, Any]] = []
+    alias_parts: list[dict[str, Any]] = []
+    for function in candidate_functions:
+        function_id = str(function.get("id") or "")
+        if not function_id or function_id in referenced:
+            continue
+        alias_key = _candidate_part_alias_key(function)
+        if alias_key is not None and alias_key in referenced_alias_keys:
+            alias_parts.append(function)
+        else:
+            parts.append(function)
+    return {
+        "enabled": True,
+        "candidate_parts_total": len(candidate_functions),
+        "candidate_parts_referenced": len(referenced),
+        "total": len(parts),
+        "alias_total": len(alias_parts),
+        "parts": [_candidate_only_ssa_part_detail(function) for function in parts],
+        "alias_parts": [_candidate_only_ssa_part_detail(function) for function in alias_parts],
+    }
+
+
+def _referenced_candidate_ssa_ids(results: list[dict[str, Any]], external_parts: dict[str, Any]) -> set[str]:
+    referenced: set[str] = set()
+    for result in results:
+        _add_candidate_reference(referenced, result.get("candidate_function"))
+    for result in external_parts.get("results", []) or []:
+        if isinstance(result, dict):
+            _add_candidate_reference(referenced, result.get("candidate_function"))
+    return referenced
+
+
+def _add_candidate_reference(referenced: set[str], value: Any) -> None:
+    if isinstance(value, str) and value:
+        referenced.add(value)
+
+
+def _candidate_only_ssa_part_detail(function: dict[str, Any]) -> dict[str, Any]:
+    info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
+    return {
+        "id": function.get("id"),
+        "function": {"id": info.get("id"), "name": info.get("name")},
+        "detail": _ssa_function_report_detail(function),
+    }
+
+
+def _candidate_part_alias_key(function: dict[str, Any]) -> tuple[Any, ...] | None:
+    entry = function.get("entry") if isinstance(function.get("entry"), dict) else {}
+    part = function.get("part") if isinstance(function.get("part"), dict) else {}
+    source = function.get("source") if isinstance(function.get("source"), dict) else {}
+    linear = entry.get("linear")
+    ip = entry.get("ip")
+    if not linear and not ip:
+        return None
+    return (
+        linear,
+        ip,
+        part.get("index"),
+        part.get("delta"),
+        source.get("machine_code_sha256"),
+        source.get("machine_code_size"),
+        source.get("instruction_count"),
+    )
+
+
 def _empty_connectivity_report(*, enabled: bool) -> dict[str, Any]:
     return {
         "enabled": enabled,
@@ -494,9 +763,106 @@ def _empty_connectivity_report(*, enabled: bool) -> dict[str, Any]:
         "state_edges_checked": 0,
         "state_inputs_checked": 0,
         "state_solver_time_ms": 0,
+        "external_successor_edges_skipped": 0,
+        "external_successor_edges": [],
+        "external_successor_edges_covered": 0,
+        "external_successor_edges_unproved": 0,
         "region_exempt_functions": [],
         "failures": [],
         "refusals": [],
+    }
+
+
+def _current_process_rss_kib() -> int | None:
+    try:
+        with open("/proc/self/status", "r", encoding="ascii") as status_file:
+            for line in status_file:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return int(parts[1])
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    return None
+
+
+def _compare_soft_rss_limit_kib(max_rss_mb: int) -> int | None:
+    if max_rss_mb <= 0:
+        return None
+    return max(1, max_rss_mb // 2) * 1024
+
+
+def _compare_memory_limit_status(max_rss_mb: int) -> dict[str, Any] | None:
+    soft_limit_kib = _compare_soft_rss_limit_kib(max_rss_mb)
+    if soft_limit_kib is None:
+        return None
+    rss_kib = _current_process_rss_kib()
+    if rss_kib is None or rss_kib <= soft_limit_kib:
+        return None
+    return {
+        "kind": "memory_limit",
+        "rss_kib": rss_kib,
+        "rss_mb": round(rss_kib / 1024, 1),
+        "soft_limit_mb": round(soft_limit_kib / 1024, 1),
+        "hard_limit_mb": max_rss_mb,
+    }
+
+
+def _compare_memory_abort(phase: str, memory_limit: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "phase": phase,
+        "reason": "memory_limit",
+        "memory": memory_limit,
+        "detail": (
+            "SSA comparison stopped before the hard RSS watchdog killed the process; "
+            "rerun with tighter solver gates or a smaller function set"
+        ),
+    }
+
+
+def _memory_limit_mismatch(aborted: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "kind": "memory_limit",
+        "detail": None if aborted is None else aborted.get("detail"),
+        "phase": None if aborted is None else aborted.get("phase"),
+        "memory": None if aborted is None else aborted.get("memory"),
+    }
+
+
+def _memory_limit_compare_result(aborted: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "refused",
+        "reason": "memory_limit",
+        "function": {"id": "<compare>", "name": "<compare>"},
+        "oracle_function": None,
+        "candidate_function": None,
+        "mapped_candidate": None,
+        "oracle_detail": None,
+        "candidate_detail": None,
+        "mismatches": [_memory_limit_mismatch(aborted)],
+    }
+
+
+def _memory_limited_connectivity_report(aborted: dict[str, Any] | None) -> dict[str, Any]:
+    report = _empty_connectivity_report(enabled=True)
+    report["status"] = "refused"
+    report["aborted"] = aborted
+    report["refusals"] = [_memory_limit_mismatch(aborted)]
+    return report
+
+
+def _memory_limited_external_parts_report(aborted: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "status": "refused",
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "refused": 1,
+        "unproved": 0,
+        "solver_time_ms": 0,
+        "aborted": aborted,
+        "results": [_memory_limit_compare_result(aborted or _compare_memory_abort("external_parts", {}))],
     }
 
 
@@ -522,7 +888,12 @@ def compare_ssa_abi_documents(
     for abi_function in _abi_functions(abi_manifest):
         function_name = str(abi_function.get("name") or "")
         oracle_group = _ssa_group_for_abi_function(oracle_groups, abi_function, side="oracle")
-        mapped = mapped_candidates.get(str(abi_function.get("id") or "")) or mapped_candidates.get(function_name)
+        mapped = (
+            mapped_candidates.get(str(abi_function.get("oracle_id") or ""))
+            or mapped_candidates.get(str(abi_function.get("oracle_name") or ""))
+            or mapped_candidates.get(str(abi_function.get("id") or ""))
+            or mapped_candidates.get(function_name)
+        )
         candidate_group = _ssa_group_for_abi_function(candidate_groups, abi_function, side="candidate", mapped=mapped)
         observables = _abi_observables(abi_function)
         input_constraints = _abi_input_constraints(abi_function)
@@ -670,6 +1041,63 @@ def compare_ssa_abi_documents(
     return document
 
 
+def _function_linear_ranges(
+    *,
+    function: dict[str, Any],
+    function_base: int,
+    start: int,
+    end: int,
+    scan_limit: int,
+) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = [(start, end)]
+    for item in function.get("ranges", ()) or ():
+        if not isinstance(item, dict):
+            continue
+        try:
+            offset = parse_int(item.get("offset"), field="function.ranges.offset")
+        except DosUnitError:
+            continue
+        size_value = item.get("size")
+        if isinstance(size_value, int):
+            size = size_value
+        else:
+            try:
+                end_offset = parse_int(item.get("end_offset"), field="function.ranges.end_offset")
+            except DosUnitError:
+                continue
+            size = end_offset - offset + 1
+        if size <= 0:
+            continue
+        bounded_size = max(1, min(size, scan_limit))
+        linear = function_base + offset
+        ranges.append((linear, linear + bounded_size))
+    return _merge_linear_ranges(ranges)
+
+
+def _merge_linear_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted((start, end) for start, end in ranges if end > start):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def _linear_range_end(ranges: list[tuple[int, int]], address: int) -> int | None:
+    for start, end in ranges:
+        if start <= address < end:
+            return end
+    return None
+
+
+def _can_add_dynamic_successor_range(*, project: Any, function_base: int, successor: int) -> bool:
+    if successor < function_base or successor >= function_base + 0x10000:
+        return False
+    probe = _loader_bytes(project, successor, 1)
+    return probe is not None and len(probe) == 1
+
+
 def _lower_function(
     *,
     project: Any,
@@ -679,6 +1107,7 @@ def _lower_function(
     cache_document: dict[str, Any] | None,
     cache_stats: dict[str, int],
     function: dict[str, Any],
+    segment_paragraphs: dict[str, int],
     output_regs: tuple[str, ...],
     source_ir: str,
     max_blocks_per_function: int,
@@ -686,6 +1115,7 @@ def _lower_function(
     max_assignments_per_function: int,
     scan_limit: int,
     follow_call_fallthrough: bool,
+    max_lift_block_ms: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     function_id = str(function.get("id", "<unknown>"))
     names = function.get("names", []) if isinstance(function.get("names"), list) else []
@@ -694,7 +1124,7 @@ def _lower_function(
     if not isinstance(entry, dict):
         return [], [_refusal(function, "unsupported_ir", "function entry is missing")], 0
     try:
-        segment_para = parse_int(entry.get("segment_para"), field="function.entry.segment_para")
+        segment_para = _entry_segment_para(entry, segment_paragraphs=segment_paragraphs)
         entry_ip = parse_int(entry.get("offset"), field="function.entry.offset")
     except DosUnitError as ex:
         return [], [_refusal(function, "unsupported_ir", str(ex))], 0
@@ -702,18 +1132,28 @@ def _lower_function(
     start = function_base + entry_ip
     size = function.get("size")
     limit = int(size) if isinstance(size, int) and size > 0 else scan_limit
+    allow_dynamic_successor_ranges = True
     limit = max(1, min(limit, scan_limit))
     end = start + limit
+    allowed_ranges = _function_linear_ranges(
+        function=function,
+        function_base=function_base,
+        start=start,
+        end=end,
+        scan_limit=scan_limit,
+    )
     function_machine_code = _loader_bytes(project, start, limit)
     pending = [start]
     seen: set[int] = set()
     lowered_parts: list[dict[str, Any]] = []
     refusals: list[dict[str, Any]] = []
     blocks_lifted = 0
+    boundary_extensions: set[int] = set()
 
     while pending and len(seen) < max_blocks_per_function:
         at = pending.pop(0)
-        if at < start or at >= end or at in seen:
+        range_end = _linear_range_end(allowed_ranges, at)
+        if range_end is None or at in seen:
             continue
         seen.add(at)
         try:
@@ -722,16 +1162,30 @@ def _lower_function(
                 exe_path=exe_path,
                 exe_digest=exe_digest,
                 start=at,
-                size=max(1, min(limit, end - at)),
+                size=max(1, min(scan_limit, range_end - at)),
                 opt_level=0,
                 cache_document=cache_document,
                 cache_stats=cache_stats,
+                max_lift_block_ms=max_lift_block_ms,
             )
             irsb = lifted.irsb
+        except TimeoutError as ex:
+            refusals.append(
+                _refusal(
+                    function,
+                    "timeout",
+                    f"lifter block timed out at {normalize_hex(at)} after {max_lift_block_ms} ms: {ex}",
+                    extra={"address": {"linear": normalize_hex(at)}},
+                )
+            )
+            continue
         except Exception as ex:  # noqa: BLE001
             refusals.append(
                 _refusal(
-                    function, "unsupported_ir", f"lifter block failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}"
+                    function,
+                    "unsupported_ir",
+                    f"lifter block failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}",
+                    extra={"address": {"linear": normalize_hex(at)}},
                 )
             )
             continue
@@ -740,9 +1194,32 @@ def _lower_function(
         instructions = [
             _instruction_text_from_record(record, function_base=function_base)
             for record in lifted.instructions
-            if start <= parse_int(record.get("linear", 0), field="instruction.linear") < end
+            if _linear_range_end(
+                allowed_ranges,
+                parse_int(record.get("linear", 0), field="instruction.linear"),
+            )
+            is not None
         ]
+        lifted_size = int(getattr(irsb, "size", 0) or 0)
+        if lifted_size > 0:
+            lifted_end = at + lifted_size
+            instructions = [
+                instruction
+                for instruction in instructions
+                if (_optional_int((instruction.get("address") or {}).get("linear")) or 0) < lifted_end
+            ]
         if not instructions:
+            if (
+                allow_dynamic_successor_ranges
+                and at not in boundary_extensions
+                and range_end - at < 16
+                and _can_add_dynamic_successor_range(project=project, function_base=function_base, successor=range_end)
+            ):
+                boundary_extensions.add(at)
+                seen.discard(at)
+                allowed_ranges = _merge_linear_ranges([*allowed_ranges, (range_end, range_end + scan_limit)])
+                pending.insert(0, at)
+                continue
             refusals.append(
                 _refusal(function, "unsupported_ir", f"lifter produced no instructions at {normalize_hex(at)}")
             )
@@ -756,43 +1233,102 @@ def _lower_function(
                 )
             )
             continue
+        boring_fallthrough = _boring_fallthrough_successor(irsb, instructions)
+        if (
+            boring_fallthrough == range_end
+            and allow_dynamic_successor_ranges
+            and at not in boundary_extensions
+            and _can_add_dynamic_successor_range(project=project, function_base=function_base, successor=range_end)
+        ):
+            boundary_extensions.add(at)
+            seen.discard(at)
+            allowed_ranges = _merge_linear_ranges([*allowed_ranges, (range_end, range_end + scan_limit)])
+            pending.insert(0, at)
+            continue
         if _is_incomplete_noncontrol_block(irsb, instructions):
+            if (
+                allow_dynamic_successor_ranges
+                and at not in boundary_extensions
+                and _incomplete_block_reaches_range_end(instructions, range_end)
+                and _can_add_dynamic_successor_range(project=project, function_base=function_base, successor=range_end)
+            ):
+                boundary_extensions.add(at)
+                seen.discard(at)
+                allowed_ranges = _merge_linear_ranges([*allowed_ranges, (range_end, range_end + scan_limit)])
+                pending.insert(0, at)
+                continue
             last = instructions[-1]
             refusals.append(
                 _refusal(
                     function,
                     "incomplete_block",
                     f"lifter stopped before a control transfer at {last.get('address', {}).get('linear')}: {last.get('disassembly')}",
+                    extra={"address": last.get("address", {}) if isinstance(last.get("address"), dict) else {}},
                 )
             )
             continue
 
-        transfer = _transfer_info(irsb, instructions)
+        transfer = (
+            _repeat_string_transfer(instructions)
+            or _nonreturning_interrupt_transfer(instructions)
+            or _transfer_info(irsb, instructions)
+        )
         block_output_regs = _with_control_output_regs(output_regs, transfer)
-        if source_ir == "vex":
-            lowered = _lower_irsb(
-                irsb, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function
-            )
-        elif source_ir == "ail":
-            try:
-                ail_block = _vex_irsb_to_ail_block(project=project, irsb=irsb)
-            except Exception as ex:  # noqa: BLE001
-                refusals.append(
-                    _refusal(
-                        function,
-                        "unsupported_ir",
-                        f"AIL conversion failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}",
-                    )
+        try:
+            with _timeout_alarm(
+                max_lift_block_ms,
+                message=f"SSA block lowering exceeded timeout at {normalize_hex(at)}",
+            ):
+                string_summary = _lower_repeat_string_summary(
+                    instructions,
+                    output_regs=block_output_regs,
+                    max_assignments_per_function=max_assignments_per_function,
                 )
-                continue
-            lowered = _lower_ail_block(
-                ail_block, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function
+                if string_summary is not None:
+                    lowered = string_summary
+                elif source_ir == "vex":
+                    lowered = _lower_irsb(
+                        irsb, output_regs=block_output_regs, max_assignments_per_function=max_assignments_per_function
+                    )
+                elif source_ir == "ail":
+                    try:
+                        ail_block = _vex_irsb_to_ail_block(project=project, irsb=irsb)
+                    except Exception as ex:  # noqa: BLE001
+                        refusals.append(
+                            _refusal(
+                                function,
+                                "unsupported_ir",
+                                f"AIL conversion failed at {normalize_hex(at)}: {type(ex).__name__}: {ex}",
+                            )
+                        )
+                        continue
+                    lowered = _lower_ail_block(
+                        ail_block,
+                        output_regs=block_output_regs,
+                        max_assignments_per_function=max_assignments_per_function,
+                    )
+                else:
+                    refusals.append(_refusal(function, "unsupported_ir", f"unsupported SSA source IR: {source_ir}"))
+                    continue
+        except TimeoutError as ex:
+            refusals.append(
+                _refusal(
+                    function,
+                    "timeout",
+                    f"SSA block lowering timed out at {normalize_hex(at)} after {max_lift_block_ms} ms: {ex}",
+                    extra={"address": {"linear": normalize_hex(at)}},
+                )
             )
-        else:
-            refusals.append(_refusal(function, "unsupported_ir", f"unsupported SSA source IR: {source_ir}"))
             continue
         if isinstance(lowered, LowerFailure):
-            refusals.append(_refusal(function, lowered.reason, f"{lowered.message} at {normalize_hex(at)}"))
+            refusals.append(
+                _refusal(
+                    function,
+                    lowered.reason,
+                    f"{lowered.message} at {normalize_hex(at)}",
+                    extra={"address": {"linear": normalize_hex(at)}},
+                )
+            )
             continue
 
         part_index = len(lowered_parts)
@@ -830,8 +1366,26 @@ def _lower_function(
         body["id"] = stable_id("ssa-function", body_without_id)
         lowered_parts.append(body)
 
-        for successor in _ssa_block_successors(irsb, instructions, follow_call_fallthrough=follow_call_fallthrough):
-            if start <= successor < end and successor not in seen and successor not in pending:
+        successors = (
+            _transfer_successor_linears(transfer)
+            if isinstance(transfer, dict) and transfer.get("summary") == "repeat_string"
+            else _ssa_block_successors(
+                irsb,
+                instructions,
+                follow_call_fallthrough=follow_call_fallthrough,
+                transfer=transfer,
+            )
+        )
+        for successor in successors:
+            if _linear_range_end(allowed_ranges, successor) is None:
+                if not allow_dynamic_successor_ranges or not _can_add_dynamic_successor_range(
+                    project=project,
+                    function_base=function_base,
+                    successor=successor,
+                ):
+                    continue
+                allowed_ranges = _merge_linear_ranges([*allowed_ranges, (successor, successor + scan_limit)])
+            if successor not in seen and successor not in pending:
                 pending.append(successor)
 
     if pending and len(seen) >= max_blocks_per_function:
@@ -844,26 +1398,393 @@ def _lower_function(
 def _with_control_output_regs(output_regs: tuple[str, ...], transfer: dict[str, Any] | None) -> tuple[str, ...]:
     if not isinstance(transfer, dict) or transfer.get("kind") != "direct_successors":
         return output_regs
-    if "ip" in output_regs:
-        return output_regs
-    return (*output_regs, "ip")
+    return tuple(dict.fromkeys((*output_regs, *RAW_OUTPUT_REGS, "ip")))
+
+
+def _catalog_segment_paragraphs(functions_catalog: dict[str, Any]) -> dict[str, int]:
+    paragraphs: dict[str, int] = {}
+    for item in functions_catalog.get("segments", ()) or ():
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        paragraph = _optional_int(item.get("paragraph"))
+        if not isinstance(name, str) or paragraph is None:
+            continue
+        normalized = name.strip()
+        if not normalized:
+            continue
+        paragraphs[normalized] = paragraph
+        paragraphs[normalized.lower()] = paragraph
+    return paragraphs
+
+
+def _entry_segment_para(entry: dict[str, Any], *, segment_paragraphs: dict[str, int] | None = None) -> int:
+    segment_para = _optional_int(entry.get("segment_para"))
+    if segment_para is not None:
+        return segment_para
+    segment = entry.get("segment")
+    if isinstance(segment, str):
+        text_raw = segment.strip()
+        text = text_raw.lower()
+        if segment_paragraphs:
+            mapped = segment_paragraphs.get(text_raw)
+            if mapped is None:
+                mapped = segment_paragraphs.get(text)
+            if mapped is not None:
+                return mapped
+        parsed = _optional_int(text)
+        if parsed is not None:
+            return parsed
+    if entry.get("kind") == "module_relative" and entry.get("offset") is not None:
+        return 0
+    raise DosUnitError("function.entry.segment_para must be an integer or hex string")
+
+
+def _repeat_string_transfer(instructions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    info = _repeat_string_info(instructions)
+    if info is None:
+        return None
+    fallthrough = _call_fallthrough_linear_from_instructions(instructions)
+    if fallthrough is None:
+        return None
+    return {
+        "kind": "direct_successors",
+        "jumpkind": "Ijk_Boring",
+        "summary": "repeat_string",
+        "successors": [
+            {
+                "linear": normalize_hex(fallthrough),
+                "low16": normalize_hex(fallthrough & 0xFFFF, width=4),
+            }
+        ],
+    }
+
+
+def _transfer_successor_linears(transfer: dict[str, Any] | None) -> list[int]:
+    if not isinstance(transfer, dict):
+        return []
+    successors = transfer.get("successors")
+    if not isinstance(successors, list):
+        return []
+    linears: list[int] = []
+    for successor in successors:
+        if not isinstance(successor, dict):
+            continue
+        linear = _optional_int(successor.get("linear"))
+        if linear is not None:
+            linears.append(linear)
+    return _unique_ints(linears)
+
+
+def _repeat_string_info(instructions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not _last_instruction_is_repeat_string(instructions):
+        return None
+    instruction = instructions[-1]
+    text = str(instruction.get("disassembly") or instruction.get("mnemonic") or "").lower()
+    tokens = text.replace(",", " ").split()
+    if len(tokens) < 2 or tokens[0] not in {"rep", "repe", "repz", "repne", "repnz"}:
+        return None
+    base = tokens[1]
+    if base.startswith("movs"):
+        family = "movs"
+    elif base.startswith("stos"):
+        family = "stos"
+    elif base.startswith("scas"):
+        family = "scas"
+    elif base.startswith("cmps"):
+        family = "cmps"
+    else:
+        return None
+    suffix = base[-1:]
+    width = 1 if suffix == "b" else 2 if suffix == "w" else 4 if suffix == "d" else None
+    if width is None:
+        return None
+    return {"repeat": tokens[0], "family": family, "width": width, "mnemonic": base}
+
+
+def _lower_repeat_string_summary(
+    instructions: list[dict[str, Any]],
+    *,
+    output_regs: tuple[str, ...],
+    max_assignments_per_function: int,
+) -> dict[str, Any] | None:
+    info = _repeat_string_info(instructions)
+    if info is None:
+        return None
+    family = str(info["family"])
+    width = int(info["width"])
+    repeat = str(info["repeat"])
+    tag = f"summary_{repeat}_{family}{width * 8}"
+    reg_versions: dict[str, SsaExpr] = {
+        name: SsaExpr("input", reg_width, name=name) for _offset, (name, reg_width) in REG_BY_OFFSET.items()
+    }
+    mem_input = SsaExpr("mem_input", 0, name="mem")
+    cx = reg_versions["cx"]
+    si = reg_versions["si"]
+    di = reg_versions["di"]
+    ax_value = _coerce_width(reg_versions["ax"], 8 if width == 1 else 16)
+    flags = reg_versions["flags"]
+    ds = reg_versions["ds"]
+    es = reg_versions["es"]
+
+    if family == "movs":
+        args = (mem_input, cx, si, di, ds, es, flags)
+        reg_versions["cx"] = SsaExpr(f"{tag}_cx", 16, args)
+        reg_versions["si"] = SsaExpr(f"{tag}_si", 16, args)
+        reg_versions["di"] = SsaExpr(f"{tag}_di", 16, args)
+        mem_version = SsaExpr(f"{tag}_memory", 0, args)
+        memory_touched = True
+    elif family == "stos":
+        args = (mem_input, cx, di, ax_value, es, flags)
+        reg_versions["cx"] = SsaExpr(f"{tag}_cx", 16, args)
+        reg_versions["di"] = SsaExpr(f"{tag}_di", 16, args)
+        mem_version = SsaExpr(f"{tag}_memory", 0, args)
+        memory_touched = True
+    elif family == "scas":
+        args = (mem_input, cx, di, ax_value, es, flags)
+        reg_versions["cx"] = SsaExpr(f"{tag}_cx", 16, args)
+        reg_versions["di"] = SsaExpr(f"{tag}_di", 16, args)
+        reg_versions["flags"] = SsaExpr(f"{tag}_flags", 16, args)
+        mem_version = mem_input
+        memory_touched = False
+    elif family == "cmps":
+        args = (mem_input, cx, si, di, ds, es, flags)
+        reg_versions["cx"] = SsaExpr(f"{tag}_cx", 16, args)
+        reg_versions["si"] = SsaExpr(f"{tag}_si", 16, args)
+        reg_versions["di"] = SsaExpr(f"{tag}_di", 16, args)
+        reg_versions["flags"] = SsaExpr(f"{tag}_flags", 16, args)
+        mem_version = mem_input
+        memory_touched = False
+    else:
+        return None
+
+    fallthrough = _call_fallthrough_linear_from_instructions(instructions)
+    if fallthrough is not None:
+        reg_versions["ip"] = SsaExpr("const", 16, value=fallthrough & 0xFFFF)
+    if family in {"scas", "cmps"} and "flags" not in output_regs:
+        output_regs = tuple(dict.fromkeys((*output_regs, "flags")))
+
+    requested: dict[str, SsaExpr] = {}
+    for reg in output_regs:
+        if reg not in reg_versions:
+            return None
+        requested[reg] = reg_versions[reg]
+
+    assignments: list[dict[str, Any]] = []
+    memo: dict[tuple[Any, ...], str] = {}
+    object_memo: dict[int, dict[str, Any]] = {}
+    try:
+        outputs = {
+            reg: _materialize(
+                expr,
+                assignments=assignments,
+                memo=memo,
+                object_memo=object_memo,
+                max_assignments_per_function=max_assignments_per_function,
+            )
+            for reg, expr in requested.items()
+        }
+        if memory_touched:
+            outputs["memory"] = _materialize(
+                mem_version,
+                assignments=assignments,
+                memo=memo,
+                object_memo=object_memo,
+                max_assignments_per_function=max_assignments_per_function,
+            )
+    except LowerFailure:
+        return None
+    inputs = _collect_inputs(requested.values())
+    if memory_touched:
+        inputs.update(_collect_inputs((mem_version,)))
+    return {
+        "inputs": _input_items(inputs),
+        "outputs": outputs,
+        "assignments": assignments,
+        "summary": {"kind": "repeat_string", **info},
+    }
+
+
+def _vex_live_statement_indices(irsb: Any, output_regs: tuple[str, ...]) -> set[int]:
+    statements = list(getattr(irsb, "statements", []) or [])
+    tyenv = getattr(irsb, "tyenv", None)
+    needed_regs = set(output_regs)
+    needed_tmps: set[int] = set()
+    need_memory = any(getattr(statement, "tag", None) == "Ist_Store" for statement in statements)
+    live: set[int] = set()
+
+    next_deps = _vex_expr_deps(getattr(irsb, "next", None), tyenv)
+    needed_tmps.update(next_deps.temps)
+    needed_regs.update(next_deps.regs)
+    need_memory = need_memory or next_deps.memory
+
+    for index in range(len(statements) - 1, -1, -1):
+        statement = statements[index]
+        tag = getattr(statement, "tag", None)
+        if tag == "Ist_WrTmp":
+            tmp = int(getattr(statement, "tmp", -1))
+            if tmp not in needed_tmps:
+                continue
+            live.add(index)
+            needed_tmps.discard(tmp)
+            deps = _vex_expr_deps(getattr(statement, "data", None), tyenv)
+            needed_tmps.update(deps.temps)
+            needed_regs.update(deps.regs)
+            need_memory = need_memory or deps.memory
+            continue
+
+        if tag == "Ist_Put":
+            target = _vex_put_target(statement, tyenv)
+            if target is None or target[0] not in needed_regs:
+                continue
+            live.add(index)
+            needed_regs.discard(target[0])
+            deps = _vex_expr_deps(getattr(statement, "data", None), tyenv)
+            needed_tmps.update(deps.temps)
+            needed_regs.update(deps.regs)
+            need_memory = need_memory or deps.memory
+            continue
+
+        if tag == "Ist_Store":
+            if not need_memory:
+                continue
+            live.add(index)
+            addr_deps = _vex_expr_deps(getattr(statement, "addr", None), tyenv)
+            data_deps = _vex_expr_deps(getattr(statement, "data", None), tyenv)
+            needed_tmps.update(addr_deps.temps)
+            needed_tmps.update(data_deps.temps)
+            needed_regs.update(addr_deps.regs)
+            needed_regs.update(data_deps.regs)
+            need_memory = True
+            continue
+
+        if tag == "Ist_Exit":
+            if "ip" not in needed_regs:
+                continue
+            live.add(index)
+            guard_deps = _vex_expr_deps(getattr(statement, "guard", None), tyenv)
+            dst_deps = _vex_expr_deps(getattr(statement, "dst", None), tyenv)
+            needed_tmps.update(guard_deps.temps)
+            needed_tmps.update(dst_deps.temps)
+            needed_regs.update(guard_deps.regs)
+            needed_regs.update(dst_deps.regs)
+            need_memory = need_memory or guard_deps.memory or dst_deps.memory
+            continue
+
+        if tag in {"Ist_IMark", "Ist_NoOp", "Ist_AbiHint", "Ist_MBE"}:
+            continue
+        if tag == "Ist_Dirty":
+            live.add(index)
+            deps = _vex_dirty_deps(statement, tyenv)
+            needed_tmps.update(deps.temps)
+            needed_regs.update(deps.regs)
+            need_memory = need_memory or deps.memory
+            continue
+        live.add(index)
+
+    return live
+
+
+def _vex_put_target(statement: Any, tyenv: Any) -> tuple[str, int] | None:
+    width = _vex_expr_width(getattr(statement, "data", None), tyenv)
+    return _register_write_target(int(getattr(statement, "offset", -1)), width)
+
+
+def _vex_expr_width(expr: Any, tyenv: Any) -> int | None:
+    if expr is None:
+        return None
+    if hasattr(expr, "result_size"):
+        try:
+            return int(expr.result_size(tyenv))
+        except Exception:  # noqa: BLE001
+            return None
+    if hasattr(expr, "size"):
+        try:
+            return int(expr.size)
+        except Exception:  # noqa: BLE001
+            return None
+    if hasattr(expr, "con") and hasattr(expr.con, "size"):
+        try:
+            return int(expr.con.size)
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def _vex_expr_deps(expr: Any, tyenv: Any) -> _VexDeps:
+    deps = _VexDeps(set(), set())
+    _collect_vex_expr_deps(expr, tyenv, deps, set())
+    return deps
+
+
+def _vex_dirty_deps(statement: Any, tyenv: Any) -> _VexDeps:
+    deps = _VexDeps(set(), set())
+    for expr in getattr(statement, "args", ()) or ():
+        deps.update(_vex_expr_deps(expr, tyenv))
+    deps.update(_vex_expr_deps(getattr(statement, "guard", None), tyenv))
+    return deps
+
+
+def _collect_vex_expr_deps(expr: Any, tyenv: Any, deps: _VexDeps, seen: set[int]) -> None:
+    if expr is None:
+        return
+    marker = id(expr)
+    if marker in seen:
+        return
+    seen.add(marker)
+    tag = getattr(expr, "tag", None)
+    if tag == "Iex_RdTmp":
+        deps.temps.add(int(expr.tmp))
+        return
+    if tag == "Iex_Get":
+        width = _vex_expr_width(expr, tyenv)
+        target = _register_write_target(int(getattr(expr, "offset", -1)), width)
+        if target is not None:
+            deps.regs.add(target[0])
+        return
+    if tag == "Iex_Load":
+        deps.memory = True
+        _collect_vex_expr_deps(getattr(expr, "addr", None), tyenv, deps, seen)
+        return
+    if tag == "Iex_ITE":
+        _collect_vex_expr_deps(getattr(expr, "cond", None), tyenv, deps, seen)
+        _collect_vex_expr_deps(getattr(expr, "iftrue", None), tyenv, deps, seen)
+        _collect_vex_expr_deps(getattr(expr, "iffalse", None), tyenv, deps, seen)
+        return
+    if tag in {"Iex_Const"} or (str(tag).startswith("Ico_") if tag is not None else False):
+        return
+    for attr in ("args", "arg", "arg1", "arg2", "arg3", "arg4", "cond", "iftrue", "iffalse", "addr"):
+        value = getattr(expr, attr, None)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                _collect_vex_expr_deps(item, tyenv, deps, seen)
+        else:
+            _collect_vex_expr_deps(value, tyenv, deps, seen)
 
 
 def _lower_irsb(
     irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int
 ) -> dict[str, Any] | LowerFailure:
+    live_statements = _vex_live_statement_indices(irsb, output_regs)
     temp_defs: dict[int, SsaExpr] = {}
     temp_failures: dict[int, LowerFailure] = {}
     reg_versions: dict[str, SsaExpr] = {
         name: SsaExpr("input", width, name=name) for _offset, (name, width) in REG_BY_OFFSET.items()
     }
     mem_version = SsaExpr("mem_input", 0, name="mem")
+    io_version = SsaExpr("mem_input", 0, name="io")
     memory_touched = False
+    io_touched = False
+    io_event_index = 0
     exits: list[tuple[SsaExpr, SsaExpr]] = []
 
-    for statement in irsb.statements:
+    for statement_index, statement in enumerate(irsb.statements):
         tag = statement.tag
         if tag == "Ist_IMark":
+            continue
+        if statement_index not in live_statements:
             continue
         if tag == "Ist_WrTmp":
             expr = _lower_expr(
@@ -953,6 +1874,30 @@ def _lower_irsb(
             continue
         if tag in {"Ist_NoOp", "Ist_AbiHint", "Ist_MBE"}:
             continue
+        if tag == "Ist_Dirty":
+            lowered_dirty = _lower_dirty_io_statement(
+                statement,
+                temp_defs=temp_defs,
+                temp_failures=temp_failures,
+                reg_versions=reg_versions,
+                tyenv=irsb.tyenv,
+                memory=mem_version,
+                io=io_version,
+                event_index=io_event_index,
+            )
+            if isinstance(lowered_dirty, LowerFailure):
+                return lowered_dirty
+            if lowered_dirty is not None and lowered_dirty.op == "summary_io_out":
+                io_version = lowered_dirty
+                io_touched = True
+                io_event_index += 1
+                continue
+            if lowered_dirty is not None and lowered_dirty.op == "summary_io_in":
+                tmp = int(getattr(statement, "tmp", -1))
+                if tmp >= 0:
+                    temp_defs[tmp] = lowered_dirty
+                io_event_index += 1
+            continue
         return LowerFailure("unsupported_ir", f"unsupported VEX statement: {tag}")
 
     next_expr = _lower_expr(
@@ -982,13 +1927,36 @@ def _lower_irsb(
 
     assignments: list[dict[str, Any]] = []
     memo: dict[tuple[Any, ...], str] = {}
-    key_cache: dict[int, tuple[Any, ...]] = {}
-    outputs = {
-        reg: _materialize(expr, assignments=assignments, memo=memo, key_cache=key_cache)
-        for reg, expr in requested.items()
-    }
-    if memory_touched:
-        outputs["memory"] = _materialize(mem_version, assignments=assignments, memo=memo, key_cache=key_cache)
+    object_memo: dict[int, dict[str, Any]] = {}
+    try:
+        outputs = {
+            reg: _materialize(
+                expr,
+                assignments=assignments,
+                memo=memo,
+                object_memo=object_memo,
+                max_assignments_per_function=max_assignments_per_function,
+            )
+            for reg, expr in requested.items()
+        }
+        if memory_touched:
+            outputs["memory"] = _materialize(
+                mem_version,
+                assignments=assignments,
+                memo=memo,
+                object_memo=object_memo,
+                max_assignments_per_function=max_assignments_per_function,
+            )
+        if io_touched:
+            outputs["io"] = _materialize(
+                io_version,
+                assignments=assignments,
+                memo=memo,
+                object_memo=object_memo,
+                max_assignments_per_function=max_assignments_per_function,
+            )
+    except LowerFailure as ex:
+        return ex
     if max_assignments_per_function > 0 and len(assignments) > max_assignments_per_function:
         return LowerFailure(
             "slice_too_large", f"SSA assignment limit reached: {len(assignments)} > {max_assignments_per_function}"
@@ -996,11 +1964,148 @@ def _lower_irsb(
     inputs = _collect_inputs(requested.values())
     if memory_touched:
         inputs.update(_collect_inputs((mem_version,)))
+    if io_touched:
+        inputs.update(_collect_inputs((io_version,)))
     return {
         "inputs": _input_items(inputs),
         "outputs": outputs,
         "assignments": assignments,
     }
+
+
+def _lower_dirty_io_statement(
+    statement: Any,
+    *,
+    temp_defs: dict[int, SsaExpr],
+    temp_failures: dict[int, LowerFailure],
+    reg_versions: dict[str, SsaExpr],
+    tyenv: Any,
+    memory: SsaExpr,
+    io: SsaExpr,
+    event_index: int,
+) -> SsaExpr | LowerFailure | None:
+    callee = getattr(statement, "cee", None)
+    name = str(getattr(callee, "name", "") or callee or "")
+    if name == "x86g_dirtyhelper_IN":
+        guard = _lower_expr(
+            getattr(statement, "guard", None),
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
+        if isinstance(guard, LowerFailure):
+            return guard
+        if _const_value(guard) != 1:
+            return LowerFailure("unsupported_ir", "guarded port input is not modeled")
+        args = list(getattr(statement, "args", ()) or ())
+        if len(args) < 2:
+            return LowerFailure("unsupported_ir", f"unsupported port input arity: {len(args)}")
+        port = _lower_expr(
+            args[0],
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
+        width = _lower_expr(
+            args[1],
+            temp_defs=temp_defs,
+            temp_failures=temp_failures,
+            reg_versions=reg_versions,
+            tyenv=tyenv,
+            memory=memory,
+        )
+        for expr in (port, width):
+            if isinstance(expr, LowerFailure):
+                return expr
+        width_value = _const_value(width)
+        value_width = 16
+        if width_value == 8:
+            value_width = 8
+        elif width_value == 16:
+            value_width = 16
+        elif width_value == 32:
+            value_width = 32
+        elif width_value is not None:
+            return LowerFailure("unsupported_ir", f"unsupported port input width: {width_value}")
+        return SsaExpr(
+            "summary_io_in",
+            value_width,
+            (
+                io,
+                SsaExpr("const", 16, value=event_index & 0xFFFF),
+                _coerce_width(port, 16),
+                _coerce_width(width, 16),
+            ),
+        )
+    if name != "x86g_dirtyhelper_OUT":
+        return LowerFailure("unsupported_ir", f"unsupported VEX dirty helper: {name or '<unknown>'}")
+    guard = _lower_expr(
+        getattr(statement, "guard", None),
+        temp_defs=temp_defs,
+        temp_failures=temp_failures,
+        reg_versions=reg_versions,
+        tyenv=tyenv,
+        memory=memory,
+    )
+    if isinstance(guard, LowerFailure):
+        return guard
+    if _const_value(guard) != 1:
+        return LowerFailure("unsupported_ir", "guarded port output is not modeled")
+    args = list(getattr(statement, "args", ()) or ())
+    if len(args) < 3:
+        return LowerFailure("unsupported_ir", f"unsupported port output arity: {len(args)}")
+    port = _lower_expr(
+        args[0],
+        temp_defs=temp_defs,
+        temp_failures=temp_failures,
+        reg_versions=reg_versions,
+        tyenv=tyenv,
+        memory=memory,
+    )
+    value = _lower_expr(
+        args[1],
+        temp_defs=temp_defs,
+        temp_failures=temp_failures,
+        reg_versions=reg_versions,
+        tyenv=tyenv,
+        memory=memory,
+    )
+    width = _lower_expr(
+        args[2],
+        temp_defs=temp_defs,
+        temp_failures=temp_failures,
+        reg_versions=reg_versions,
+        tyenv=tyenv,
+        memory=memory,
+    )
+    for expr in (port, value, width):
+        if isinstance(expr, LowerFailure):
+            return expr
+    width_value = _const_value(width)
+    value_width = 16
+    if width_value == 8:
+        value_width = 8
+    elif width_value == 16:
+        value_width = 16
+    elif width_value == 32:
+        value_width = 32
+    elif width_value is not None:
+        return LowerFailure("unsupported_ir", f"unsupported port output width: {width_value}")
+    return SsaExpr(
+        "summary_io_out",
+        0,
+        (
+            io,
+            SsaExpr("const", 16, value=event_index & 0xFFFF),
+            _coerce_width(port, 16),
+            _coerce_width(value, value_width),
+            _coerce_width(width, 16),
+        ),
+    )
 
 
 BYTE_REGISTER_ACCESS = {
@@ -1190,13 +2295,28 @@ def _lower_ail_block(
 
     assignments: list[dict[str, Any]] = []
     memo: dict[tuple[Any, ...], str] = {}
-    key_cache: dict[int, tuple[Any, ...]] = {}
-    outputs = {
-        reg: _materialize(expr, assignments=assignments, memo=memo, key_cache=key_cache)
-        for reg, expr in requested.items()
-    }
-    if memory_touched:
-        outputs["memory"] = _materialize(mem_version, assignments=assignments, memo=memo, key_cache=key_cache)
+    object_memo: dict[int, dict[str, Any]] = {}
+    try:
+        outputs = {
+            reg: _materialize(
+                expr,
+                assignments=assignments,
+                memo=memo,
+                object_memo=object_memo,
+                max_assignments_per_function=max_assignments_per_function,
+            )
+            for reg, expr in requested.items()
+        }
+        if memory_touched:
+            outputs["memory"] = _materialize(
+                mem_version,
+                assignments=assignments,
+                memo=memo,
+                object_memo=object_memo,
+                max_assignments_per_function=max_assignments_per_function,
+            )
+    except LowerFailure as ex:
+        return ex
     if max_assignments_per_function > 0 and len(assignments) > max_assignments_per_function:
         return LowerFailure(
             "slice_too_large", f"SSA assignment limit reached: {len(assignments)} > {max_assignments_per_function}"
@@ -1688,7 +2808,8 @@ def _materialize(
     *,
     assignments: list[dict[str, Any]],
     memo: dict[tuple[Any, ...], str],
-    key_cache: dict[int, tuple[Any, ...]],
+    object_memo: dict[int, dict[str, Any]],
+    max_assignments_per_function: int,
 ) -> dict[str, Any]:
     if expr.op == "input":
         return {"op": "input", "name": expr.name, "width": expr.width}
@@ -1696,14 +2817,53 @@ def _materialize(
         return {"op": "mem_input", "name": expr.name, "addr_width": 32, "value_width": 8}
     if expr.op == "const":
         return {"op": "const", "value": normalize_hex(expr.value or 0), "width": expr.width}
-    key = _expr_key(expr, key_cache)
+    ident = id(expr)
+    cached = object_memo.get(ident)
+    if cached is not None:
+        return dict(cached)
+    if max_assignments_per_function > 0 and len(assignments) >= max_assignments_per_function:
+        raise LowerFailure(
+            "slice_too_large",
+            f"SSA assignment limit reached before materializing {expr.op}: {len(assignments)} >= {max_assignments_per_function}",
+        )
+    args = [
+        _materialize(
+            arg,
+            assignments=assignments,
+            memo=memo,
+            object_memo=object_memo,
+            max_assignments_per_function=max_assignments_per_function,
+        )
+        for arg in expr.args
+    ]
+    key = _materialized_expr_key(expr, args)
     if key in memo:
-        return {"ref": memo[key]}
-    args = [_materialize(arg, assignments=assignments, memo=memo, key_cache=key_cache) for arg in expr.args]
-    ident = f"v{len(assignments)}"
-    memo[key] = ident
-    assignments.append({"id": ident, "op": expr.op, "width": expr.width, "args": args})
-    return {"ref": ident}
+        result = {"ref": memo[key]}
+        object_memo[ident] = result
+        return dict(result)
+    if max_assignments_per_function > 0 and len(assignments) >= max_assignments_per_function:
+        raise LowerFailure(
+            "slice_too_large",
+            f"SSA assignment limit reached: {len(assignments)} >= {max_assignments_per_function}",
+        )
+    assignment_id = f"v{len(assignments)}"
+    memo[key] = assignment_id
+    assignments.append({"id": assignment_id, "op": expr.op, "width": expr.width, "args": args})
+    result = {"ref": assignment_id}
+    object_memo[ident] = result
+    return dict(result)
+
+
+def _materialized_expr_key(expr: SsaExpr, args: list[dict[str, Any]]) -> tuple[Any, ...]:
+    return (expr.op, expr.width, expr.value, expr.name, tuple(_freeze_json_like(arg) for arg in args))
+
+
+def _freeze_json_like(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple((key, _freeze_json_like(value[key])) for key in sorted(value))
+    if isinstance(value, list):
+        return tuple(_freeze_json_like(item) for item in value)
+    return value
 
 
 def _expr_key(expr: SsaExpr, key_cache: dict[int, tuple[Any, ...]]) -> tuple[Any, ...]:
@@ -1778,6 +2938,38 @@ def _ssa_store_count(function: dict[str, Any]) -> int:
     )
 
 
+def _prepare_local_block_output_projection(
+    oracle_function: dict[str, Any],
+    candidate_function: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    if not _has_direct_successor_transfer(oracle_function) or not _has_direct_successor_transfer(candidate_function):
+        return oracle_function, candidate_function, None
+    oracle_outputs = set((oracle_function.get("outputs", {}) or {}).keys())
+    candidate_outputs = set((candidate_function.get("outputs", {}) or {}).keys())
+    keep = sorted((oracle_outputs | candidate_outputs) & {"ip", "memory", "sp"})
+    if not keep:
+        return oracle_function, candidate_function, None
+    if set(keep) == oracle_outputs and set(keep) == candidate_outputs:
+        return oracle_function, candidate_function, None
+    return (
+        _project_ssa_outputs(oracle_function, keep),
+        _project_ssa_outputs(candidate_function, keep),
+        {
+            "kind": "local_block_outputs",
+            "reason": "nonterminal direct-successor block; register state is checked by connectivity liveness",
+            "outputs": keep,
+            "oracle_dropped": sorted(oracle_outputs - set(keep)),
+            "candidate_dropped": sorted(candidate_outputs - set(keep)),
+        },
+    )
+
+
+def _has_direct_successor_transfer(function: dict[str, Any]) -> bool:
+    source = function.get("source", {}) if isinstance(function.get("source"), dict) else {}
+    transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
+    return transfer.get("kind") == "direct_successors"
+
+
 def _compare_ssa_pair(
     item: dict[str, Any],
     *,
@@ -1791,6 +2983,7 @@ def _compare_ssa_pair(
     max_solver_inputs: int,
     max_solver_memory_stores: int,
     skip_binary_equal: bool,
+    max_rss_mb: int = 0,
 ) -> tuple[dict[str, Any], int]:
     oracle_function = item["oracle_function"]
     candidate_function = item["candidate_function"]
@@ -1843,6 +3036,10 @@ def _compare_ssa_pair(
         oracle_for_z3,
         candidate_for_z3,
     )
+    oracle_for_z3, candidate_for_z3, output_projection = _prepare_local_block_output_projection(
+        oracle_for_z3,
+        candidate_for_z3,
+    )
     quick = _quick_compare_functions(oracle_for_z3, candidate_for_z3, skip_binary_equal=skip_binary_equal)
     if quick is not None:
         return (
@@ -1851,6 +3048,7 @@ def _compare_ssa_pair(
                 "status": quick["status"],
                 "reason": quick.get("reason"),
                 "layout_normalization": layout_normalization,
+                "output_projection": output_projection,
                 "mismatches": quick.get("mismatches", []),
             },
             0,
@@ -1869,7 +3067,22 @@ def _compare_ssa_pair(
                 "status": "refused",
                 "reason": gate["reason"],
                 "layout_normalization": layout_normalization,
+                "output_projection": output_projection,
                 "mismatches": [gate],
+            },
+            0,
+        )
+    memory_limit = _compare_memory_limit_status(max_rss_mb)
+    if memory_limit is not None:
+        aborted = _compare_memory_abort("ssa_pair", memory_limit)
+        return (
+            {
+                **base,
+                "status": "refused",
+                "reason": "memory_limit",
+                "layout_normalization": layout_normalization,
+                "output_projection": output_projection,
+                "mismatches": [_memory_limit_mismatch(aborted)],
             },
             0,
         )
@@ -1881,10 +3094,586 @@ def _compare_ssa_pair(
             "status": comparison["status"],
             "reason": comparison.get("reason"),
             "layout_normalization": layout_normalization,
+            "output_projection": output_projection,
             "mismatches": comparison.get("mismatches", []),
         },
         elapsed,
     )
+
+
+def _compare_external_oracle_parts(
+    *,
+    oracle_external_functions: list[dict[str, Any]],
+    candidate_functions: list[dict[str, Any]],
+    mapping_document: dict[str, Any] | None,
+    oracle_index: dict[str, dict[Any, dict[str, Any]]],
+    candidate_index: dict[str, dict[Any, dict[str, Any]]],
+    allow_aliased_call_targets: bool,
+    proof_cache: "_SemanticEqualityCache | None",
+    timeout_ms: int,
+    max_solver_assignments: int,
+    max_solver_inputs: int,
+    max_solver_memory_stores: int,
+    skip_binary_equal: bool,
+    max_rss_mb: int = 0,
+) -> dict[str, Any]:
+    mapped_candidates = _ssa_candidate_mapping(mapping_document) if mapping_document is not None else {}
+    candidate_by_id_delta = _functions_by_id_and_delta(candidate_functions)
+    candidate_by_key_delta = _functions_by_name_and_delta(candidate_functions)
+    candidate_by_id_part = _functions_by_id_and_part(candidate_functions)
+    candidate_by_key_part = _functions_by_name_and_part(candidate_functions)
+    candidate_by_id_exact_signature = _functions_by_id_and_exact_block_signature(candidate_functions)
+    candidate_by_key_exact_signature = _functions_by_name_and_exact_block_signature(candidate_functions)
+    candidate_by_id_signature = _functions_by_id_and_block_signature(candidate_functions)
+    candidate_by_key_signature = _functions_by_name_and_block_signature(candidate_functions)
+    candidate_by_exact_signature = _functions_by_exact_block_signature(candidate_functions)
+    candidate_by_signature = _functions_by_block_signature(candidate_functions)
+    candidate_by_id_delta_any = _functions_by_id_and_delta(candidate_functions)
+    candidate_by_key_delta_any = _functions_by_name_and_delta(candidate_functions)
+    results: list[dict[str, Any]] = []
+    solver_time_ms = 0
+    matched_by_oracle_id: dict[str, dict[str, Any]] = {}
+
+    for oracle_function in oracle_external_functions:
+        memory_limit = _compare_memory_limit_status(max_rss_mb)
+        if memory_limit is not None:
+            aborted = _compare_memory_abort("external_parts", memory_limit)
+            results.append(_memory_limit_compare_result(aborted))
+            solver_time_ms = 0
+            status = "refused"
+            return {
+                "enabled": True,
+                "status": status,
+                "total": len(results),
+                "passed": sum(1 for result in results if result.get("status") == "passed"),
+                "failed": sum(1 for result in results if result.get("status") == "failed"),
+                "refused": sum(1 for result in results if result.get("status") == "refused"),
+                "unproved": sum(1 for result in results if result.get("status") != "passed"),
+                "solver_time_ms": solver_time_ms,
+                "aborted": aborted,
+                "results": results,
+            }
+        function = oracle_function.get("function", {}) if isinstance(oracle_function, dict) else {}
+        function_id = str(function.get("id", ""))
+        function_name = str(function.get("name", function_id))
+        mapped = mapped_candidates.get(function_id) or mapped_candidates.get(function_name)
+        candidate_function, match_reason = _candidate_for_external_part(
+            oracle_function,
+            mapped=mapped,
+            candidate_by_id_delta=candidate_by_id_delta,
+            candidate_by_key_delta=candidate_by_key_delta,
+            candidate_by_id_part=candidate_by_id_part,
+            candidate_by_key_part=candidate_by_key_part,
+            candidate_by_id_exact_signature=candidate_by_id_exact_signature,
+            candidate_by_key_exact_signature=candidate_by_key_exact_signature,
+            candidate_by_id_signature=candidate_by_id_signature,
+            candidate_by_key_signature=candidate_by_key_signature,
+            candidate_by_exact_signature=candidate_by_exact_signature,
+            candidate_by_signature=candidate_by_signature,
+            prior_matches=matched_by_oracle_id,
+            oracle_external_functions=oracle_external_functions,
+            candidate_by_id_delta_any=candidate_by_id_delta_any,
+            candidate_by_key_delta_any=candidate_by_key_delta_any,
+            candidate_functions=candidate_functions,
+        )
+        if candidate_function is None:
+            stream_match = _external_part_covered_by_candidate_instruction_stream(
+                oracle_function,
+                mapped=mapped,
+                candidate_functions=candidate_functions,
+            )
+            if stream_match is not None:
+                results.append(
+                    {
+                        "status": "passed",
+                        "reason": "covered_by_candidate_instruction_stream",
+                        "function": {"id": function_id, "name": function_name},
+                        "oracle_function": oracle_function.get("id"),
+                        "candidate_function": stream_match.get("candidate_function"),
+                        "mapped_candidate": _mapped_candidate_detail(mapped),
+                        "oracle_detail": _ssa_function_report_detail(oracle_function),
+                        "candidate_detail": stream_match.get("candidate_detail"),
+                        "external_part": {
+                            "kind": "external_or_shared_tail",
+                            "match_reason": "candidate_instruction_stream_contains_oracle_slice",
+                        },
+                        "instruction_stream_match": stream_match.get("instruction_stream_match"),
+                        "mismatches": [],
+                    }
+                )
+                continue
+            results.append(
+                {
+                    "status": "refused",
+                    "reason": "candidate_external_part_missing",
+                    "function": {"id": function_id, "name": function_name},
+                    "oracle_function": oracle_function.get("id"),
+                    "candidate_function": None,
+                    "mapped_candidate": _mapped_candidate_detail(mapped),
+                    "oracle_detail": _ssa_function_report_detail(oracle_function),
+                    "candidate_detail": None,
+                    "external_part": {
+                        "kind": "external_or_shared_tail",
+                        "match_reason": match_reason,
+                    },
+                    "mismatches": [
+                        {
+                            "kind": "external_part_unmatched",
+                            "detail": "out-of-body oracle SSA part has no unique candidate block by delta or block signature",
+                        }
+                    ],
+                }
+            )
+            continue
+        item = {
+            "oracle_function": oracle_function,
+            "candidate_function": candidate_function,
+            "mapped": mapped,
+            "function_id": function_id,
+            "function_name": function_name,
+        }
+        result, elapsed = _compare_ssa_pair(
+            item,
+            mapping_document=mapping_document,
+            oracle_index=oracle_index,
+            candidate_index=candidate_index,
+            allow_aliased_call_targets=allow_aliased_call_targets,
+            proof_cache=proof_cache,
+            timeout_ms=timeout_ms,
+            max_solver_assignments=max_solver_assignments,
+            max_solver_inputs=max_solver_inputs,
+            max_solver_memory_stores=max_solver_memory_stores,
+            skip_binary_equal=skip_binary_equal,
+            max_rss_mb=max_rss_mb,
+        )
+        solver_time_ms += elapsed
+        result["external_part"] = {
+            "kind": "external_or_shared_tail",
+            "match_reason": match_reason,
+        }
+        results.append(result)
+        if result.get("status") == "passed":
+            matched_by_oracle_id[str(oracle_function.get("id"))] = candidate_function
+
+    failed = sum(1 for result in results if result.get("status") == "failed")
+    refused = sum(1 for result in results if result.get("status") == "refused")
+    passed = sum(1 for result in results if result.get("status") == "passed")
+    status = "not_applicable"
+    if failed:
+        status = "failed"
+    elif refused:
+        status = "refused"
+    elif results:
+        status = "passed"
+    return {
+        "enabled": True,
+        "status": status,
+        "total": len(results),
+        "passed": passed,
+        "failed": failed,
+        "refused": refused,
+        "unproved": failed + refused,
+        "solver_time_ms": solver_time_ms,
+        "results": results,
+    }
+
+
+def _candidate_for_mapped_part_across_body_boundary(
+    oracle_function: dict[str, Any],
+    *,
+    mapped: dict[str, Any] | None,
+    candidate_by_id_delta: dict[tuple[str, str], dict[str, Any]],
+    candidate_by_key_delta: dict[tuple[str, str], dict[str, Any]],
+    candidate_by_id_part: dict[tuple[str, int], dict[str, Any]],
+    candidate_by_key_part: dict[tuple[str, int], dict[str, Any]],
+    candidate_by_id_exact_signature: dict[tuple[str, tuple[int, ...]], dict[str, Any]],
+    candidate_by_key_exact_signature: dict[tuple[str, tuple[int, ...]], dict[str, Any]],
+    candidate_by_id_signature: dict[tuple[str, tuple[int | None, ...]], dict[str, Any]],
+    candidate_by_key_signature: dict[tuple[str, tuple[int | None, ...]], dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not isinstance(mapped, dict):
+        return None
+    candidate_id = str(mapped.get("candidate_id") or "")
+    candidate_name = str(mapped.get("candidate_name") or "")
+    part_delta = _ssa_part_delta(oracle_function)
+    if part_delta:
+        for key, index in (
+            ((candidate_id, part_delta), candidate_by_id_delta),
+            ((candidate_name, part_delta), candidate_by_key_delta),
+        ):
+            if key[0] and key in index and _ssa_block_signatures_match(oracle_function, index[key]):
+                return index[key]
+
+    part_index = _ssa_part_index(oracle_function)
+    for key, index in (
+        ((candidate_id, part_index), candidate_by_id_part),
+        ((candidate_name, part_index), candidate_by_key_part),
+    ):
+        if key[0] and key in index and _ssa_block_signatures_match(oracle_function, index[key]):
+            return index[key]
+
+    exact_signature = _ssa_exact_block_signature(oracle_function)
+    if exact_signature is not None:
+        for key, index in (
+            ((candidate_id, exact_signature), candidate_by_id_exact_signature),
+            ((candidate_name, exact_signature), candidate_by_key_exact_signature),
+        ):
+            if key[0] and key in index:
+                return index[key]
+
+    signature = _ssa_block_signature(oracle_function)
+    if signature is not None:
+        for key, index in (
+            ((candidate_id, signature), candidate_by_id_signature),
+            ((candidate_name, signature), candidate_by_key_signature),
+        ):
+            if key[0] and key in index:
+                return index[key]
+    return None
+
+
+def _candidate_for_external_part(
+    oracle_function: dict[str, Any],
+    *,
+    mapped: dict[str, Any] | None,
+    candidate_by_id_delta: dict[tuple[str, str], dict[str, Any]],
+    candidate_by_key_delta: dict[tuple[str, str], dict[str, Any]],
+    candidate_by_id_part: dict[tuple[str, int], dict[str, Any]],
+    candidate_by_key_part: dict[tuple[str, int], dict[str, Any]],
+    candidate_by_id_exact_signature: dict[tuple[str, tuple[int, ...]], dict[str, Any]],
+    candidate_by_key_exact_signature: dict[tuple[str, tuple[int, ...]], dict[str, Any]],
+    candidate_by_id_signature: dict[tuple[str, tuple[int | None, ...]], dict[str, Any]],
+    candidate_by_key_signature: dict[tuple[str, tuple[int | None, ...]], dict[str, Any]],
+    candidate_by_exact_signature: dict[tuple[int, ...], dict[str, Any]],
+    candidate_by_signature: dict[tuple[int | None, ...], dict[str, Any]],
+    prior_matches: dict[str, dict[str, Any]],
+    oracle_external_functions: list[dict[str, Any]],
+    candidate_by_id_delta_any: dict[tuple[str, str], dict[str, Any]],
+    candidate_by_key_delta_any: dict[tuple[str, str], dict[str, Any]],
+    candidate_functions: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    function = oracle_function.get("function", {}) if isinstance(oracle_function, dict) else {}
+    oracle_id = str(function.get("id", ""))
+    oracle_name = str(function.get("name", oracle_id))
+    candidate_id = str(mapped.get("candidate_id") or "") if isinstance(mapped, dict) else oracle_id
+    candidate_name = str(mapped.get("candidate_name") or "") if isinstance(mapped, dict) else oracle_name
+    part_delta = _ssa_part_delta(oracle_function)
+    exact_signature = _ssa_exact_block_signature(oracle_function)
+    signature = _ssa_block_signature(oracle_function)
+
+    if part_delta:
+        for key, index in (
+            ((candidate_id, part_delta), candidate_by_id_delta),
+            ((candidate_name, part_delta), candidate_by_key_delta),
+        ):
+            if key[0] and key in index and _ssa_block_signatures_match(oracle_function, index[key]):
+                return index[key], "same_function_delta"
+    part_index = _ssa_part_index(oracle_function)
+    for key, index in (
+        ((candidate_id, part_index), candidate_by_id_part),
+        ((candidate_name, part_index), candidate_by_key_part),
+    ):
+        if (
+            key[0]
+            and key in index
+            and _ssa_part_outside_declared_body(index[key])
+            and _ssa_block_signatures_match(oracle_function, index[key])
+        ):
+            return index[key], "same_function_part_index"
+    if exact_signature is not None:
+        for key, index in (
+            ((candidate_id, exact_signature), candidate_by_id_exact_signature),
+            ((candidate_name, exact_signature), candidate_by_key_exact_signature),
+        ):
+            if key[0] and key in index:
+                return index[key], "same_function_exact_block_signature"
+    if signature is not None:
+        for key, index in (
+            ((candidate_id, signature), candidate_by_id_signature),
+            ((candidate_name, signature), candidate_by_key_signature),
+        ):
+            if key[0] and key in index:
+                return index[key], "same_function_normalized_block_signature"
+    if exact_signature is not None and exact_signature in candidate_by_exact_signature:
+        return candidate_by_exact_signature[exact_signature], "global_exact_block_signature"
+    if signature is not None and signature in candidate_by_signature:
+        return candidate_by_signature[signature], "global_normalized_block_signature"
+    chained = _candidate_for_external_part_by_matched_predecessor(
+        oracle_function,
+        prior_matches=prior_matches,
+        oracle_external_functions=oracle_external_functions,
+        candidate_by_id_delta=candidate_by_id_delta_any,
+        candidate_by_key_delta=candidate_by_key_delta_any,
+    )
+    if chained is not None:
+        return chained, "matched_predecessor_successor"
+    ordinal = _candidate_for_external_part_by_signature_ordinal(
+        oracle_function,
+        mapped=mapped,
+        oracle_external_functions=oracle_external_functions,
+        candidate_functions=candidate_functions or [],
+    )
+    if ordinal is not None:
+        return ordinal, "same_function_signature_ordinal"
+    return None, "no_unique_candidate_by_delta_or_signature"
+
+
+def _external_part_covered_by_candidate_instruction_stream(
+    oracle_function: dict[str, Any],
+    *,
+    mapped: dict[str, Any] | None,
+    candidate_functions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    oracle_signature = _region_linear_instruction_signature([oracle_function])
+    if oracle_signature is None or not oracle_signature["pattern"]:
+        return None
+    function = oracle_function.get("function", {}) if isinstance(oracle_function, dict) else {}
+    oracle_id = str(function.get("id", ""))
+    oracle_name = str(function.get("name", oracle_id))
+    candidate_id = str(mapped.get("candidate_id") or "") if isinstance(mapped, dict) else oracle_id
+    candidate_name = str(mapped.get("candidate_name") or "") if isinstance(mapped, dict) else oracle_name
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidate_functions:
+        info = candidate.get("function", {}) if isinstance(candidate.get("function"), dict) else {}
+        keys = {str(info.get("id") or ""), str(info.get("name") or "")}
+        if candidate_id and candidate_id in keys:
+            grouped.setdefault(candidate_id, []).append(candidate)
+        if candidate_name and candidate_name in keys:
+            grouped.setdefault(candidate_name, []).append(candidate)
+    for key in (candidate_id, candidate_name):
+        group = grouped.get(key) or []
+        if not group:
+            continue
+        candidate_signature = _region_linear_instruction_signature(group)
+        if candidate_signature is None:
+            continue
+        offset = _pattern_subsequence_offset(candidate_signature["pattern"], oracle_signature["pattern"])
+        if offset is None:
+            continue
+        first = min(group, key=_ssa_part_index)
+        return {
+            "candidate_function": first.get("id"),
+            "candidate_detail": _ssa_region_report_detail(group),
+            "instruction_stream_match": {
+                "candidate_key": key,
+                "oracle_signature_size": len(oracle_signature["pattern"]),
+                "candidate_signature_size": len(candidate_signature["pattern"]),
+                "pattern_offset": offset,
+                "signature_sha256": _block_signature_digest(oracle_signature["pattern"]),
+            },
+        }
+    global_matches: list[dict[str, Any]] = []
+    for candidate in candidate_functions:
+        candidate_signature = _region_linear_instruction_signature([candidate])
+        if candidate_signature is None:
+            continue
+        offset = _pattern_subsequence_offset(candidate_signature["pattern"], oracle_signature["pattern"])
+        if offset is None:
+            continue
+        info = candidate.get("function", {}) if isinstance(candidate.get("function"), dict) else {}
+        global_matches.append(
+            {
+                "candidate": candidate,
+                "offset": offset,
+                "candidate_key": str(info.get("id") or info.get("name") or ""),
+                "candidate_signature_size": len(candidate_signature["pattern"]),
+            }
+        )
+    if len(global_matches) == 1:
+        match = global_matches[0]
+        candidate = match["candidate"]
+        return {
+            "candidate_function": candidate.get("id"),
+            "candidate_detail": _ssa_function_report_detail(candidate),
+            "instruction_stream_match": {
+                "candidate_key": match["candidate_key"],
+                "oracle_signature_size": len(oracle_signature["pattern"]),
+                "candidate_signature_size": match["candidate_signature_size"],
+                "pattern_offset": match["offset"],
+                "signature_sha256": _block_signature_digest(oracle_signature["pattern"]),
+                "scope": "global_unique_candidate_block",
+            },
+        }
+    return None
+
+
+def _pattern_subsequence_offset(
+    haystack: tuple[int | None, ...], needle: tuple[int | None, ...]
+) -> int | None:
+    if not needle or len(needle) > len(haystack):
+        return None
+    for offset in range(0, len(haystack) - len(needle) + 1):
+        matched = True
+        for index, expected in enumerate(needle):
+            actual = haystack[offset + index]
+            if expected is not None and actual is not None and expected != actual:
+                matched = False
+                break
+        if matched:
+            return offset
+    return None
+
+
+def _ssa_block_signatures_match(oracle_function: dict[str, Any], candidate_function: dict[str, Any]) -> bool:
+    oracle_exact = _ssa_exact_block_signature(oracle_function)
+    candidate_exact = _ssa_exact_block_signature(candidate_function)
+    if oracle_exact is not None and oracle_exact == candidate_exact:
+        return True
+    oracle_signature = _ssa_block_signature(oracle_function)
+    candidate_signature = _ssa_block_signature(candidate_function)
+    return oracle_signature is not None and oracle_signature == candidate_signature
+
+
+def _candidate_for_external_part_by_matched_predecessor(
+    oracle_function: dict[str, Any],
+    *,
+    prior_matches: dict[str, dict[str, Any]],
+    oracle_external_functions: list[dict[str, Any]],
+    candidate_by_id_delta: dict[tuple[str, str], dict[str, Any]],
+    candidate_by_key_delta: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any] | None:
+    target_delta = _ssa_detail_entry_delta(oracle_function)
+    if target_delta is None:
+        return None
+    for predecessor in oracle_external_functions:
+        predecessor_id = str(predecessor.get("id"))
+        matched_predecessor = prior_matches.get(predecessor_id)
+        if matched_predecessor is None:
+            continue
+        if target_delta not in _direct_successor_delta_set(predecessor):
+            continue
+        candidate_successors = sorted(_direct_successor_delta_set(matched_predecessor))
+        if len(candidate_successors) != 1:
+            continue
+        candidate_delta = _format_ssa_delta(candidate_successors[0])
+        candidate_info = matched_predecessor.get("function", {}) if isinstance(matched_predecessor.get("function"), dict) else {}
+        candidate_id = str(candidate_info.get("id") or "")
+        candidate_name = str(candidate_info.get("name") or "")
+        for key, index in (
+            ((candidate_id, candidate_delta), candidate_by_id_delta),
+            ((candidate_name, candidate_delta), candidate_by_key_delta),
+        ):
+            if key[0] and key in index and _ssa_block_signatures_match(oracle_function, index[key]):
+                return index[key]
+    return None
+
+
+def _candidate_for_external_part_by_signature_ordinal(
+    oracle_function: dict[str, Any],
+    *,
+    mapped: dict[str, Any] | None,
+    oracle_external_functions: list[dict[str, Any]],
+    candidate_functions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    function = oracle_function.get("function", {}) if isinstance(oracle_function, dict) else {}
+    oracle_id = str(function.get("id", ""))
+    oracle_name = str(function.get("name", oracle_id))
+    candidate_id = str(mapped.get("candidate_id") or "") if isinstance(mapped, dict) else oracle_id
+    candidate_name = str(mapped.get("candidate_name") or "") if isinstance(mapped, dict) else oracle_name
+    for signature_kind in ("exact", "normalized", "shape"):
+        signature = _ssa_signature_for_kind(oracle_function, signature_kind)
+        if signature is None:
+            continue
+        oracle_group = _external_signature_group(
+            oracle_external_functions,
+            function_ids={oracle_id, oracle_name},
+            signature=signature,
+            signature_kind=signature_kind,
+        )
+        candidate_group = _external_signature_group(
+            candidate_functions,
+            function_ids={candidate_id, candidate_name},
+            signature=signature,
+            signature_kind=signature_kind,
+        )
+        if not oracle_group or not candidate_group:
+            continue
+        oracle_ids = [str(item.get("id")) for item in oracle_group]
+        try:
+            ordinal = oracle_ids.index(str(oracle_function.get("id")))
+        except ValueError:
+            continue
+        if ordinal < len(candidate_group):
+            return candidate_group[ordinal]
+    return None
+
+
+def _external_signature_group(
+    functions: list[dict[str, Any]],
+    *,
+    function_ids: set[str],
+    signature: tuple[Any, ...],
+    signature_kind: str,
+) -> list[dict[str, Any]]:
+    group: list[dict[str, Any]] = []
+    for function in functions:
+        if not isinstance(function, dict) or not _ssa_part_outside_declared_body(function):
+            continue
+        info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
+        if str(info.get("id", "")) not in function_ids and str(info.get("name", "")) not in function_ids:
+            continue
+        current = _ssa_signature_for_kind(function, signature_kind)
+        if current == signature:
+            group.append(function)
+    return sorted(group, key=lambda item: (_ssa_detail_entry_linear(item) or 0, str(item.get("id", ""))))
+
+
+def _ssa_signature_for_kind(function: dict[str, Any], signature_kind: str) -> tuple[Any, ...] | None:
+    if signature_kind == "exact":
+        return _ssa_exact_block_signature(function)
+    if signature_kind == "normalized":
+        return _ssa_block_signature(function)
+    if signature_kind == "shape":
+        return _ssa_instruction_shape_signature(function)
+    return None
+
+
+def _ssa_instruction_shape_signature(function: dict[str, Any]) -> tuple[Any, ...] | None:
+    source = function.get("source") if isinstance(function.get("source"), dict) else {}
+    instructions = source.get("instructions") if isinstance(source.get("instructions"), list) else []
+    instructions = _strip_leading_nop_instructions(instructions)
+    blob = _machine_code_bytes(instructions)
+    entry = function.get("entry") if isinstance(function.get("entry"), dict) else {}
+    linear = _optional_int(entry.get("linear"))
+    if linear is not None:
+        linear += _leading_nop_size(source.get("instructions") if isinstance(source.get("instructions"), list) else [])
+    if blob is None or linear is None:
+        return None
+    try:
+        import capstone  # type: ignore
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
+        md.detail = True
+        items: list[Any] = []
+        for insn in md.disasm(blob, linear):
+            operands: list[Any] = []
+            for operand in getattr(insn, "operands", []) or []:
+                operand_type = getattr(operand, "type", None)
+                size = int(getattr(operand, "size", 0) or 0)
+                if operand_type == capstone.x86.X86_OP_REG:
+                    operands.append(("reg", size, int(getattr(operand, "reg", 0) or 0)))
+                elif operand_type == capstone.x86.X86_OP_IMM:
+                    operands.append(("imm", size))
+                elif operand_type == capstone.x86.X86_OP_MEM:
+                    mem = getattr(operand, "mem", None)
+                    operands.append(
+                        (
+                            "mem",
+                            size,
+                            int(getattr(mem, "segment", 0) or 0),
+                            int(getattr(mem, "base", 0) or 0),
+                            int(getattr(mem, "index", 0) or 0),
+                            int(getattr(mem, "scale", 0) or 0),
+                        )
+                    )
+                else:
+                    operands.append(("other", size, int(operand_type or 0)))
+            items.append((str(insn.mnemonic).lower(), tuple(operands)))
+        return tuple(items) if items else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _empty_region_equality_report(*, enabled: bool) -> dict[str, Any]:
@@ -1896,6 +3685,7 @@ def _empty_region_equality_report(*, enabled: bool) -> dict[str, Any]:
         "failed": 0,
         "refused": 0,
         "covered_results": 0,
+        "skipped_passed_functions": 0,
         "solver_time_ms": 0,
         "results": [],
     }
@@ -1917,6 +3707,7 @@ def _compare_ssa_region_equality(
     max_loop_unroll: int,
     skip_binary_equal: bool,
     proof_cache: "_SemanticEqualityCache | None",
+    max_rss_mb: int = 0,
 ) -> dict[str, Any]:
     oracle_groups = _unique_ssa_function_groups(list(oracle.get("functions", []) or []))
     candidate_groups = _ssa_function_groups(list(candidate.get("functions", []) or []))
@@ -1924,8 +3715,28 @@ def _compare_ssa_region_equality(
     status_by_function = _raw_result_status_by_function(current_results)
     results: list[dict[str, Any]] = []
     solver_time_ms = 0
+    skipped_passed_functions = 0
+    document_output_regs = _ssa_document_output_regs(oracle) or _ssa_document_output_regs(candidate)
+    aborted: dict[str, Any] | None = None
 
     for oracle_id, oracle_name, oracle_group in oracle_groups:
+        memory_limit = _compare_memory_limit_status(max_rss_mb)
+        if memory_limit is not None:
+            aborted = _compare_memory_abort("region_equality", memory_limit)
+            results.append(
+                {
+                    "function": {"id": oracle_id, "name": oracle_name},
+                    "mapped_candidate": _mapped_candidate_detail(
+                        mapped_candidates.get(oracle_id) or mapped_candidates.get(oracle_name)
+                    ),
+                    "oracle_region_detail": _ssa_region_report_detail(oracle_group),
+                    "candidate_region_detail": None,
+                    "status": "refused",
+                    "reason": "memory_limit",
+                    "mismatches": [_memory_limit_mismatch(aborted)],
+                }
+            )
+            break
         mapped = mapped_candidates.get(oracle_id) or mapped_candidates.get(oracle_name)
         candidate_group = _candidate_group_for_region(
             candidate_groups,
@@ -1936,6 +3747,8 @@ def _compare_ssa_region_equality(
         if not _should_attempt_region_equality(
             oracle_id, oracle_name, oracle_group, candidate_group, status_by_function
         ):
+            if _region_function_already_passed(oracle_id, oracle_name, status_by_function):
+                skipped_passed_functions += 1
             continue
         base_result = {
             "function": {"id": oracle_id, "name": oracle_name},
@@ -1953,7 +3766,13 @@ def _compare_ssa_region_equality(
                 }
             )
             continue
-        contract = _synthetic_region_contract(oracle_id, oracle_name, oracle_group, candidate_group)
+        contract = _synthetic_region_contract(
+            oracle_id,
+            oracle_name,
+            oracle_group,
+            candidate_group,
+            default_output_regs=document_output_regs,
+        )
         observables = contract["observables"]
         base_result["observables"] = observables
         base_result["input_constraints"] = contract["input_constraints"]
@@ -1964,6 +3783,21 @@ def _compare_ssa_region_equality(
                     "status": "refused",
                     "reason": "no_declared_observables",
                     "mismatches": [{"kind": "no_declared_observables"}],
+                }
+            )
+            continue
+        precompose_gate = _region_precompose_memory_gate(
+            oracle_group,
+            candidate_group,
+            max_rss_mb=max_rss_mb,
+        )
+        if precompose_gate is not None:
+            results.append(
+                {
+                    **base_result,
+                    "status": "refused",
+                    "reason": precompose_gate["reason"],
+                    "mismatches": [precompose_gate],
                 }
             )
             continue
@@ -1979,7 +3813,12 @@ def _compare_ssa_region_equality(
         )
         if call_normalizations:
             base_result["call_normalizations"] = call_normalizations
-        incomplete = _region_incomplete_successors(oracle_group_for_compare, candidate_group_for_compare)
+        incomplete = _region_incomplete_successors(
+            oracle_group_for_compare,
+            candidate_group_for_compare,
+            oracle_refusals=[item for item in oracle.get("refusals", []) or [] if isinstance(item, dict)],
+            candidate_refusals=[item for item in candidate.get("refusals", []) or [] if isinstance(item, dict)],
+        )
         if incomplete is not None:
             results.append(
                 {
@@ -1990,6 +3829,31 @@ def _compare_ssa_region_equality(
                 }
             )
             continue
+        linear_signature_result = None
+        if _linear_region_call_normalizations_are_safe(call_normalizations):
+            linear_signature_result = _compare_region_linear_instruction_signature(
+                oracle_group_for_compare,
+                candidate_group_for_compare,
+            )
+        if linear_signature_result is not None:
+            result = {
+                **base_result,
+                "status": "passed",
+                "reason": "linear_instruction_signature_equal",
+                "oracle_summary": linear_signature_result["oracle_summary"],
+                "candidate_summary": linear_signature_result["candidate_summary"],
+                "mismatches": [],
+                "linear_instruction_signature": linear_signature_result["linear_instruction_signature"],
+            }
+            results.append(result)
+            if proof_cache is not None:
+                proof_cache.record(
+                    oracle_group_for_compare[0],
+                    candidate_group_for_compare[0],
+                    proof="linear_instruction_signature_equal",
+                    scope="function",
+                )
+            continue
         if _region_has_direct_cycle(oracle_group_for_compare) or _region_has_direct_cycle(candidate_group_for_compare):
             transition_result = _compare_region_transition_system(
                 oracle_group_for_compare,
@@ -1999,6 +3863,7 @@ def _compare_ssa_region_equality(
                 max_solver_inputs=max_solver_inputs,
                 max_solver_memory_stores=max_solver_memory_stores,
                 skip_binary_equal=skip_binary_equal,
+                max_rss_mb=max_rss_mb,
             )
             if transition_result is not None:
                 solver_time_ms += int(transition_result.get("solver_time_ms", 0))
@@ -2063,6 +3928,20 @@ def _compare_ssa_region_equality(
                 }
             )
             continue
+        memory_limit = _compare_memory_limit_status(max_rss_mb)
+        if memory_limit is not None:
+            aborted = _compare_memory_abort("region_equality", memory_limit)
+            results.append(
+                {
+                    **base_result,
+                    "status": "refused",
+                    "reason": "memory_limit",
+                    "oracle_summary": _summary_detail(oracle_summary),
+                    "candidate_summary": _summary_detail(candidate_summary),
+                    "mismatches": [_memory_limit_mismatch(aborted)],
+                }
+            )
+            break
         oracle_function = oracle_summary["function"]
         candidate_function = candidate_summary["function"]
         quick = _quick_compare_functions(oracle_function, candidate_function, skip_binary_equal=skip_binary_equal)
@@ -2137,10 +4016,15 @@ def _compare_ssa_region_equality(
             candidate_index=candidate_index,
             allow_aliased_call_targets=allow_aliased_call_targets,
         )
+        result_status = comparison["status"]
+        result_reason = _region_reason(comparison.get("reason"))
+        if result_status == "failed" and _region_mismatches_blocked_by_unproven_call(mismatches):
+            result_status = "refused"
+            result_reason = "callee_not_proven"
         result = {
             **base_result,
-            "status": comparison["status"],
-            "reason": _region_reason(comparison.get("reason")),
+            "status": result_status,
+            "reason": result_reason,
             "oracle_summary": _summary_detail(oracle_summary),
             "candidate_summary": _summary_detail(candidate_summary),
             "mismatches": mismatches,
@@ -2169,7 +4053,9 @@ def _compare_ssa_region_equality(
         "failed": sum(1 for result in results if result.get("status") == "failed"),
         "refused": sum(1 for result in results if result.get("status") == "refused"),
         "covered_results": 0,
+        "skipped_passed_functions": skipped_passed_functions,
         "solver_time_ms": solver_time_ms,
+        "aborted": aborted,
         "results": results,
     }
 
@@ -2182,6 +4068,89 @@ def _region_reason(reason: Any) -> str:
     if reason in {"binary_equal", "block_binary_equal"}:
         return "region_binary_equal"
     return str(reason)
+
+
+def _region_precompose_memory_gate(
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+    *,
+    max_rss_mb: int,
+) -> dict[str, Any] | None:
+    if max_rss_mb <= 0:
+        return None
+    oracle_metrics = _region_precompose_metrics(oracle_group)
+    candidate_metrics = _region_precompose_metrics(candidate_group)
+    assignment_limit = max(1024, max_rss_mb * 2)
+    part_limit = max(64, max_rss_mb // 16)
+    store_limit = max(128, max_rss_mb // 8)
+    conditional_block_limit = max(32, max_rss_mb // 128)
+    successor_edge_limit = conditional_block_limit * 3
+    checks = [
+        ("assignments", assignment_limit),
+        ("parts", part_limit),
+        ("stores", store_limit),
+        ("conditional_blocks", conditional_block_limit),
+        ("successor_edges", successor_edge_limit),
+    ]
+    for metric, limit in checks:
+        oracle_value = int(oracle_metrics.get(metric, 0))
+        candidate_value = int(candidate_metrics.get(metric, 0))
+        value = max(oracle_value, candidate_value)
+        if value <= limit:
+            continue
+        return {
+            "kind": "solver_gate",
+            "reason": "slice_too_large",
+            "detail": (
+                f"region {metric} {value} exceeds memory-capped pre-compose gate {limit}; "
+                "block-level SSA and connectivity can still prove smaller parts"
+            ),
+            "metric": f"region_{metric}",
+            "value": value,
+            "limit": limit,
+            "oracle_metrics": oracle_metrics,
+            "candidate_metrics": candidate_metrics,
+            "memory_cap": {
+                "hard_limit_mb": max_rss_mb,
+                "soft_limit_mb": None if _compare_soft_rss_limit_kib(max_rss_mb) is None else _compare_soft_rss_limit_kib(max_rss_mb) // 1024,
+            },
+        }
+    return None
+
+
+def _region_precompose_metrics(group: list[dict[str, Any]]) -> dict[str, int]:
+    successor_edges = 0
+    successor_blocks = 0
+    conditional_blocks = 0
+    call_blocks = 0
+    terminal_blocks = 0
+    for part in group:
+        if not isinstance(part, dict):
+            continue
+        source = part.get("source") if isinstance(part.get("source"), dict) else {}
+        transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
+        successors = transfer.get("successors") if isinstance(transfer.get("successors"), list) else []
+        if successors:
+            successor_blocks += 1
+            successor_edges += len(successors)
+        if len(successors) > 1:
+            conditional_blocks += 1
+        jumpkind = str(source.get("jumpkind") or "")
+        if jumpkind == "Ijk_Call":
+            call_blocks += 1
+        if jumpkind.startswith(("Ijk_Ret", "Ijk_Sig")):
+            terminal_blocks += 1
+    return {
+        "parts": len(group),
+        "assignments": sum(len(part.get("assignments", []) or []) for part in group if isinstance(part, dict)),
+        "inputs": sum(len(part.get("inputs", []) or []) for part in group if isinstance(part, dict)),
+        "stores": sum(_ssa_store_count(part) for part in group if isinstance(part, dict)),
+        "successor_blocks": successor_blocks,
+        "conditional_blocks": conditional_blocks,
+        "successor_edges": successor_edges,
+        "call_blocks": call_blocks,
+        "terminal_blocks": terminal_blocks,
+    }
 
 
 def _prepare_region_call_normalized_groups(
@@ -2242,9 +4211,12 @@ def _prepare_region_call_normalized_groups(
 def _region_incomplete_successors(
     oracle_group: list[dict[str, Any]],
     candidate_group: list[dict[str, Any]],
+    *,
+    oracle_refusals: list[dict[str, Any]],
+    candidate_refusals: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    oracle_missing = _missing_region_successors(oracle_group)
-    candidate_missing = _missing_region_successors(candidate_group)
+    oracle_missing = _missing_region_successors(oracle_group, refusals=oracle_refusals)
+    candidate_missing = _missing_region_successors(candidate_group, refusals=candidate_refusals)
     if not oracle_missing and not candidate_missing:
         return None
     return {
@@ -2256,19 +4228,24 @@ def _region_incomplete_successors(
     }
 
 
-def _missing_region_successors(group: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _missing_region_successors(group: list[dict[str, Any]], *, refusals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     blocks = _region_blocks_by_delta(group)
     if not blocks:
         return []
+    refusal_index = _lowering_refusals_by_address(refusals)
     missing: list[dict[str, Any]] = []
     for delta, block in sorted(blocks.items()):
         source = block.get("source", {}) if isinstance(block.get("source"), dict) else {}
         transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
         if transfer.get("kind") != "direct_successors":
             continue
+        function_entry = block.get("function_entry") if isinstance(block.get("function_entry"), dict) else {}
+        function_linear = _optional_int(function_entry.get("linear"))
         for successor in sorted(_direct_successor_delta_set(block)):
             if successor in blocks:
                 continue
+            successor_linear = None if function_linear is None else function_linear + successor
+            lowering_refusal = None if successor_linear is None else refusal_index.get(successor_linear)
             missing.append(
                 {
                     "from_delta": _format_ssa_delta(delta),
@@ -2276,9 +4253,27 @@ def _missing_region_successors(group: list[dict[str, Any]]) -> list[dict[str, An
                     "jumpkind": _ssa_source_jumpkind(block),
                     "entry": block.get("entry") if isinstance(block.get("entry"), dict) else None,
                     "last_instruction": _last_instruction_detail(block),
+                    "lowering_refusal": lowering_refusal,
                 }
             )
     return missing
+
+
+def _lowering_refusals_by_address(refusals: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    indexed: dict[int, dict[str, Any]] = {}
+    for refusal in refusals:
+        detail = refusal.get("detail") if isinstance(refusal.get("detail"), dict) else {}
+        address = detail.get("address") if isinstance(detail.get("address"), dict) else {}
+        linear = _optional_int(address.get("linear"))
+        if linear is None:
+            continue
+        indexed[linear] = {
+            "reason": refusal.get("reason"),
+            "message": detail.get("message"),
+            "address": address,
+            "metrics": detail.get("metrics") if isinstance(detail.get("metrics"), dict) else None,
+        }
+    return indexed
 
 
 def _last_instruction_detail(function: dict[str, Any]) -> dict[str, Any] | None:
@@ -2302,6 +4297,7 @@ def _compare_region_transition_system(
     max_solver_inputs: int,
     max_solver_memory_stores: int,
     skip_binary_equal: bool,
+    max_rss_mb: int = 0,
 ) -> dict[str, Any] | None:
     oracle_by_delta = _region_blocks_by_delta(oracle_group)
     candidate_by_delta = _region_blocks_by_delta(candidate_group)
@@ -2314,6 +4310,8 @@ def _compare_region_transition_system(
     solver_time_ms = 0
     block_results: list[dict[str, Any]] = []
     for delta in sorted(deltas):
+        if _compare_memory_limit_status(max_rss_mb) is not None:
+            return None
         oracle_block = oracle_by_delta[delta]
         candidate_block = candidate_by_delta[delta]
         if _ssa_source_jumpkind(oracle_block) != _ssa_source_jumpkind(candidate_block):
@@ -2472,6 +4470,18 @@ def _attach_region_call_compare(
     return mismatches
 
 
+def _region_mismatches_blocked_by_unproven_call(mismatches: list[dict[str, Any]]) -> bool:
+    if not mismatches:
+        return False
+    for mismatch in mismatches:
+        call_compare = mismatch.get("call_compare") if isinstance(mismatch, dict) else None
+        if not isinstance(call_compare, dict):
+            return False
+        if call_compare.get("equivalent") is not False:
+            return False
+    return True
+
+
 def _region_call_compare(
     oracle_group: list[dict[str, Any]],
     candidate_group: list[dict[str, Any]],
@@ -2511,6 +4521,82 @@ def _region_call_compare(
         if call_compare is not None:
             return call_compare
     return None
+
+
+def _compare_region_linear_instruction_signature(
+    oracle_group: list[dict[str, Any]],
+    candidate_group: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    oracle_signature = _region_linear_instruction_signature(oracle_group)
+    candidate_signature = _region_linear_instruction_signature(candidate_group)
+    if oracle_signature is None or candidate_signature is None:
+        return None
+    if oracle_signature["pattern"] != candidate_signature["pattern"]:
+        return None
+    summary = {
+        "status": "passed",
+        "reason": "linear_instruction_signature_equal",
+        "terminal_count": None,
+        "blocks_composed": None,
+        "branches": None,
+        "branch_prunes": 0,
+        "branch_merges": 0,
+        "loop_cuts": 0,
+        "instruction_count": oracle_signature["instruction_count"],
+    }
+    return {
+        "oracle_summary": {**summary, "part_count": len(oracle_group)},
+        "candidate_summary": {**summary, "part_count": len(candidate_group)},
+        "linear_instruction_signature": {
+            "kind": "layout_normalized_linear_instruction_stream",
+            "instruction_count": oracle_signature["instruction_count"],
+            "signature_size": len(oracle_signature["pattern"]),
+            "signature_sha256": _block_signature_digest(oracle_signature["pattern"]),
+        },
+    }
+
+
+def _region_linear_instruction_signature(parts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    instructions_by_linear: dict[int, dict[str, Any]] = {}
+    for part in parts:
+        source = part.get("source", {}) if isinstance(part.get("source"), dict) else {}
+        for instruction in source.get("instructions", []) or []:
+            if not isinstance(instruction, dict):
+                continue
+            if str(instruction.get("mnemonic") or "").lower() == "nop":
+                continue
+            address = instruction.get("address") if isinstance(instruction.get("address"), dict) else {}
+            linear = _optional_int(address.get("linear"))
+            if linear is None:
+                return None
+            instructions_by_linear.setdefault(linear, instruction)
+    if not instructions_by_linear:
+        return None
+    ordered = [instructions_by_linear[key] for key in sorted(instructions_by_linear)]
+    blob = _machine_code_bytes(ordered)
+    if blob is None:
+        return None
+    pattern = _layout_binary_signature_pattern(blob, min(instructions_by_linear))
+    return {"pattern": pattern, "instruction_count": len(ordered)}
+
+
+def _linear_region_call_normalizations_are_safe(call_normalizations: list[dict[str, Any]]) -> bool:
+    unsafe_reasons = {
+        "direct call targets are equivalent through function mapping",
+        "direct call targets have the same function id",
+        "direct call targets have the same function name",
+        "direct call targets have equivalent normalized symbol names",
+    }
+    for item in call_normalizations:
+        call_compare = item.get("call_compare") if isinstance(item, dict) else None
+        if not isinstance(call_compare, dict):
+            continue
+        if call_compare.get("equivalent") is not True:
+            return False
+        reason = str(call_compare.get("reason") or "")
+        if reason in unsafe_reasons and not isinstance(call_compare.get("proof_fact"), dict):
+            return False
+    return True
 
 
 def _ssa_source_jumpkind(function: dict[str, Any]) -> str:
@@ -2580,8 +4666,31 @@ def _should_attempt_region_equality(
     candidate_group: list[dict[str, Any]],
     status_by_function: dict[str, list[str]],
 ) -> bool:
-    del oracle_id, oracle_name, status_by_function
-    return len(oracle_group) > 1 or len(candidate_group) > 1
+    if len(oracle_group) <= 1 and len(candidate_group) <= 1:
+        return False
+    if _region_status_count(status_by_function) <= 64:
+        return True
+    return not _region_function_already_passed(oracle_id, oracle_name, status_by_function)
+
+
+def _region_function_already_passed(
+    oracle_id: str, oracle_name: str, status_by_function: dict[str, list[str]]
+) -> bool:
+    statuses = [*status_by_function.get(oracle_id, []), *status_by_function.get(oracle_name, [])]
+    return bool(statuses) and all(status == "passed" for status in statuses)
+
+
+def _region_status_count(status_by_function: dict[str, list[str]]) -> int:
+    return sum(len(statuses) for statuses in status_by_function.values())
+
+
+def _ssa_document_output_regs(document: dict[str, Any]) -> tuple[str, ...]:
+    params = document.get("parameters", {}) if isinstance(document.get("parameters"), dict) else {}
+    regs = params.get("output_regs", [])
+    if not isinstance(regs, (list, tuple)):
+        return ()
+    reg_widths = {name for _offset, (name, _width) in REG_BY_OFFSET.items()}
+    return tuple(str(name).lower() for name in regs if str(name).lower() in reg_widths)
 
 
 def _synthetic_region_contract(
@@ -2589,9 +4698,15 @@ def _synthetic_region_contract(
     oracle_name: str,
     oracle_group: list[dict[str, Any]],
     candidate_group: list[dict[str, Any]],
+    default_output_regs: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     reg_widths = {name: width for _offset, (name, width) in REG_BY_OFFSET.items()}
-    output_regs: set[str] = set()
+    declared_outputs = {
+        str(name).lower()
+        for name in (default_output_regs or [])
+        if str(name).lower() in reg_widths
+    }
+    output_regs: set[str] = set(declared_outputs)
     whole_memory = False
     for part in [*oracle_group, *candidate_group]:
         outputs = part.get("outputs", {}) if isinstance(part.get("outputs"), dict) else {}
@@ -2602,7 +4717,7 @@ def _synthetic_region_contract(
                 continue
             if key in {"ip", "call_target"}:
                 continue
-            if key in reg_widths:
+            if not declared_outputs and key in reg_widths:
                 output_regs.add(key)
 
     input_regs: set[str] = set()
@@ -2662,6 +4777,13 @@ def _apply_region_equality_gate(results: list[dict[str, Any]], region_equality: 
         )
         if region_result is None:
             continue
+        call_compare = result.get("call_compare")
+        if (
+            isinstance(call_compare, dict)
+            and call_compare.get("equivalent") is False
+            and region_result.get("reason") != "linear_instruction_signature_equal"
+        ):
+            continue
         if result.get("status") == "passed" and result.get("reason") == "covered_by_region_equal":
             continue
         if result.get("status") != "passed":
@@ -2684,6 +4806,116 @@ def _apply_region_equality_gate(results: list[dict[str, Any]], region_equality: 
     region_equality["covered_results"] = max(int(region_equality.get("covered_results", 0) or 0), covered)
 
 
+def _apply_connectivity_region_coverage(
+    region_equality: dict[str, Any],
+    results: list[dict[str, Any]],
+    connectivity: dict[str, Any],
+) -> None:
+    if not isinstance(region_equality, dict) or not region_equality.get("enabled"):
+        return
+    if not isinstance(connectivity, dict) or connectivity.get("status") != "passed":
+        return
+    status_by_function = _raw_result_status_by_function(results)
+    covered = 0
+    for region_result in region_equality.get("results", []) or []:
+        if not isinstance(region_result, dict) or region_result.get("status") == "passed":
+            continue
+        if region_result.get("reason") != "slice_too_large":
+            continue
+        mismatches = [item for item in region_result.get("mismatches", []) or [] if isinstance(item, dict)]
+        if not mismatches or any(item.get("kind") != "solver_gate" for item in mismatches):
+            continue
+        function = region_result.get("function") if isinstance(region_result.get("function"), dict) else {}
+        function_id = str(function.get("id") or "")
+        function_name = str(function.get("name") or function_id)
+        if not _region_function_already_passed(function_id, function_name, status_by_function):
+            continue
+        previous = {
+            "status": region_result.get("status"),
+            "reason": region_result.get("reason"),
+            "mismatches": mismatches,
+        }
+        region_result["status"] = "passed"
+        region_result["reason"] = "covered_by_block_connectivity"
+        region_result["mismatches"] = []
+        region_result["connectivity_coverage"] = {
+            "reason": "all compared SSA blocks passed and the connectivity gate proved successor state equivalence",
+            "previous": previous,
+            "edges_checked": connectivity.get("edges_checked", 0),
+            "state_edges_checked": connectivity.get("state_edges_checked", 0),
+            "state_inputs_checked": connectivity.get("state_inputs_checked", 0),
+            "external_successor_edges_skipped": connectivity.get("external_successor_edges_skipped", 0),
+        }
+        covered += 1
+    if covered:
+        region_equality["connectivity_covered_regions"] = (
+            int(region_equality.get("connectivity_covered_regions", 0) or 0) + covered
+        )
+        _refresh_region_equality_summary(region_equality)
+
+
+def _apply_external_successor_edge_coverage(connectivity: dict[str, Any], external_parts: dict[str, Any]) -> None:
+    if not isinstance(connectivity, dict) or not isinstance(external_parts, dict):
+        return
+    edges = [edge for edge in connectivity.get("external_successor_edges", []) or [] if isinstance(edge, dict)]
+    if not edges:
+        connectivity["external_successor_edges_covered"] = 0
+        connectivity["external_successor_edges_unproved"] = 0
+        return
+    oracle_passed: set[tuple[str, str]] = set()
+    candidate_passed: set[tuple[str, str]] = set()
+    for result in external_parts.get("results", []) or []:
+        if not isinstance(result, dict) or result.get("status") != "passed":
+            continue
+        function = result.get("function") if isinstance(result.get("function"), dict) else {}
+        function_id = str(function.get("id") or function.get("name") or "")
+        if not function_id:
+            continue
+        oracle_delta = _ssa_detail_entry_delta(result.get("oracle_detail"))
+        candidate_delta = _ssa_detail_entry_delta(result.get("candidate_detail"))
+        if oracle_delta is not None:
+            oracle_passed.add((function_id, _external_edge_delta_key(_format_ssa_delta(oracle_delta))))
+        if candidate_delta is not None:
+            candidate_passed.add((function_id, _external_edge_delta_key(_format_ssa_delta(candidate_delta))))
+    covered = 0
+    unproved = 0
+    for edge in edges:
+        side = str(edge.get("side") or "")
+        key = (str(edge.get("function") or ""), _external_edge_delta_key(edge.get("successor_delta")))
+        is_covered = key in (oracle_passed if side == "oracle" else candidate_passed)
+        edge["target_proof"] = "passed" if is_covered else "unproved"
+        if is_covered:
+            covered += 1
+        else:
+            unproved += 1
+    connectivity["external_successor_edges_covered"] = covered
+    connectivity["external_successor_edges_unproved"] = unproved
+
+
+def _external_edge_delta_key(value: Any) -> str:
+    try:
+        parsed = parse_int(value, field="external_successor_delta")
+    except DosUnitError:
+        return str(value or "")
+    return normalize_hex(parsed & 0xFFFF, width=4)
+
+
+def _refresh_region_equality_summary(region_equality: dict[str, Any]) -> None:
+    results = [item for item in region_equality.get("results", []) or [] if isinstance(item, dict)]
+    region_equality["total"] = len(results)
+    region_equality["passed"] = sum(1 for result in results if result.get("status") == "passed")
+    region_equality["failed"] = sum(1 for result in results if result.get("status") == "failed")
+    region_equality["refused"] = sum(1 for result in results if result.get("status") == "refused")
+    if region_equality["failed"]:
+        region_equality["status"] = "failed"
+    elif region_equality["refused"]:
+        region_equality["status"] = "refused"
+    elif region_equality["passed"]:
+        region_equality["status"] = "passed"
+    else:
+        region_equality["status"] = "not_applicable" if region_equality.get("enabled") else "disabled"
+
+
 def _apply_ssa_connectivity_gate(
     results: list[dict[str, Any]],
     *,
@@ -2691,13 +4923,17 @@ def _apply_ssa_connectivity_gate(
     oracle_functions: list[dict[str, Any]] | None = None,
     candidate_functions: list[dict[str, Any]] | None = None,
     timeout_ms: int = 60000,
+    max_rss_mb: int = 0,
 ) -> dict[str, Any]:
     region_exempt_functions = region_exempt_functions or set()
     oracle_body_by_id = _ssa_body_by_id(oracle_functions or [])
     candidate_body_by_id = _ssa_body_by_id(candidate_functions or [])
     block_pairs: dict[tuple[str, int], tuple[int, int]] = {}
+    block_pairs_by_linear: dict[tuple[str, int], tuple[int, int, int | None]] = {}
     inverse_pairs: dict[tuple[str, int], int] = {}
+    inverse_pairs_by_linear: dict[tuple[str, int], int] = {}
     candidate_deltas_by_function: dict[str, set[int]] = defaultdict(set)
+    candidate_linears_by_function: dict[str, set[int]] = defaultdict(set)
     for index, result in enumerate(results):
         if result.get("status") != "passed":
             continue
@@ -2714,17 +4950,31 @@ def _apply_ssa_connectivity_gate(
         block_pairs[(function_id, oracle_delta)] = (index, candidate_delta)
         inverse_pairs[(function_id, candidate_delta)] = oracle_delta
         candidate_deltas_by_function[function_id].add(candidate_delta)
+        oracle_linear = _ssa_detail_entry_linear(result.get("oracle_detail"))
+        candidate_linear = _ssa_detail_entry_linear(result.get("candidate_detail"))
+        if oracle_linear is not None and candidate_linear is not None:
+            block_pairs_by_linear[(function_id, oracle_linear)] = (index, candidate_delta, candidate_linear)
+            inverse_pairs_by_linear[(function_id, candidate_linear)] = oracle_delta
+            candidate_linears_by_function[function_id].add(candidate_linear)
 
     checked_edges = 0
+    external_successor_edges_skipped = 0
     state_edges_checked = 0
     state_inputs_checked = 0
     state_solver_time_ms = 0
     failures: list[dict[str, Any]] = []
     refusals: list[dict[str, Any]] = []
+    external_successor_edges: list[dict[str, Any]] = []
     failed_result_indexes: set[int] = set()
     refused_result_indexes: set[int] = set()
+    aborted: dict[str, Any] | None = None
 
     for index, result in enumerate(results):
+        memory_limit = _compare_memory_limit_status(max_rss_mb)
+        if memory_limit is not None:
+            aborted = _compare_memory_abort("connectivity", memory_limit)
+            refusals.append(_memory_limit_mismatch(aborted))
+            break
         if result.get("status") != "passed":
             continue
         function = result.get("function") if isinstance(result.get("function"), dict) else {}
@@ -2737,6 +4987,8 @@ def _apply_ssa_connectivity_gate(
         candidate_delta = _ssa_detail_entry_delta(result.get("candidate_detail"))
         oracle_successors = _ssa_detail_direct_successor_deltas(result.get("oracle_detail"))
         candidate_successors = _ssa_detail_direct_successor_deltas(result.get("candidate_detail"))
+        oracle_successor_linears = _ssa_detail_direct_successor_linears(result.get("oracle_detail"))
+        candidate_successor_linears = _ssa_detail_direct_successor_linears(result.get("candidate_detail"))
         if oracle_delta is None or candidate_delta is None:
             if oracle_successors or candidate_successors:
                 refusals.append(
@@ -2767,10 +5019,29 @@ def _apply_ssa_connectivity_gate(
             continue
 
         candidate_successor_set = set(candidate_successors)
+        candidate_successor_linear_set = set(candidate_successor_linears)
         oracle_successor_set = set(oracle_successors)
-        for successor_delta in oracle_successors:
+        for ordinal, successor_delta in enumerate(oracle_successors):
             mapped = block_pairs.get((function_id, successor_delta))
+            expected_candidate_linear: int | None = None
+            if mapped is None and ordinal < len(oracle_successor_linears):
+                linear_mapped = block_pairs_by_linear.get((function_id, oracle_successor_linears[ordinal]))
+                if linear_mapped is not None:
+                    successor_index, expected_candidate_delta, expected_candidate_linear = linear_mapped
+                    mapped = (successor_index, expected_candidate_delta)
             if mapped is None:
+                if not _ssa_detail_delta_inside_function(result.get("oracle_detail"), successor_delta):
+                    external_successor_edges_skipped += 1
+                    external_successor_edges.append(
+                        {
+                            "side": "oracle",
+                            "function": function_id,
+                            "from_delta": _format_ssa_delta(oracle_delta),
+                            "successor_delta": _format_ssa_delta(successor_delta),
+                            "result_index": index,
+                        }
+                    )
+                    continue
                 refusals.append(
                     {
                         "kind": "connectivity_refused",
@@ -2784,7 +5055,10 @@ def _apply_ssa_connectivity_gate(
                 continue
             checked_edges += 1
             successor_index, expected_candidate_delta = mapped
-            if expected_candidate_delta not in candidate_successor_set:
+            candidate_has_successor = _delta_in_set_mod16(expected_candidate_delta, candidate_successor_set) or (
+                expected_candidate_linear is not None and expected_candidate_linear in candidate_successor_linear_set
+            )
+            if not candidate_has_successor:
                 failure = {
                     "kind": "connectivity_successor_mismatch",
                     "detail": "oracle direct successor maps to a candidate block that is not a direct successor",
@@ -2821,6 +5095,12 @@ def _apply_ssa_connectivity_gate(
                     candidate_successor,
                 )
 
+            memory_limit = _compare_memory_limit_status(max_rss_mb)
+            if memory_limit is not None:
+                aborted = _compare_memory_abort("connectivity", memory_limit)
+                refusals.append(_memory_limit_mismatch(aborted))
+                refused_result_indexes.add(index)
+                break
             state_check = _connectivity_state_check(
                 predecessor=result,
                 successor=results[successor_index],
@@ -2846,10 +5126,32 @@ def _apply_ssa_connectivity_gate(
                 refusals.append(state_check["mismatch"])
                 refused_result_indexes.add(index)
 
-        for successor_delta in candidate_successors:
+        if aborted is not None:
+            break
+        for ordinal, successor_delta in enumerate(candidate_successors):
             oracle_successor_delta = inverse_pairs.get((function_id, successor_delta))
+            if oracle_successor_delta is None and ordinal < len(candidate_successor_linears):
+                oracle_successor_delta = inverse_pairs_by_linear.get((function_id, candidate_successor_linears[ordinal]))
             if oracle_successor_delta is None:
-                if successor_delta in candidate_deltas_by_function.get(function_id, set()):
+                candidate_successor_linear = (
+                    candidate_successor_linears[ordinal] if ordinal < len(candidate_successor_linears) else None
+                )
+                if not _ssa_detail_delta_inside_function(result.get("candidate_detail"), successor_delta):
+                    external_successor_edges_skipped += 1
+                    external_successor_edges.append(
+                        {
+                            "side": "candidate",
+                            "function": function_id,
+                            "from_delta": _format_ssa_delta(candidate_delta),
+                            "successor_delta": _format_ssa_delta(successor_delta),
+                            "result_index": index,
+                        }
+                    )
+                    continue
+                if _delta_in_set_mod16(successor_delta, candidate_deltas_by_function.get(function_id, set())) or (
+                    candidate_successor_linear is not None
+                    and candidate_successor_linear in candidate_linears_by_function.get(function_id, set())
+                ):
                     failure = {
                         "kind": "connectivity_successor_mismatch",
                         "detail": "candidate has a direct successor to a paired block with no oracle successor",
@@ -2863,7 +5165,7 @@ def _apply_ssa_connectivity_gate(
                     failures.append(failure)
                     failed_result_indexes.add(index)
                 continue
-            if oracle_successor_delta not in oracle_successor_set:
+            if not _delta_in_set_mod16(oracle_successor_delta, oracle_successor_set):
                 checked_edges += 1
                 failure = {
                     "kind": "connectivity_successor_mismatch",
@@ -2907,10 +5209,15 @@ def _apply_ssa_connectivity_gate(
     return {
         "status": status,
         "edges_checked": checked_edges,
+        "external_successor_edges_skipped": external_successor_edges_skipped,
+        "external_successor_edges": external_successor_edges,
+        "external_successor_edges_covered": 0,
+        "external_successor_edges_unproved": external_successor_edges_skipped,
         "state_edges_checked": state_edges_checked,
         "state_inputs_checked": state_inputs_checked,
         "state_solver_time_ms": state_solver_time_ms,
         "region_exempt_functions": sorted(region_exempt_functions),
+        "aborted": aborted,
         "failures": failures,
         "refusals": refusals,
     }
@@ -2947,13 +5254,15 @@ def _connectivity_state_check(
     result_index: int,
     timeout_ms: int,
 ) -> dict[str, Any]:
-    oracle_missing = _ssa_missing_successor_inputs(
-        predecessor.get("oracle_detail"),
-        successor.get("oracle_detail"),
+    oracle_successor_inputs = _successor_required_inputs(successor.get("oracle_detail"), oracle_successor)
+    candidate_successor_inputs = _successor_required_inputs(successor.get("candidate_detail"), candidate_successor)
+    oracle_missing = _missing_successor_inputs_from_sets(
+        _ssa_detail_outputs(predecessor.get("oracle_detail")),
+        oracle_successor_inputs,
     )
-    candidate_missing = _ssa_missing_successor_inputs(
-        predecessor.get("candidate_detail"),
-        successor.get("candidate_detail"),
+    candidate_missing = _missing_successor_inputs_from_sets(
+        _ssa_detail_outputs(predecessor.get("candidate_detail")),
+        candidate_successor_inputs,
     )
     oracle_ignored_missing = sorted(
         name
@@ -2969,10 +5278,8 @@ def _connectivity_state_check(
     oracle_missing = sorted(name for name in oracle_missing if name not in ignored)
     candidate_missing = sorted(name for name in candidate_missing if name not in ignored)
     if not oracle_missing and not candidate_missing:
-        oracle_inputs = _ssa_detail_inputs(successor.get("oracle_detail"))
-        candidate_inputs = _ssa_detail_inputs(successor.get("candidate_detail"))
         ignored_inputs = CONNECTIVITY_IMPLICIT_STATE | CONNECTIVITY_OPTIONALLY_IMPLICIT_STATE
-        checked = sorted((oracle_inputs - ignored_inputs) & (candidate_inputs - ignored_inputs))
+        checked = sorted((oracle_successor_inputs - ignored_inputs) & (candidate_successor_inputs - ignored_inputs))
         if not checked:
             return {"status": "passed", "edges_checked": 1, "inputs_checked": 0, "solver_time_ms": 0}
         if (
@@ -3090,7 +5397,57 @@ def _project_ssa_outputs(function: dict[str, Any], names: list[str]) -> dict[str
 def _ssa_missing_successor_inputs(predecessor_detail: Any, successor_detail: Any) -> set[str]:
     predecessor_outputs = _ssa_detail_outputs(predecessor_detail)
     successor_inputs = _ssa_detail_inputs(successor_detail)
+    return _missing_successor_inputs_from_sets(predecessor_outputs, successor_inputs)
+
+
+def _missing_successor_inputs_from_sets(predecessor_outputs: set[str], successor_inputs: set[str]) -> set[str]:
     return {name for name in successor_inputs if name not in predecessor_outputs}
+
+
+def _successor_required_inputs(successor_detail: Any, successor_body: dict[str, Any] | None) -> set[str]:
+    if successor_body is None:
+        return _ssa_detail_inputs(successor_detail)
+    outputs = successor_body.get("outputs", {}) if isinstance(successor_body.get("outputs"), dict) else {}
+    assignments = {
+        str(item.get("id")): item
+        for item in successor_body.get("assignments", []) or []
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    semantic_outputs = []
+    may_defer_passthrough = _has_direct_successor_transfer(successor_body)
+    for name, term in outputs.items():
+        output_name = str(name)
+        if may_defer_passthrough and output_name in RAW_OUTPUT_REGS and isinstance(term, dict) and _term_is_identity_input(
+            term, output_name, assignments
+        ):
+            continue
+        if isinstance(term, dict):
+            semantic_outputs.append(term)
+    return {
+        str(item.get("name"))
+        for item in _term_input_items(semantic_outputs, list(assignments.values()))
+        if isinstance(item, dict) and item.get("name")
+    }
+
+
+def _term_is_identity_input(
+    term: dict[str, Any],
+    name: str,
+    assignments: dict[str, dict[str, Any]],
+    seen: set[str] | None = None,
+) -> bool:
+    if term.get("op") == "input" and str(term.get("name") or "") == name:
+        return True
+    ref = term.get("ref")
+    if not isinstance(ref, str):
+        return False
+    if seen is None:
+        seen = set()
+    if ref in seen:
+        return False
+    seen.add(ref)
+    assignment = assignments.get(ref)
+    return isinstance(assignment, dict) and _term_is_identity_input(assignment, name, assignments, seen)
 
 
 def _connectivity_refusal_reason(refusals: list[dict[str, Any]]) -> str:
@@ -3101,6 +5458,10 @@ def _connectivity_refusal_reason(refusals: list[dict[str, Any]]) -> str:
         if reason:
             return reason
     return "connectivity_refused"
+
+
+def _delta_in_set_mod16(delta: int, values: set[int]) -> bool:
+    return any(((delta - value) & 0xFFFF) == 0 for value in values)
 
 
 def _ssa_detail_entry_delta(detail: Any) -> int | None:
@@ -3117,6 +5478,13 @@ def _ssa_detail_entry_delta(detail: Any) -> int | None:
     if entry_linear is None or function_linear is None:
         return None
     return entry_linear - function_linear
+
+
+def _ssa_detail_entry_linear(detail: Any) -> int | None:
+    if not isinstance(detail, dict):
+        return None
+    entry = detail.get("entry") if isinstance(detail.get("entry"), dict) else {}
+    return _optional_int(entry.get("linear"))
 
 
 def _ssa_detail_direct_successor_deltas(detail: Any) -> list[int]:
@@ -3138,6 +5506,64 @@ def _ssa_detail_direct_successor_deltas(detail: Any) -> list[int]:
             continue
         deltas.append(linear - function_linear)
     return _unique_ints(deltas)
+
+
+def _ssa_detail_direct_successor_linears(detail: Any) -> list[int]:
+    if not isinstance(detail, dict):
+        return []
+    transfer = detail.get("transfer") if isinstance(detail.get("transfer"), dict) else {}
+    if transfer.get("kind") != "direct_successors":
+        return []
+    linears: list[int] = []
+    for successor in transfer.get("successors", []) or []:
+        if not isinstance(successor, dict):
+            continue
+        linear = _optional_int(successor.get("linear"))
+        if linear is not None:
+            linears.append(linear)
+    return _unique_ints(linears)
+
+
+def _ssa_detail_delta_inside_function(detail: Any, delta: int) -> bool:
+    if not isinstance(detail, dict):
+        return True
+    source = detail.get("source") if isinstance(detail.get("source"), dict) else detail
+    size = source.get("function_machine_code_size") if isinstance(source, dict) else None
+    if not isinstance(size, int) or size <= 0:
+        return True
+    return 0 <= delta < size
+
+
+def _ssa_part_outside_declared_body(function: dict[str, Any]) -> bool:
+    delta = _ssa_detail_entry_delta(function)
+    if delta is None:
+        return False
+    return not _ssa_detail_delta_inside_function(function, delta)
+
+
+def _partition_declared_body_ssa_parts(
+    functions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    kept: list[dict[str, Any]] = []
+    external: list[dict[str, Any]] = []
+    for function in functions:
+        if isinstance(function, dict) and _ssa_part_outside_declared_body(function):
+            external.append(function)
+            continue
+        kept.append(function)
+    return kept, external
+
+
+def _incomplete_block_reaches_range_end(instructions: list[dict[str, Any]], range_end: int) -> bool:
+    if not instructions:
+        return False
+    last = instructions[-1]
+    address = last.get("address") if isinstance(last.get("address"), dict) else {}
+    linear = _optional_int(address.get("linear"))
+    size = _optional_int(last.get("size"))
+    if linear is None or size is None or size <= 0:
+        return False
+    return linear + size >= range_end
 
 
 def _format_ssa_delta(delta: int) -> str:
@@ -3406,6 +5832,7 @@ def _compare_functions(
             z3=z3,
             assignments=oracle_assignments,
             cache=oracle_cache,
+            output_name=reg,
         )
         candidate_expr = _z3_term(
             candidate_outputs[reg],
@@ -3414,6 +5841,7 @@ def _compare_functions(
             z3=z3,
             assignments=candidate_assignments,
             cache=candidate_cache,
+            output_name=reg,
         )
         if not (_is_z3_array(oracle_expr, z3) or _is_z3_array(candidate_expr, z3)):
             oracle_expr, candidate_expr = _align_z3_widths(oracle_expr, candidate_expr, z3)
@@ -3720,6 +6148,17 @@ def _summarize_abi_function(
         )
     except LowerFailure as ex:
         return {"status": "refused", "reason": ex.reason, "mismatches": [{"kind": ex.reason, "detail": ex.message}]}
+    except RecursionError:
+        return {
+            "status": "refused",
+            "reason": "loop_bound_incomplete",
+            "mismatches": [
+                {
+                    "kind": "loop_bound_incomplete",
+                    "detail": "bounded loop summary exceeded Python recursion depth",
+                }
+            ],
+        }
     return {
         "status": "passed",
         "part_count": len(parts),
@@ -4893,18 +7332,18 @@ def _materialize_json_term(
     *,
     assignments: list[dict[str, Any]],
     memo: dict[str, str],
-    term_cache: dict[int, dict[str, Any]] | None = None,
+    term_cache: dict[int, tuple[dict[str, Any], dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     if term_cache is None:
         term_cache = {}
     cache_key = id(term)
     cached = term_cache.get(cache_key)
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] is term:
+        return cached[1]
     op = term.get("op")
     if op in {"input", "mem_input", "const"}:
         result = copy.deepcopy(term)
-        term_cache[cache_key] = result
+        term_cache[cache_key] = (term, result)
         return result
     args = [
         _materialize_json_term(arg, assignments=assignments, memo=memo, term_cache=term_cache)
@@ -4915,13 +7354,13 @@ def _materialize_json_term(
     key = _materialized_term_key(shallow)
     if key in memo:
         result = {"ref": memo[key]}
-        term_cache[cache_key] = result
+        term_cache[cache_key] = (term, result)
         return result
     ident = f"v{len(assignments)}"
     memo[key] = ident
     assignments.append({"id": ident, **shallow})
     result = {"ref": ident}
-    term_cache[cache_key] = result
+    term_cache[cache_key] = (term, result)
     return result
 
 
@@ -5070,6 +7509,308 @@ def _set_unique_index(table: dict[Any, dict[str, Any] | None], key: Any, functio
         table[key] = None
 
 
+def _attach_binary_signature_context(
+    index: dict[str, dict[Any, dict[str, Any]]],
+    document: dict[str, Any],
+    functions: list[dict[str, Any]],
+) -> None:
+    exe = document.get("exe")
+    if not exe:
+        return
+    try:
+        image = load_mz_image(Path(str(exe))).memory
+    except Exception:  # noqa: BLE001 - signature fallback must not break SSA comparison.
+        return
+    linked_base = _ssa_document_linked_base(functions)
+    if linked_base is None:
+        return
+    index["_binary_signature_context"] = {
+        "image": image,
+        "linked_base": linked_base,
+        "exe": str(exe),
+    }
+
+
+def _ssa_document_linked_base(functions: list[dict[str, Any]]) -> int | None:
+    bases: Counter[int] = Counter()
+    for function in functions:
+        if not isinstance(function, dict):
+            continue
+        entry = function.get("entry", {}) if isinstance(function.get("entry"), dict) else {}
+        linear = _optional_int(entry.get("linear"))
+        ip = _optional_int(entry.get("ip"))
+        if linear is None or ip is None:
+            continue
+        bases[(linear - (ip & 0xFFFF)) & 0xFFFFFFFF] += 1
+    if not bases:
+        return None
+    return bases.most_common(1)[0][0]
+
+
+def _binary_signature_target_for_call_raw(
+    raw: int, index: dict[str, dict[Any, dict[str, Any]]]
+) -> tuple[dict[str, Any] | None, str | None]:
+    context = index.get("_binary_signature_context")
+    if not isinstance(context, dict):
+        return None, None
+    image = context.get("image")
+    linked_base = context.get("linked_base")
+    if not isinstance(image, (bytes, bytearray)) or not isinstance(linked_base, int):
+        return None, None
+    for linear, offset in _candidate_linear_offsets_for_low16(raw, len(image), linked_base):
+        blob = bytes(image[offset : offset + BINARY_CALL_TARGET_SIGNATURE_BYTES])
+        if len(blob) < 8 or not any(blob):
+            continue
+        signature_fields = _binary_call_signature_fields(blob, linear)
+        signature = str(signature_fields["signature_sha256"])
+        target_without_id = {
+            "id": f"library-signature:{signature[:16]}",
+            "name": f"library_signature_{signature[:12]}",
+            "entry": {
+                "linear": normalize_hex(linear, width=8),
+                "ip": normalize_hex(offset & 0xFFFF, width=4),
+                "image_offset": normalize_hex(offset, width=8),
+            },
+            "signature_kind": "binary_local",
+            **signature_fields,
+        }
+        return target_without_id, (
+            "resolved through binary-local call-target signature "
+            f"at loaded offset {normalize_hex(offset, width=8)}"
+        )
+    return None, None
+
+
+def _candidate_linear_offsets_for_low16(raw: int, image_size: int, linked_base: int) -> list[tuple[int, int]]:
+    low16 = raw & 0xFFFF
+    seen: set[int] = set()
+    candidates: list[tuple[int, int]] = []
+    max_linear = linked_base + max(0, image_size - 1)
+    high = 0
+    while high <= max_linear + 0x10000:
+        linear = high + low16
+        offset = linear - linked_base
+        if 0 <= offset < image_size and offset not in seen:
+            seen.add(offset)
+            candidates.append((linear, offset))
+        high += 0x10000
+    return candidates
+
+
+def _binary_call_signature_fields(blob: bytes, linear: int) -> dict[str, Any]:
+    signature_blob = _binary_signature_prefix(blob, linear)
+    normalized_pattern = _normalized_binary_signature_pattern(signature_blob, linear)
+    normalized_text = "".join("??" if byte is None else f"{byte:02x}" for byte in normalized_pattern)
+    layout_pattern = _layout_binary_signature_pattern(signature_blob, linear)
+    layout_text = "".join("??" if byte is None else f"{byte:02x}" for byte in layout_pattern)
+    return {
+        "signature_sha256": hashlib.sha256(signature_blob).hexdigest(),
+        "signature_size": len(signature_blob),
+        "signature_preview": signature_blob[: min(8, len(signature_blob))].hex(),
+        "normalized_signature_sha256": hashlib.sha256(normalized_text.encode("ascii")).hexdigest(),
+        "normalized_signature_size": len(normalized_pattern),
+        "normalized_signature_masked_bytes": sum(1 for byte in normalized_pattern if byte is None),
+        "normalized_signature_preview": normalized_text[:32],
+        "layout_signature_sha256": hashlib.sha256(layout_text.encode("ascii")).hexdigest(),
+        "layout_signature_size": len(layout_pattern),
+        "layout_signature_masked_bytes": sum(1 for byte in layout_pattern if byte is None),
+        "layout_signature_preview": layout_text[:32],
+    }
+
+
+def _binary_signature_prefix(blob: bytes, linear: int) -> bytes:
+    try:
+        import capstone  # type: ignore
+    except Exception:  # noqa: BLE001
+        return blob
+    try:
+        consumed = 0
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
+        for insn in md.disasm(blob, linear):
+            consumed += len(insn.bytes)
+            mnemonic = str(insn.mnemonic).lower()
+            if consumed >= 8 and mnemonic in {"ret", "retf", "iret", "jmp", "ljmp"}:
+                return blob[:consumed]
+    except Exception:  # noqa: BLE001
+        return blob
+    return blob
+
+
+def _normalized_binary_signature_pattern(blob: bytes, linear: int) -> tuple[int | None, ...]:
+    try:
+        import capstone  # type: ignore
+    except Exception:  # noqa: BLE001
+        return tuple(blob)
+    try:
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
+        md.detail = True
+        pattern: list[int | None] = []
+        for insn in md.disasm(blob, linear):
+            encoded = list(insn.bytes)
+            mask = [False] * len(encoded)
+            encoding = getattr(insn, "encoding", None)
+            for offset_name, size_name in (("imm_offset", "imm_size"), ("disp_offset", "disp_size")):
+                offset = int(getattr(encoding, offset_name, 0) or 0)
+                size = int(getattr(encoding, size_name, 0) or 0)
+                if offset <= 0 or size <= 0:
+                    continue
+                for idx in range(offset, min(offset + size, len(mask))):
+                    mask[idx] = True
+            pattern.extend(None if masked else byte for byte, masked in zip(encoded, mask))
+            if len(pattern) >= len(blob):
+                break
+        if len(pattern) < len(blob):
+            pattern.extend(blob[len(pattern) :])
+        return tuple(pattern[: len(blob)])
+    except Exception:  # noqa: BLE001
+        return tuple(blob)
+
+
+def _layout_binary_signature_pattern(blob: bytes, linear: int) -> tuple[int | None, ...]:
+    try:
+        import capstone  # type: ignore
+    except Exception:  # noqa: BLE001
+        return tuple(blob)
+    try:
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
+        md.detail = True
+        pattern: list[int | None] = []
+        pending_reg_immediates: dict[str, list[int]] = {}
+        for insn in md.disasm(blob, linear):
+            encoded = list(insn.bytes)
+            mask = [False] * len(encoded)
+            mnemonic = str(insn.mnemonic).lower()
+            encoding = getattr(insn, "encoding", None)
+            operands = list(getattr(insn, "operands", []) or [])
+            if mnemonic in CONTROL_MNEMONICS:
+                for offset_name, size_name in (("imm_offset", "imm_size"), ("disp_offset", "disp_size")):
+                    offset = int(getattr(encoding, offset_name, 0) or 0)
+                    size = int(getattr(encoding, size_name, 0) or 0)
+                    if offset <= 0 or size <= 0:
+                        continue
+                    for idx in range(offset, min(offset + size, len(mask))):
+                        mask[idx] = True
+            else:
+                disp_offset = int(getattr(encoding, "disp_offset", 0) or 0)
+                disp_size = int(getattr(encoding, "disp_size", 0) or 0)
+                if disp_offset > 0 and disp_size > 0 and _insn_has_layout_memory_operand(insn):
+                    for idx in range(disp_offset, min(disp_offset + disp_size, len(mask))):
+                        mask[idx] = True
+                    for reg_name in _insn_source_register_names(insn):
+                        for pattern_index in pending_reg_immediates.get(reg_name, []):
+                            if 0 <= pattern_index < len(pattern):
+                                pattern[pattern_index] = None
+                if _insn_has_ivt_vector_memory_operand(insn):
+                    for reg_name in _insn_source_register_names(insn):
+                        for pattern_index in pending_reg_immediates.get(reg_name, []):
+                            if 0 <= pattern_index < len(pattern):
+                                pattern[pattern_index] = None
+                    imm_offset = int(getattr(encoding, "imm_offset", 0) or 0)
+                    imm_size = int(getattr(encoding, "imm_size", 0) or 0)
+                    if imm_offset > 0 and imm_size > 0:
+                        for idx in range(imm_offset, min(imm_offset + imm_size, len(mask))):
+                            mask[idx] = True
+                imm_offset = int(getattr(encoding, "imm_offset", 0) or 0)
+                imm_size = int(getattr(encoding, "imm_size", 0) or 0)
+                reg_imm = _insn_register_immediate(insn)
+                if imm_offset > 0 and imm_size > 0 and reg_imm is not None:
+                    reg_name, imm_value = reg_imm
+                    if mnemonic == "mov" and reg_name in {"bx", "bp", "si", "di"} and (imm_value & 0xFFFF) >= 0x1000:
+                        for idx in range(imm_offset, min(imm_offset + imm_size, len(mask))):
+                            mask[idx] = True
+                    elif mnemonic == "mov" and (imm_value & 0xFFFF) >= 0x1000:
+                        pending_reg_immediates[reg_name] = [
+                            len(pattern) + idx for idx in range(imm_offset, min(imm_offset + imm_size, len(mask)))
+                        ]
+                    elif mnemonic in {"add", "sub", "cmp"} and (imm_value & 0xFFFF) >= 0x1000:
+                        for idx in range(imm_offset, min(imm_offset + imm_size, len(mask))):
+                            mask[idx] = True
+            pattern.extend(None if masked else byte for byte, masked in zip(encoded, mask))
+            if len(pattern) >= len(blob):
+                break
+        if len(pattern) < len(blob):
+            pattern.extend(blob[len(pattern) :])
+        return tuple(pattern[: len(blob)])
+    except Exception:  # noqa: BLE001
+        return tuple(blob)
+
+
+def _insn_has_layout_memory_operand(insn: Any) -> bool:
+    try:
+        import capstone  # type: ignore
+    except Exception:  # noqa: BLE001
+        return False
+    for operand in getattr(insn, "operands", []) or []:
+        if getattr(operand, "type", None) != capstone.x86.X86_OP_MEM:
+            continue
+        mem = getattr(operand, "mem", None)
+        if mem is None:
+            continue
+        base = int(getattr(mem, "base", 0) or 0)
+        index = int(getattr(mem, "index", 0) or 0)
+        disp = int(getattr(mem, "disp", 0) or 0) & 0xFFFF
+        segment = int(getattr(mem, "segment", 0) or 0)
+        if segment == capstone.x86.X86_REG_CS:
+            return True
+        if base == 0 and index == 0 and disp >= 0x1000:
+            return True
+    return False
+
+
+def _insn_has_ivt_vector_memory_operand(insn: Any) -> bool:
+    try:
+        import capstone  # type: ignore
+    except Exception:  # noqa: BLE001
+        return False
+    for operand in getattr(insn, "operands", []) or []:
+        if getattr(operand, "type", None) != capstone.x86.X86_OP_MEM:
+            continue
+        mem = getattr(operand, "mem", None)
+        if mem is None:
+            continue
+        base = int(getattr(mem, "base", 0) or 0)
+        index = int(getattr(mem, "index", 0) or 0)
+        disp = int(getattr(mem, "disp", 0) or 0)
+        segment = int(getattr(mem, "segment", 0) or 0)
+        if segment == capstone.x86.X86_REG_ES and base == 0 and index == 0 and disp in {0, 2}:
+            return True
+    return False
+
+
+def _insn_register_immediate(insn: Any) -> tuple[str, int] | None:
+    try:
+        import capstone  # type: ignore
+    except Exception:  # noqa: BLE001
+        return None
+    operands = list(getattr(insn, "operands", []) or [])
+    if len(operands) < 2:
+        return None
+    if getattr(operands[0], "type", None) != capstone.x86.X86_OP_REG:
+        return None
+    if getattr(operands[1], "type", None) != capstone.x86.X86_OP_IMM:
+        return None
+    reg_name = str(insn.reg_name(getattr(operands[0], "reg", 0)) or "").lower()
+    if not reg_name:
+        return None
+    return reg_name, int(getattr(operands[1], "imm", 0) or 0)
+
+
+def _insn_source_register_names(insn: Any) -> list[str]:
+    try:
+        import capstone  # type: ignore
+    except Exception:  # noqa: BLE001
+        return []
+    result: list[str] = []
+    operands = list(getattr(insn, "operands", []) or [])
+    for operand in operands[1:]:
+        if getattr(operand, "type", None) != capstone.x86.X86_OP_REG:
+            continue
+        reg_name = str(insn.reg_name(getattr(operand, "reg", 0)) or "").lower()
+        if reg_name:
+            result.append(reg_name)
+    return result
+
+
 class _SemanticEqualityCache:
     def __init__(self) -> None:
         self._facts: dict[tuple[str, str], dict[str, Any]] = {}
@@ -5129,6 +7870,30 @@ def _semantic_cache_keys(function_brief: dict[str, Any] | None) -> list[str]:
         keys.append(f"low16:{linear & 0xFFFF:04x}")
     if ip is not None:
         keys.append(f"ip:{ip & 0xFFFF:04x}")
+    signature_hash = str(function_brief.get("signature_sha256") or "")
+    signature_size = _optional_int(function_brief.get("signature_size"))
+    if signature_hash and signature_size is not None:
+        keys.append(f"signature:{signature_size}:{signature_hash}")
+    normalized_signature_hash = str(function_brief.get("normalized_signature_sha256") or "")
+    normalized_signature_size = _optional_int(function_brief.get("normalized_signature_size"))
+    if normalized_signature_hash and normalized_signature_size is not None:
+        keys.append(f"normalized_signature:{normalized_signature_size}:{normalized_signature_hash}")
+    layout_signature_hash = str(function_brief.get("layout_signature_sha256") or "")
+    layout_signature_size = _optional_int(function_brief.get("layout_signature_size"))
+    if layout_signature_hash and layout_signature_size is not None:
+        keys.append(f"layout_signature:{layout_signature_size}:{layout_signature_hash}")
+    exact_block_signature_hash = str(function_brief.get("exact_block_signature_sha256") or "")
+    exact_block_signature_size = _optional_int(function_brief.get("exact_block_signature_size"))
+    if exact_block_signature_hash and exact_block_signature_size is not None:
+        keys.append(f"exact_block_signature:{exact_block_signature_size}:{exact_block_signature_hash}")
+    normalized_block_signature_hash = str(function_brief.get("normalized_block_signature_sha256") or "")
+    normalized_block_signature_size = _optional_int(function_brief.get("normalized_block_signature_size"))
+    if normalized_block_signature_hash and normalized_block_signature_size is not None:
+        keys.append(f"normalized_block_signature:{normalized_block_signature_size}:{normalized_block_signature_hash}")
+    layout_block_signature_hash = str(function_brief.get("layout_block_signature_sha256") or "")
+    layout_block_signature_size = _optional_int(function_brief.get("layout_block_signature_size"))
+    if layout_block_signature_hash and layout_block_signature_size is not None:
+        keys.append(f"layout_block_signature:{layout_block_signature_size}:{layout_block_signature_hash}")
     return sorted(set(keys))
 
 
@@ -5190,15 +7955,42 @@ def _resolve_call_target(
         "kind": "direct",
         "raw": normalize_hex(raw),
         "low16": normalize_hex(raw & 0xFFFF, width=4),
-        "resolved": _ssa_function_brief(target),
+        "resolved": _ssa_call_target_brief(target, index),
     }
     if aliases:
-        detail["aliases"] = [_ssa_function_brief(function) for function in aliases]
+        detail["aliases"] = [_ssa_call_target_brief(function, index) for function in aliases]
     if target is None:
         detail["reason"] = alias_reason or "no SSA function starts at the direct call target"
     elif alias_reason:
         detail["resolution_note"] = alias_reason
     return detail
+
+
+def _ssa_call_target_brief(
+    function: dict[str, Any] | None, index: dict[str, dict[Any, dict[str, Any]]]
+) -> dict[str, Any] | None:
+    brief = _ssa_function_brief(function)
+    if not isinstance(brief, dict) or brief.get("signature_kind") == "binary_local":
+        return brief
+    context = index.get("_binary_signature_context")
+    if not isinstance(context, dict):
+        return brief
+    image = context.get("image")
+    linked_base = context.get("linked_base")
+    entry = brief.get("entry") if isinstance(brief.get("entry"), dict) else {}
+    linear = _optional_int(entry.get("linear"))
+    if not isinstance(image, (bytes, bytearray)) or not isinstance(linked_base, int) or linear is None:
+        return brief
+    offset = linear - linked_base
+    if offset < 0 or offset >= len(image):
+        return brief
+    blob = bytes(image[offset : offset + BINARY_CALL_TARGET_SIGNATURE_BYTES])
+    if len(blob) < 8 or not any(blob):
+        return brief
+    augmented = dict(brief)
+    augmented["signature_kind"] = "binary_local"
+    augmented.update(_binary_call_signature_fields(blob, linear))
+    return augmented
 
 
 def _direct_call_target(function: dict[str, Any]) -> int | None:
@@ -5240,6 +8032,30 @@ def _function_for_call_target(
         ("by_linear", "by_linear_all", raw),
         ("by_linear_low16", "by_linear_low16_all", low16),
         ("by_linear", "by_linear_all", low16),
+    ):
+        if allow_aliased_call_targets:
+            candidates = [item for item in index.get(all_table, {}).get(key, []) or [] if isinstance(item, dict)]
+            if len(candidates) > 1:
+                aliases = _same_entry_aliases(candidates)
+                if aliases:
+                    return aliases[0], aliases, f"resolved through same-entry aliases by {all_table}"
+                return None, [], f"direct call target matched multiple non-equivalent SSA functions by {all_table}"
+        table = index.get(unique_table, {})
+        if key in table and table.get(key) is not None:
+            return table[key], [], None
+        if allow_aliased_call_targets:
+            candidates = [item for item in index.get(all_table, {}).get(key, []) or [] if isinstance(item, dict)]
+            if candidates:
+                aliases = _same_entry_aliases(candidates)
+                if aliases:
+                    return aliases[0], aliases, f"resolved through same-entry aliases by {all_table}"
+                return None, [], f"direct call target matched multiple non-equivalent SSA functions by {all_table}"
+        if key in table:
+            return None, [], f"direct call target matched multiple non-equivalent SSA functions by {unique_table}"
+    signature_target, signature_reason = _binary_signature_target_for_call_raw(raw, index)
+    if signature_target is not None:
+        return signature_target, [], signature_reason
+    for unique_table, all_table, key in (
         ("by_ip", "by_ip_all", raw),
         ("by_ip", "by_ip_all", low16),
     ):
@@ -5288,9 +8104,30 @@ def _ssa_function_brief(
 ) -> dict[str, Any] | None:
     if not isinstance(function, dict):
         return None
+    if function.get("signature_kind") == "binary_local":
+        return {
+            "id": function.get("id"),
+            "name": function.get("name"),
+            "entry": function.get("entry"),
+            "signature_kind": function.get("signature_kind"),
+            "signature_sha256": function.get("signature_sha256"),
+            "signature_size": function.get("signature_size"),
+            "signature_preview": function.get("signature_preview"),
+            "normalized_signature_sha256": function.get("normalized_signature_sha256"),
+            "normalized_signature_size": function.get("normalized_signature_size"),
+            "normalized_signature_masked_bytes": function.get("normalized_signature_masked_bytes"),
+            "normalized_signature_preview": function.get("normalized_signature_preview"),
+            "layout_signature_sha256": function.get("layout_signature_sha256"),
+            "layout_signature_size": function.get("layout_signature_size"),
+            "layout_signature_masked_bytes": function.get("layout_signature_masked_bytes"),
+            "layout_signature_preview": function.get("layout_signature_preview"),
+        }
     info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
     source = function.get("source", {}) if isinstance(function.get("source"), dict) else {}
     instructions = [item for item in source.get("instructions", []) or [] if isinstance(item, dict)]
+    exact_block_signature = _ssa_exact_block_signature(function)
+    normalized_block_signature = _ssa_block_signature(function)
+    layout_block_signature = _ssa_layout_block_signature(function)
     return {
         "id": info.get("id"),
         "name": info.get("name"),
@@ -5299,6 +8136,12 @@ def _ssa_function_brief(
         "instructions": instructions[:instruction_limit],
         "machine_code_sha256": source.get("machine_code_sha256"),
         "machine_code_size": source.get("machine_code_size"),
+        "exact_block_signature_sha256": _block_signature_digest(exact_block_signature),
+        "exact_block_signature_size": None if exact_block_signature is None else len(exact_block_signature),
+        "normalized_block_signature_sha256": _block_signature_digest(normalized_block_signature),
+        "normalized_block_signature_size": None if normalized_block_signature is None else len(normalized_block_signature),
+        "layout_block_signature_sha256": _block_signature_digest(layout_block_signature),
+        "layout_block_signature_size": None if layout_block_signature is None else len(layout_block_signature),
         "semantic_ssa_id": _semantic_ssa_id(function),
     }
 
@@ -5338,8 +8181,10 @@ def _call_targets_equivalent(
         if fact is not None:
             return True, "direct call targets are equivalent through proven callee equality", fact, None
     semantic_reason = _call_target_semantic_equivalence_reason(oracle_targets, candidate_targets)
+    mapped_signature_reason = _call_target_layout_signature_equivalence_reason(oracle_targets, candidate_targets)
 
     unproven_reason: str | None = None
+    mapped_mismatch_seen = False
     for oracle_target in oracle_targets:
         oracle_id = str(oracle_target.get("id") or "")
         oracle_name = str(oracle_target.get("name") or "")
@@ -5353,10 +8198,17 @@ def _call_targets_equivalent(
                 unproven_reason = "direct call targets are equivalent through function mapping"
                 if semantic_reason is not None:
                     return True, unproven_reason, None, None
+                if mapped_signature_reason is not None:
+                    return True, mapped_signature_reason, None, None
                 if require_proven_call_targets:
                     return False, "callee_not_proven", None, unproven_reason
                 return True, unproven_reason, None, None
-            return False, "direct call targets resolve to different mapped functions", None, None
+            if semantic_reason is not None and _has_signature_only_target_pair(oracle_targets, candidate_targets):
+                return True, semantic_reason, None, None
+            mapped_mismatch_seen = True
+            continue
+    if mapped_mismatch_seen:
+        return False, "direct call targets resolve to different mapped functions", None, None
     for oracle_target in oracle_targets:
         oracle_id = str(oracle_target.get("id") or "")
         oracle_name = str(oracle_target.get("name") or "")
@@ -5365,7 +8217,11 @@ def _call_targets_equivalent(
         ):
             unproven_reason = "direct call targets have the same function id"
             if semantic_reason is not None:
+                if semantic_reason == "direct call targets have identical binary-local signatures":
+                    return True, semantic_reason, None, None
                 return True, unproven_reason, None, None
+            if mapped_signature_reason is not None:
+                return True, mapped_signature_reason, None, None
             if require_proven_call_targets:
                 return False, "callee_not_proven", None, unproven_reason
             return True, unproven_reason, None, None
@@ -5376,6 +8232,8 @@ def _call_targets_equivalent(
             unproven_reason = "direct call targets have the same function name"
             if semantic_reason is not None:
                 return True, unproven_reason, None, None
+            if mapped_signature_reason is not None:
+                return True, mapped_signature_reason, None, None
             if require_proven_call_targets:
                 return False, "callee_not_proven", None, unproven_reason
             return True, unproven_reason, None, None
@@ -5387,6 +8245,8 @@ def _call_targets_equivalent(
             unproven_reason = "direct call targets have equivalent normalized symbol names"
             if semantic_reason is not None:
                 return True, unproven_reason, None, None
+            if mapped_signature_reason is not None:
+                return True, mapped_signature_reason, None, None
             if require_proven_call_targets:
                 return False, "callee_not_proven", None, unproven_reason
             return True, unproven_reason, None, None
@@ -5425,11 +8285,80 @@ def _call_target_semantic_equivalence_reason(
                 and oracle_block_size == candidate_block_size
             ):
                 return "direct call target entry blocks have identical machine code"
+            oracle_exact_block = oracle_target.get("exact_block_signature_sha256")
+            candidate_exact_block = candidate_target.get("exact_block_signature_sha256")
+            oracle_exact_block_size = oracle_target.get("exact_block_signature_size")
+            candidate_exact_block_size = candidate_target.get("exact_block_signature_size")
+            if (
+                oracle_exact_block
+                and oracle_exact_block == candidate_exact_block
+                and oracle_exact_block_size == candidate_exact_block_size
+            ):
+                return "direct call target entry blocks have identical exact block signatures"
+            oracle_layout_block = oracle_target.get("layout_block_signature_sha256")
+            candidate_layout_block = candidate_target.get("layout_block_signature_sha256")
+            oracle_layout_block_size = oracle_target.get("layout_block_signature_size")
+            candidate_layout_block_size = candidate_target.get("layout_block_signature_size")
+            if (
+                oracle_layout_block
+                and oracle_layout_block == candidate_layout_block
+                and oracle_layout_block_size == candidate_layout_block_size
+            ):
+                return "direct call target entry blocks have identical layout-normalized block signatures"
+            oracle_signature = oracle_target.get("signature_sha256")
+            candidate_signature = candidate_target.get("signature_sha256")
+            oracle_signature_size = oracle_target.get("signature_size")
+            candidate_signature_size = candidate_target.get("signature_size")
+            if (
+                oracle_signature
+                and oracle_signature == candidate_signature
+                and oracle_signature_size == candidate_signature_size
+            ):
+                return "direct call targets have identical binary-local signatures"
+            oracle_normalized_signature = oracle_target.get("normalized_signature_sha256")
+            candidate_normalized_signature = candidate_target.get("normalized_signature_sha256")
+            oracle_normalized_size = oracle_target.get("normalized_signature_size")
+            candidate_normalized_size = candidate_target.get("normalized_signature_size")
+            if (
+                oracle_normalized_signature
+                and oracle_normalized_signature == candidate_normalized_signature
+                and oracle_normalized_size == candidate_normalized_size
+                and (_is_signature_only_target(oracle_target) or _is_signature_only_target(candidate_target))
+            ):
+                return "direct call targets have identical normalized binary-local signatures"
             oracle_semantic = oracle_target.get("semantic_ssa_id")
             candidate_semantic = candidate_target.get("semantic_ssa_id")
             if oracle_semantic and oracle_semantic == candidate_semantic:
                 return "direct call target entry blocks have identical compact SSA"
     return None
+
+
+def _call_target_layout_signature_equivalence_reason(
+    oracle_targets: list[dict[str, Any]], candidate_targets: list[dict[str, Any]]
+) -> str | None:
+    for oracle_target in oracle_targets:
+        for candidate_target in candidate_targets:
+            oracle_layout_signature = oracle_target.get("layout_signature_sha256")
+            candidate_layout_signature = candidate_target.get("layout_signature_sha256")
+            oracle_layout_size = oracle_target.get("layout_signature_size")
+            candidate_layout_size = candidate_target.get("layout_signature_size")
+            if (
+                oracle_layout_signature
+                and oracle_layout_signature == candidate_layout_signature
+                and oracle_layout_size == candidate_layout_size
+            ):
+                return "direct call targets have identical layout-normalized binary-local signatures"
+    return None
+
+
+def _is_signature_only_target(target: dict[str, Any]) -> bool:
+    return str(target.get("id") or "").startswith("library-signature:")
+
+
+def _has_signature_only_target_pair(
+    oracle_targets: list[dict[str, Any]], candidate_targets: list[dict[str, Any]]
+) -> bool:
+    return any(_is_signature_only_target(target) for target in [*oracle_targets, *candidate_targets])
 
 
 def _mapped_call_target(
@@ -5486,11 +8415,34 @@ def _prepare_call_normalized_functions(
     if equivalent:
         oracle_copy, oracle_return = _normalize_call_return_store(oracle_copy)
         candidate_copy, candidate_return = _normalize_call_return_store(candidate_copy)
+        oracle_copy, oracle_stack = _normalize_call_stack_store_addresses(oracle_copy)
+        candidate_copy, candidate_stack = _normalize_call_stack_store_addresses(candidate_copy)
         normalized["normalizations"] = [
             {"side": "oracle", **oracle_return},
             {"side": "candidate", **candidate_return},
+            {"side": "oracle", **oracle_stack},
+            {"side": "candidate", **candidate_stack},
         ]
+    oracle_copy = _drop_call_boundary_volatile_outputs(oracle_copy)
+    candidate_copy = _drop_call_boundary_volatile_outputs(candidate_copy)
     return oracle_copy, candidate_copy, normalized
+
+
+def _drop_call_boundary_volatile_outputs(function: dict[str, Any]) -> dict[str, Any]:
+    source = function.get("source", {}) if isinstance(function.get("source"), dict) else {}
+    if source.get("jumpkind") != "Ijk_Call":
+        return function
+    outputs = function.get("outputs") if isinstance(function.get("outputs"), dict) else None
+    if not outputs:
+        return function
+    removable = {"ax", "dx", "sp"}
+    if not any(key in outputs for key in removable):
+        return function
+    copied = copy.deepcopy(function)
+    copied_outputs = copied.get("outputs") if isinstance(copied.get("outputs"), dict) else {}
+    for key in removable:
+        copied_outputs.pop(key, None)
+    return copied
 
 
 def _prepare_layout_normalized_functions(
@@ -5501,6 +8453,7 @@ def _prepare_layout_normalized_functions(
     if not pairs:
         return oracle_function, candidate_function, None
     candidate_map: dict[int, int] = {}
+    candidate_reasons: dict[int, str] = {}
     notes: list[dict[str, Any]] = []
     for pair in pairs:
         oracle_value = int(pair["oracle"])
@@ -5509,6 +8462,7 @@ def _prepare_layout_normalized_functions(
             if candidate_key in candidate_map and candidate_map[candidate_key] != oracle_replacement:
                 continue
             candidate_map[candidate_key] = oracle_replacement
+            candidate_reasons[candidate_key] = str(pair.get("reason") or "")
         notes.append(
             {
                 "oracle": normalize_hex(oracle_value, width=4),
@@ -5520,6 +8474,7 @@ def _prepare_layout_normalized_functions(
         return oracle_function, candidate_function, None
     candidate_copy = dict(candidate_function)
     candidate_copy["_constant_normalization"] = candidate_map
+    candidate_copy["_constant_normalization_reasons"] = candidate_reasons
     return oracle_function, candidate_copy, {"kind": "layout_constants", "pairs": notes}
 
 
@@ -5535,6 +8490,7 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
     data_segment_immediate_indexes = _data_segment_immediate_indexes(oracle_instructions, candidate_instructions)
     pairs: list[dict[str, Any]] = []
     memory_pairs: list[tuple[int, int]] = []
+    absolute_memory_pairs: list[dict[str, Any]] = []
     deferred: list[dict[str, Any]] = []
     pointer_arithmetic_by_index = _pointer_arithmetic_evidence_by_index(oracle_instructions, candidate_instructions)
     for instruction_index, (oracle, candidate) in enumerate(zip(oracle_instructions, candidate_instructions)):
@@ -5546,7 +8502,12 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
             pointer_arithmetic_regs=pointer_arithmetic_by_index.get(instruction_index, set()),
         )
         for pair in instruction_pairs:
-            if pair.get("reason") in {"memory_operand", "absolute_memory_operand"}:
+            if pair.get("reason") == "absolute_memory_operand":
+                absolute_memory_pairs.append(pair)
+            elif pair.get("reason") == "code_segment_memory_operand":
+                memory_pairs.append((int(pair["oracle"]), int(pair["candidate"])))
+                pairs.append(pair)
+            elif pair.get("reason") == "memory_operand":
                 memory_pairs.append((int(pair["oracle"]), int(pair["candidate"])))
                 pairs.append(pair)
             elif pair.get("reason") in {
@@ -5554,10 +8515,18 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
                 "pointer_arithmetic",
                 "ivt_segment",
                 "data_segment_immediate",
+                "control_target",
+                "control_fallthrough",
+                "pointer_bound",
             }:
                 pairs.append(pair)
             else:
                 deferred.append(pair)
+    absolute_deltas = {((int(pair["candidate"]) - int(pair["oracle"])) & 0xFFFF) for pair in absolute_memory_pairs}
+    if len(absolute_memory_pairs) == 1 or len(absolute_deltas) == 1:
+        for pair in absolute_memory_pairs:
+            memory_pairs.append((int(pair["oracle"]), int(pair["candidate"])))
+            pairs.append(pair)
     deltas = {((candidate - oracle) & 0xFFFF) for oracle, candidate in memory_pairs}
     for pair in deferred:
         oracle = int(pair["oracle"])
@@ -5581,8 +8550,65 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
             pair = dict(pair)
             pair["reason"] = "same_delta_constant_set"
             pairs.append(pair)
+    pairs.extend(_call_argument_immediate_layout_pairs(oracle_instructions, candidate_instructions))
     pairs.extend(_control_transfer_layout_constant_pairs(oracle_function, candidate_function))
     return _unique_layout_pairs(pairs)
+
+
+def _mov_reg_imm(instruction: dict[str, Any]) -> tuple[str | None, int | None]:
+    op_str = str(instruction.get("op_str", "")).strip().lower()
+    if "," not in op_str:
+        return None, None
+    lhs, rhs = (part.strip() for part in op_str.split(",", 1))
+    if not lhs or not re.fullmatch(r"[a-z][a-z0-9]*", lhs):
+        return None, None
+    try:
+        return lhs, int(rhs, 0)
+    except ValueError:
+        return None, None
+
+
+def _pushes_register(instruction: dict[str, Any], register: str) -> bool:
+    return str(instruction.get("mnemonic", "")).lower() == "push" and str(
+        instruction.get("op_str", "")
+    ).strip().lower() == register
+
+
+def _call_argument_immediate_layout_pairs(
+    oracle_instructions: list[dict[str, Any]], candidate_instructions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not any(str(item.get("mnemonic", "")).lower() in {"call", "lcall"} for item in oracle_instructions):
+        return []
+    if not any(str(item.get("mnemonic", "")).lower() in {"call", "lcall"} for item in candidate_instructions):
+        return []
+    pairs: list[dict[str, Any]] = []
+    for index in range(0, min(len(oracle_instructions), len(candidate_instructions)) - 1):
+        oracle = oracle_instructions[index]
+        candidate = candidate_instructions[index]
+        oracle_next = oracle_instructions[index + 1]
+        candidate_next = candidate_instructions[index + 1]
+        if str(oracle.get("mnemonic", "")).lower() != "mov" or str(candidate.get("mnemonic", "")).lower() != "mov":
+            continue
+        oracle_reg, oracle_value = _mov_reg_imm(oracle)
+        candidate_reg, candidate_value = _mov_reg_imm(candidate)
+        if oracle_reg is None or oracle_reg != candidate_reg or oracle_value is None or candidate_value is None:
+            continue
+        if (oracle_value & 0xFFFF) == (candidate_value & 0xFFFF):
+            continue
+        if not _looks_layout_constant(oracle_value & 0xFFFF, candidate_value & 0xFFFF):
+            continue
+        if not _pushes_register(oracle_next, oracle_reg) or not _pushes_register(candidate_next, candidate_reg):
+            continue
+        pairs.append(
+            {
+                "oracle": oracle_value & 0xFFFF,
+                "candidate": candidate_value & 0xFFFF,
+                "oracle_raw": oracle_value,
+                "candidate_raw": candidate_value,
+                "reason": "call_argument_immediate",
+            }
+        )
+    return pairs
 
 
 def _control_transfer_layout_constant_pairs(
@@ -5590,14 +8616,80 @@ def _control_transfer_layout_constant_pairs(
 ) -> list[dict[str, Any]]:
     oracle_successors = _successor_low16_by_delta(oracle_function)
     candidate_successors = _successor_low16_by_delta(candidate_function)
+    oracle_fallthrough_delta = _control_fallthrough_delta(oracle_function)
+    candidate_fallthrough_delta = _control_fallthrough_delta(candidate_function)
     pairs: list[dict[str, Any]] = []
     for delta in sorted(set(oracle_successors) & set(candidate_successors)):
+        if (
+            oracle_fallthrough_delta is not None
+            and candidate_fallthrough_delta is not None
+            and delta == oracle_fallthrough_delta
+            and delta == candidate_fallthrough_delta
+        ):
+            continue
         oracle_value = oracle_successors[delta]
         candidate_value = candidate_successors[delta]
         if oracle_value == candidate_value:
             continue
         pairs.append({"oracle": oracle_value, "candidate": candidate_value, "reason": "control_target"})
+    oracle_fallthrough = _control_fallthrough_low16(oracle_function)
+    candidate_fallthrough = _control_fallthrough_low16(candidate_function)
+    if (
+        oracle_fallthrough is not None
+        and candidate_fallthrough is not None
+        and oracle_fallthrough != candidate_fallthrough
+    ):
+        pairs.append(
+            {
+                "oracle": oracle_fallthrough,
+                "candidate": candidate_fallthrough,
+                "reason": "control_fallthrough",
+            }
+        )
     return pairs
+
+
+def _control_fallthrough_low16(function: dict[str, Any]) -> int | None:
+    fallthrough = _control_fallthrough_linear(function)
+    return None if fallthrough is None else fallthrough & 0xFFFF
+
+
+def _control_fallthrough_delta(function: dict[str, Any]) -> int | None:
+    fallthrough = _control_fallthrough_linear(function)
+    if fallthrough is None:
+        return None
+    function_entry = function.get("function_entry", {}) if isinstance(function.get("function_entry"), dict) else {}
+    function_linear = _optional_int(function_entry.get("linear"))
+    if function_linear is None:
+        return None
+    return (fallthrough - function_linear) & 0xFFFF
+
+
+def _control_fallthrough_linear(function: dict[str, Any]) -> int | None:
+    source = function.get("source", {}) if isinstance(function.get("source"), dict) else {}
+    transfer = source.get("transfer") if isinstance(source.get("transfer"), dict) else {}
+    if transfer.get("summary") == "repeat_string":
+        successors = transfer.get("successors") if isinstance(transfer.get("successors"), list) else []
+        linears = [
+            _optional_int(successor.get("linear"))
+            for successor in successors
+            if isinstance(successor, dict) and _optional_int(successor.get("linear")) is not None
+        ]
+        if len(linears) == 1:
+            return linears[0]
+    instructions = _ssa_instructions(function)
+    if not instructions:
+        return None
+    last = instructions[-1]
+    mnemonic = str(last.get("mnemonic", "")).lower()
+    if mnemonic not in CONDITIONAL_JUMP_MNEMONICS:
+        return None
+    address = last.get("address") if isinstance(last.get("address"), dict) else {}
+    linear = _optional_int(address.get("linear"))
+    size = _optional_int(last.get("size"))
+    if linear is None or size is None:
+        return None
+    return linear + size
 
 
 def _successor_low16_by_delta(function: dict[str, Any]) -> dict[int, int]:
@@ -5664,7 +8756,7 @@ def _instruction_layout_constant_pairs(
             data_segment_immediate=data_segment_immediate,
             pointer_arithmetic_regs=pointer_arithmetic_regs,
         )
-        if reason not in {"absolute_memory_operand", "data_segment_immediate"} and not _looks_layout_constant(
+        if reason not in {"absolute_memory_operand", "data_segment_immediate", "control_target"} and not _looks_layout_constant(
             oracle_value, candidate_value
         ):
             continue
@@ -5729,6 +8821,10 @@ def _layout_pair_reason(
     if _number_is_inside_memory_operand(oracle_op, index) and _number_is_inside_memory_operand(candidate_op, index):
         if _memory_operand_has_register(oracle_op) or _memory_operand_has_register(candidate_op):
             return "memory_operand"
+        if _memory_operand_has_explicit_segment(oracle_op, "cs") and _memory_operand_has_explicit_segment(
+            candidate_op, "cs"
+        ):
+            return "code_segment_memory_operand"
         return "absolute_memory_operand"
     oracle_first = oracle_op.split(",", 1)[0].strip()
     candidate_first = candidate_op.split(",", 1)[0].strip()
@@ -5741,12 +8837,16 @@ def _layout_pair_reason(
         return "data_segment_immediate"
     if mnemonic in {"add", "sub"} and oracle_first == candidate_first and oracle_first in pointer_arithmetic_regs:
         return "pointer_arithmetic"
+    if mnemonic == "cmp" and oracle_first == candidate_first and oracle_first in {"si", "di", "bx", "bp"}:
+        return "pointer_bound"
     if mnemonic in {"mov", "lea"} and oracle_first == candidate_first and oracle_first in {"si", "di", "bx", "bp"}:
         return "pointer_immediate"
     if mnemonic == "mov" and has_ivt_segment_store and oracle_first == candidate_first and oracle_first == "ax":
         return "ivt_segment"
     if _is_ivt_segment_store_operand(oracle_op) and _is_ivt_segment_store_operand(candidate_op):
         return "ivt_segment"
+    if mnemonic in (CONTROL_MNEMONICS - {"call", "lcall", "int"}):
+        return "control_target"
     return None
 
 
@@ -5807,6 +8907,11 @@ def _memory_operand_has_register(op_str: str) -> bool:
         if _register_used_inside_memory_operand(op_str, reg):
             return True
     return False
+
+
+def _memory_operand_has_explicit_segment(op_str: str, segment: str) -> bool:
+    compact = re.sub(r"\s+", "", op_str.lower())
+    return f"{segment.lower()}:[" in compact
 
 
 def _pointer_arithmetic_evidence_by_index(
@@ -6106,6 +9211,72 @@ def _normalize_call_return_store_chain(
     }
 
 
+def _normalize_call_stack_store_addresses(function: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    outputs = function.get("outputs", {}) if isinstance(function.get("outputs"), dict) else {}
+    memory = outputs.get("memory") if isinstance(outputs.get("memory"), dict) else None
+    ref = memory.get("ref") if isinstance(memory, dict) else None
+    if not isinstance(ref, str):
+        return function, {"applied": False, "reason": "no memory output store chain"}
+    assignments = list(function.get("assignments", []) or [])
+    by_id = {str(item["id"]): item for item in assignments if isinstance(item, dict) and "id" in item}
+    current_ref: str | None = ref
+    normalized = list(assignments)
+    normalized_indexes: list[int] = []
+    slot = 0
+    while current_ref:
+        index = next(
+            (idx for idx, item in enumerate(normalized) if isinstance(item, dict) and item.get("id") == current_ref),
+            None,
+        )
+        if index is None:
+            break
+        store = normalized[index]
+        if store.get("op") not in {"storele", "storebe"}:
+            break
+        args = list(store.get("args", []) or [])
+        if len(args) < 3:
+            break
+        if isinstance(args[1], dict) and _term_depends_on_input(args[1], "ss", by_id):
+            rewritten = dict(store)
+            args[1] = {"op": "const", "value": normalize_hex(0xF0000000 + slot, width=8), "width": 32}
+            rewritten["args"] = args
+            normalized[index] = rewritten
+            normalized_indexes.append(index)
+            slot += 1
+        previous = args[0]
+        current_ref = previous.get("ref") if isinstance(previous, dict) else None
+    if not normalized_indexes:
+        return function, {"applied": False, "reason": "no stack-segment store addresses found"}
+    copied = dict(function)
+    copied["assignments"] = normalized
+    return copied, {
+        "applied": True,
+        "reason": "normalized call-boundary stack store addresses",
+        "store_count": len(normalized_indexes),
+    }
+
+
+def _term_depends_on_input(
+    term: dict[str, Any], name: str, assignments: dict[str, dict[str, Any]], seen: set[str] | None = None
+) -> bool:
+    if seen is None:
+        seen = set()
+    if term.get("op") == "input" and term.get("name") == name:
+        return True
+    ref = term.get("ref")
+    if isinstance(ref, str):
+        if ref in seen:
+            return False
+        seen.add(ref)
+        assignment = assignments.get(ref)
+        if isinstance(assignment, dict):
+            return _term_depends_on_input(assignment, name, assignments, seen)
+    for arg in term.get("args", []) or []:
+        if isinstance(arg, dict) and _term_depends_on_input(arg, name, assignments, seen):
+            return True
+    return False
+
+
 def _call_return_ip_from_instruction(function: dict[str, Any]) -> int | None:
     instructions = _ssa_instructions(function)
     if not instructions:
@@ -6365,6 +9536,7 @@ def _z3_term(
     z3: Any,
     assignments: dict[str, dict[str, Any]] | None = None,
     cache: dict[str, Any] | None = None,
+    output_name: str | None = None,
 ) -> Any:
     if "ref" in term:
         if assignments is None:
@@ -6376,7 +9548,13 @@ def _z3_term(
         if cache is None:
             cache = {}
         return _z3_assignment(
-            str(term["ref"]), assignments=assignments, document=document, inputs=inputs, z3=z3, cache=cache
+            str(term["ref"]),
+            assignments=assignments,
+            document=document,
+            inputs=inputs,
+            z3=z3,
+            cache=cache,
+            output_name=output_name,
         )
     op = term.get("op")
     width = int(term.get("width", 16))
@@ -6386,7 +9564,7 @@ def _z3_term(
         return inputs[str(term["name"])][0]
     if op == "const":
         value = parse_int(term.get("value"), field="ssa.const")
-        value = _normalized_constant_value(value, width=width, document=document)
+        value = _normalized_constant_value(value, width=width, document=document, output_name=output_name)
         return z3.BitVecVal(value, width)
     raise DosUnitError(f"unsupported SSA term: {term}")
 
@@ -6399,6 +9577,7 @@ def _z3_assignment(
     inputs: dict[str, tuple[Any, int]],
     z3: Any,
     cache: dict[str, Any],
+    output_name: str | None = None,
 ) -> Any:
     if ident in cache:
         return cache[ident]
@@ -6413,6 +9592,7 @@ def _z3_assignment(
             z3=z3,
             assignments=assignments,
             cache=cache,
+            output_name=output_name,
         )
         for arg in item.get("args", []) or []
     ]
@@ -6422,6 +9602,8 @@ def _z3_assignment(
 
 
 def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
+    if op.startswith("summary_"):
+        return _z3_uninterpreted_summary(op, width, args, z3)
     if op == "add":
         left, right, op_width = _align_z3_pair(args[0], args[1], width, signed=False, z3=z3)
         return _resize_z3(left + right, op_width, width, signed=False, z3=z3)
@@ -6545,6 +9727,17 @@ def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
     raise DosUnitError(f"unsupported SSA op: {op}")
 
 
+def _z3_uninterpreted_summary(op: str, width: int, args: list[Any], z3: Any) -> Any:
+    domain = [arg.sort() for arg in args]
+    if width == 0:
+        range_sort = z3.ArraySort(z3.BitVecSort(32), z3.BitVecSort(8))
+    else:
+        range_sort = z3.BitVecSort(width)
+    name = re.sub(r"[^A-Za-z0-9_]", "_", op)
+    fn = z3.Function(name, *domain, range_sort)
+    return fn(*args)
+
+
 def _align_z3_pair(left: Any, right: Any, width: int, *, signed: bool, z3: Any) -> tuple[Any, Any, int]:
     target_width = max(1, int(width), int(left.size()), int(right.size()))
     return (
@@ -6597,13 +9790,26 @@ def _align_z3_widths(left: Any, right: Any, z3: Any) -> tuple[Any, Any]:
     )
 
 
-def _normalized_constant_value(value: int, *, width: int, document: dict[str, Any]) -> int:
+def _normalized_constant_value(
+    value: int, *, width: int, document: dict[str, Any], output_name: str | None = None
+) -> int:
     normalization = document.get("_constant_normalization")
     if not isinstance(normalization, dict):
         return value
+    reasons = document.get("_constant_normalization_reasons")
+    if not isinstance(reasons, dict):
+        reasons = {}
     mask = _mask(width)
     key = value & mask
     if key not in normalization:
+        if width > 16:
+            low_key = key & 0xFFFF
+            if low_key in normalization:
+                if reasons.get(low_key) in {"control_target", "control_fallthrough"} and output_name != "ip":
+                    return value
+                return ((key & ~0xFFFF) | (int(normalization[low_key]) & 0xFFFF)) & mask
+        return value
+    if reasons.get(key) in {"control_target", "control_fallthrough"} and output_name != "ip":
         return value
     return int(normalization[key]) & mask
 
@@ -6616,25 +9822,37 @@ def _coerce_width(expr: SsaExpr, width: int) -> SsaExpr:
     return SsaExpr("trunc", width, (expr,))
 
 
-def _expr_failure(expr: SsaExpr) -> LowerFailure | None:
+def _expr_failure(expr: SsaExpr, seen: set[int] | None = None) -> LowerFailure | None:
+    if seen is None:
+        seen = set()
+    ident = id(expr)
+    if ident in seen:
+        return None
+    seen.add(ident)
     if expr.op == "unsupported":
         if expr.name and "|" in expr.name:
             reason, message = expr.name.split("|", 1)
             return LowerFailure(reason, message)
         return LowerFailure("unsupported_ir", expr.name or "unsupported expression reached output slice")
     for arg in expr.args:
-        failure = _expr_failure(arg)
+        failure = _expr_failure(arg, seen)
         if failure is not None:
             return failure
     return None
 
 
-def _collect_inputs(expressions: Any) -> set[str]:
+def _collect_inputs(expressions: Any, seen: set[int] | None = None) -> set[str]:
+    if seen is None:
+        seen = set()
     found: set[str] = set()
     for expr in expressions:
+        ident = id(expr)
+        if ident in seen:
+            continue
+        seen.add(ident)
         if expr.op in {"input", "mem_input"} and expr.name:
             found.add(expr.name)
-        found.update(_collect_inputs(expr.args))
+        found.update(_collect_inputs(expr.args, seen))
     return found
 
 
@@ -6642,8 +9860,8 @@ def _input_items(inputs: set[str]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     reg_widths = {name: width for _offset, (name, width) in REG_BY_OFFSET.items()}
     for name in sorted(inputs):
-        if name == "mem":
-            items.append({"kind": "memory", "name": "mem", "addr_width": 32, "value_width": 8})
+        if name in {"mem", "io"}:
+            items.append({"kind": "memory", "name": name, "addr_width": 32, "value_width": 8})
             continue
         width = reg_widths.get(name)
         if width is not None:
@@ -6753,6 +9971,7 @@ def _lift_vex_block_cached(
     opt_level: int,
     cache_document: dict[str, Any] | None,
     cache_stats: dict[str, int],
+    max_lift_block_ms: int,
 ) -> LiftedBlock:
     del exe_path
     key = _vex_cache_key(start=start, size=size, opt_level=opt_level)
@@ -6771,7 +9990,8 @@ def _lift_vex_block_cached(
 
     if cache_document is not None:
         cache_stats["misses"] += 1
-    block = project.factory.block(start, size=size, opt_level=opt_level)
+    with _block_lift_timeout(max_lift_block_ms, start=start):
+        block = project.factory.block(start, size=size, opt_level=opt_level)
     lifted = LiftedBlock(
         irsb=block.vex,
         instructions=[_instruction_record(item.insn) for item in block.capstone.insns],
@@ -6789,6 +10009,47 @@ def _lift_vex_block_cached(
         cache_document["_dirty"] = True
         cache_stats["writes"] += 1
     return lifted
+
+
+class _BlockLiftTimeout:
+    def __init__(self, timeout_ms: int, *, message: str) -> None:
+        self.timeout_ms = max(0, int(timeout_ms))
+        self.message = message
+        self.previous_handler: Any = None
+        self.previous_timer: tuple[float, float] | None = None
+        self.enabled = False
+
+    def __enter__(self) -> "_BlockLiftTimeout":
+        if self.timeout_ms <= 0 or not hasattr(signal, "setitimer"):
+            return self
+        self.previous_handler = signal.getsignal(signal.SIGALRM)
+        self.previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        signal.signal(signal.SIGALRM, self._handle_timeout)
+        signal.setitimer(signal.ITIMER_REAL, self.timeout_ms / 1000.0)
+        self.enabled = True
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        if self.enabled:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            if self.previous_handler is not None:
+                signal.signal(signal.SIGALRM, self.previous_handler)
+            if self.previous_timer is not None:
+                delay, interval = self.previous_timer
+                if delay > 0 or interval > 0:
+                    signal.setitimer(signal.ITIMER_REAL, delay, interval)
+        return False
+
+    def _handle_timeout(self, _signum: int, _frame: Any) -> None:
+        raise TimeoutError(self.message)
+
+
+def _block_lift_timeout(timeout_ms: int, *, start: int) -> _BlockLiftTimeout:
+    return _timeout_alarm(timeout_ms, message=f"VEX lift exceeded block timeout at {normalize_hex(start)}")
+
+
+def _timeout_alarm(timeout_ms: int, *, message: str) -> _BlockLiftTimeout:
+    return _BlockLiftTimeout(timeout_ms, message=message)
 
 
 def _functions_by_name_and_ordinal(functions: list[dict[str, Any]]) -> dict[tuple[str, int], dict[str, Any]]:
@@ -6854,6 +10115,166 @@ def _functions_by_name_and_delta(functions: list[dict[str, Any]]) -> dict[tuple[
         key = function_name or function_id
         indexed.setdefault((key, delta), function)
     return indexed
+
+
+def _ssa_block_signature(function: dict[str, Any]) -> tuple[int | None, ...] | None:
+    source = function.get("source") if isinstance(function.get("source"), dict) else {}
+    instructions = source.get("instructions") if isinstance(source.get("instructions"), list) else []
+    instructions = _strip_leading_nop_instructions(instructions)
+    blob = _machine_code_bytes(instructions)
+    entry = function.get("entry") if isinstance(function.get("entry"), dict) else {}
+    linear = _optional_int(entry.get("linear"))
+    if linear is not None:
+        linear += _leading_nop_size(source.get("instructions") if isinstance(source.get("instructions"), list) else [])
+    if blob is None or linear is None:
+        return None
+    return _normalized_binary_signature_pattern(blob, linear)
+
+
+def _ssa_layout_block_signature(function: dict[str, Any]) -> tuple[int | None, ...] | None:
+    source = function.get("source") if isinstance(function.get("source"), dict) else {}
+    instructions = source.get("instructions") if isinstance(source.get("instructions"), list) else []
+    instructions = _strip_leading_nop_instructions(instructions)
+    blob = _machine_code_bytes(instructions)
+    entry = function.get("entry") if isinstance(function.get("entry"), dict) else {}
+    linear = _optional_int(entry.get("linear"))
+    if linear is not None:
+        linear += _leading_nop_size(source.get("instructions") if isinstance(source.get("instructions"), list) else [])
+    if blob is None or linear is None:
+        return None
+    return _layout_binary_signature_pattern(blob, linear)
+
+
+def _ssa_exact_block_signature(function: dict[str, Any]) -> tuple[int, ...] | None:
+    source = function.get("source") if isinstance(function.get("source"), dict) else {}
+    instructions = source.get("instructions") if isinstance(source.get("instructions"), list) else []
+    instructions = _strip_leading_nop_instructions(instructions)
+    blob = _machine_code_bytes(instructions)
+    return None if blob is None else tuple(blob)
+
+
+def _block_signature_digest(signature: tuple[int | None, ...] | None) -> str | None:
+    if signature is None:
+        return None
+    text = "".join("??" if byte is None else f"{byte:02x}" for byte in signature)
+    return hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
+def _strip_leading_nop_instructions(instructions: list[Any]) -> list[Any]:
+    index = 0
+    while index < len(instructions):
+        instruction = instructions[index]
+        if not isinstance(instruction, dict) or str(instruction.get("mnemonic") or "").lower() != "nop":
+            break
+        index += 1
+    return instructions[index:]
+
+
+def _leading_nop_size(instructions: list[Any]) -> int:
+    size = 0
+    for instruction in instructions:
+        if not isinstance(instruction, dict) or str(instruction.get("mnemonic") or "").lower() != "nop":
+            break
+        size += int(instruction.get("size") or 0)
+    return size
+
+
+def _functions_by_name_and_exact_block_signature(
+    functions: list[dict[str, Any]],
+) -> dict[tuple[str, tuple[int, ...]], dict[str, Any]]:
+    indexed: dict[tuple[str, tuple[int, ...]], dict[str, Any] | None] = {}
+    for function in functions:
+        if not isinstance(function, dict):
+            continue
+        signature = _ssa_exact_block_signature(function)
+        if signature is None:
+            continue
+        info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
+        function_id = str(info.get("id", ""))
+        function_name = str(info.get("name", function_id))
+        key = (function_name or function_id, signature)
+        indexed[key] = function if key not in indexed else None
+    return {key: value for key, value in indexed.items() if value is not None}
+
+
+def _functions_by_exact_block_signature(functions: list[dict[str, Any]]) -> dict[tuple[int, ...], dict[str, Any]]:
+    indexed: dict[tuple[int, ...], dict[str, Any] | None] = {}
+    for function in functions:
+        if not isinstance(function, dict):
+            continue
+        signature = _ssa_exact_block_signature(function)
+        if signature is None:
+            continue
+        indexed[signature] = function if signature not in indexed else None
+    return {key: value for key, value in indexed.items() if value is not None}
+
+
+def _functions_by_id_and_exact_block_signature(
+    functions: list[dict[str, Any]],
+) -> dict[tuple[str, tuple[int, ...]], dict[str, Any]]:
+    indexed: dict[tuple[str, tuple[int, ...]], dict[str, Any] | None] = {}
+    for function in functions:
+        if not isinstance(function, dict):
+            continue
+        signature = _ssa_exact_block_signature(function)
+        if signature is None:
+            continue
+        info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
+        function_id = str(info.get("id", ""))
+        if not function_id:
+            continue
+        key = (function_id, signature)
+        indexed[key] = function if key not in indexed else None
+    return {key: value for key, value in indexed.items() if value is not None}
+
+
+def _functions_by_block_signature(functions: list[dict[str, Any]]) -> dict[tuple[int | None, ...], dict[str, Any]]:
+    indexed: dict[tuple[int | None, ...], dict[str, Any] | None] = {}
+    for function in functions:
+        if not isinstance(function, dict):
+            continue
+        signature = _ssa_block_signature(function)
+        if signature is None:
+            continue
+        indexed[signature] = function if signature not in indexed else None
+    return {key: value for key, value in indexed.items() if value is not None}
+
+
+def _functions_by_name_and_block_signature(
+    functions: list[dict[str, Any]],
+) -> dict[tuple[str, tuple[int | None, ...]], dict[str, Any]]:
+    indexed: dict[tuple[str, tuple[int | None, ...]], dict[str, Any] | None] = {}
+    for function in functions:
+        if not isinstance(function, dict):
+            continue
+        signature = _ssa_block_signature(function)
+        if signature is None:
+            continue
+        info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
+        function_id = str(info.get("id", ""))
+        function_name = str(info.get("name", function_id))
+        key = (function_name or function_id, signature)
+        indexed[key] = function if key not in indexed else None
+    return {key: value for key, value in indexed.items() if value is not None}
+
+
+def _functions_by_id_and_block_signature(
+    functions: list[dict[str, Any]],
+) -> dict[tuple[str, tuple[int | None, ...]], dict[str, Any]]:
+    indexed: dict[tuple[str, tuple[int | None, ...]], dict[str, Any] | None] = {}
+    for function in functions:
+        if not isinstance(function, dict):
+            continue
+        signature = _ssa_block_signature(function)
+        if signature is None:
+            continue
+        info = function.get("function", {}) if isinstance(function.get("function"), dict) else {}
+        function_id = str(info.get("id", ""))
+        if not function_id:
+            continue
+        key = (function_id, signature)
+        indexed[key] = function if key not in indexed else None
+    return {key: value for key, value in indexed.items() if value is not None}
 
 
 def _functions_by_id_and_part(functions: list[dict[str, Any]]) -> dict[tuple[str, int], dict[str, Any]]:
@@ -6963,6 +10384,9 @@ def _instruction_text(insn: Any, *, function_base: int) -> dict[str, Any]:
 
 
 def _transfer_info(irsb: Any, instructions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    nonreturning = _nonreturning_interrupt_transfer(instructions)
+    if nonreturning is not None:
+        return nonreturning
     jumpkind = str(getattr(irsb, "jumpkind", ""))
     if jumpkind == "Ijk_Call":
         info: dict[str, Any] = {"kind": "direct_call", "jumpkind": jumpkind}
@@ -6999,9 +10423,12 @@ def _transfer_info(irsb: Any, instructions: list[dict[str, Any]]) -> dict[str, A
 
 
 def _transfer_info_from_instructions(source: dict[str, Any]) -> dict[str, Any] | None:
+    instructions = [item for item in source.get("instructions", []) or [] if isinstance(item, dict)]
+    nonreturning = _nonreturning_interrupt_transfer(instructions)
+    if nonreturning is not None:
+        return nonreturning
     if source.get("jumpkind") != "Ijk_Call":
         return None
-    instructions = [item for item in source.get("instructions", []) or [] if isinstance(item, dict)]
     target = _direct_call_target_from_instructions(source)
     fallthrough = _call_fallthrough_linear_from_instructions(instructions)
     if target is None and fallthrough is None:
@@ -7018,6 +10445,51 @@ def _transfer_info_from_instructions(source: dict[str, Any]) -> dict[str, Any] |
             "low16": normalize_hex(fallthrough & 0xFFFF, width=4),
         }
     return info
+
+
+def _nonreturning_interrupt_transfer(instructions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not _is_dos_process_terminate_interrupt(instructions):
+        return None
+    return {
+        "kind": "nonreturning_interrupt",
+        "jumpkind": "Ijk_Call",
+        "interrupt": "0x21",
+        "dos_function": "0x4c",
+        "effect": "process_terminate",
+    }
+
+
+def _is_dos_process_terminate_interrupt(instructions: list[dict[str, Any]]) -> bool:
+    if not instructions:
+        return False
+    last = instructions[-1]
+    if str(last.get("mnemonic", "")).lower() != "int":
+        return False
+    operand = str(last.get("op_str") or _operand_from_disassembly(last)).strip().lower()
+    if _optional_int(operand) != 0x21:
+        return False
+    for instruction in reversed(instructions[:-1]):
+        mnemonic = str(instruction.get("mnemonic", "")).lower()
+        operands = _instruction_operands(instruction)
+        if not operands:
+            continue
+        dest = operands[0].lower()
+        if mnemonic == "mov" and len(operands) >= 2:
+            value = _optional_int(operands[1])
+            if dest == "ah":
+                return value == 0x4C
+            if dest == "ax" and value is not None:
+                return ((value >> 8) & 0xFF) == 0x4C
+        if dest in {"ah", "ax"}:
+            return False
+    return False
+
+
+def _instruction_operands(instruction: dict[str, Any]) -> list[str]:
+    operand = str(instruction.get("op_str") or _operand_from_disassembly(instruction)).strip()
+    if not operand:
+        return []
+    return [part.strip() for part in operand.split(",")]
 
 
 def _call_fallthrough_linear_from_instructions(instructions: list[dict[str, Any]]) -> int | None:
@@ -7067,7 +10539,12 @@ def _ssa_block_successors(
     instructions: list[dict[str, Any]],
     *,
     follow_call_fallthrough: bool = False,
+    transfer: dict[str, Any] | None = None,
 ) -> list[int]:
+    if isinstance(transfer, dict) and transfer.get("kind") == "nonreturning_interrupt":
+        return []
+    if _is_dos_process_terminate_interrupt(instructions):
+        return []
     jumpkind = str(getattr(irsb, "jumpkind", ""))
     if jumpkind == "Ijk_Call":
         if not follow_call_fallthrough:
@@ -7078,8 +10555,9 @@ def _ssa_block_successors(
         return []
     if jumpkind != "Ijk_Boring":
         return []
-    if not _last_instruction_is_control(instructions):
-        return []
+    if not _last_instruction_is_control(instructions) and not _last_instruction_is_repeat_string(instructions):
+        fallthrough = _boring_fallthrough_successor(irsb, instructions)
+        return [] if fallthrough is None else [fallthrough]
     reference_linear = _reference_linear_from_instructions(instructions)
     successors: list[int] = []
     successors.extend(_direct_instruction_successors(instructions))
@@ -7098,13 +10576,45 @@ def _ssa_block_successors(
 def _is_incomplete_noncontrol_block(irsb: Any, instructions: list[dict[str, Any]]) -> bool:
     if str(getattr(irsb, "jumpkind", "")) != "Ijk_Boring":
         return False
+    if _last_instruction_is_repeat_string(instructions):
+        return False
+    if _boring_fallthrough_successor(irsb, instructions) is not None:
+        return False
     return not _last_instruction_is_control(instructions)
+
+
+def _boring_fallthrough_successor(irsb: Any, instructions: list[dict[str, Any]]) -> int | None:
+    if str(getattr(irsb, "jumpkind", "")) != "Ijk_Boring" or not instructions:
+        return None
+    last = instructions[-1]
+    address = last.get("address") if isinstance(last.get("address"), dict) else {}
+    linear = _optional_int(address.get("linear"))
+    size = _optional_int(last.get("size"))
+    if linear is None or size is None or size <= 0:
+        return None
+    fallthrough = linear + size
+    next_target = _const_expr_value(getattr(irsb, "next", None))
+    if next_target is None:
+        return None
+    reference_linear = _reference_linear_from_instructions(instructions)
+    canonical_next = _canonical_near_linear_target(next_target, reference_linear=reference_linear)
+    return fallthrough if canonical_next == fallthrough else None
 
 
 def _last_instruction_is_control(instructions: list[dict[str, Any]]) -> bool:
     if not instructions:
         return False
     return str(instructions[-1].get("mnemonic", "")).lower() in CONTROL_MNEMONICS
+
+
+def _last_instruction_is_repeat_string(instructions: list[dict[str, Any]]) -> bool:
+    if not instructions:
+        return False
+    instruction = instructions[-1]
+    mnemonic = str(instruction.get("mnemonic", "")).lower()
+    disassembly = str(instruction.get("disassembly", "")).lower()
+    text = f"{mnemonic} {disassembly}".strip()
+    return text.startswith(("rep ", "repe ", "repz ", "repne ", "repnz "))
 
 
 def _direct_instruction_successors(instructions: list[dict[str, Any]]) -> list[int]:
@@ -7270,15 +10780,18 @@ def _operand_from_disassembly(instruction: dict[str, Any]) -> str:
     return parts[1] if len(parts) == 2 else ""
 
 
-def _refusal(function: dict[str, Any], reason: str, message: str) -> dict[str, Any]:
+def _refusal(function: dict[str, Any], reason: str, message: str, *, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    detail = {
+        "function_id": function.get("id"),
+        "strategy": "straightline_ssa",
+        "message": message,
+    }
+    if extra:
+        detail.update(extra)
     return {
         "status": "refused",
         "reason": reason,
-        "detail": {
-            "function_id": function.get("id"),
-            "strategy": "straightline_ssa",
-            "message": message,
-        },
+        "detail": detail,
     }
 
 

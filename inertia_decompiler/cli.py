@@ -58,6 +58,7 @@ from .cli_c_ast_rewrites import (
     _unwrap_c_casts,
 )
 from .cli_c_text_postprocess import _simplify_x86_16_stack_byte_pointers
+from .cli_c_text_postprocess import _simplify_x86_16_conditions
 from .cli_core import main
 from .disassembly_helpers import _infer_linear_disassembly_window, _linear_disassembly
 
@@ -228,6 +229,7 @@ __all__ = [
     "_coalesce_linear_recurrence_statements",
     "_same_c_expression",
     "_simplify_x86_16_stack_byte_pointers",
+    "_simplify_x86_16_conditions",
     "_linear_disassembly",
     "_probe_lift_break",
     "_fix_carr_inbox_guard_blind_spot",

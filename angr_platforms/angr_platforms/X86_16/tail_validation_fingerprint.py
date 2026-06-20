@@ -55,7 +55,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION = 9
+TAIL_VALIDATION_FINGERPRINT_VERSION = 10
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 50000
@@ -182,6 +182,11 @@ def _stack_slot_fingerprint_from_slot_8616(offset: int, size: int | None = None)
     return f"stack_slot:SS:BP{offset:+#x}{size_text}"
 
 
+def _source_arg_fingerprint_from_slot_8616(name: str, offset: int, size: int | None = None) -> str:
+    size_text = f":size{size}" if isinstance(size, int) and size > 0 else ""
+    return f"stack_arg:{name}{size_text}:bp{offset:+#x}"
+
+
 def _type_size_bytes_8616(type_, *, default: int = 2) -> int:
     try:
         bits = getattr(type_, "size", None)
@@ -190,6 +195,23 @@ def _type_size_bytes_8616(type_, *, default: int = 2) -> int:
     if isinstance(bits, int) and bits > 0:
         return max(1, (bits + 7) // 8)
     return default
+
+
+def _target_abi_type_size_bytes_8616(type_, project, *, default: int = 2) -> int:
+    arch_name = getattr(getattr(project, "arch", None), "name", None)
+    if arch_name == "86_16":
+        type_name = type(type_).__name__
+        if type_name in {"SimTypeChar", "SimTypeNum"}:
+            return 1
+        if type_name in {"SimTypeShort", "SimTypeInt", "SimTypeBool"}:
+            return 2
+        if type_name == "SimTypeLong":
+            return 4
+        if type_name == "SimTypeLongLong":
+            return 8
+        if type_name == "SimTypePointer":
+            return 2
+    return _type_size_bytes_8616(type_, default=default)
 
 
 def _source_arg_names_by_offset_8616(function) -> dict[int, str]:
@@ -206,6 +228,21 @@ def _source_arg_names_by_offset_8616(function) -> dict[int, str]:
     return names_by_offset
 
 
+def _source_arg_sizes_by_offset_8616(function, project) -> dict[int, int]:
+    prototype = getattr(function, "prototype", None) if function is not None else None
+    arg_names = tuple(arg_name for arg_name in (getattr(prototype, "arg_names", ()) or ()) if isinstance(arg_name, str))
+    arg_types = tuple(getattr(prototype, "args", ()) or ())
+    if not arg_names or len(arg_names) != len(arg_types):
+        return {}
+    offset = 4
+    sizes_by_offset: dict[int, int] = {}
+    for _arg_name, arg_type in zip(arg_names, arg_types, strict=False):
+        size = _target_abi_type_size_bytes_8616(arg_type, project)
+        sizes_by_offset[offset] = size
+        offset += max(2, size)
+    return sizes_by_offset
+
+
 def _cfunc_source_arg_names_by_offset_8616(cfunc) -> dict[int, str]:
     names_by_offset: dict[int, str] = {}
     for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
@@ -220,6 +257,45 @@ def _cfunc_source_arg_names_by_offset_8616(cfunc) -> dict[int, str]:
             continue
         names_by_offset[offset] = name
     return names_by_offset
+
+
+def _cfunc_source_arg_sizes_by_offset_8616(cfunc) -> dict[int, int]:
+    sizes_by_offset: dict[int, int] = {}
+    for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
+        variable = getattr(arg, "variable", None)
+        if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
+            continue
+        offset = getattr(variable, "offset", None)
+        size = getattr(variable, "size", None)
+        if isinstance(offset, int) and offset > 0 and isinstance(size, int) and size > 0:
+            sizes_by_offset[offset] = size
+    return sizes_by_offset
+
+
+def _source_arg_match_by_offset_8616(
+    function,
+    project,
+    offset: int,
+    *,
+    size: int | None,
+) -> tuple[str, int, int | None] | None:
+    source_names_by_offset = _source_arg_names_by_offset_8616(function)
+    source_sizes_by_offset = _source_arg_sizes_by_offset_8616(function, project)
+    source_name = source_names_by_offset.get(offset)
+    if isinstance(source_name, str) and source_name:
+        return source_name, offset, source_sizes_by_offset.get(offset, size)
+    if len(source_names_by_offset) != 1:
+        return None
+    [(only_offset, only_name)] = source_names_by_offset.items()
+    source_size = source_sizes_by_offset.get(only_offset)
+    if not isinstance(only_name, str) or not only_name:
+        return None
+    if isinstance(size, int) and isinstance(source_size, int) and size != source_size:
+        return None
+    # Some MSC switch-helper lowering snapshots expose the sole source argument
+    # through a transient positive-BP helper slot. In one-argument functions the
+    # source prototype gives a stronger storage identity than that helper slot.
+    return only_name, only_offset, source_size if isinstance(source_size, int) else size
 
 
 def _source_arg_location_fingerprint_8616(node, project) -> str | None:
@@ -246,18 +322,25 @@ def _source_arg_location_fingerprint_8616(node, project) -> str | None:
     if not isinstance(name, str) or not name:
         return None
     function = _lookup_function_for_call_context_8616(project, func_addr)
-    prototype = getattr(function, "prototype", None) if function is not None else None
-    arg_names = tuple(arg_name for arg_name in (getattr(prototype, "arg_names", ()) or ()) if isinstance(arg_name, str))
+    variable_size = getattr(variable, "size", None)
+    source_names_by_offset = _source_arg_names_by_offset_8616(function)
+    source_name = source_names_by_offset.get(offset)
+    if isinstance(source_name, str) and source_name:
+        source_size = _source_arg_sizes_by_offset_8616(function, project).get(offset, variable_size)
+        return _source_arg_fingerprint_from_slot_8616(
+            source_name,
+            offset,
+            source_size if isinstance(source_size, int) and source_size > 0 else None,
+        )
     source_name = _cfunc_source_arg_names_by_offset_8616(cfunc).get(offset)
-    if not isinstance(source_name, str) and name in arg_names:
-        source_name = name
-    if not isinstance(source_name, str):
-        source_name = _source_arg_names_by_offset_8616(function).get(offset)
     if not isinstance(source_name, str) or not source_name:
         return None
-    size = getattr(variable, "size", None)
-    size_text = f":size{size}" if isinstance(size, int) and size > 0 else ""
-    return f"stack_arg:{source_name}{size_text}"
+    size = _cfunc_source_arg_sizes_by_offset_8616(cfunc).get(offset, variable_size)
+    return _source_arg_fingerprint_from_slot_8616(
+        source_name,
+        offset,
+        size if isinstance(size, int) and size > 0 else None,
+    )
 
 
 def _lookup_widened_carrier_proof_8616(value, codegen):
@@ -822,6 +905,88 @@ def canonicalize_stack_alias_fingerprint_8616(value, *, stack_alias_map, materia
     return _stack_slot_fingerprint_from_slot_8616(value, size)
 
 
+def _source_arg_stack_slot_fingerprint_8616(offset: int, codegen, *, size: int | None = None) -> str | None:
+    if not isinstance(offset, int) or offset <= 0 or codegen is None:
+        return None
+    cfunc = getattr(codegen, "cfunc", None)
+    project = getattr(codegen, "project", None)
+    active_codegen = getattr(project, "_inertia_tail_validation_active_codegen", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if (cfunc is None or not isinstance(func_addr, int)) and active_codegen is not None:
+        codegen = active_codegen
+        cfunc = getattr(codegen, "cfunc", None)
+        project = getattr(codegen, "project", project)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int) or project is None:
+        _debug_source_arg_stack_slot_8616(
+            codegen,
+            offset=offset,
+            size=size,
+            reason="missing_function_context",
+            final=None,
+        )
+        return None
+    function = _lookup_function_for_call_context_8616(project, func_addr)
+    source_match = _source_arg_match_by_offset_8616(function, project, offset, size=size)
+    if source_match is not None:
+        source_name, source_offset, source_size = source_match
+    else:
+        source_name = _cfunc_source_arg_names_by_offset_8616(cfunc).get(offset)
+        source_offset = offset
+        source_size = _cfunc_source_arg_sizes_by_offset_8616(cfunc).get(offset, size)
+    if not isinstance(source_name, str) or not source_name:
+        _debug_source_arg_stack_slot_8616(
+            codegen,
+            offset=offset,
+            size=size,
+            reason="no_source_arg_name",
+            final=None,
+        )
+        return None
+    final = _source_arg_fingerprint_from_slot_8616(
+        source_name,
+        source_offset,
+        source_size if isinstance(source_size, int) and source_size > 0 else None,
+    )
+    _debug_source_arg_stack_slot_8616(
+        codegen,
+        offset=offset,
+        size=size,
+        reason="matched",
+        final=final,
+    )
+    return final
+
+
+def _debug_source_arg_stack_slot_8616(
+    codegen,
+    *,
+    offset: int,
+    size: int | None,
+    reason: str,
+    final: str | None,
+) -> None:
+    if not os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS"):
+        return
+    cfunc = getattr(codegen, "cfunc", None) if codegen is not None else None
+    func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
+    delta = (
+        getattr(getattr(codegen, "project", None), "_inertia_original_linear_delta", None)
+        if codegen is not None
+        else None
+    )
+    original = func_addr + delta if isinstance(func_addr, int) and isinstance(delta, int) else func_addr
+    target_text = os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS_ADDR")
+    target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else None
+    if isinstance(target_addr, int) and original != target_addr:
+        return
+    sys.stderr.write(
+        "[TAIL_SOURCE_ARG_SLOT] "
+        f"func={original!r} offset={offset:+#x} size={size!r} reason={reason!r} final={final!r}\n"
+    )
+    sys.stderr.flush()
+
+
 def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen, *, source: str, node=None) -> str:
     def _impl():
         if source == "stack_var":
@@ -832,12 +997,26 @@ def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen, *, sou
                 materialized_size = materialized_local_map.get(offset, (None, None))[0]
                 if isinstance(materialized_size, int) and (not isinstance(size, int) or materialized_size > size):
                     size = materialized_size
+                if offset > 0:
+                    source_arg = _source_arg_stack_slot_fingerprint_8616(
+                        offset,
+                        codegen,
+                        size=size if isinstance(size, int) and size > 0 else None,
+                    )
+                    if source_arg is not None:
+                        return source_arg
                 return _stack_slot_fingerprint_from_slot_8616(
                     offset,
                     size if isinstance(size, int) and size > 0 else None,
                 )
         if source == "word_pair":
+            source_arg = _source_arg_stack_slot_fingerprint_8616(offset, codegen, size=2)
+            if source_arg is not None:
+                return source_arg
             return _stack_slot_fingerprint_from_slot_8616(offset, 2)
+        source_arg = _source_arg_stack_slot_fingerprint_8616(offset, codegen)
+        if source_arg is not None:
+            return source_arg
         materialized_local_map = _materialized_local_map_8616(codegen) if codegen is not None else {}
         normalized = canonicalize_stack_alias_fingerprint_8616(
             offset,
@@ -1680,13 +1859,14 @@ def _expr_fingerprint(node, project, _seen: set[int] | None = None) -> str:
             id(node),
             type(node).__name__,
         )
-        cache = _expr_fingerprint_cache_8616(project)
-        cached = cache.get(cache_key)
+        cacheable = not _contains_bp_stack_location_expr_8616(node)
+        cache = _expr_fingerprint_cache_8616(project) if cacheable else {}
+        cached = cache.get(cache_key) if cacheable else None
         if isinstance(cached, str):
             return cached
 
         def _cached(result: str) -> str:
-            if len(cache) <= _EXPR_FINGERPRINT_CACHE_LIMIT_8616:
+            if cacheable and len(cache) <= _EXPR_FINGERPRINT_CACHE_LIMIT_8616:
                 cache[cache_key] = result
             return result
 

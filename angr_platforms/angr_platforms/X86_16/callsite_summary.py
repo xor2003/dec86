@@ -813,6 +813,11 @@ def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *,
             if not ops:
                 return base_source
             return (CallsitePushSourceKind8616.EXPR.value, base_source, tuple(reversed(ops)))
+        zero_source = _zeroing_register_source_8616(insn, source_regs)
+        if zero_source is not None:
+            if not ops:
+                return zero_source
+            return (CallsitePushSourceKind8616.EXPR.value, zero_source, tuple(reversed(ops)))
         if len(operands) == 2 and _operand_reg_name(insn, operands[0]) == reg_name:
             if mnemonic in {"adc", "add", "sbb", "sub"}:
                 value = _operand_imm_value(operands[1])
@@ -875,6 +880,20 @@ def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *,
         skipped += 1
         scan -= 1
     return None
+
+
+def _zeroing_register_source_8616(insn, source_regs: set[str]) -> tuple | None:
+    operands = _instruction_operands(insn)
+    if len(operands) != 2:
+        return None
+    mnemonic = _mnemonic(insn)
+    if mnemonic not in {"sub", "xor"}:
+        return None
+    lhs = _operand_reg_name(insn, operands[0])
+    rhs = _operand_reg_name(insn, operands[1])
+    if lhs is None or lhs != rhs or lhs not in source_regs:
+        return None
+    return (CallsitePushSourceKind8616.IMMEDIATE.value, 0)
 
 
 def _return_register_push_source_from_context_8616(function, insns: tuple, idx: int, pushed_reg: str) -> tuple | None:
@@ -1007,6 +1026,11 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
                 if not ops:
                     return base_source
                 return (CallsitePushSourceKind8616.EXPR.value, base_source, tuple(reversed(ops)))
+            zero_source = _zeroing_register_source_8616(insn, source_regs)
+            if zero_source is not None:
+                if not ops:
+                    return zero_source
+                return (CallsitePushSourceKind8616.EXPR.value, zero_source, tuple(reversed(ops)))
             if len(operands) == 2 and _operand_reg_name(insn, operands[0]) == pushed_reg:
                 if mnemonic in {"adc", "add", "sbb", "sub"}:
                     value = _operand_imm_value(operands[1])
@@ -1092,7 +1116,11 @@ def _push_arg_source_from_context(function, insns: tuple, idx: int) -> tuple | N
                 operands = _instruction_operands(insn)
                 sibling_reg = _operand_reg_name(insn, operands[0]) if len(operands) == 1 else None
                 if _is_segment_register_push_8616(insn) or (
-                    pushed_reg in {"ax", "dx"} and sibling_reg in {"ax", "dx"} and sibling_reg != pushed_reg
+                    isinstance(sibling_reg, str)
+                    and (
+                        sibling_reg == pushed_reg
+                        or (pushed_reg in {"ax", "dx"} and sibling_reg in {"ax", "dx"})
+                    )
                 ):
                     scan -= 1
                     skipped += 1
@@ -1349,7 +1377,6 @@ def _return_shape_after_call(function, insns: tuple, idx: int, callsite_addr: in
     store_dx_offsets: set[int] = set()
     store_ax_offsets: set[int] = set()
     saw_ax = False
-    saw_dx = False
 
     def _has_adjacent_word_pair_8616(ax_offsets: set[int], dx_offsets: set[int]) -> bool:
         for offset in dx_offsets:
@@ -1370,7 +1397,6 @@ def _return_shape_after_call(function, insns: tuple, idx: int, callsite_addr: in
             if base == "bp" and isinstance(disp, int):
                 if _operand_is_reg(insn, operands[1], {"dx", "dh", "dl"}):
                     store_dx_offsets.add(disp)
-                    saw_dx = True
                 if _operand_is_reg(insn, operands[1], {"ax", "al", "ah"}):
                     store_ax_offsets.add(disp)
                     saw_ax = True
@@ -1379,12 +1405,8 @@ def _return_shape_after_call(function, insns: tuple, idx: int, callsite_addr: in
 
         if _instruction_reads_return_reg(insn, {"ax", "al", "ah"}):
             saw_ax = True
-        if _instruction_reads_return_reg(insn, {"dx", "dh", "dl"}):
-            saw_dx = True
         if _instruction_writes_return_reg(insn, {"ax", "al", "ah"}):
             saw_ax = True
-        if _instruction_writes_return_reg(insn, {"dx", "dh", "dl"}):
-            saw_dx = True
 
         if _transparent_return_epilogue_insn_8616(insn):
             continue

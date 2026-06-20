@@ -154,11 +154,38 @@ def build_compare_condition_8616(lhs, rhs, update_flags) -> IRCondition | None:
     return None
 
 
+def build_carry_compare_condition_8616(lhs, rhs, carry, update_flags) -> IRCondition | None:
+    name = getattr(update_flags, "__name__", "")
+    if name not in {"update_eflags_adc", "update_eflags_sbb"}:
+        return None
+    target_size = max(_size_bytes_from_operand(lhs), _size_bytes_from_operand(rhs), _size_bytes_from_operand(carry))
+    lhs_value = _condition_value_from_operand(lhs, size_hint=target_size)
+    rhs_value = _condition_value_from_operand(rhs, size_hint=target_size)
+    carry_value = _condition_value_from_operand(carry, size_hint=target_size)
+    lhs_value, rhs_value = harmonize_condition_args_8616(lhs_value, rhs_value, size=target_size)
+    return build_condition_ir_8616(
+        "carry_compare",
+        lhs_value,
+        rhs_value,
+        carry_value,
+        expr=(name,),
+    )
+
+
 def _record_last_condition_from_update_flags(emu, lhs, rhs, update_flags) -> None:
     owner = getattr(update_flags, "__self__", None)
     if owner is None or not hasattr(owner, "set_last_condition"):
         return
     condition = build_compare_condition_8616(lhs, rhs, update_flags)
+    if condition is not None:
+        owner.set_last_condition(condition)
+
+
+def _record_last_condition_from_carry_update_flags(emu, lhs, rhs, carry, update_flags) -> None:
+    owner = getattr(update_flags, "__self__", None)
+    if owner is None or not hasattr(owner, "set_last_condition"):
+        return
+    condition = build_carry_compare_condition_8616(lhs, rhs, carry, update_flags)
     if condition is not None:
         owner.set_last_condition(condition)
 
@@ -189,6 +216,7 @@ def binary_operation_with_carry(
         carry = emu.constant(int(bool(carry)), type_for_bits(width_bits))
     set_result(operator(lhs, rhs, carry))
     update_flags(lhs, rhs, carry)
+    _record_last_condition_from_carry_update_flags(emu, lhs, rhs, carry, update_flags)
 
 
 def compare_operation(get_lhs, get_rhs, update_flags):

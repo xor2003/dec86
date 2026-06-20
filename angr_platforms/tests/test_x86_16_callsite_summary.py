@@ -274,6 +274,29 @@ def test_callsite_summary_counts_pushes_separated_by_register_arithmetic_chain(m
     )
 
 
+def test_callsite_summary_recovers_zero_register_push_sources(monkeypatch):
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "sub", [_Operand(reg=2), _Operand(reg=2)], reg_names={2: "ax"}),
+            _Insn(0x1002, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1003, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1004, "call"),
+            _Insn(0x1007, "add", [_Operand(reg=1), _Operand(imm=4)], reg_names={1: "sp"}),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1004, 0x1544, 0x1007, "direct_far")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1004)
+
+    assert summary is not None
+    assert summary.arg_count == 2
+    assert summary.arg_widths == (2, 2)
+    assert summary.push_arg_sources == (("imm", 0), ("imm", 0))
+
+
 def test_callsite_summary_records_register_stack_source_add_push_expr(monkeypatch):
     function = _function_with_block(
         [

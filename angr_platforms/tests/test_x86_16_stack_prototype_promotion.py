@@ -1041,6 +1041,84 @@ def test_bp_stack_return_address_pruning_keeps_annotated_arguments():
     assert func.prototype.arg_names == ("segment",)
 
 
+def test_bp_stack_return_address_pruning_drops_body_assignment_artifact():
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    retaddr_var = SimStackVariable(0, 2, base="bp", name="local_0", region=0x1000)
+    retaddr_cvar = structured_c.CVariable(retaddr_var, variable_type=SimTypeShort(False), codegen=c_codegen)
+    rhs = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="fn", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=c_codegen,
+    )
+    artifact = structured_c.CAssignment(retaddr_cvar, rhs, codegen=c_codegen)
+    ret = structured_c.CReturn(
+        structured_c.CConstant(0, SimTypeShort(False), codegen=c_codegen),
+        codegen=c_codegen,
+    )
+    func = SimpleNamespace(prototype=None, is_prototype_guessed=True, info={})
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+    statements = structured_c.CStatements([artifact, ret], codegen=c_codegen)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            arg_list=[],
+            statements=statements,
+            body=statements,
+            variables_in_use={retaddr_var: retaddr_cvar},
+        )
+    )
+
+    changed = postprocess._prune_return_address_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [ret]
+    assert retaddr_var not in codegen.cfunc.variables_in_use
+
+
+def test_bp_stack_return_address_pruning_walks_cstatements_root_without_body_alias():
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    retaddr_var = SimStackVariable(0, 2, base="bp", name="local_0", region=0x1000)
+    retaddr_cvar = structured_c.CVariable(retaddr_var, variable_type=SimTypeShort(False), codegen=c_codegen)
+    rhs = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="fn", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=c_codegen,
+    )
+    artifact = structured_c.CAssignment(retaddr_cvar, rhs, codegen=c_codegen)
+    ret = structured_c.CReturn(
+        structured_c.CConstant(0, SimTypeShort(False), codegen=c_codegen),
+        codegen=c_codegen,
+    )
+    func = SimpleNamespace(prototype=None, is_prototype_guessed=True, info={})
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+    statements = structured_c.CStatements([artifact, ret], codegen=c_codegen)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            arg_list=[],
+            statements=statements,
+            variables_in_use={retaddr_var: retaddr_cvar},
+        )
+    )
+
+    changed = postprocess._prune_return_address_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements is statements
+    assert codegen.cfunc.statements.statements == [ret]
+    assert retaddr_var not in codegen.cfunc.variables_in_use
+
+
 def test_bp_stack_return_address_pruning_refuses_selector_return_contract():
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
     arg_var = SimStackVariable(6, 2, base="bp", name="limit", region=0x1000)

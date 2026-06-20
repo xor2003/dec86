@@ -1,3 +1,19 @@
+"""Syntactic load matchers for legacy postprocess consumers.
+
+This module identifies rendered C shapes for global and segmented loads so late
+cleanup passes can consume them. It is a temporary compatibility layer, not an
+owner of memory semantics.
+
+Allowed work here is limited to shape queries over existing C AST nodes. The
+actual proof of a load's Address(space, offset, width) belongs in alias,
+segmented memory lowering, object/global recovery, and typed lowering before
+structuring.
+
+Do not add new memory recovery, segment flattening, or byte/word inference here.
+If a caller needs stronger facts, move that proof to the memory/lowering layer
+and make this module unnecessary for that case.
+"""
+
 from __future__ import annotations
 
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CTypeCast

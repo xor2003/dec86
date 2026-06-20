@@ -247,6 +247,136 @@ def test_simplify_structured_expressions_inverts_negated_compare():
     assert result.op == "CmpGT"
 
 
+def test_simplify_structured_expressions_simplifies_direct_zero_flag_projection():
+    project = _project()
+    codegen = _codegen([])
+    source = _global(0x132, codegen, size=2)
+    zero_bit = CBinaryOp(
+        "Mul",
+        CBinaryOp("CmpEQ", source, _const(0, codegen), codegen=codegen),
+        _const(64, codegen),
+        codegen=codegen,
+    )
+    flags = CBinaryOp(
+        "Or",
+        CBinaryOp("And", _reg(project, "eflags", codegen), _const(65471, codegen), codegen=codegen),
+        zero_bit,
+        codegen=codegen,
+    )
+    expr = CBinaryOp(
+        "CmpNE",
+        CBinaryOp("And", flags, _const(64, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CUnaryOp)
+    assert result.op == "Not"
+    assert result.operand is source
+
+
+def test_simplify_structured_expressions_refuses_stack_pointer_zero_flag_source():
+    project = _project()
+    codegen = _codegen([])
+    source = CBinaryOp("Add", _reg(project, "sp", codegen), _const(-2, codegen), codegen=codegen)
+    zero_bit = CBinaryOp(
+        "Mul",
+        CBinaryOp("CmpEQ", source, _const(0, codegen), codegen=codegen),
+        _const(64, codegen),
+        codegen=codegen,
+    )
+    flags = CBinaryOp(
+        "Or",
+        CBinaryOp("And", _reg(project, "eflags", codegen), _const(65471, codegen), codegen=codegen),
+        zero_bit,
+        codegen=codegen,
+    )
+    expr = CBinaryOp(
+        "CmpNE",
+        CBinaryOp("And", flags, _const(64, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements is expr
+
+
+def test_simplify_structured_expressions_refuses_flag_register_zero_flag_source():
+    project = _project()
+    codegen = _codegen([])
+    source = CBinaryOp("And", _reg(project, "eflags", codegen), _const(64, codegen), codegen=codegen)
+    zero_bit = CBinaryOp(
+        "Mul",
+        CBinaryOp("CmpEQ", source, _const(0, codegen), codegen=codegen),
+        _const(64, codegen),
+        codegen=codegen,
+    )
+    flags = CBinaryOp(
+        "Or",
+        CBinaryOp("And", _reg(project, "eflags", codegen), _const(65471, codegen), codegen=codegen),
+        zero_bit,
+        codegen=codegen,
+    )
+    expr = CBinaryOp(
+        "CmpNE",
+        CBinaryOp("And", flags, _const(64, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements is expr
+
+
+def test_simplify_structured_expressions_allows_value_register_zero_flag_source():
+    project = _project()
+    codegen = _codegen([])
+    source = CBinaryOp("Add", _reg(project, "ax", codegen), _const(-61, codegen), codegen=codegen)
+    zero_bit = CBinaryOp(
+        "Mul",
+        CBinaryOp("CmpEQ", source, _const(0, codegen), codegen=codegen),
+        _const(64, codegen),
+        codegen=codegen,
+    )
+    flags = CBinaryOp(
+        "Or",
+        CBinaryOp("And", _reg(project, "eflags", codegen), _const(65471, codegen), codegen=codegen),
+        zero_bit,
+        codegen=codegen,
+    )
+    expr = CBinaryOp(
+        "CmpNE",
+        CBinaryOp("And", flags, _const(64, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CUnaryOp)
+    assert result.op == "Not"
+    assert result.operand is source
+
+
 def test_simplify_structured_expressions_removes_same_arm_cite_condition_source():
     project = _project()
     codegen = _codegen([])
@@ -325,6 +455,40 @@ def test_simplify_virtual_inline_refuses_dereference_address_carrier():
     write_lhs = codegen.cfunc.statements.statements[1].lhs
     assert write_lhs.operand.lhs.lhs is dirty_use
     assert codegen._inertia_virtual_inline_protected_address_refused == 1
+
+
+def test_simplify_virtual_inline_uses_unique_virtual_id_before_register_key():
+    class _DirtyCarrier:
+        def __init__(self, varid: int):
+            self.varid = varid
+            self.name = f"vvar_{varid}"
+            self.tmp_idx = 0
+            self.reg = 0
+            self.bits = 16
+
+    codegen = _codegen([])
+    first_lhs = CDirtyExpression(_DirtyCarrier(1), codegen=codegen)
+    first_use = CDirtyExpression(_DirtyCarrier(1), codegen=codegen)
+    second_lhs = CDirtyExpression(_DirtyCarrier(2), codegen=codegen)
+    second_use = CDirtyExpression(_DirtyCarrier(2), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(first_lhs, _const(7, codegen), codegen=codegen),
+            CAssignment(second_lhs, first_use, codegen=codegen),
+            CReturn(second_use, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    retval = codegen.cfunc.statements.statements[0].retval
+    assert isinstance(retval, CConstant)
+    assert retval.value == 7
 
 
 def test_eliminate_single_use_temporaries_inlines_immediate_use():

@@ -5,6 +5,8 @@ Tests if-cascade pattern detection and switch classification.
 """
 
 import pytest
+from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.structuring_analysis import StructureAnalysis
 from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType
 
@@ -40,11 +42,11 @@ class TestSwitchDetection:
 
         # Run structuring
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
 
         # Verify structuring completed successfully
         assert analysis.stats.iterations > 0, "Structuring should iterate"
-        assert analysis.stats.max_iterations_reached == False, "Should complete without hitting limit"
+        assert not analysis.stats.max_iterations_reached, "Should complete without hitting limit"
 
     def test_many_way_branch_switch(self):
         """
@@ -72,12 +74,65 @@ class TestSwitchDetection:
 
         # Run structuring
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
 
         # Many-way branch should be detected as switch candidate
         assert switch_region.region_type == RegionType.IncSwitch or len(analysis.unresolved_switches) > 0, (
             "5-way branch should be strongly marked as switch"
         )
+
+    def test_typed_edge_guard_if_cascade_detected_as_switch(self):
+        entry = Region(block_addr=0x1100, region_type=RegionType.Linear)
+        cond_a = Region(block_addr=0x1110, region_type=RegionType.Condition)
+        cond_b = Region(block_addr=0x1120, region_type=RegionType.Condition)
+        cond_c = Region(block_addr=0x1130, region_type=RegionType.Condition)
+        default = Region(block_addr=0x1140, region_type=RegionType.Linear)
+        cases = [
+            Region(block_addr=0x1150, region_type=RegionType.Linear),
+            Region(block_addr=0x1160, region_type=RegionType.Linear),
+            Region(block_addr=0x1170, region_type=RegionType.Linear),
+        ]
+        exit_region = Region(block_addr=0x1180, region_type=RegionType.Linear)
+        lhs = IRValue(MemSpace.REG, name="ax", size=2)
+
+        for case, value in zip(cases, (69, 27, 33), strict=True):
+            case.metadata["typed_condition_edge_guards"] = (
+                ConditionIR(
+                    op="eq",
+                    lhs=lhs,
+                    rhs=IRValue(MemSpace.CONST, const=value, size=2),
+                    src_insn=case.block_addr,
+                    block_addr=case.block_addr,
+                    producer_insn=case.block_addr - 1,
+                ),
+            )
+
+        graph = RegionGraph()
+        graph.entry = entry
+        for region in [entry, cond_a, cond_b, cond_c, default, *cases, exit_region]:
+            graph.add_node(region)
+
+        graph.add_edge(entry, cond_a)
+        graph.add_edge(cond_a, cases[0])
+        graph.add_edge(cond_a, cond_b)
+        graph.add_edge(cond_b, cases[1])
+        graph.add_edge(cond_b, cond_c)
+        graph.add_edge(cond_c, cases[2])
+        graph.add_edge(cond_c, default)
+        graph.add_edge(default, exit_region)
+        for case in cases:
+            graph.add_edge(case, exit_region)
+
+        analysis = StructureAnalysis(graph)
+        analysis.structure()
+
+        assert cond_a.region_type == RegionType.IncSwitch
+        assert cond_a.metadata["switch_detection"] == "typed_condition_edge_cascade"
+        assert cond_a.metadata["switch_candidates"] == cases
+        assert cond_a.metadata["switch_case_values"] == (69, 27, 33)
+        assert cond_a.metadata["switch_condition_lhs"] == lhs
+        assert cond_a.metadata["switch_default_target"] == default
+        assert analysis.stats.edge_guard_switches_detected == 1
 
     def test_binary_branch_not_switch(self):
         """
@@ -102,7 +157,7 @@ class TestSwitchDetection:
 
         # Run structuring
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
 
         # Binary if-else should NOT be marked as switch
         assert condition.region_type != RegionType.IncSwitch, "Binary if-else should not be marked as switch"
@@ -140,11 +195,11 @@ class TestSwitchDetection:
 
         # Run structuring
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
 
         # Verify structuring completed without errors
         assert analysis.stats.iterations > 0, "Should process nested structures"
-        assert analysis.stats.max_iterations_reached == False, "Should complete structuring"
+        assert not analysis.stats.max_iterations_reached, "Should complete structuring"
 
     def test_switch_detection_doesnt_break_loops(self):
         """
@@ -180,7 +235,7 @@ class TestSwitchDetection:
         # With 2 successors, dispatch is binary (if-then-else), not a switch
         # So we expect it to be either marked as Condition or merged
         # The key is that structuring should complete without errors
-        assert analysis.stats.max_iterations_reached == False, "Should complete structuring"
+        assert not analysis.stats.max_iterations_reached, "Should complete structuring"
         assert len(result.nodes) > 0, "Should preserve graph"
 
     def test_switch_stats_tracking(self):
@@ -208,7 +263,7 @@ class TestSwitchDetection:
 
         # Run structuring
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
 
         # Stats should show processing occurred
         assert analysis.stats.iterations > 0, "Should iterate"
@@ -216,7 +271,7 @@ class TestSwitchDetection:
         assert (
             switch.region_type == RegionType.IncSwitch
             or analysis.stats.regions_reduced > 0
-            or analysis.stats.max_iterations_reached == False
+            or not analysis.stats.max_iterations_reached
         ), "Structuring should either detect switch or reduce structure"
 
 

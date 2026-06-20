@@ -30,6 +30,7 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackUpdateOp8616,
     DirectStackUpdateSourceKind8616,
     _direct_stack_move_instruction_facts_8616,
+    lower_stable_ss_linear_stack_dereferences_8616,
     materialize_direct_global_incdec_instructions_8616,
     materialize_direct_stack_incdec_instructions_8616,
     materialize_direct_stack_mov_instructions_8616,
@@ -322,6 +323,43 @@ def test_materialize_direct_global_add_refuses_duplicate_rebased_global_assignme
     assert stats["failure_count"] == 0
 
 
+def test_materialize_direct_global_add_renames_generated_target_to_same_addr_source_name():
+    project, codegen = _project()
+    generated_var = SimMemoryVariable(0x0048, 2, name="g_48", region=0x4010)
+    generated = CVariable(generated_var, variable_type=SimTypeShort(False), codegen=codegen)
+    source_var = SimMemoryVariable(0x0048, 2, name="_S104_seen", region=0x4010)
+    source = CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.statements.statements.append(
+        CAssignment(
+            generated,
+            CBinaryOp(
+                "Add",
+                source,
+                CConstant(2, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+            tags={"ins_addr": 0x4018},
+        )
+    )
+    mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x0048)
+    dst = SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem)
+    src = SimpleNamespace(type=X86_OP_IMM, size=2, imm=2)
+    insn = SimpleNamespace(address=0x4018, id=X86_INS_ADD, operands=(dst, src))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn,))),))
+
+    changed = materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    stmt = codegen.cfunc.statements.statements[0]
+    assert isinstance(stmt, CAssignment)
+    assert stmt.lhs.variable.name == "_S104_seen"
+    assert stmt.rhs.lhs.variable.name == "_S104_seen"
+    stats = codegen._inertia_direct_global_update_lowering_8616
+    assert stats["already_materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
 def test_materialize_direct_global_inc_consumes_one_fact_once_for_duplicate_tags():
     project, codegen = _project()
     metadata = SimpleNamespace(global_names=("counter",))
@@ -376,6 +414,62 @@ def test_materialize_direct_global_inc_consumes_one_fact_once_for_duplicate_tags
     stats = codegen._inertia_direct_global_update_lowering_8616
     assert stats["materialized_count"] == 1
     assert stats["consumed_fact_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_global_inc_materializes_distinct_same_global_facts():
+    project, codegen = _project()
+    metadata = SimpleNamespace(global_names=("counter",))
+    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: metadata}
+    for ins_addr, reg_name in ((0x4018, "ax"), (0x4020, "bx")):
+        placeholder_var = SimRegisterVariable(0, 2, name=reg_name)
+        placeholder = CVariable(placeholder_var, variable_type=SimTypeShort(False), codegen=codegen)
+        codegen.cfunc.statements.statements.append(
+            CAssignment(
+                placeholder,
+                CConstant(0, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+                tags={"ins_addr": ins_addr},
+            )
+        )
+    mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x1234)
+    operand = SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem)
+    first_insn = SimpleNamespace(address=0x4018, id=X86_INS_INC, operands=(operand,))
+    second_insn = SimpleNamespace(address=0x4020, id=X86_INS_INC, operands=(operand,))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(first_insn, second_insn))),),
+    )
+
+    changed = materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    materialized = [
+        stmt
+        for stmt in codegen.cfunc.statements.statements
+        if isinstance(stmt, CAssignment)
+        and isinstance(getattr(stmt, "lhs", None), CVariable)
+        and stmt.lhs.variable.name == "counter"
+    ]
+    assert len(materialized) == 2
+    assert {stmt.tags["ins_addr"] for stmt in materialized} == {0x4018, 0x4020}
+    assert all(isinstance(stmt.rhs, CBinaryOp) and stmt.rhs.op == "Add" for stmt in materialized)
+
+    second_changed = materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert second_changed is False
+    assert len(
+        [
+            stmt
+            for stmt in codegen.cfunc.statements.statements
+            if isinstance(stmt, CAssignment)
+            and isinstance(getattr(stmt, "lhs", None), CVariable)
+            and stmt.lhs.variable.name == "counter"
+        ]
+    ) == 2
+    stats = codegen._inertia_direct_global_update_lowering_8616
+    assert stats["materialized_count"] == 2
+    assert stats["consumed_fact_count"] == 2
     assert stats["failure_count"] == 0
 
 
@@ -916,6 +1010,50 @@ def test_materialize_direct_stack_add_indexed_pointer_source_replaces_tagged_ass
     assert isinstance(stmt.rhs.rhs, CIndexedVariable)
     assert stmt.rhs.rhs.variable.variable is src_var
     assert stmt.rhs.rhs.index.variable is i_var
+
+
+def test_lower_stable_stack_rewrites_seg_ptr_indexed_bp_address_argument():
+    project, codegen = _project()
+    ach_var = SimStackVariable(-44, 1, base="bp", name="achT", region=0x4010)
+    i_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    ach_cvar = CVariable(ach_var, variable_type=SimTypeChar(False), codegen=codegen)
+    i_cvar = CVariable(i_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[ach_var] = ach_cvar
+    codegen.cfunc.variables_in_use[i_var] = i_cvar
+    codegen.cfunc.unified_local_vars[ach_var] = {(ach_cvar, SimTypeChar(False))}
+    codegen.cfunc.unified_local_vars[i_var] = {(i_cvar, SimTypeShort(False))}
+
+    offset = CBinaryOp("Add", ach_cvar, i_cvar, codegen=codegen)
+    ptr_arg = CFunctionCall("SEG_PTR", None, [_reg(project, "ds", codegen), offset], codegen=codegen)
+    call = CFunctionCall("memset", None, [ptr_arg, _const(32, codegen), _const(4, codegen)], codegen=codegen)
+    codegen.cfunc.statements.statements.append(call)
+    indexed_bp_access = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(
+            _reg_operand(X86_REG_AX),
+            SimpleNamespace(
+                type=X86_OP_MEM,
+                size=1,
+                mem=SimpleNamespace(base=X86_REG_BP, index=X86_REG_SI, disp=-44),
+            ),
+        ),
+    )
+    codegen._inertia_current_function_8616 = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(indexed_bp_access,))),),
+    )
+
+    changed = lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
+
+    assert changed is True
+    rewritten = call.args[0]
+    assert isinstance(rewritten, CBinaryOp)
+    assert rewritten.op == "Add"
+    assert isinstance(rewritten.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs, CVariable)
+    assert rewritten.rhs.variable is i_var
+    assert "SEG_PTR" not in str(rewritten)
 
 
 def test_materialize_direct_stack_or_immediate_replaces_tagged_assignment():
@@ -2914,6 +3052,22 @@ def test_recompile_check_msc51_sanitizes_c99_line_comments():
     assert "///" not in payload
     assert "source sidecar" in payload
     assert '"http://example"' in payload
+
+
+def test_recompile_check_msc51_dedupes_existing_runtime_typedefs():
+    payload = recompile_check._compile_input_payload_8616(
+        "typedef unsigned long clock_t;\n"
+        "typedef long time_t;\n"
+        "typedef unsigned short uint16_t;\n"
+        "clock_t clock(void);\n"
+        "void Sleep(clock_t wait) { }\n",
+        target="msc-dos",
+    )
+
+    assert payload.count("typedef unsigned long clock_t;") == 1
+    assert payload.count("typedef long time_t;") == 1
+    assert payload.count("typedef unsigned short uint16_t;") == 1
+    assert "void Sleep(clock_t wait)" in payload
 
 
 def test_recompile_check_msc51_accepts_uppercase_existing_dos_header():

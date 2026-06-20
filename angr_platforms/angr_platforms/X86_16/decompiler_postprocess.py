@@ -437,6 +437,77 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
                         changed_maps = True
             return changed_maps
 
+        def _assignment_lhs_rhs(node):
+            lhs = getattr(node, "lhs", None)
+            rhs = getattr(node, "rhs", None)
+            if lhs is None and hasattr(node, "dst"):
+                lhs = getattr(node, "dst", None)
+                rhs = getattr(node, "src", None)
+            return lhs, rhs
+
+        def _top_level_assignment(stmt):
+            if isinstance(stmt, CAssignment) or stmt.__class__.__name__.endswith("Assignment"):
+                return stmt
+            nested = getattr(stmt, "statements", None)
+            if isinstance(nested, (list, tuple)) and len(nested) == 1:
+                child = nested[0]
+                if isinstance(child, CAssignment) or child.__class__.__name__.endswith("Assignment"):
+                    return child
+            return None
+
+        def _return_address_lvalue(lhs) -> bool:
+            node = lhs
+            while isinstance(node, CTypeCast):
+                node = node.expr
+            variable = getattr(node, "variable", None)
+            return _return_address_stack_offset(variable) == 0
+
+        def _rhs_has_side_effect(rhs) -> bool:
+            for node in (rhs, *_iter_c_nodes_deep_8616(rhs)):
+                if isinstance(node, CFunctionCall):
+                    return True
+                if isinstance(node, CUnaryOp) and getattr(node, "op", None) == "Dereference":
+                    return True
+            return False
+
+        def _is_return_address_assignment_artifact(stmt) -> bool:
+            assignment = _top_level_assignment(stmt)
+            if assignment is None:
+                return False
+            lhs, rhs = _assignment_lhs_rhs(assignment)
+            if lhs is None or rhs is None or not _return_address_lvalue(lhs):
+                return False
+            return not _rhs_has_side_effect(rhs)
+
+        def _prune_return_address_body_assignments(owner) -> bool:
+            statements = getattr(owner, "statements", None)
+            statements_owner = owner
+            if isinstance(owner, CStatements):
+                statements_owner = owner
+                statements = getattr(owner, "statements", None)
+            elif isinstance(statements, CStatements):
+                statements_owner = statements
+                statements = getattr(statements, "statements", None)
+            changed_body = False
+            if isinstance(statements, (list, tuple)):
+                items = []
+                for stmt in statements:
+                    if _is_return_address_assignment_artifact(stmt):
+                        changed_body = True
+                        continue
+                    changed_body = _prune_return_address_body_assignments(stmt) or changed_body
+                    items.append(stmt)
+                if changed_body:
+                    statements_owner.statements = items if isinstance(statements, list) else tuple(items)
+            for attr in ("body", "else_node"):
+                child = getattr(owner, attr, None)
+                if child is not None:
+                    changed_body = _prune_return_address_body_assignments(child) or changed_body
+            for pair in tuple(getattr(owner, "condition_and_nodes", ()) or ()):
+                if isinstance(pair, tuple) and len(pair) == 2 and pair[1] is not None:
+                    changed_body = _prune_return_address_body_assignments(pair[1]) or changed_body
+            return changed_body
+
         def _arg_name_from_stack_spec(variable, stack_specs):
             arg_name = getattr(variable, "name", None)
             if not isinstance(variable, SimStackVariable):
@@ -501,7 +572,9 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
         stack_specs = annotations.get("stack_vars", {}) if isinstance(annotations, dict) else {}
         arg_list = list(getattr(codegen.cfunc, "arg_list", ()) or ())
         if prototype is None or not arg_list:
-            return _prune_return_address_variable_maps()
+            changed_body = _prune_return_address_body_assignments(codegen.cfunc)
+            changed_maps = _prune_return_address_variable_maps()
+            return changed_body or changed_maps
 
         kept_args = []
         changed = False
@@ -513,7 +586,9 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
                 continue
             kept_args.append(arg)
 
-        changed = _prune_return_address_variable_maps() or changed
+        changed_body = _prune_return_address_body_assignments(codegen.cfunc)
+        changed_maps = _prune_return_address_variable_maps()
+        changed = changed_body or changed_maps or changed
         if not changed:
             return False
         codegen.cfunc.arg_list = kept_args
@@ -2795,7 +2870,6 @@ def _rename_stack_variables_from_specs_8616(
     name_owner_offsets: dict[str, int],
 ) -> bool:
     def _impl():
-        positive_spec_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
         positive_specs_are_normalized = _positive_stack_specs_are_normalized_for_codegen_8616(stack_specs, codegen)
 
         def unique_stack_name(base_name: str | None) -> str | None:

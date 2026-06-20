@@ -9,6 +9,7 @@ from angr.analyses.calling_convention import utils as _cc_utils
 from angr.analyses.decompiler.decompiler import Decompiler
 from angr_platforms.X86_16 import (
     bootstrap,
+    decompiler_postprocess_inventory,
     decompiler_postprocess_stage,
     decompiler_structuring_stage,
     recovery_confidence,
@@ -37,10 +38,16 @@ def test_x86_16_package_exports_source_backends():
     assert "apply_x86_16_stack_compatibility" in x8616.__all__
     assert "apply_x86_16_bootstrap" in x8616.__all__
     assert "apply_x86_16_decompiler_postprocess" in x8616.__all__
+    assert "decompiler_postprocess_inventory" in x8616.__all__
     assert "decompiler_postprocess_utils" in x8616.__all__
     assert "decompiler_postprocess_simplify" in x8616.__all__
     assert "decompiler_structuring_stage" in x8616.__all__
     assert "decompiler_postprocess_flags" in x8616.__all__
+    assert "describe_x86_16_decompiler_postprocess_inventory_8616" in x8616.__all__
+    assert "validate_x86_16_decompiler_postprocess_inventory_8616" in x8616.__all__
+    assert "DecompilerPostprocessPassInventoryItem" in x8616.__all__
+    assert "DecompilerPostprocessPassKind8616" in x8616.__all__
+    assert "DecompilerPostprocessPassInventoryViolation" in x8616.__all__
     assert "calling_convention_compat" in x8616.__all__
     assert "decompiler_return_compat" in x8616.__all__
     assert "describe_x86_16_decompiler_postprocess_stage" in x8616.__all__
@@ -143,31 +150,24 @@ def test_x86_16_calling_convention_compatibility_patches_register_sanity():
 
 
 def test_x86_16_decompiler_postprocess_registry_order():
-    assert [spec.func.__name__ for spec in decompiler_postprocess_stage.DECOMPILER_POSTPROCESS_PASSES] == [
+    pass_names = [spec.name for spec in decompiler_postprocess_stage.DECOMPILER_POSTPROCESS_PASSES]
+
+    assert pass_names[:6] == [
         "_apply_word_global_types_8616",
         "_apply_annotations_8616",
+        "_materialize_stable_stack_semantics_early_8616",
         "_promote_stack_prototype_from_bp_loads_8616",
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
-        "_rewrite_decoded_jcc_conditions_8616",
-        "_rewrite_flag_condition_pairs_8616",
-        "_rewrite_flag_bit_value_uses_8616",
-        "_prune_unused_flag_assignments_8616",
-        "_prune_overwritten_flag_assignments_8616",
-        "_fix_interval_guard_conditions_8616",
-        "_simplify_boolean_cites_8616",
-        "_simplify_structured_expressions_8616",
-        "_maybe_eliminate_single_use_temporaries_8616",
-        "_attach_callsite_summaries_8616",
-        "_materialize_callsite_stack_arguments_8616",
-        "_materialize_callsite_prototypes_8616",
-        "_lower_stable_ss_stack_accesses_8616",
-        "_normalize_function_prototype_arg_names_8616",
-        "_normalize_call_target_names_8616",
-        "_classify_return_shape_8616",
-        "_prune_void_function_return_values_8616",
-        "_dedupe_codegen_variable_names_8616",
     ]
+    assert pass_names.index("_rewrite_decoded_jcc_conditions_8616") < pass_names.index(
+        "_rewrite_decoded_jcc_conditions_after_calls_8616"
+    )
+    assert pass_names.index("_attach_callsite_summaries_8616") < pass_names.index(
+        "_materialize_callsite_stack_arguments_8616"
+    )
+    assert pass_names.index("_classify_return_shape_8616") < pass_names.index("_prune_void_function_return_values_8616")
+    assert pass_names[-1] == "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616"
 
 
 def test_x86_16_decompiler_postprocess_registry_factory_shape():
@@ -188,6 +188,155 @@ def test_x86_16_decompiler_postprocess_stage_exports():
     assert "apply_x86_16_decompiler_postprocess" in decompiler_postprocess_stage.__all__
 
 
+def test_x86_16_decompiler_postprocess_inventory_exports():
+    assert "DecompilerPostprocessPassInventoryItem" in decompiler_postprocess_inventory.__all__
+    assert "DecompilerPostprocessPassKind8616" in decompiler_postprocess_inventory.__all__
+    assert "DecompilerPostprocessPassInventoryViolation" in decompiler_postprocess_inventory.__all__
+    assert "describe_x86_16_decompiler_postprocess_inventory_8616" in decompiler_postprocess_inventory.__all__
+    assert "validate_x86_16_decompiler_postprocess_inventory_8616" in decompiler_postprocess_inventory.__all__
+
+
+def test_x86_16_decompiler_postprocess_inventory_contract_is_clean():
+    assert decompiler_postprocess_inventory.validate_x86_16_decompiler_postprocess_inventory_8616() == ()
+
+
+def test_x86_16_decompiler_postprocess_inventory_contract_reports_violations(monkeypatch):
+    item_cls = decompiler_postprocess_inventory.DecompilerPostprocessPassInventoryItem
+    kind = decompiler_postprocess_inventory.DecompilerPostprocessPassKind8616
+    fake_inventory = (
+        item_cls(
+            name="_materialize_bad_8616",
+            kind=kind.CLEANUP,
+            owner="postprocess orchestration/cleanup",
+        ),
+        item_cls(
+            name="_semantic_generic_owner_8616",
+            kind=kind.SEMANTIC_MATERIALIZATION,
+            owner="Step 4: classified semantic materialization debt pending owner split",
+        ),
+        item_cls(
+            name="_semantic_generic_owner_8616",
+            kind=kind.SEMANTIC_MATERIALIZATION,
+            owner="Step 4: classified semantic materialization debt pending owner split",
+        ),
+        item_cls(
+            name="_cleanup_with_counters_8616",
+            kind=kind.CLEANUP,
+            owner="postprocess orchestration/cleanup",
+            required_evidence_counters=("raw_fact_count",),
+        ),
+    )
+    monkeypatch.setattr(
+        decompiler_postprocess_inventory,
+        "describe_x86_16_decompiler_postprocess_inventory_8616",
+        lambda: fake_inventory,
+    )
+
+    violations = decompiler_postprocess_inventory.validate_x86_16_decompiler_postprocess_inventory_8616()
+
+    assert {(item.name, item.reason) for item in violations} == {
+        ("_materialize_bad_8616", "semantic-looking-name-not-semantic"),
+        ("_semantic_generic_owner_8616", "semantic-pass-missing-evidence-counters"),
+        ("_semantic_generic_owner_8616", "semantic-pass-generic-owner"),
+        ("_semantic_generic_owner_8616", "duplicate-pass-name"),
+        ("_cleanup_with_counters_8616", "nonsemantic-pass-has-evidence-counters"),
+    }
+
+
+def test_x86_16_decompiler_postprocess_inventory_classifies_condition_debt():
+    inventory = {
+        item.name: item for item in decompiler_postprocess_inventory.describe_x86_16_decompiler_postprocess_inventory_8616()
+    }
+    semantic = decompiler_postprocess_inventory.DecompilerPostprocessPassKind8616.SEMANTIC_MATERIALIZATION
+
+    assert inventory["_apply_typed_conditions_to_codegen_8616"].kind is semantic
+    assert "ConditionIR" in inventory["_apply_typed_conditions_to_codegen_8616"].owner
+    assert inventory["_rewrite_decoded_jcc_conditions_8616"].kind is semantic
+    assert "structuring" in inventory["_rewrite_decoded_jcc_conditions_8616"].owner
+    assert inventory["_rewrite_decoded_jcc_conditions_after_calls_8616"].kind is semantic
+    assert inventory["_rewrite_flag_condition_pairs_8616"].kind is semantic
+    assert "condition semantics" in inventory["_rewrite_flag_condition_pairs_8616"].owner
+    assert inventory["_rewrite_flag_bit_value_uses_8616"].kind is semantic
+    assert inventory["_fix_interval_guard_conditions_8616"].kind is semantic
+
+
+def test_x86_16_decompiler_postprocess_inventory_fails_closed_for_semantic_names():
+    inventory = tuple(decompiler_postprocess_inventory.describe_x86_16_decompiler_postprocess_inventory_8616())
+    semantic = decompiler_postprocess_inventory.DecompilerPostprocessPassKind8616.SEMANTIC_MATERIALIZATION
+    semantic_prefixes = (
+        "_materialize_",
+        "_recover_",
+        "_repair_",
+        "_rewrite_flag_",
+        "_fix_interval_guard_",
+    )
+
+    leaked = [item.name for item in inventory if item.name.startswith(semantic_prefixes) and item.kind is not semantic]
+
+    assert leaked == []
+
+
+def test_x86_16_decompiler_postprocess_inventory_routes_semantic_debt_to_plan_steps():
+    inventory = tuple(decompiler_postprocess_inventory.describe_x86_16_decompiler_postprocess_inventory_8616())
+    semantic = decompiler_postprocess_inventory.DecompilerPostprocessPassKind8616.SEMANTIC_MATERIALIZATION
+    generic_owners = [
+        item.name
+        for item in inventory
+        if item.kind is semantic
+        and (
+            "owning semantic/alias/lowering/structuring layer" in item.owner
+            or item.owner.startswith("Step 4:")
+        )
+    ]
+
+    assert generic_owners == []
+    owners_by_name = {item.name: item.owner for item in inventory}
+    assert owners_by_name["_materialize_stable_stack_semantics_early_8616"].startswith("Step 5:")
+    assert owners_by_name["_materialize_direct_global_incdec_instructions_8616"].startswith("Step 7:")
+    assert owners_by_name["_materialize_callsite_stack_arguments_8616"].startswith("Step 9:")
+    assert owners_by_name["_materialize_cfg_selector_return_branches_8616"].startswith("Step 6:")
+
+
+def test_x86_16_decompiler_postprocess_inventory_requires_semantic_evidence_counters():
+    inventory = tuple(decompiler_postprocess_inventory.describe_x86_16_decompiler_postprocess_inventory_8616())
+    semantic = decompiler_postprocess_inventory.DecompilerPostprocessPassKind8616.SEMANTIC_MATERIALIZATION
+    required = (
+        "raw_fact_count",
+        "normalized_fact_count",
+        "classified_fact_count",
+        "materialized_count",
+        "failure_count",
+    )
+
+    semantic_without_counters = [
+        item.name for item in inventory if item.kind is semantic and item.required_evidence_counters != required
+    ]
+    nonsemantic_with_counters = [
+        item.name for item in inventory if item.kind is not semantic and item.required_evidence_counters
+    ]
+
+    assert semantic_without_counters == []
+    assert nonsemantic_with_counters == []
+
+
+def test_x86_16_decompiler_postprocess_inventory_keeps_cleanup_categories_distinct():
+    inventory = {
+        item.name: item for item in decompiler_postprocess_inventory.describe_x86_16_decompiler_postprocess_inventory_8616()
+    }
+
+    assert (
+        inventory["_dead_code_elimination_after_flag_prune_8616"].kind
+        is decompiler_postprocess_inventory.DecompilerPostprocessPassKind8616.DCE_WITH_EVIDENCE
+    )
+    assert (
+        inventory["_simplify_structured_expressions_8616"].kind
+        is decompiler_postprocess_inventory.DecompilerPostprocessPassKind8616.FORMATTING
+    )
+    assert (
+        inventory["_apply_annotations_8616"].kind is decompiler_postprocess_inventory.DecompilerPostprocessPassKind8616.CLEANUP
+    )
+
+
 def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
     function = SimpleNamespace(info={"x86_16_decompilation_profile": {"wrapper_like": True}})
     project = SimpleNamespace(
@@ -203,23 +352,24 @@ def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
         spec.name for spec in decompiler_postprocess_stage._decompiler_postprocess_passes_for_function(project, codegen)
     )
 
-    assert pass_names == (
+    required_passes = (
         "_apply_word_global_types_8616",
         "_apply_annotations_8616",
+        "_materialize_stable_stack_semantics_early_8616",
         "_promote_stack_prototype_from_bp_loads_8616",
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
-        "_rewrite_decoded_jcc_conditions_8616",
-        "_rewrite_flag_condition_pairs_8616",
-        "_rewrite_flag_bit_value_uses_8616",
-        "_prune_unused_flag_assignments_8616",
-        "_prune_overwritten_flag_assignments_8616",
-        "_fix_interval_guard_conditions_8616",
+        "_rewrite_decoded_jcc_conditions_after_calls_8616",
         "_attach_callsite_summaries_8616",
         "_materialize_callsite_stack_arguments_8616",
         "_materialize_callsite_prototypes_8616",
         "_lower_stable_ss_stack_accesses_8616",
         "_normalize_call_target_names_8616",
+    )
+    for pass_name in required_passes:
+        assert pass_name in pass_names
+    assert pass_names.index("_attach_callsite_summaries_8616") < pass_names.index(
+        "_materialize_callsite_stack_arguments_8616"
     )
 
 

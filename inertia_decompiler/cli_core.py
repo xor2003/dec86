@@ -19,9 +19,13 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
+import angr
+from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr_platforms.X86_16.analysis_helpers import collect_neighbor_call_targets
 from angr_platforms.X86_16.cod_extract import (
+    CODProcMetadata,
     extract_cod_function_entries,
     extract_cod_proc_metadata,
     extract_simple_cod_logic_entries,
@@ -30,6 +34,7 @@ from angr_platforms.X86_16.cod_extract import (
     join_cod_entries_with_synthetic_globals,
 )
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
+from angr_platforms.X86_16.lst_extract import LSTMetadata
 from angr_platforms.X86_16.structuring.compare32_recovery import recover_32bit_compare_c_8616
 from angr_platforms.X86_16.structuring.simple_loop_recovery import recover_counted_stack_loop_c_8616
 
@@ -40,6 +45,7 @@ from inertia_decompiler.cache import (
     _recovery_cache_key,
     _store_cache_json,
 )
+from inertia_decompiler.cli_c_text_postprocess import _prune_invalid_simple_function_prototypes_text
 from inertia_decompiler.cli_output import (
     _print_asm_fallback_text,
     _print_diagnostic_text,
@@ -204,6 +210,7 @@ from inertia_decompiler.x86_16_exact_slice import (
 )
 
 from .cli_c_text_postprocess import (
+    _coalesce_redundant_split_global_incdec_text,
     _dedupe_duplicate_local_declarations_text,
     _hoist_c89_local_declarations_text,
     _materialize_missing_direct_call_prototypes_text,
@@ -219,7 +226,10 @@ from .cli_c_text_postprocess import (
     _normalize_seg_offset_void_pointer_args_text,
     _normalize_unsupported_computed_goto_text,
     _prune_parameter_shadow_declarations_text,
+    _prune_standalone_memory_helper_reads_text,
     _prune_undefined_fragment_carrier_assignments_text,
+    _prune_unused_local_declarations_text,
+    _prune_unused_staging_assignments,
     _prune_void_call_assignments_text,
     _strip_register_fragment_suffixes_text,
 )
@@ -242,6 +252,7 @@ from .cli_fallback_decompilation import (
     _try_emit_trivial_sidecar_c,
 )
 from .cli_function_discovery import (
+    _X86_16_EXACT_REGION_PADDING_SCAN_LIMIT,
     _expanded_exe_discovery_limit,
     _format_sidecar_function_catalog,
     _interesting_functions,
@@ -261,6 +272,7 @@ from .cli_function_discovery import (
     _recover_partial_cfg,
     _recover_ranked_binary_function,
     _recover_seeded_exe_functions,
+    _resolve_x86_16_function_start,
     _store_catalog_address_cache,
     _supplement_cached_seeded_recovery,
     _supplement_functions_from_prologue_scan,
@@ -606,6 +618,37 @@ def _function_recovery_detail(stage: str | None) -> str | None:
     return None
 
 
+def _sanitize_direct_timeout_stage_token(token: str) -> str:
+    """Normalize timeout stage fragments into parser-friendly tokens."""
+    return re.sub(r"\s+", "_", token.strip()) or "timeout"
+
+
+def _direct_timeout_failure_stage_from_payload(payload: object | None, *, default: str = "decompilation") -> str:
+    message = str(payload or "").lower()
+    if not message:
+        return default
+
+    if "during x86-16 structuring pass " in message:
+        detail = message.split("during x86-16 structuring pass ", 1)[1].strip().rstrip(".")
+        normalized_detail = _sanitize_direct_timeout_stage_token(detail)
+        return f"structuring:{normalized_detail}"
+    if "during x86-16 structuring" in message:
+        return "structuring"
+    if "during x86-16 postprocess pass " in message:
+        detail = message.split("during x86-16 postprocess pass ", 1)[1].strip().rstrip(".")
+        normalized_detail = _sanitize_direct_timeout_stage_token(detail)
+        return f"postprocess:{normalized_detail}"
+    if "during x86-16 postprocess" in message:
+        return "postprocess"
+    if "during core decompilation" in message:
+        return "decompilation:core"
+    if "during clinic" in message:
+        return "decompilation:clinic"
+    if "during decompilation" in message:
+        return "decompilation"
+    return default
+
+
 def _bounded_non_optimized_timeout(timeout: int) -> int:
     # The non-optimized slice path is our recovery fallback after bounded
     # function discovery times out. Very small caps cause deterministic
@@ -698,6 +741,76 @@ def _direct_addr_robust_retry_enabled_8616(*, timeout_was_explicit: bool) -> boo
     # Robust retry is useful for default interactive recovery, but it must not
     # silently double a caller-provided direct-address timeout budget.
     return not timeout_was_explicit
+
+
+@dataclass(frozen=True, slots=True)
+class DirectAddrCanonicalization8616:
+    requested_addr: int
+    canonical_addr: int
+    region: tuple[int, int]
+    name: str | None
+
+
+def _canonicalize_direct_addr_from_sidecar_padding_8616(
+    project: angr.Project,
+    lst_metadata: LSTMetadata | None,
+    requested_addr: int | None,
+    *,
+    function_label: str | None = None,
+) -> DirectAddrCanonicalization8616 | None:
+    if (
+        lst_metadata is None
+        or requested_addr is None
+        or getattr(getattr(project, "arch", None), "name", "") != "86_16"
+    ):
+        return None
+    region = _lst_code_region(lst_metadata, requested_addr)
+    if region is None or len(region) != 2:
+        return None
+    start, end = region
+    if not isinstance(start, int) or not isinstance(end, int) or not (start <= requested_addr < end):
+        return None
+    scan_size = min(_X86_16_EXACT_REGION_PADDING_SCAN_LIMIT, max(0, end - start))
+    if scan_size <= 0:
+        return None
+    try:
+        code = bytes(project.loader.memory.load(start, scan_size))
+    except Exception:
+        return None
+    canonical_offset = _resolve_x86_16_function_start(
+        code,
+        0,
+        max_padding=_X86_16_EXACT_REGION_PADDING_SCAN_LIMIT,
+    )
+    if not isinstance(canonical_offset, int) or canonical_offset <= 0:
+        return None
+    canonical_addr = start + canonical_offset
+    if not (requested_addr <= canonical_addr < end):
+        return None
+    canonical_name = function_label or _lst_code_label(lst_metadata, canonical_addr, project.entry)
+    return DirectAddrCanonicalization8616(
+        requested_addr=requested_addr,
+        canonical_addr=canonical_addr,
+        region=(start, end),
+        name=canonical_name,
+    )
+
+
+def _canonicalize_sidecar_work_offset_8616(
+    project: angr.Project,
+    lst_metadata: LSTMetadata | None,
+    offset: int,
+    name: str | None,
+) -> tuple[int, str | None]:
+    canonical = _canonicalize_direct_addr_from_sidecar_padding_8616(
+        project,
+        lst_metadata,
+        offset,
+        function_label=name,
+    )
+    if canonical is None:
+        return offset, name
+    return canonical.canonical_addr, canonical.name or name
 
 
 def _prepare_ranked_binary_preview_items(
@@ -967,6 +1080,18 @@ def _function_work_cache_lookup(
                         tail_validation_enabled,
                         expected_validation_stages,
                     )
+                normalized_cached_payload = _normalize_accepted_payload_8616(cached_payload)
+                if normalized_cached_payload.rstrip() != cached_payload.rstrip():
+                    return (
+                        None,
+                        (
+                            f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
+                            f"{getattr(item.function, 'name', 'sub')} stale_normalization\n"
+                        ),
+                        cache_key,
+                        tail_validation_enabled,
+                        expected_validation_stages,
+                    )
                 cached_quality = assess_decompiled_c_text(cached_payload)
                 if cached_quality.reject_as_decompiled:
                     marker_summary = ", ".join(cached_quality.markers[:3]) if cached_quality.markers else "unresolved"
@@ -982,6 +1107,36 @@ def _function_work_cache_lookup(
                         tail_validation_enabled,
                         expected_validation_stages,
                     )
+                cached_source_evidence_payload = _source_evidence_payload_for_function_8616(
+                    binary_path=binary_path,
+                    function_name=str(getattr(item.function, "name", "")) or None,
+                    payload=cached_payload,
+                )
+                cached_source_backed = (
+                    isinstance(cached_source_evidence_payload, str)
+                    and bool(cached_source_evidence_payload.strip())
+                    and "///" in cached_source_evidence_payload
+                )
+                if cached_source_backed:
+                    cached_source_quality = assess_source_backed_c_text(cached_payload)
+                    if cached_source_quality.reject_as_decompiled:
+                        marker_summary = (
+                            ", ".join(cached_source_quality.markers[:3])
+                            if cached_source_quality.markers
+                            else "unresolved"
+                        )
+                        if len(cached_source_quality.markers) > 3:
+                            marker_summary += ", ..."
+                        return (
+                            None,
+                            (
+                                f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
+                                f"{getattr(item.function, 'name', 'sub')} source_quality={marker_summary}\n"
+                            ),
+                            cache_key,
+                            tail_validation_enabled,
+                            expected_validation_stages,
+                        )
                 source_blocker = _source_evidence_return_blocker_8616(
                     binary_path=binary_path,
                     function_name=str(getattr(item.function, "name", "")) or None,
@@ -1179,6 +1334,7 @@ def _run_function_work_item(
             acceptance_validated_hash = acceptance.validated_payload_hash
             acceptance_gcc_hash = acceptance.gcc_checked_payload_hash
             payload = acceptance.gcc_checked_payload
+            source_quality_blocked = _is_source_backed_quality_blocker_8616(acceptance_blocker)
             if acceptance_blocker is not None:
                 if status == WorkItemStatus.VALIDATION_FAILED.value:
                     preserved_candidate = None
@@ -1194,7 +1350,7 @@ def _run_function_work_item(
                     )
                 payload = acceptance_blocker
                 partial_payload = preserved_candidate
-            if status in {"empty", "validation_failed"}:
+            if status in {"empty", "validation_failed"} and not source_quality_blocked:
                 recovered_payload, recovered_snapshot = _recover_binary_evidence_c_8616(
                     decompile_project, decompile_function
                 )
@@ -1656,6 +1812,10 @@ def _normalize_accepted_payload_8616(payload: str) -> str:
     accepted_payload = _dedupe_duplicate_local_declarations_text(accepted_payload)
     accepted_payload = _prune_parameter_shadow_declarations_text(accepted_payload)
     accepted_payload = _prune_undefined_fragment_carrier_assignments_text(accepted_payload)
+    accepted_payload = _coalesce_redundant_split_global_incdec_text(accepted_payload)
+    accepted_payload = _prune_standalone_memory_helper_reads_text(accepted_payload)
+    accepted_payload = _prune_unused_staging_assignments(accepted_payload)
+    accepted_payload = _prune_unused_local_declarations_text(accepted_payload)
     accepted_payload = _normalize_scalar_gb_array_declarations_text(accepted_payload)
     accepted_payload = _normalize_seg_offset_void_pointer_args_text(accepted_payload)
     accepted_payload = _normalize_unsupported_computed_goto_text(accepted_payload)
@@ -1797,6 +1957,7 @@ def _validated_generated_c_acceptance_8616(
             return _acceptance_result_8616("validation_failed", detail, accepted_payload)
 
         accepted_payload = _normalize_accepted_payload_8616(accepted_payload)
+        accepted_payload = _prune_invalid_simple_function_prototypes_text(accepted_payload)
 
         quality = assess_decompiled_c_text(accepted_payload)
         if quality.reject_as_decompiled:
@@ -1899,6 +2060,23 @@ def _validated_generated_c_acceptance_8616(
 
 def _is_source_backed_quality_blocker_8616(blocker: object) -> bool:
     return isinstance(blocker, str) and blocker.startswith("Source-backed quality guard rejected emitted C")
+
+
+def _dump_validation_failed_payload_if_requested_8616(payload: str, *, prefix: str = "payload") -> None:
+    if not _env_truthy_8616("INERTIA_DUMP_VALIDATION_FAILED_PAYLOAD"):
+        return
+    if not isinstance(payload, str) or not payload.strip():
+        return
+    try:
+        root = Path("angr_platforms/.cache/validation_failed_payloads")
+        root.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        stamp = int(time.time())
+        out = root / f"{prefix}_{stamp}_{digest}.c"
+        out.write_text(payload, encoding="utf-8")
+        print(f"[tail-validation] failed payload artifact: {out}", file=sys.stderr)
+    except Exception:
+        return
 
 
 def _with_source_evidence_comments_8616(
@@ -3001,6 +3179,12 @@ def _fresh_sidecar_retry_work_item_8616(
     source_name = getattr(item.function, "name", None)
     if not isinstance(source_name, str) or not source_name:
         source_name = f"sub_{source_addr:x}"
+    source_addr, source_name = _canonicalize_sidecar_work_offset_8616(
+        project,
+        lst_metadata,
+        source_addr,
+        source_name,
+    )
     loader = getattr(project, "loader", None)
     main_object = getattr(loader, "main_object", None)
     linked_base = getattr(main_object, "linked_base", None)
@@ -3063,6 +3247,7 @@ def _emit_function_result(
     fallback_tail_validation_by_index: dict[int, dict[str, object]],
 ) -> tuple[int, int]:
     def _impl():
+        nonlocal result
         result_tail_validation = _tail_validation_snapshot_from_result_8616(getattr(result, "tail_validation", None))
         decompiled_local = 0
         failed_local = 0
@@ -3125,8 +3310,45 @@ def _emit_function_result(
             print(_format_first_block_asm(project, function.addr))
         emitted_problem = False
         if result.status == "ok":
-            if not _tail_validation_runtime_enabled(project) or x86_16_tail_validation_snapshot_passed(
-                result_tail_validation
+            payload_text = result.payload if isinstance(result.payload, str) else ""
+            normalized_payload_text = _normalize_accepted_payload_8616(payload_text)
+            if normalized_payload_text != payload_text:
+                result = replace(result, payload=normalized_payload_text)
+                payload_text = normalized_payload_text
+            source_evidence_payload = _source_evidence_payload_for_function_8616(
+                binary_path=args.binary,
+                function_name=item.function.name,
+                payload=payload_text,
+            )
+            source_backed = (
+                isinstance(source_evidence_payload, str)
+                and bool(source_evidence_payload.strip())
+                and "///" in source_evidence_payload
+            )
+            if source_backed:
+                source_quality = assess_source_backed_c_text(payload_text)
+                if source_quality.reject_as_decompiled:
+                    marker_summary = ", ".join(source_quality.markers[:3]) if source_quality.markers else "unresolved"
+                    if len(source_quality.markers) > 3:
+                        marker_summary += ", ..."
+                    detail = f"Source-backed quality guard rejected emitted C ({marker_summary})."
+                    print("/* problem: validation=failed */")
+                    _print_diagnostic_text(detail)
+                    _dump_validation_failed_payload_if_requested_8616(
+                        source_evidence_payload,
+                        prefix=f"emit_{function.addr:x}_{function.name}",
+                    )
+                    result = replace(
+                        result,
+                        status=WorkItemStatus.VALIDATION_FAILED.value,
+                        payload=detail,
+                        partial_payload=None,
+                    )
+                    emitted_problem = True
+                    attempt_status_printed = True
+            if result.status == "ok" and (
+                not _tail_validation_runtime_enabled(project)
+                or x86_16_tail_validation_snapshot_passed(result_tail_validation)
             ):
                 decompiled_local += 1
                 _print_function_attempt_status(
@@ -3142,43 +3364,44 @@ def _emit_function_result(
                     c_header="/* -- c -- */",
                 )
                 return decompiled_local, failed_local
-            validation_status = _tail_validation_display_status(result_tail_validation)
-            print("/* problem: validation=failed */")
-            for _diag_line in _format_tail_validation_diagnostic(
-                result_tail_validation,
-                function_addr=function.addr,
-                function_name=function.name,
-                block_count=getattr(result, "block_count", None),
-                byte_count=getattr(result, "byte_count", None),
-                exit_kind=result.status,
-                exit_detail=f"tail-validation status={validation_status}",
-            ):
-                print(_diag_line)
-            _print_function_attempt_status(
-                function,
-                attempt="decompiled",
-                validation_snapshot=result_tail_validation,
-            )
-            print("/* decompiled output failed tail-validation; trying fallback lanes */")
-            attempt_status_printed = True
-            emitted_problem = True
-            if (
-                args.addr is None
-                and getattr(project.arch, "name", "") == "86_16"
-                and getattr(result, "failure_stage", None) != "sweep_budget"
-                and _try_emit_retry_recovered_candidate_8616(
-                    item=retry_item,
-                    function=function,
-                    project=project,
-                    args=args,
-                    lst_metadata=lst_metadata,
-                    cod_metadata=cod_metadata,
-                    synthetic_globals=synthetic_globals,
-                    retry_timeout=_retry_timeout_for_failed_result_8616(result, args),
+            if result.status == "ok":
+                validation_status = _tail_validation_display_status(result_tail_validation)
+                print("/* problem: validation=failed */")
+                for _diag_line in _format_tail_validation_diagnostic(
+                    result_tail_validation,
+                    function_addr=function.addr,
+                    function_name=function.name,
+                    block_count=getattr(result, "block_count", None),
+                    byte_count=getattr(result, "byte_count", None),
+                    exit_kind=result.status,
+                    exit_detail=f"tail-validation status={validation_status}",
+                ):
+                    print(_diag_line)
+                _print_function_attempt_status(
+                    function,
+                    attempt="decompiled",
+                    validation_snapshot=result_tail_validation,
                 )
-            ):
-                decompiled_local += 1
-                return decompiled_local, failed_local
+                print("/* decompiled output failed tail-validation; trying fallback lanes */")
+                attempt_status_printed = True
+                emitted_problem = True
+                if (
+                    args.addr is None
+                    and getattr(project.arch, "name", "") == "86_16"
+                    and getattr(result, "failure_stage", None) != "sweep_budget"
+                    and _try_emit_retry_recovered_candidate_8616(
+                        item=retry_item,
+                        function=function,
+                        project=project,
+                        args=args,
+                        lst_metadata=lst_metadata,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        retry_timeout=_retry_timeout_for_failed_result_8616(result, args),
+                    )
+                ):
+                    decompiled_local += 1
+                    return decompiled_local, failed_local
 
         if result.partial_payload:
             _print_function_attempt_status(
@@ -3283,6 +3506,20 @@ def _try_emit_retry_recovered_candidate_8616(
             or not getattr(retry_result, "payload").strip()
         ):
             return False
+        retry_payload = getattr(retry_result, "payload")
+        source_evidence_payload = _source_evidence_payload_for_function_8616(
+            binary_path=args.binary,
+            function_name=item.function.name,
+            payload=retry_payload,
+        )
+        if (
+            isinstance(source_evidence_payload, str)
+            and bool(source_evidence_payload.strip())
+            and "///" in source_evidence_payload
+        ):
+            source_quality = assess_source_backed_c_text(retry_payload)
+            if source_quality.reject_as_decompiled:
+                return False
         print("/* retry lane: recovered validation-passed candidate */")
         _print_function_attempt_status(
             function,
@@ -3292,7 +3529,7 @@ def _try_emit_retry_recovered_candidate_8616(
         _emit_optional_source_sidecar_c_block(
             args.binary,
             item.function.name,
-            retry_result.payload,
+            retry_payload,
             alternate_source_c=bool(args.alternate_source_c),
             c_header="/* -- c -- */",
         )
@@ -4028,7 +4265,8 @@ def main(argv: list[str] | None = None) -> int:
                     direct_budget_timeout = max(args.timeout, 1)
                 else:
                     direct_budget_timeout = max(direct_budget_timeout, 24)
-            direct_addr_deadline = time.monotonic() + _direct_addr_wall_clock_budget(
+            direct_addr_started_at = time.monotonic()
+            direct_addr_deadline = direct_addr_started_at + _direct_addr_wall_clock_budget(
                 args.timeout,
                 effective_timeout=direct_budget_timeout,
                 explicit_timeout=bool(timeout_was_explicit),
@@ -4081,6 +4319,24 @@ def main(argv: list[str] | None = None) -> int:
                 if detail is None:
                     detail = "after exhausting direct-address recovery budget"
                 _emit_budget_exhausted_sidecar_asm_fallback_or_timeout(detail)
+
+            canonical_direct_addr = _canonicalize_direct_addr_from_sidecar_padding_8616(
+                project,
+                lst_metadata,
+                args.addr,
+                function_label=function_label,
+            )
+            if canonical_direct_addr is not None:
+                print(
+                    "/* direct address canonicalized from "
+                    f"{canonical_direct_addr.requested_addr:#x} to {canonical_direct_addr.canonical_addr:#x} "
+                    "using sidecar padding/prologue evidence */",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                args.addr = canonical_direct_addr.canonical_addr
+                if function_label is None and canonical_direct_addr.name:
+                    function_label = canonical_direct_addr.name
 
             try:
 
@@ -4678,6 +4934,7 @@ def main(argv: list[str] | None = None) -> int:
             direct_failure_family_state = FailureFamilyState()
             direct_sidecar_verdict = "not_attempted"
             direct_nonoptimized_verdict = "not_attempted"
+            direct_timeout_stage: str | None = None
 
             def _direct_analysis_timeout_for_shape(base_timeout: int, block_count: int, byte_count: int) -> int:
                 boosted = _effective_decompile_timeout_8616(
@@ -4847,6 +5104,15 @@ def main(argv: list[str] | None = None) -> int:
                     _direct_blocks,
                     _direct_bytes,
                 )
+                direct_addr_deadline = max(
+                    direct_addr_deadline,
+                    direct_addr_started_at
+                    + _direct_addr_wall_clock_budget(
+                        args.timeout,
+                        effective_timeout=_direct_effective_timeout,
+                        explicit_timeout=bool(timeout_was_explicit),
+                    ),
+                )
                 direct_decompile_timeout = _enforce_function_timeout_cap(
                     max(1, _direct_effective_timeout) + 28,
                     context="direct analysis wrapper timeout",
@@ -4891,22 +5157,29 @@ def main(argv: list[str] | None = None) -> int:
                             thread_name_prefix="direct-decomp",
                         )
                     annotate_current_span(status=status)
-                for extra in direct_extra:
-                    if isinstance(extra, dict):
-                        direct_tail_validation_snapshot = dict(extra)
-                    elif isinstance(extra, FailureFamilyState):
-                        direct_failure_family_state.previous_snapshot = extra.previous_snapshot
-                        direct_failure_family_state.candidate_snapshot = extra.candidate_snapshot
-                        direct_failure_family_state.new_proof_seen = extra.new_proof_seen
-                        direct_failure_family_state.repeat_detected = extra.repeat_detected
+                    for extra in direct_extra:
+                        if isinstance(extra, dict):
+                            direct_tail_validation_snapshot = dict(extra)
+                        elif isinstance(extra, FailureFamilyState):
+                            direct_failure_family_state.previous_snapshot = extra.previous_snapshot
+                            direct_failure_family_state.candidate_snapshot = extra.candidate_snapshot
+                            direct_failure_family_state.new_proof_seen = extra.new_proof_seen
+                            direct_failure_family_state.repeat_detected = extra.repeat_detected
             except FuturesTimeoutError:
                 status = "timeout"
                 payload = f"Timed out after {direct_decompile_timeout}s."
                 partial_payload = None
+                direct_timeout_stage = _direct_timeout_failure_stage_from_payload(payload, default="decompilation")
             except TimeoutError as ex:
                 status = "timeout"
                 payload = _describe_exception(ex) or f"Timed out after {direct_decompile_timeout}s."
                 partial_payload = None
+                direct_timeout_stage = _direct_timeout_failure_stage_from_payload(payload, default="decompilation")
+            else:
+                direct_timeout_stage = _direct_timeout_failure_stage_from_payload(
+                    payload,
+                    default="decompilation",
+                ) if status == "timeout" else None
             direct_item = FunctionWorkItem(index=1, function_cfg=cfg, function=func)
             direct_result = FunctionWorkResult(
                 index=1,
@@ -4916,6 +5189,7 @@ def main(argv: list[str] | None = None) -> int:
                 function=func,
                 function_cfg=cfg,
                 partial_payload=partial_payload,
+                failure_stage=direct_timeout_stage,
                 tail_validation=direct_tail_validation_snapshot
                 or _tail_validation_snapshot_for_function_run(direct_project, func),
             )
@@ -5367,9 +5641,6 @@ def main(argv: list[str] | None = None) -> int:
                 known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
                 # Cap heavy fallback fan-out per function to keep direct-addr mode
                 # deterministic and prevent minute-long retry storms.
-                explicit_short_timeout = bool(
-                    timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6
-                )
                 if fast_direct_probe:
                     heavy_fallback_budget = 0
                 elif timeout_was_explicit and isinstance(args.timeout, int):
@@ -5423,6 +5694,10 @@ def main(argv: list[str] | None = None) -> int:
                     checked_blocker = checked_acceptance.blocker
                     if checked_status == "ok":
                         return checked_acceptance.gcc_checked_payload or payload_for_acceptance
+                    _dump_validation_failed_payload_if_requested_8616(
+                        payload_for_validation,
+                        prefix=f"fallback_{func.addr:x}_{func.name}",
+                    )
                     print(
                         f"[dbg] rejected direct fallback payload: {checked_status} detail={checked_blocker or 'n/a'}",
                         file=sys.stderr,
@@ -6531,7 +6806,13 @@ def main(argv: list[str] | None = None) -> int:
         fallback_tail_validation_by_index: dict[int, dict[str, object]] = {}
         if lst_metadata is not None and visible_code_labels:
             for index, (offset, name) in enumerate(labeled_offsets, start=1):
-                placeholder = _make_placeholder_function(project, offset, name)
+                work_offset, work_name = _canonicalize_sidecar_work_offset_8616(
+                    project,
+                    lst_metadata,
+                    offset,
+                    name,
+                )
+                placeholder = _make_placeholder_function(project, work_offset, work_name or name)
                 function_tasks.append(FunctionWorkItem(index=index, function_cfg=None, function=placeholder))
         elif (
             args.addr is None
@@ -7286,6 +7567,10 @@ def main(argv: list[str] | None = None) -> int:
                                     failure_stage="decompilation",
                                 )
                     if result is not None and result.status == "ok":
+                        result_payload = result.payload if isinstance(result.payload, str) else ""
+                        normalized_result_payload = _normalize_accepted_payload_8616(result_payload)
+                        if normalized_result_payload != result_payload:
+                            result = replace(result, payload=normalized_result_payload)
                         source_blocker = _source_evidence_return_blocker_8616(
                             binary_path=args.binary,
                             function_name=getattr(getattr(result, "function", None), "name", None)

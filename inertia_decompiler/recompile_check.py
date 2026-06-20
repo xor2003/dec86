@@ -68,6 +68,24 @@ def _sanitize_c99_line_comments_for_msc_8616(text: str) -> str:
     return "".join(lines)
 
 
+def _dedupe_msc_runtime_typedefs_8616(text: str) -> str:
+    typedef_re = re.compile(
+        r"^\s*typedef\s+.+?\s+(?P<name>uint8_t|uint16_t|uint32_t|clock_t|time_t)\s*;\s*$",
+        re.IGNORECASE,
+    )
+    seen: set[str] = set()
+    kept: list[str] = []
+    for line in str(text or "").splitlines(keepends=True):
+        match = typedef_re.match(line.rstrip("\r\n"))
+        if match is not None:
+            name = match.group("name").lower()
+            if name in seen:
+                continue
+            seen.add(name)
+        kept.append(line)
+    return "".join(kept)
+
+
 @dataclass(frozen=True, slots=True)
 class RecompileCheckResult:
     passed: bool
@@ -92,6 +110,7 @@ _MSC51_TRANSIENT_RETRY_LIMIT = 5
 def _compile_input_payload_8616(c_text: str, *, target: str) -> str:
     header_payload = _with_runtime_header_8616(c_text, target=target)
     if target == "msc-dos":
+        header_payload = _dedupe_msc_runtime_typedefs_8616(header_payload)
         header_payload = _sanitize_c99_line_comments_for_msc_8616(header_payload)
     sanitized = _sanitize_nested_block_comments(header_payload)
     return sanitized

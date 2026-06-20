@@ -15,8 +15,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
-from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_stack_metadata import _prune_dead_stack_carrier_assignments_8616
 from angr_platforms.X86_16.callsite_summary import CallsitePushExprOp8616, CallsiteSummary8616
@@ -29,6 +29,7 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _missing_calls_from_sequences_8616,
     _normalize_call_target_names_8616,
     _ordered_missing_from_source_8616,
+    _prune_scalar_global_high_byte_call_arg_remnants_8616,
     _recover_expected_calls_8616,
     _recover_missing_direct_calls_from_evidence_8616,
 )
@@ -72,6 +73,24 @@ class _LoopLikeNode:
 
 def _project():
     return SimpleNamespace(arch=Arch86_16())
+
+
+class _ByteMemory:
+    def __init__(self, base: int, data: bytes):
+        self.base = base
+        self.data = data
+
+    def load(self, addr: int, size: int) -> bytes:
+        start = addr - self.base
+        if start < 0 or start + size > len(self.data):
+            raise KeyError(addr)
+        return self.data[start : start + size]
+
+
+def _project_with_bytes(base: int, data: bytes):
+    project = _project()
+    project.loader = SimpleNamespace(memory=_ByteMemory(base, data))
+    return project
 
 
 def _codegen(project, statements):
@@ -364,6 +383,56 @@ def test_attach_callsite_summaries_upgrades_source_proven_stack_probe_summary(mo
     assert summary.helper_return_width == 2
     assert summary.helper_return_address_kind == "stack"
     assert codegen._inertia_callsite_materialization_stats.source_proven_stack_probe_count == 1
+
+
+def test_attach_callsite_summaries_upgrades_named_stack_probe_summary(monkeypatch):
+    project = _project()
+    function = SimpleNamespace(get_call_sites=lambda: (0x4012,))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr, create=False: (
+                function
+                if addr == 0x4010
+                else SimpleNamespace(addr=addr, name="aNchkstk")
+                if addr == 0x105D2
+                else None
+            )
+        ),
+        labels={},
+    )
+    codegen = _empty_codegen(project)
+    call = CFunctionCall("aNchkstk", SimpleNamespace(addr=0x105D2, name="aNchkstk"), [], codegen=codegen)
+    codegen.cfunc.statements = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
+        lambda _function, _callsite_addr: CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x105D2,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register=None,
+            return_used=False,
+            stack_probe_helper=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
+        lambda _project, _addr: (),
+    )
+
+    changed = _attach_callsite_summaries_8616(project, codegen)
+
+    assert changed is True
+    summary = codegen._inertia_callsite_summaries[id(call)]
+    assert summary.stack_probe_helper is True
+    assert summary.helper_return_state == "stack_address"
+    assert summary.helper_return_space == "ss"
+    assert summary.helper_return_width == 2
+    assert summary.helper_return_address_kind == "stack"
 
 
 def test_attach_callsite_summaries_prefers_sidecar_labels_for_sub_targets(monkeypatch):
@@ -1140,6 +1209,46 @@ def test_materialize_callsite_stack_arguments_syncs_body_root_to_rendered_statem
     assert len(body_call.args) == 1
     assert isinstance(body_call.args[0], CFunctionCall)
     assert body_call.args[0].callee_target == "SEG_U32"
+
+
+def test_materialize_callsite_stack_arguments_uses_global_expr_push_source():
+    project = _project()
+    codegen = _empty_codegen(project)
+    call = CFunctionCall(
+        "settextposition",
+        SimpleNamespace(name="settextposition"),
+        [],
+        codegen=codegen,
+    )
+    root = CStatements([CExpressionStatement(call, codegen=codegen)], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x101F,
+            target_addr=0x128E4,
+            return_addr=0x1024,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 75), ("expr", ("global", 0x160, 2), ((CallsitePushExprOp8616.ADD.value, 1),))),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert len(call.args) == 2
+    row_arg, column_arg = call.args
+    assert isinstance(row_arg, _scg.c.CBinaryOp)
+    assert row_arg.op == "Add"
+    assert isinstance(row_arg.lhs, CFunctionCall)
+    assert row_arg.lhs.callee_target == "SEG_U16"
+    assert getattr(row_arg.lhs.args[1], "value", None) == 0x160
+    assert getattr(row_arg.rhs, "value", None) == 1
+    assert getattr(column_arg, "value", None) == 75
 
 
 def test_materialize_callsite_stack_arguments_resolves_register_carrier_before_materializing():
@@ -4751,10 +4860,207 @@ def test_materialize_callsite_stack_arguments_keeps_exact_imm_push_source_over_r
     assert call_arg.value == 0xFFFC
 
 
+def test_materialize_callsite_stack_arguments_prunes_proven_local_expr_push_setup_assignment():
+    project = _project_with_bytes(0x1058, b"\x8b\x46\xfe\x05\x02\x00\x50")
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_slot = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    i_var = structured_c.CVariable(i_slot, variable_type=SimTypeShort(False), codegen=codegen)
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_1123"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    row_arg = structured_c.CBinaryOp(
+        "Add",
+        i_var,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    col_arg = structured_c.CConstant(48, SimTypeShort(False), codegen=codegen)
+    call = CFunctionCall("settextposition", SimpleNamespace(name="settextposition"), [row_arg, col_arg], codegen=codegen)
+
+    setup = CAssignment(i_var, carrier, codegen=codegen, tags={"ins_addr": 0x105E})
+    codegen.cfunc.statements = CStatements(
+        [setup, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x105F,
+            target_addr=0x128E4,
+            return_addr=0x1064,
+            kind="direct_far",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 48), ("expr", ("bp", -2), ((CallsitePushExprOp8616.ADD.value, 2),))),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == [codegen.cfunc.statements.statements[0]]
+    assert codegen.cfunc.statements.statements[0].expr is call
+    assert call.args == [row_arg, col_arg]
+
+
+def test_materialize_callsite_stack_arguments_keeps_unproved_local_expr_setup_assignment():
+    project = _project_with_bytes(0x105A, b"\xc7\x46\xfe\x02\x00")
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_slot = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    i_var = structured_c.CVariable(i_slot, variable_type=SimTypeShort(False), codegen=codegen)
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_1123"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    row_arg = structured_c.CBinaryOp(
+        "Add",
+        i_var,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    col_arg = structured_c.CConstant(48, SimTypeShort(False), codegen=codegen)
+    call = CFunctionCall("settextposition", SimpleNamespace(name="settextposition"), [row_arg, col_arg], codegen=codegen)
+
+    setup = CAssignment(i_var, carrier, codegen=codegen, tags={"ins_addr": 0x105E})
+    codegen.cfunc.statements = CStatements(
+        [setup, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x105F,
+            target_addr=0x128E4,
+            return_addr=0x1064,
+            kind="direct_far",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 48), ("expr", ("bp", -2), ((CallsitePushExprOp8616.ADD.value, 2),))),
+        ),
+    }
+
+    _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert codegen.cfunc.statements.statements[0] is setup
+
+
+def test_materialize_callsite_stack_arguments_prunes_proven_local_immediate_push_setup_assignment():
+    project = _project_with_bytes(0x105B, b"\xb8\x30\x00\x50")
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_slot = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    i_var = structured_c.CVariable(i_slot, variable_type=SimTypeShort(False), codegen=codegen)
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_1115"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    row_arg = structured_c.CBinaryOp(
+        "Add",
+        i_var,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    col_arg = structured_c.CConstant(48, SimTypeShort(False), codegen=codegen)
+    call = CFunctionCall("settextposition", SimpleNamespace(name="settextposition"), [row_arg, col_arg], codegen=codegen)
+
+    setup = CAssignment(i_var, carrier, codegen=codegen, tags={"ins_addr": 0x105E})
+    codegen.cfunc.statements = CStatements(
+        [setup, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x105F,
+            target_addr=0x128E4,
+            return_addr=0x1064,
+            kind="direct_far",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 48), ("expr", ("bp", -2), ((CallsitePushExprOp8616.ADD.value, 2),))),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == [codegen.cfunc.statements.statements[0]]
+    assert codegen.cfunc.statements.statements[0].expr is call
+    assert call.args == [row_arg, col_arg]
+
+
+def test_materialize_callsite_stack_arguments_keeps_unproved_local_immediate_setup_assignment():
+    project = _project_with_bytes(0x105A, b"\xc7\x46\xfe\x30\x00")
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_slot = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    i_var = structured_c.CVariable(i_slot, variable_type=SimTypeShort(False), codegen=codegen)
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_1115"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    row_arg = structured_c.CBinaryOp(
+        "Add",
+        i_var,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    col_arg = structured_c.CConstant(48, SimTypeShort(False), codegen=codegen)
+    call = CFunctionCall("settextposition", SimpleNamespace(name="settextposition"), [row_arg, col_arg], codegen=codegen)
+
+    setup = CAssignment(i_var, carrier, codegen=codegen, tags={"ins_addr": 0x105E})
+    codegen.cfunc.statements = CStatements(
+        [setup, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x105F,
+            target_addr=0x128E4,
+            return_addr=0x1064,
+            kind="direct_far",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 48), ("expr", ("bp", -2), ((CallsitePushExprOp8616.ADD.value, 2),))),
+        ),
+    }
+
+    _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert codegen.cfunc.statements.statements[0] is setup
+
+
 def test_materialize_callsite_stack_arguments_unknown_positive_bp_source_uses_local_name():
     project = _project()
     codegen = _empty_codegen(project)
-    structured_c = _scg.c
 
     call = CFunctionCall("sortproc", SimpleNamespace(name="sortproc"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements([CExpressionStatement(call, codegen=codegen)], addr=0x4010, codegen=codegen)
@@ -5235,6 +5541,147 @@ def test_materialize_callsite_stack_arguments_groups_ss_bp_address_far_pointer_a
     stats = codegen._inertia_callsite_materialization_stats
     assert stats.known_prototype_arg_mismatch_count == 0
     assert stats.pointer_arg_materialized_count >= 1
+    assert codegen._inertia_callsite_unmaterialized_arg_gaps_8616 == ()
+
+
+def test_materialize_callsite_stack_arguments_prunes_direct_push_source_far_pointer_stores():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    local_buf = structured_c.CVariable(
+        SimStackVariable(-44, 44, base="bp", name="achT", region=0x4010),
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    ss_reg = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use = {local_buf.variable: local_buf}
+    codegen.cfunc.unified_local_vars = {local_buf.variable: {(local_buf, local_buf.variable_type)}}
+    call = CFunctionCall(
+        "outtext",
+        SimpleNamespace(addr=0x1544, name="outtext", block_addrs_set={0x1544}),
+        [],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            _ss_sp_stack_store(codegen, project, -4, local_buf),
+            _ss_sp_stack_store(codegen, project, -2, ss_reg),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("seg", "ss"), ("bp_addr", -44)),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    assert len(codegen.cfunc.statements.statements) == 1
+    final_call = codegen.cfunc.statements.statements[0].expr
+    assert len(final_call.args) == 1
+    arg = final_call.args[0]
+    assert isinstance(arg, structured_c.CUnaryOp)
+    assert arg.op == "Reference"
+    assert getattr(getattr(arg.operand, "variable", None), "name", None) == "achT"
+    assert codegen._inertia_callsite_direct_push_source_stores_pruned_8616 == 2
+
+
+def test_materialize_callsite_stack_arguments_prunes_keep_existing_scalar_byte_pair_stores():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    ss_reg = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    source = CVariable(SimRegisterVariable(0x40, 2, name="vvar_source"), codegen=codegen)
+    slot = CVariable(SimRegisterVariable(0x42, 2, name="vvar_slot"), codegen=codegen)
+    stack_segment = CVariable(SimRegisterVariable(0x44, 2, name="vvar_stack_segment"), codegen=codegen)
+    sp_carrier = CVariable(SimRegisterVariable(0x46, 2, name="vvar_sp"), codegen=codegen)
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+
+    def byte_store(*, high: bool):
+        offset = structured_c.CBinaryOp("Add", slot, one, codegen=codegen) if high else slot
+        rhs = structured_c.CBinaryOp("Shr", source, eight, codegen=codegen) if high else source
+        return CAssignment(
+            CFunctionCall("SEG_U8", None, [stack_segment, offset], codegen=codegen),
+            rhs,
+            codegen=codegen,
+        )
+
+    call = CFunctionCall(
+        "settextposition",
+        SimpleNamespace(addr=0x128E4, name="settextposition", block_addrs_set={0x128E4}),
+        [
+            structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+            structured_c.CConstant(48, SimTypeShort(False), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(source, structured_c.CConstant(48, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            CAssignment(
+                slot,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    sp_carrier,
+                    structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            CAssignment(stack_segment, ss_reg, codegen=codegen),
+            byte_store(high=False),
+            byte_store(high=True),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x105F,
+            target_addr=0x128E4,
+            return_addr=0x1062,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 48), ("imm", 2)),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    assert statements[0].expr is call
+    assert codegen._inertia_callsite_direct_push_source_stores_pruned_8616 == 5
 
 
 def test_materialize_callsite_stack_arguments_groups_getvideoconfig_ss_bp_far_pointer_arg():
@@ -5252,7 +5699,7 @@ def test_materialize_callsite_stack_arguments_groups_getvideoconfig_ss_bp_far_po
     call = CFunctionCall(
         "getvideoconfig",
         SimpleNamespace(addr=0x3568, name="getvideoconfig", block_addrs_set={0x3568}),
-        [],
+        [structured_c.CUnaryOp("Reference", local_config, codegen=codegen)],
         codegen=codegen,
     )
     codegen.cfunc.statements = CStatements([CExpressionStatement(call, codegen=codegen)], addr=0x4010, codegen=codegen)
@@ -5272,7 +5719,7 @@ def test_materialize_callsite_stack_arguments_groups_getvideoconfig_ss_bp_far_po
         ),
     }
 
-    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is False
 
     final_call = codegen.cfunc.statements.statements[0].expr
     assert len(final_call.args) == 1
@@ -5280,6 +5727,749 @@ def test_materialize_callsite_stack_arguments_groups_getvideoconfig_ss_bp_far_po
     assert isinstance(arg, structured_c.CUnaryOp)
     assert arg.op == "Reference"
     assert getattr(getattr(arg.operand, "variable", None), "name", None) == "vc"
+    assert codegen._inertia_callsite_unmaterialized_arg_gaps_8616 == ()
+
+
+def test_materialize_callsite_stack_arguments_prunes_getvideoconfig_far_pointer_high_byte_remnants():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    local_config = structured_c.CVariable(
+        SimStackVariable(-112, 112, base="bp", name="vc", region=0x4010),
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use = {local_config.variable: local_config}
+    codegen.cfunc.unified_local_vars = {local_config.variable: {(local_config, local_config.variable_type)}}
+    ss = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    sp_carrier = CVariable(SimRegisterVariable(0x40, 2, name="vvar_46"), codegen=codegen)
+    segment_slot = CVariable(SimRegisterVariable(0x42, 2, name="vvar_51"), codegen=codegen)
+    offset_slot = CVariable(SimRegisterVariable(0x44, 2, name="vvar_53"), codegen=codegen)
+    bp_addr = CVariable(SimRegisterVariable(0x46, 2, name="v9"), codegen=codegen)
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+
+    def high_byte_stack_store(slot, source):
+        return CAssignment(
+            CFunctionCall(
+                "SEG_U8",
+                None,
+                [
+                    ss,
+                    structured_c.CBinaryOp("Add", slot, one, codegen=codegen),
+                ],
+                codegen=codegen,
+            ),
+            structured_c.CBinaryOp("Shr", source, eight, codegen=codegen),
+            codegen=codegen,
+        )
+
+    call = CFunctionCall(
+        "getvideoconfig",
+        SimpleNamespace(addr=0x3568, name="getvideoconfig", block_addrs_set={0x3568}),
+        [structured_c.CUnaryOp("Reference", local_config, codegen=codegen)],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                segment_slot,
+                structured_c.CBinaryOp(
+                    "Add",
+                    sp_carrier,
+                    structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            high_byte_stack_store(segment_slot, ss),
+            CAssignment(
+                offset_slot,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    segment_slot,
+                    structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            high_byte_stack_store(offset_slot, bp_addr),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4035,
+            target_addr=0x3568,
+            return_addr=0x4038,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("seg", "ss"), ("bp_addr", -112)),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    final_call = statements[0].expr
+    assert len(final_call.args) == 1
+    arg = final_call.args[0]
+    assert isinstance(arg, structured_c.CUnaryOp)
+    assert arg.op == "Reference"
+    assert getattr(getattr(arg.operand, "variable", None), "name", None) == "vc"
+    assert codegen._inertia_callsite_pre_call_farptr_high_byte_remnants_pruned_8616 == 4
+
+
+def test_materialize_callsite_stack_arguments_prunes_scalar_global_high_byte_remnant():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_compares = structured_c.CVariable(
+        SimMemoryVariable(0xBAA, 2, name="iCompares", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    carrier = CDirtyExpression(SimpleNamespace(varid=0x9000, name="vvar_40"), codegen=codegen)
+    ss = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+    setup_alias = CAssignment(
+        carrier,
+        structured_c.CUnaryOp(
+            "Reference",
+            structured_c.CVariable(
+                SimStackVariable(-4, 2, base="bp", name="tmp", region=0x4010),
+                variable_type=SimTypeShort(False),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    high_byte_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [ss, structured_c.CBinaryOp("Add", carrier, one, codegen=codegen)],
+            codegen=codegen,
+        ),
+        structured_c.CBinaryOp("Shr", i_compares, eight, codegen=codegen),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "sprintf",
+        SimpleNamespace(addr=0x1122, name="sprintf", block_addrs_set={0x1122}),
+        [i_compares],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [setup_alias, high_byte_store, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4040,
+            target_addr=0x1122,
+            return_addr=0x4043,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("global", 0xBAA, 2),),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    assert statements[0].expr is call
+    assert codegen._inertia_callsite_pre_call_scalar_high_byte_remnants_pruned_8616 == 2
+
+
+def test_materialize_callsite_stack_arguments_prunes_byte_sized_scalar_global_high_byte_remnant():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    byte_sized_alias = structured_c.CVariable(
+        SimMemoryVariable(0xBAA, 1, name="g_baa", region=0x4010),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    carrier = CDirtyExpression(SimpleNamespace(varid=0x9000, name="vvar_40"), codegen=codegen)
+    ss = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    setup_alias = CAssignment(
+        carrier,
+        structured_c.CConstant(6, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    high_byte_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [
+                ss,
+                structured_c.CBinaryOp(
+                    "Add",
+                    carrier,
+                    structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        ),
+        structured_c.CBinaryOp(
+            "Shr",
+            byte_sized_alias,
+            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "sprintf",
+        SimpleNamespace(addr=0x1122, name="sprintf", block_addrs_set={0x1122}),
+        [byte_sized_alias],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [setup_alias, high_byte_store, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4040,
+            target_addr=0x1122,
+            return_addr=0x4043,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("global", 0xBAA, 2),),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    assert statements[0].expr is call
+    assert codegen._inertia_callsite_pre_call_scalar_high_byte_remnants_pruned_8616 == 2
+
+
+def test_final_pruner_removes_byte_pair_scalar_global_high_byte_remnant_with_carriers():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_compares = structured_c.CVariable(
+        SimMemoryVariable(0xBAA, 2, name="iCompares", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    low_byte_alias = structured_c.CVariable(
+        SimMemoryVariable(0xBAA, 1, name="g_baa", region=0x4010),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    high_byte_alias = structured_c.CVariable(
+        SimMemoryVariable(0xBAB, 1, name="g_bab", region=0x4010),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    carrier = CDirtyExpression(SimpleNamespace(varid=0x9000, name="vvar_40"), codegen=codegen)
+    ss = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+    setup_alias = CAssignment(
+        carrier,
+        structured_c.CConstant(6, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    byte_pair_word = structured_c.CBinaryOp(
+        "Or",
+        low_byte_alias,
+        structured_c.CBinaryOp("Shl", high_byte_alias, eight, codegen=codegen),
+        codegen=codegen,
+    )
+    high_byte_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [
+                ss,
+                structured_c.CBinaryOp(
+                    "Add",
+                    carrier,
+                    structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        ),
+        structured_c.CBinaryOp("Shr", byte_pair_word, eight, codegen=codegen),
+        codegen=codegen,
+    )
+
+    def post_store_carrier(varid: int):
+        return CAssignment(
+            CDirtyExpression(SimpleNamespace(varid=varid, name=f"tmp_{varid:x}"), codegen=codegen),
+            structured_c.CBinaryOp(
+                "Add",
+                CDirtyExpression(SimpleNamespace(varid=varid + 0x100, name=f"tmp_{varid + 0x100:x}"), codegen=codegen),
+                structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        )
+
+    call = CFunctionCall(
+        "sprintf",
+        SimpleNamespace(addr=0x1122, name="sprintf", block_addrs_set={0x1122}),
+        [i_compares],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            setup_alias,
+            high_byte_store,
+            post_store_carrier(0x9010),
+            post_store_carrier(0x9020),
+            post_store_carrier(0x9030),
+            post_store_carrier(0x9040),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4040,
+            target_addr=0x1122,
+            return_addr=0x4043,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("global", 0xBAA, 2),),
+        ),
+    }
+
+    assert _prune_scalar_global_high_byte_call_arg_remnants_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    assert statements[0].expr is call
+    assert codegen._inertia_callsite_pre_call_scalar_high_byte_remnants_pruned_8616 == 6
+
+
+def test_materialize_callsite_stack_arguments_prunes_dirty_lhs_far_pointer_high_byte_remnants():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    local_config = structured_c.CVariable(
+        SimStackVariable(-112, 112, base="bp", name="vc", region=0x4010),
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use = {local_config.variable: local_config}
+    codegen.cfunc.unified_local_vars = {local_config.variable: {(local_config, local_config.variable_type)}}
+    ss = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    sp_carrier = CVariable(SimRegisterVariable(0x40, 2, name="vvar_46"), codegen=codegen)
+    segment_slot = CVariable(SimRegisterVariable(0x42, 2, name="vvar_51"), codegen=codegen)
+    offset_slot = CVariable(SimRegisterVariable(0x44, 2, name="vvar_53"), codegen=codegen)
+    bp_addr = CVariable(SimRegisterVariable(0x46, 2, name="v9"), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+
+    def high_byte_dirty_store(name, source):
+        return CAssignment(
+            CDirtyExpression(SimpleNamespace(varid=0x9000, name=name), codegen=codegen),
+            structured_c.CBinaryOp("Shr", source, eight, codegen=codegen),
+            codegen=codegen,
+        )
+
+    call = CFunctionCall(
+        "getvideoconfig",
+        SimpleNamespace(addr=0x3568, name="getvideoconfig", block_addrs_set={0x3568}),
+        [structured_c.CUnaryOp("Reference", local_config, codegen=codegen)],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                segment_slot,
+                structured_c.CBinaryOp(
+                    "Add",
+                    sp_carrier,
+                    structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            high_byte_dirty_store("SEG_U8(ss, vvar_51 + 1)", ss),
+            CAssignment(
+                offset_slot,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    segment_slot,
+                    structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            high_byte_dirty_store("SEG_U8(ss, vvar_53 + 1)", bp_addr),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4035,
+            target_addr=0x3568,
+            return_addr=0x4038,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("seg", "ss"), ("bp_addr", -112)),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    final_call = statements[0].expr
+    assert len(final_call.args) == 1
+    arg = final_call.args[0]
+    assert isinstance(arg, structured_c.CUnaryOp)
+    assert arg.op == "Reference"
+    assert getattr(getattr(arg.operand, "variable", None), "name", None) == "vc"
+    assert codegen._inertia_callsite_pre_call_farptr_high_byte_remnants_pruned_8616 == 4
+
+
+def test_materialize_callsite_stack_arguments_prunes_dirty_source_far_pointer_byte_store_pairs():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    local_buf = structured_c.CVariable(
+        SimStackVariable(-18, 15, base="bp", name="ach", region=0x4010),
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use = {local_buf.variable: local_buf}
+    codegen.cfunc.unified_local_vars = {local_buf.variable: {(local_buf, local_buf.variable_type)}}
+    ss = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    two = structured_c.CConstant(2, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+    sp_carrier = CDirtyExpression(SimpleNamespace(varid=0x9000, name="vvar_sp"), codegen=codegen)
+    segment_source = CDirtyExpression(SimpleNamespace(varid=0x9001, name="vvar_seg_source"), codegen=codegen)
+    offset_source = CDirtyExpression(SimpleNamespace(varid=0x9002, name="vvar_offset_source"), codegen=codegen)
+    segment_slot = CDirtyExpression(SimpleNamespace(varid=0x9003, name="vvar_segment_slot"), codegen=codegen)
+    offset_slot = CDirtyExpression(SimpleNamespace(varid=0x9004, name="vvar_offset_slot"), codegen=codegen)
+    stack_segment_a = CDirtyExpression(SimpleNamespace(varid=0x9005, name="vvar_stack_segment_a"), codegen=codegen)
+    stack_segment_b = CDirtyExpression(SimpleNamespace(varid=0x9006, name="vvar_stack_segment_b"), codegen=codegen)
+
+    def byte_store(slot, source, *, high: bool):
+        offset = structured_c.CBinaryOp("Add", slot, one, codegen=codegen) if high else slot
+        rhs = structured_c.CBinaryOp("Shr", source, eight, codegen=codegen) if high else source
+        return CAssignment(
+            CFunctionCall("SEG_U8", None, [stack_segment_a if slot is segment_slot else stack_segment_b, offset], codegen=codegen),
+            rhs,
+            codegen=codegen,
+        )
+
+    call = CFunctionCall(
+        "outtext",
+        SimpleNamespace(addr=0x1544, name="outtext", block_addrs_set={0x1544}),
+        [structured_c.CUnaryOp("Reference", local_buf, codegen=codegen)],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(segment_source, ss, codegen=codegen),
+            CAssignment(segment_slot, structured_c.CBinaryOp("Add", sp_carrier, two, codegen=codegen), codegen=codegen),
+            CAssignment(stack_segment_a, ss, codegen=codegen),
+            byte_store(segment_slot, segment_source, high=False),
+            byte_store(segment_slot, segment_source, high=True),
+            CAssignment(offset_source, structured_c.CUnaryOp("Reference", local_buf, codegen=codegen), codegen=codegen),
+            CAssignment(offset_slot, structured_c.CBinaryOp("Sub", segment_slot, two, codegen=codegen), codegen=codegen),
+            CAssignment(stack_segment_b, ss, codegen=codegen),
+            byte_store(offset_slot, offset_source, high=False),
+            byte_store(offset_slot, offset_source, high=True),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x10BD,
+            target_addr=0x1544,
+            return_addr=0x10C0,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("seg", "ss"), ("bp_addr", -18)),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    final_call = statements[0].expr
+    assert len(final_call.args) == 1
+    arg = final_call.args[0]
+    assert isinstance(arg, structured_c.CUnaryOp)
+    assert arg.op == "Reference"
+    assert getattr(getattr(arg.operand, "variable", None), "name", None) == "ach"
+    assert codegen._inertia_callsite_pre_call_farptr_high_byte_remnants_pruned_8616 == 10
+
+
+def test_materialize_callsite_stack_arguments_prunes_global_index_far_pointer_byte_store_pairs():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    ds = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ds"][0], 2, name="ds"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    two = structured_c.CConstant(2, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+    sp_carrier = CDirtyExpression(SimpleNamespace(varid=0x9100, name="vvar_sp"), codegen=codegen)
+    segment_source = CDirtyExpression(SimpleNamespace(varid=0x9101, name="vvar_ds_source"), codegen=codegen)
+    offset_source = CDirtyExpression(SimpleNamespace(varid=0x9102, name="vvar_indexed_offset"), codegen=codegen)
+    segment_slot = CDirtyExpression(SimpleNamespace(varid=0x9103, name="vvar_segment_slot"), codegen=codegen)
+    offset_slot = CDirtyExpression(SimpleNamespace(varid=0x9104, name="vvar_offset_slot"), codegen=codegen)
+    stack_segment = CDirtyExpression(SimpleNamespace(varid=0x9105, name="vvar_stack_segment"), codegen=codegen)
+
+    def byte_store(slot, source, *, high: bool):
+        offset = structured_c.CBinaryOp("Add", slot, one, codegen=codegen) if high else slot
+        rhs = structured_c.CBinaryOp("Shr", source, eight, codegen=codegen) if high else source
+        return CAssignment(
+            CFunctionCall("SEG_U8", None, [stack_segment, offset], codegen=codegen),
+            rhs,
+            codegen=codegen,
+        )
+
+    call_arg = CVariable(SimMemoryVariable(0x0136, 2, name="aszMenu_i", region=0x4010), codegen=codegen)
+    call = CFunctionCall(
+        "outtext",
+        SimpleNamespace(addr=0x1544, name="outtext", block_addrs_set={0x1544}),
+        [call_arg],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(segment_source, ds, codegen=codegen),
+            CAssignment(segment_slot, structured_c.CBinaryOp("Add", sp_carrier, two, codegen=codegen), codegen=codegen),
+            CAssignment(stack_segment, ds, codegen=codegen),
+            byte_store(segment_slot, segment_source, high=False),
+            byte_store(segment_slot, segment_source, high=True),
+            CAssignment(offset_source, call_arg, codegen=codegen),
+            CAssignment(offset_slot, structured_c.CBinaryOp("Sub", segment_slot, two, codegen=codegen), codegen=codegen),
+            byte_store(offset_slot, offset_source, high=False),
+            byte_store(offset_slot, offset_source, high=True),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1071,
+            target_addr=0x1544,
+            return_addr=0x1074,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(
+                ("seg", "ds"),
+                ("global_index", 310, 2, ("bp", -2), ((CallsitePushExprOp8616.SHL.value, 1),)),
+            ),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    assert statements[0].expr is call
+    assert codegen._inertia_callsite_pre_call_farptr_high_byte_remnants_pruned_8616 == 9
+
+
+def test_materialize_callsite_stack_arguments_prunes_far_pointer_remnants_before_safe_suffix_assignment():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    local_config = structured_c.CVariable(
+        SimStackVariable(-112, 112, base="bp", name="vc", region=0x4010),
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use = {local_config.variable: local_config}
+    codegen.cfunc.unified_local_vars = {local_config.variable: {(local_config, local_config.variable_type)}}
+    ss = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    sp_carrier = CVariable(SimRegisterVariable(0x40, 2, name="vvar_46"), codegen=codegen)
+    segment_slot = CVariable(SimRegisterVariable(0x42, 2, name="vvar_51"), codegen=codegen)
+    offset_slot = CVariable(SimRegisterVariable(0x44, 2, name="vvar_53"), codegen=codegen)
+    bp_addr = CVariable(SimRegisterVariable(0x46, 2, name="v9"), codegen=codegen)
+    safe_suffix_lhs = CVariable(
+        SimStackVariable(0, 2, base="bp", name="local_0", region=0x4010),
+        codegen=codegen,
+    )
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+
+    def high_byte_stack_store(slot, source):
+        return CAssignment(
+            CFunctionCall(
+                "SEG_U8",
+                None,
+                [
+                    ss,
+                    structured_c.CBinaryOp("Add", slot, one, codegen=codegen),
+                ],
+                codegen=codegen,
+            ),
+            structured_c.CBinaryOp("Shr", source, eight, codegen=codegen),
+            codegen=codegen,
+        )
+
+    call = CFunctionCall(
+        "getvideoconfig",
+        SimpleNamespace(addr=0x3568, name="getvideoconfig", block_addrs_set={0x3568}),
+        [structured_c.CUnaryOp("Reference", local_config, codegen=codegen)],
+        codegen=codegen,
+    )
+    safe_suffix = CAssignment(safe_suffix_lhs, bp_addr, codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                segment_slot,
+                structured_c.CBinaryOp(
+                    "Add",
+                    sp_carrier,
+                    structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            high_byte_stack_store(segment_slot, ss),
+            safe_suffix,
+            CAssignment(
+                CDirtyExpression(SimpleNamespace(varid=0x9001, name="vvar_53"), codegen=codegen),
+                structured_c.CBinaryOp(
+                    "Sub",
+                    CDirtyExpression(SimpleNamespace(varid=0x9002, name="vvar_51"), codegen=codegen),
+                    structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            high_byte_stack_store(offset_slot, bp_addr),
+            CExpressionStatement(call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4035,
+            target_addr=0x3568,
+            return_addr=0x4038,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("seg", "ss"), ("bp_addr", -112)),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 2
+    assert statements[0] is safe_suffix
+    final_call = statements[-1].expr
+    assert len(final_call.args) == 1
+    arg = final_call.args[0]
+    assert isinstance(arg, structured_c.CUnaryOp)
+    assert arg.op == "Reference"
+    assert getattr(getattr(arg.operand, "variable", None), "name", None) == "vc"
+    assert codegen._inertia_callsite_pre_call_farptr_high_byte_remnants_pruned_8616 == 4
 
 
 def test_materialize_callsite_stack_arguments_keeps_existing_stack_address_pointer_arg():
@@ -5561,10 +6751,142 @@ def test_materialize_callsite_stack_arguments_consumes_recorded_dx_ax_return_pus
     assert getattr(codegen, "_inertia_return_register_call_args_materialized_8616", 0) == 1
 
 
-def test_callsite_prototype_mismatch_defers_until_final_gate():
+def test_materialize_callsite_prunes_ret_reg_pre_call_stack_carriers_after_return_arg_materialized():
     project = _project()
     codegen = _empty_codegen(project)
     structured_c = _scg.c
+
+    local_buf = structured_c.CVariable(
+        SimStackVariable(-18, 18, base="bp", name="ach", region=0x4010),
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    i_var = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="i", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    div_call = CFunctionCall(
+        "aNldiv",
+        SimpleNamespace(addr=0x10D3, name="aNldiv", block_addrs_set={0x10D3}),
+        [
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+            structured_c.CConstant(30, SimTypeShort(False), codegen=codegen),
+            structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    stale_local = CAssignment(
+        i_var,
+        CDirtyExpression("tmp_ret_ax", codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x10DF},
+    )
+    stale_dirty = CAssignment(
+        CDirtyExpression("tmp_ret_dx", codegen=codegen),
+        CDirtyExpression("tmp_ret_rhs", codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x10DF},
+    )
+    sprintf_call = CFunctionCall(
+        "sprintf",
+        SimpleNamespace(addr=0x10E0, name="sprintf", block_addrs_set={0x10E0}),
+        [],
+        codegen=codegen,
+    )
+    call_stmt = CExpressionStatement(sprintf_call, codegen=codegen)
+    codegen.cfunc.statements = CStatements([stale_local, stale_dirty, call_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen.cfunc.variables_in_use = {local_buf.variable: local_buf, i_var.variable: i_var}
+    codegen.cfunc.unified_local_vars = {
+        local_buf.variable: {(local_buf, local_buf.variable_type)},
+        i_var.variable: {(i_var, i_var.variable_type)},
+    }
+    codegen._inertia_callsite_return_exprs_8616 = {0x10D3: div_call}
+    codegen._inertia_callsite_summaries = {
+        id(sprintf_call): CallsiteSummary8616(
+            callsite_addr=0x10E0,
+            target_addr=0x12BA,
+            return_addr=0x10E3,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 2, 2),
+            stack_cleanup=8,
+            return_register="ax",
+            return_used=False,
+            push_arg_sources=(
+                ("ret_reg", 0x10D3, "dx"),
+                ("ret_reg", 0x10D3, "ax"),
+                ("imm", 0x16A),
+                ("bp_addr", -18),
+            ),
+        ),
+    }
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+
+    statements = codegen.cfunc.statements.statements
+    assert statements == [call_stmt]
+    assert len(sprintf_call.args) == 3
+    assert isinstance(sprintf_call.args[2], CFunctionCall)
+    assert sprintf_call.args[2].callee_target == "aNldiv"
+
+
+def test_materialize_callsite_keeps_ret_reg_pre_call_stack_carriers_without_recorded_return_arg():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_var = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="i", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    stale_local = CAssignment(
+        i_var,
+        CDirtyExpression("tmp_ret_ax", codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x10DF},
+    )
+    sprintf_call = CFunctionCall(
+        "sprintf",
+        SimpleNamespace(addr=0x10E0, name="sprintf", block_addrs_set={0x10E0}),
+        [structured_c.CConstant(0, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    call_stmt = CExpressionStatement(sprintf_call, codegen=codegen)
+    codegen.cfunc.statements = CStatements([stale_local, call_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(sprintf_call): CallsiteSummary8616(
+            callsite_addr=0x10E0,
+            target_addr=0x12BA,
+            return_addr=0x10E3,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 2, 2),
+            stack_cleanup=8,
+            return_register="ax",
+            return_used=False,
+            push_arg_sources=(
+                ("ret_reg", 0x10D3, "dx"),
+                ("ret_reg", 0x10D3, "ax"),
+                ("imm", 0x16A),
+                ("bp_addr", -18),
+            ),
+        ),
+    }
+
+    _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert stale_local in codegen.cfunc.statements.statements
+    assert call_stmt in codegen.cfunc.statements.statements
+
+
+def test_callsite_prototype_mismatch_defers_until_final_gate():
+    project = _project()
+    codegen = _empty_codegen(project)
 
     call = CFunctionCall(
         "memset",
@@ -5994,6 +7316,9 @@ def test_normalize_call_target_names_repairs_unmaterialized_far_pointer_args_bef
     assert getattr(getattr(arg.operand, "variable", None), "name", None) == "achT"
     stats = codegen._inertia_callsite_materialization_stats
     assert stats.known_prototype_arg_mismatch_count == 0
+    assert stats.call_arg_fact_count == 1
+    assert stats.call_arg_materialized_count == 1
+    assert stats.failure_count == 0
     assert stats.pointer_arg_materialized_count >= 1
 
 
@@ -6506,6 +7831,233 @@ def test_materialize_callsite_consumes_dirty_setup_assignments_at_callsite():
     assert root.statements == [call_stmt]
     assert _args_match(call.args, [dst_slot, src_slot])
     assert codegen._inertia_callsite_dirty_setup_assignments_consumed_8616 == 2
+
+
+def test_materialize_callsite_consumes_dirty_setup_assignments_in_pre_call_push_window():
+    project = _project()
+    codegen = _DummyCodegen(project)
+    dst_slot = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="dst", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    src_slot = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="src", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+
+    def _dirty_setup(delta: int):
+        dirty = CDirtyExpression(f"tmp_{delta}", codegen=codegen)
+        return CAssignment(
+            dirty,
+            _scg.c.CBinaryOp(
+                "Sub",
+                CDirtyExpression(f"tmp_rhs_{delta}", codegen=codegen),
+                _scg.c.CConstant(delta, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            tags={"ins_addr": 0x1084, "vex_block_addr": 0x1080},
+            codegen=codegen,
+        )
+
+    setup_first = _dirty_setup(2)
+    setup_second = _dirty_setup(4)
+    call = CFunctionCall(
+        "DemoCall",
+        SimpleNamespace(addr=0x2000, name="DemoCall"),
+        [dst_slot, src_slot],
+        codegen=codegen,
+    )
+    call_stmt = CExpressionStatement(call, codegen=codegen)
+    root = CStatements([setup_first, setup_second, call_stmt], addr=0x1000, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            0x1089,
+            0x2000,
+            0x108C,
+            "near",
+            2,
+            (2, 2),
+            4,
+            None,
+            False,
+            push_arg_sources=(("bp", -4), ("bp", -2)),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [call_stmt]
+    assert _args_match(call.args, [dst_slot, src_slot])
+    assert codegen._inertia_callsite_dirty_setup_assignments_consumed_8616 == 2
+
+
+def test_materialize_callsite_prunes_byte_proven_dirty_source_alias_after_dirty_suffix():
+    project = _project_with_bytes(0x1056, b"\x8b\x46\xfe\x05\x02\x00\x50")
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_slot = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    i_var = structured_c.CVariable(i_slot, variable_type=SimTypeShort(False), codegen=codegen)
+    alias_rhs = CDirtyExpression("tmp_i_push", codegen=codegen)
+    alias = CAssignment(i_var, alias_rhs, codegen=codegen, tags={"ins_addr": 0x105C})
+    dirty_setup = CAssignment(
+        CDirtyExpression("tmp_setup", codegen=codegen),
+        CDirtyExpression("tmp_setup_rhs", codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x105E},
+    )
+    call_arg = structured_c.CBinaryOp(
+        "Add",
+        i_var,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "settextposition",
+        SimpleNamespace(name="settextposition"),
+        [call_arg, structured_c.CConstant(48, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    call_stmt = CExpressionStatement(call, codegen=codegen)
+    root = CStatements([alias, dirty_setup, call_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x105F,
+            target_addr=0x128E4,
+            return_addr=0x1064,
+            kind="direct_far",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 48), ("expr", ("bp", -2), ((CallsitePushExprOp8616.ADD.value, 2),))),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [call_stmt]
+    assert codegen._inertia_callsite_dirty_setup_assignments_consumed_8616 == 1
+    assert codegen._inertia_callsite_pre_call_source_alias_artifacts_pruned_8616 == 1
+
+
+def test_materialize_callsite_prunes_full_byte_proven_pre_call_setup_window():
+    project = _project_with_bytes(0x1052, b"\xb8\x30\x00\x50\x8b\x46\xfe\x05\x02\x00\x50")
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_slot = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    i_var = structured_c.CVariable(i_slot, variable_type=SimTypeShort(False), codegen=codegen)
+    leading_dirty = CAssignment(
+        CDirtyExpression("tmp_imm", codegen=codegen),
+        structured_c.CConstant(48, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1055},
+    )
+    alias = CAssignment(i_var, CDirtyExpression("tmp_i_push", codegen=codegen), codegen=codegen, tags={"ins_addr": 0x1055})
+    dirty_suffix = CAssignment(
+        CDirtyExpression("tmp_expr", codegen=codegen),
+        CDirtyExpression("tmp_expr_rhs", codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x105C},
+    )
+    row_arg = structured_c.CBinaryOp(
+        "Add",
+        i_var,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "settextposition",
+        SimpleNamespace(name="settextposition"),
+        [row_arg, structured_c.CConstant(48, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    call_stmt = CExpressionStatement(call, codegen=codegen)
+    root = CStatements([leading_dirty, alias, dirty_suffix, call_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x105F,
+            target_addr=0x128E4,
+            return_addr=0x1064,
+            kind="direct_far",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 48), ("expr", ("bp", -2), ((CallsitePushExprOp8616.ADD.value, 2),))),
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [call_stmt]
+
+
+def test_materialize_callsite_keeps_pre_call_setup_window_without_full_byte_evidence():
+    project = _project_with_bytes(0x1056, b"\x8b\x46\xfe\x05\x02\x00\x50")
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    i_slot = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    i_var = structured_c.CVariable(i_slot, variable_type=SimTypeShort(False), codegen=codegen)
+    leading_dirty = CAssignment(
+        CDirtyExpression("tmp_imm", codegen=codegen),
+        structured_c.CConstant(48, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1055},
+    )
+    alias = CAssignment(i_var, CDirtyExpression("tmp_i_push", codegen=codegen), codegen=codegen, tags={"ins_addr": 0x105C})
+    dirty_suffix = CAssignment(
+        CDirtyExpression("tmp_expr", codegen=codegen),
+        CDirtyExpression("tmp_expr_rhs", codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x105C},
+    )
+    row_arg = structured_c.CBinaryOp(
+        "Add",
+        i_var,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "settextposition",
+        SimpleNamespace(name="settextposition"),
+        [row_arg, structured_c.CConstant(48, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    call_stmt = CExpressionStatement(call, codegen=codegen)
+    root = CStatements([leading_dirty, alias, dirty_suffix, call_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x105F,
+            target_addr=0x128E4,
+            return_addr=0x1064,
+            kind="direct_far",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("imm", 48), ("expr", ("bp", -2), ((CallsitePushExprOp8616.ADD.value, 2),))),
+        ),
+    }
+
+    _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert leading_dirty in root.statements
+    assert call_stmt in root.statements
 
 
 def test_prune_dead_stack_carriers_only_recurses_into_plain_statement_blocks():

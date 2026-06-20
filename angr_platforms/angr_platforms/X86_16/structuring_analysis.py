@@ -22,6 +22,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
+from .ir.condition_ir import ConditionIR
+from .ir.core import IRValue, MemSpace
 from .structuring_graph_builder import build_region_graph
 from .structuring_loops import (
     NaturalLoopInfo,
@@ -45,6 +47,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _condition_const_value_8616(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, IRValue) and value.space == MemSpace.CONST and isinstance(value.const, int):
+        return value.const
+    return None
+
+
+def _single_eq_edge_guard_8616(region: Region) -> ConditionIR | None:
+    guards = tuple(region.metadata.get("typed_condition_edge_guards", ()) or ())
+    typed_guards = tuple(guard for guard in guards if isinstance(guard, ConditionIR))
+    if len(typed_guards) != 1:
+        return None
+    guard = typed_guards[0]
+    if guard.op != "eq":
+        return None
+    if _condition_const_value_8616(guard.rhs) is None:
+        return None
+    return guard
+
+
 @dataclass
 class StructuringStats:
     """Statistics about the structuring process."""
@@ -55,6 +78,7 @@ class StructuringStats:
     sequences_created: int = 0
     max_iterations_reached: bool = False
     had_unstructured_gotos: bool = False
+    edge_guard_switches_detected: int = 0
 
 
 class StructureAnalysis:
@@ -72,7 +96,7 @@ class StructureAnalysis:
         graph: RegionGraph,
         event_listener: Optional[Callable[[str], None]] = None,
         max_iterations: int = MAX_ITERATIONS,
-    ):
+    ) -> None:
         """Initialize the structuring analyzer.
 
         Args:
@@ -97,7 +121,7 @@ class StructureAnalysis:
         return self._execute()
 
     def _execute(self) -> RegionGraph:
-        def _impl():
+        def _impl() -> RegionGraph:
             """Core structuring algorithm.
 
             Iteratively:
@@ -135,6 +159,10 @@ class StructureAnalysis:
                 # Reset unresolved lists for this iteration
                 self.unresolved_cycles.clear()
                 self.unresolved_switches.clear()
+
+                for region in sorted(self.graph.nodes, key=lambda item: item.region_id or 0):
+                    if self._try_edge_guard_switch_cascade(region):
+                        self.stats.regions_reduced += 1
 
                 # Visit regions in post-order
                 post_order = self.graph.iter_postorder()
@@ -310,6 +338,8 @@ class StructureAnalysis:
         # Check if this region has multiple successors (branch point)
         succs = self.graph.successors(region)
         if len(succs) < 3:
+            if self._try_edge_guard_switch_cascade(region):
+                return True
             return False  # Need at least 3 branches for a switch candidate
 
         # Mark as switch region - this indicates potential for switch statement
@@ -320,6 +350,72 @@ class StructureAnalysis:
         logger.debug(f"Marked region {region} as switch candidate with {len(succs)} branches")
 
         return True  # Count as processed since we marked it
+
+    def _try_edge_guard_switch_cascade(self, region: Region) -> bool:
+        """Detect binary comparison cascades whose case targets carry edge guards."""
+        if region not in self.graph.nodes:
+            return False
+        if region.region_type == RegionType.IncSwitch:
+            return False
+
+        cases: list[Region] = []
+        case_values: list[int] = []
+        lhs_key: object | None = None
+        current = region
+        visited: set[Region] = set()
+
+        while current in self.graph.nodes and current not in visited:
+            visited.add(current)
+            succs = self.graph.successors(current)
+            if len(succs) != 2:
+                break
+
+            guarded_successors: list[tuple[Region, ConditionIR, int]] = []
+            for succ in succs:
+                guard = _single_eq_edge_guard_8616(succ)
+                if guard is None:
+                    continue
+                value = _condition_const_value_8616(guard.rhs)
+                if value is None:
+                    continue
+                guarded_successors.append((succ, guard, value))
+
+            if len(guarded_successors) != 1:
+                break
+
+            case_region, guard, value = guarded_successors[0]
+            if lhs_key is None:
+                lhs_key = guard.lhs
+            elif guard.lhs != lhs_key:
+                break
+            if value in case_values:
+                break
+            cases.append(case_region)
+            case_values.append(value)
+
+            next_regions = [succ for succ in succs if succ is not case_region]
+            if len(next_regions) != 1:
+                break
+            current = next_regions[0]
+
+        if len(cases) < 3:
+            return False
+
+        region.region_type = RegionType.IncSwitch
+        region.metadata["switch_candidates"] = cases
+        region.metadata["switch_case_values"] = tuple(case_values)
+        region.metadata["switch_condition_lhs"] = lhs_key
+        region.metadata["switch_detection"] = "typed_condition_edge_cascade"
+        if current in self.graph.nodes and current not in cases:
+            region.metadata["switch_default_target"] = current
+        self.unresolved_switches.append(region)
+        self.stats.edge_guard_switches_detected += 1
+        logger.debug(
+            "Marked region %s as typed edge-guard switch candidate with %d cases",
+            region,
+            len(cases),
+        )
+        return True
 
     def _try_if_then(self, region: Region) -> bool:
         """Try to form an if-then pattern.
@@ -364,7 +460,7 @@ class StructureAnalysis:
         return False
 
     def _try_if_then_else(self, region: Region) -> bool:
-        def _impl():
+        def _impl() -> bool:
             """Try to form an if-then-else pattern.
 
             If-then-else is: a condition region with exactly two branches that
@@ -546,20 +642,14 @@ class RegionBasedStructuringPass:
     structuring algorithm.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the pass."""
         self.stats = StructuringStats()
 
-    def __call__(self, codegen) -> bool:
-        def _impl():
-            """Apply region-based structuring to codegen.
+    def __call__(self, codegen: object) -> bool:
+        """Apply region-based structuring to codegen."""
 
-            Args:
-                codegen: The codegen object to structure
-
-            Returns:
-                True if changes were made, False otherwise
-            """
+        def _impl() -> bool:
             if getattr(codegen, "cfunc", None) is None:
                 return False
 
@@ -609,12 +699,12 @@ class RegionBasedStructuringPass:
 
         return _impl()
 
-    def _build_region_graph(self, codegen) -> tuple:
+    def _build_region_graph(self, codegen: object) -> tuple[RegionGraph | None, Region | None]:
         result = build_region_graph(codegen)
         return result.graph, result.entry
 
 
-def apply_region_based_structuring(codegen) -> bool:
+def apply_region_based_structuring(codegen: object) -> bool:
     """Apply region-based structuring pass to codegen.
 
     This is the entry point for the decompiler framework.

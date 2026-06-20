@@ -80,10 +80,27 @@ def _reg(project, name: str, codegen, *, var_name: str | None = None):
     return CVariable(SimRegisterVariable(reg_offset, reg_size, name=var_name or name), codegen=codegen)
 
 
+class _FakeMem:
+    def __init__(self, *, base: int = 0, index: int = 0, disp: int = 0):
+        self.base = base
+        self.index = index
+        self.disp = disp
+
+
 class _FakeOperand:
-    def __init__(self, operand_type: int, *, reg: int = 0, size: int = 2):
+    def __init__(
+        self,
+        operand_type: int,
+        *,
+        reg: int = 0,
+        imm: int = 0,
+        mem: _FakeMem | None = None,
+        size: int = 2,
+    ):
         self.type = operand_type
         self.reg = reg
+        self.imm = imm
+        self.mem = mem
         self.size = size
 
 
@@ -288,6 +305,84 @@ def test_decode_or_same_register_jcc_as_zero_test():
 
     assert decoded is not None
     assert decoded.op == "CmpNE"
+    assert isinstance(decoded.rhs, CConstant)
+    assert decoded.rhs.value == 0
+
+
+def test_decode_or_distinct_registers_jcc_as_bitwise_or_zero_test():
+    project = _project()
+    codegen = _codegen([])
+    ax_offset = project.arch.registers["ax"][0]
+    dx_offset = project.arch.registers["dx"][0]
+    insn = _FakeInsn(
+        "or",
+        (
+            _FakeOperand(1, reg=ax_offset, size=2),
+            _FakeOperand(1, reg=dx_offset, size=2),
+        ),
+        project,
+    )
+
+    decoded = _decode_test_jcc_guard_8616(project, codegen, insn, "je", {}, None)
+
+    assert decoded is not None
+    assert decoded.op == "CmpEQ"
+    assert isinstance(decoded.lhs, CBinaryOp)
+    assert decoded.lhs.op == "Or"
+    assert _expr_contains_register(project, decoded.lhs.lhs, "ax")
+    assert _expr_contains_register(project, decoded.lhs.rhs, "dx")
+    assert isinstance(decoded.rhs, CConstant)
+    assert decoded.rhs.value == 0
+
+
+def test_decode_or_register_direct_memory_jcc_as_bitwise_or_zero_test():
+    project = _project()
+    codegen = _codegen([])
+    ax_offset = project.arch.registers["ax"][0]
+    insn = _FakeInsn(
+        "or",
+        (
+            _FakeOperand(1, reg=ax_offset, size=2),
+            _FakeOperand(3, mem=_FakeMem(disp=0xF0), size=2),
+        ),
+        project,
+        address=0x1149,
+    )
+
+    decoded = _decode_test_jcc_guard_8616(project, codegen, insn, "je", {}, _reg(project, "ds", codegen))
+
+    assert decoded is not None
+    assert decoded.op == "CmpEQ"
+    assert isinstance(decoded.lhs, CBinaryOp)
+    assert decoded.lhs.op == "Or"
+    assert _expr_contains_register(project, decoded.lhs.lhs, "ax")
+    assert decoded.lhs.rhs is not None
+    assert isinstance(decoded.rhs, CConstant)
+    assert decoded.rhs.value == 0
+
+
+def test_decode_and_distinct_registers_jcc_as_bitwise_and_zero_test():
+    project = _project()
+    codegen = _codegen([])
+    ax_offset = project.arch.registers["ax"][0]
+    dx_offset = project.arch.registers["dx"][0]
+    insn = _FakeInsn(
+        "and",
+        (
+            _FakeOperand(1, reg=ax_offset, size=2),
+            _FakeOperand(1, reg=dx_offset, size=2),
+        ),
+        project,
+    )
+
+    decoded = _decode_test_jcc_guard_8616(project, codegen, insn, "jne", {}, None)
+
+    assert decoded is not None
+    assert decoded.op == "CmpNE"
+    assert isinstance(decoded.lhs, CBinaryOp)
+    assert decoded.lhs.op == "And"
+    assert _expr_contains_register(project, decoded.lhs.lhs, "ax")
+    assert _expr_contains_register(project, decoded.lhs.rhs, "dx")
     assert isinstance(decoded.rhs, CConstant)
     assert decoded.rhs.value == 0
 
@@ -1208,7 +1303,7 @@ def test_rewrite_decoded_jcc_conditions_uses_branch_target_body_polarity(monkeyp
     assert rewritten.op == "CmpLE"
 
 
-def test_rewrite_decoded_jcc_conditions_refuses_negated_cite_without_polarity_evidence(monkeypatch):
+def test_rewrite_decoded_jcc_conditions_uses_direct_negated_cite_as_polarity_evidence(monkeypatch):
     project = _project()
     codegen = _codegen([])
     flags = _reg(project, "flags", codegen, var_name="flags_tmp")
@@ -1241,13 +1336,14 @@ def test_rewrite_decoded_jcc_conditions_refuses_negated_cite_without_polarity_ev
 
     changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
 
-    assert changed is False
-    assert if_stmt.condition_and_nodes[0][0] is carrier
-    assert codegen._inertia_jcc_rewrite_refused_unknown_polarity_8616 == 1
-    assert not getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ())
+    assert changed is True
+    rewritten = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(rewritten, CBinaryOp)
+    assert rewritten.op == "CmpEQ"
+    assert getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ())
 
 
-def test_rewrite_decoded_jcc_conditions_refused_cite_keeps_tagged_literal_children(monkeypatch):
+def test_rewrite_decoded_jcc_conditions_rewrites_direct_cite_with_tagged_literal_children(monkeypatch):
     project = _project()
     codegen = _codegen([])
     flags = _reg(project, "flags", codegen, var_name="flags_tmp")
@@ -1285,13 +1381,11 @@ def test_rewrite_decoded_jcc_conditions_refused_cite_keeps_tagged_literal_childr
 
     changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
 
-    assert changed is False
+    assert changed is True
     rewritten = if_stmt.condition_and_nodes[0][0]
-    assert rewritten is carrier
-    assert rewritten.iftrue is iftrue
-    assert rewritten.iffalse is iffalse
-    assert codegen._inertia_jcc_rewrite_refused_unknown_polarity_8616 == 1
-    assert not getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ())
+    assert isinstance(rewritten, CBinaryOp)
+    assert rewritten.op == "CmpEQ"
+    assert getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ())
 
 
 def test_rewrite_decoded_jcc_conditions_refuses_raw_state_decoded_guard(monkeypatch):

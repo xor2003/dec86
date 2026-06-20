@@ -1,4 +1,5 @@
 import networkx as nx
+from angr_platforms.X86_16.ir.condition_ir import ConditionEdgeEvidence, ConditionIR
 from angr_platforms.X86_16.ir.core import IRBlock, IRCondition, IRFunctionArtifact, IRInstr, IRValue, MemSpace
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
 from angr_platforms.X86_16.structuring_grouped_pass import (
@@ -104,3 +105,50 @@ def test_grouped_structuring_pass_annotates_typed_ir_support_on_regions():
 
     assert by_id[0x1002].metadata["typed_ir_has_condition"] is True
     assert by_id[0x1002].metadata["typed_ir_allow_abnormal_loop_normalization"] is True
+
+
+def test_grouped_structuring_pass_records_typed_edge_switch_detection():
+    graph = nx.DiGraph()
+    nodes = {addr: _Node(addr) for addr in (0x1110, 0x1120, 0x1130, 0x1140, 0x1150, 0x1160, 0x1170)}
+    graph.add_nodes_from(nodes.values())
+    graph.add_edge(nodes[0x1110], nodes[0x1150])
+    graph.add_edge(nodes[0x1110], nodes[0x1120])
+    graph.add_edge(nodes[0x1120], nodes[0x1160])
+    graph.add_edge(nodes[0x1120], nodes[0x1130])
+    graph.add_edge(nodes[0x1130], nodes[0x1170])
+    graph.add_edge(nodes[0x1130], nodes[0x1140])
+
+    lhs = IRValue(MemSpace.REG, name="ax", size=2)
+    edge_evidence = []
+    for edge_block_addr, value in ((0x1150, 69), (0x1160, 27), (0x1170, 33)):
+        condition = ConditionIR(
+            op="eq",
+            lhs=lhs,
+            rhs=IRValue(MemSpace.CONST, const=value, size=2),
+            src_insn=edge_block_addr,
+            block_addr=edge_block_addr,
+            producer_insn=edge_block_addr - 1,
+        )
+        edge_evidence.append(
+            ConditionEdgeEvidence(
+                edge_block_addr=edge_block_addr,
+                condition=condition,
+                edge_kind="fallthrough_jmp",
+                source_jcc="jne",
+                producer_insn=edge_block_addr - 1,
+            )
+        )
+
+    codegen = _Codegen(0x1110, _Clinic(graph))
+    codegen._inertia_condition_edge_evidence = tuple(edge_evidence)
+
+    changed = GroupedRegionBasedStructuringPass()(codegen)
+
+    assert changed is True
+    assert codegen._inertia_grouped_structuring_graph is not None
+    assert codegen.cfunc._structuring_stats["edge_guard_switches_detected"] == 1
+    structured_regions = codegen.cfunc._structuring_stats["structured_regions"]
+    assert any(
+        region["type"] == "incswitch" and "switch_detection" in region["metadata_keys"]
+        for region in structured_regions
+    )

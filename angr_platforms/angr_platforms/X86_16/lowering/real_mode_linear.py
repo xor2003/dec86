@@ -4659,6 +4659,78 @@ def _global_cvar_identity_8616(cvar) -> tuple[int, int | None] | None:
     return addr, size if isinstance(size, int) else None
 
 
+def _global_cvar_name_8616(cvar) -> str | None:
+    cvar = _strip_casts_8616(cvar)
+    if not isinstance(cvar, structured_c.CVariable):
+        return None
+    for candidate in (getattr(cvar, "name", None), getattr(getattr(cvar, "variable", None), "name", None)):
+        if _valid_c_identifier_8616(candidate):
+            return candidate
+    return None
+
+
+def _is_generated_global_name_8616(name: str | None) -> bool:
+    if not isinstance(name, str):
+        return False
+    stripped = name.lstrip("_")
+    if not stripped.startswith("g_"):
+        return False
+    suffix = stripped[2:]
+    if not suffix:
+        return False
+    return all(ch in "0123456789abcdefABCDEF" for ch in suffix)
+
+
+def _preferred_same_addr_global_name_8616(root, addr: int, width: int, fallback: str) -> str:
+    if _valid_c_identifier_8616(fallback) and not _is_generated_global_name_8616(fallback):
+        return fallback
+    for node in _iter_structured_c_nodes_8616(root):
+        if not isinstance(node, structured_c.CVariable):
+            continue
+        identity = _global_cvar_identity_8616(node)
+        if identity is None:
+            continue
+        node_addr, node_size = identity
+        if (node_addr & 0xFFFF) != (addr & 0xFFFF):
+            continue
+        if node_size is not None and node_size != width:
+            continue
+        name = _global_cvar_name_8616(node)
+        if _valid_c_identifier_8616(name) and not _is_generated_global_name_8616(name):
+            return name
+    return fallback
+
+
+def _rename_generated_same_addr_global_cvars_8616(root, addr: int, width: int, preferred_name: str) -> int:
+    if not _valid_c_identifier_8616(preferred_name) or _is_generated_global_name_8616(preferred_name):
+        return 0
+    renamed = 0
+    for node in _iter_structured_c_nodes_8616(root):
+        if not isinstance(node, structured_c.CVariable):
+            continue
+        identity = _global_cvar_identity_8616(node)
+        if identity is None:
+            continue
+        node_addr, node_size = identity
+        if (node_addr & 0xFFFF) != (addr & 0xFFFF):
+            continue
+        if node_size is not None and node_size != width:
+            continue
+        current_name = _global_cvar_name_8616(node)
+        if current_name == preferred_name or not _is_generated_global_name_8616(current_name):
+            continue
+        variable = getattr(node, "variable", None)
+        if isinstance(variable, SimMemoryVariable):
+            variable.name = preferred_name
+        unified = getattr(node, "unified_variable", None)
+        if isinstance(unified, SimMemoryVariable):
+            unified.name = preferred_name
+        with contextlib.suppress(Exception):
+            node.name = preferred_name
+        renamed += 1
+    return renamed
+
+
 def _same_global_cvar_8616(lhs, rhs) -> bool:
     lhs_id = _global_cvar_identity_8616(lhs)
     rhs_id = _global_cvar_identity_8616(rhs)
@@ -4702,19 +4774,59 @@ def _tree_has_global_update_assignment_8616(root, dst_cvar, delta: int) -> bool:
     return False
 
 
+def _tree_has_global_update_assignment_for_insn_8616(root, project, dst_cvar, delta: int, ins_addr: int) -> bool:
+    for node in _iter_structured_c_nodes_8616(root):
+        if not _node_has_instruction_address_8616(node, project, ins_addr):
+            continue
+        if _is_same_global_update_assignment_8616(node, dst_cvar, delta):
+            return True
+    return False
+
+
+def _tree_has_untagged_global_update_assignment_8616(root, dst_cvar, delta: int) -> bool:
+    for node in _iter_structured_c_nodes_8616(root):
+        tags = getattr(node, "tags", None)
+        if isinstance(tags, dict) and isinstance(tags.get("ins_addr"), int):
+            continue
+        if _is_same_global_update_assignment_8616(node, dst_cvar, delta):
+            return True
+    return False
+
+
+def _list_has_global_update_assignment_for_insn_8616(
+    statements: list[object],
+    project,
+    dst_cvar,
+    delta: int,
+    ins_addr: int,
+) -> bool:
+    for stmt in statements:
+        if not _node_has_instruction_address_8616(stmt, project, ins_addr):
+            continue
+        if _is_same_global_update_assignment_8616(stmt, dst_cvar, delta):
+            return True
+    return False
+
+
 def _insertion_point_has_global_update_assignment_8616(
     statements: list[object],
     insert_index: int,
+    project,
     dst_cvar,
     delta: int,
+    ins_addr: int,
 ) -> bool:
     if insert_index > 0:
         previous_assignment = _last_transparent_assignment_8616(statements[insert_index - 1])
-        if _is_same_global_update_assignment_8616(previous_assignment, dst_cvar, delta):
+        if _node_has_instruction_address_8616(
+            previous_assignment, project, ins_addr
+        ) and _is_same_global_update_assignment_8616(previous_assignment, dst_cvar, delta):
             return True
     if insert_index < len(statements):
         next_assignment = _first_transparent_assignment_8616(statements[insert_index])
-        if _is_same_global_update_assignment_8616(next_assignment, dst_cvar, delta):
+        if _node_has_instruction_address_8616(next_assignment, project, ins_addr) and _is_same_global_update_assignment_8616(
+            next_assignment, dst_cvar, delta
+        ):
             return True
     return False
 
@@ -5529,6 +5641,7 @@ def _replace_tagged_register_reload_assignment_8616(
             "initializer",
             "condition",
             "cond",
+            "args",
             "iftrue",
             "iffalse",
             "iteration",
@@ -7364,7 +7477,7 @@ def _insert_global_update_before_nearest_following_tagged_statement_8616(
         seen.add(id(node))
         statements = getattr(node, "statements", None)
         if isinstance(statements, list):
-            if _list_has_global_update_assignment_8616(statements, dst_cvar, delta):
+            if _list_has_global_update_assignment_for_insn_8616(statements, project, dst_cvar, delta, ins_addr):
                 setattr(root, "_inertia_global_update_assignment_already_present_8616", True)
                 return
             for index, stmt in enumerate(tuple(statements)):
@@ -7391,7 +7504,7 @@ def _insert_global_update_before_nearest_following_tagged_statement_8616(
     if best is None:
         return False
     _distance, _depth, statements, index = best
-    if _insertion_point_has_global_update_assignment_8616(statements, index, dst_cvar, delta):
+    if _insertion_point_has_global_update_assignment_8616(statements, index, project, dst_cvar, delta, ins_addr):
         setattr(root, "_inertia_global_update_assignment_already_present_8616", True)
         return False
     statements.insert(index, assignment)
@@ -7463,12 +7576,15 @@ def _direct_global_update_can_insert_at_body_start_8616(project, function, fact:
     return found_fact
 
 
-def _insert_global_update_at_body_start_8616(root, assignment, *, delta: int) -> bool:
+def _insert_global_update_at_body_start_8616(root, project, assignment, *, delta: int, ins_addr: int) -> bool:
     statements = getattr(root, "statements", None)
     if not isinstance(statements, list):
         return False
     dst_cvar = getattr(assignment, "lhs", None)
-    if _list_has_global_update_assignment_8616(statements, dst_cvar, delta):
+    if _list_has_global_update_assignment_for_insn_8616(statements, project, dst_cvar, delta, ins_addr):
+        setattr(root, "_inertia_global_update_assignment_already_present_8616", True)
+        return False
+    if _tree_has_untagged_global_update_assignment_8616(root, dst_cvar, delta):
         setattr(root, "_inertia_global_update_assignment_already_present_8616", True)
         return False
     statements.insert(0, assignment)
@@ -7540,6 +7656,10 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
         delta = fact.delta
         stats["classified_fact_count"] = int(stats.get("classified_fact_count", 0) or 0) + 1
         name = _direct_global_update_name_8616(project, getattr(getattr(codegen, "cfunc", None), "addr", None), addr)
+        name = _preferred_same_addr_global_name_8616(root, addr, width, name)
+        renamed_count = _rename_generated_same_addr_global_cvars_8616(root, addr, width, name)
+        if renamed_count:
+            changed = True
         variable = SimMemoryVariable(
             addr, width, name=name, region=getattr(getattr(codegen, "cfunc", None), "addr", None)
         )
@@ -7561,7 +7681,9 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
             consumed_facts = set()
             setattr(codegen, "_inertia_consumed_direct_global_update_facts_8616", consumed_facts)
         fact_key = DirectGlobalUpdateFact8616(addr, width, int(delta), int(fact.ins_addr))
-        if fact_key in consumed_facts and _tree_has_global_update_assignment_8616(root, cvar, delta):
+        if fact_key in consumed_facts and _tree_has_global_update_assignment_for_insn_8616(
+            root, project, cvar, delta, fact.ins_addr
+        ):
             stats["already_materialized_count"] = int(stats.get("already_materialized_count", 0) or 0) + 1
             stats["consumed_fact_count"] = int(stats.get("consumed_fact_count", 0) or 0) + 1
             if os.environ.get("INERTIA_DEBUG_GLOBAL_UPDATE") == "1":
@@ -7571,7 +7693,7 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
                     flush=True,
                 )
             continue
-        if _tree_has_global_update_assignment_8616(root, cvar, delta):
+        if _tree_has_global_update_assignment_for_insn_8616(root, project, cvar, delta, fact.ins_addr):
             consumed_facts.add(fact_key)
             stats["already_materialized_count"] = int(stats.get("already_materialized_count", 0) or 0) + 1
             stats["consumed_fact_count"] = int(stats.get("consumed_fact_count", 0) or 0) + 1
@@ -7627,8 +7749,10 @@ def materialize_direct_global_incdec_instructions_8616(codegen, project=None, fu
             elif _direct_global_update_can_insert_at_body_start_8616(project, function, fact):
                 materialized = _insert_global_update_at_body_start_8616(
                     root,
+                    project,
                     inserted_assignment,
                     delta=delta,
+                    ins_addr=fact.ins_addr,
                 )
                 if materialized:
                     materialized_by = DirectGlobalUpdateMaterializationKind8616.INSERTED_AT_BODY_START
@@ -8340,32 +8464,42 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
     def _signed_16bit_term_value_8616(sign: int, value: int) -> int:
         return _canonical_stack_offset_8616((int(sign) * int(value)) & 0xFFFF)
 
-    def _match_indexed_bp_stack_address_8616(node) -> RealModeIndexedStackAddress8616 | None:
+    def _stack_cvar_displacement_8616(node) -> int | None:
         node = _strip_casts_8616(node)
-        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        if not isinstance(node, structured_c.CVariable):
             return None
+        variable = getattr(node, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            return None
+        offset = getattr(variable, "offset", None)
+        return _canonical_stack_offset_8616(offset) if isinstance(offset, int) else None
+
+    def _match_indexed_bp_stack_address_terms_8616(
+        terms: tuple[tuple[int, object], ...],
+        *,
+        width: int | None,
+    ) -> RealModeIndexedStackAddress8616 | None:
         fact_sizes = _indexed_bp_stack_fact_sizes_8616()
         if not fact_sizes:
-            return None
-        terms = _flatten_indexed_stack_address_terms_8616(getattr(node, "operand", None))
-        if not terms:
             return None
         matched_index: int | None = None
         matched_displacement: int | None = None
         for index, (sign, term) in enumerate(terms):
+            displacement = None
             value = _constant_value_8616(term)
-            if value is None:
+            if value is not None:
+                displacement = _signed_16bit_term_value_8616(sign, value)
+            elif sign == 1:
+                displacement = _stack_cvar_displacement_8616(term)
+            if displacement is None or displacement not in fact_sizes:
                 continue
-            displacement = _signed_16bit_term_value_8616(sign, value)
-            if displacement in fact_sizes:
-                matched_index = index
-                matched_displacement = displacement
-                break
+            matched_index = index
+            matched_displacement = displacement
+            break
         if matched_index is None or not isinstance(matched_displacement, int):
             return None
 
         residual_terms = tuple(term for index, term in enumerate(terms) if index != matched_index)
-        width = _dereference_access_width_bytes_8616(node)
         if width is None:
             constant_residual = 0
             for sign, term in residual_terms:
@@ -8384,6 +8518,34 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
             residual_terms=residual_terms,
             width=width,
         )
+
+    def _match_indexed_bp_stack_address_8616(node) -> RealModeIndexedStackAddress8616 | None:
+        node = _strip_casts_8616(node)
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            return None
+        terms = _flatten_indexed_stack_address_terms_8616(getattr(node, "operand", None))
+        if not terms:
+            return None
+        width = _dereference_access_width_bytes_8616(node)
+        return _match_indexed_bp_stack_address_terms_8616(terms, width=width)
+
+    def _match_indexed_bp_stack_pointer_8616(node) -> RealModeIndexedStackAddress8616 | None:
+        node = _strip_casts_8616(node)
+        if not isinstance(node, structured_c.CFunctionCall):
+            return None
+        call_name = _call_name_from_expr_8616(node)
+        if call_name not in {"SEG_PTR", "MK_FP"}:
+            return None
+        args = tuple(getattr(node, "args", ()) or ())
+        if len(args) != 2:
+            return None
+        segment_name = _segment_base_name_8616(args[0], project, codegen)
+        if segment_name not in {"ss", "ds"}:
+            return None
+        terms = _flatten_indexed_stack_address_terms_8616(args[1])
+        if not terms:
+            return None
+        return _match_indexed_bp_stack_address_terms_8616(terms, width=1)
 
     def _term_expr_with_sign_8616(sign: int, term):
         value = _constant_value_8616(term)
@@ -8413,8 +8575,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
                 expr = structured_c.CBinaryOp("Add", expr, term_expr, codegen=codegen)
         return expr
 
-    def _materialize_indexed_bp_stack_address_8616(access: RealModeIndexedStackAddress8616):
-        width = access.width if isinstance(access.width, int) and access.width > 0 else 1
+    def _materialize_indexed_bp_stack_pointer_8616(access: RealModeIndexedStackAddress8616):
         base_cvar = stack_cvar_for_stable_ss_linear_access_8616(
             codegen,
             RealModeLinearStackAccess8616(access.base_displacement, 1),
@@ -8422,8 +8583,6 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
         if base_cvar is None:
             return None
         byte_ptr_type = SimTypePointer(SimTypeChar(False)).with_arch(project.arch)
-        access_type = _type_for_access_width_8616(width)
-        access_ptr_type = SimTypePointer(access_type).with_arch(project.arch)
         addr_expr = structured_c.CTypeCast(
             None,
             byte_ptr_type,
@@ -8433,13 +8592,22 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
         residual = _residual_terms_expr_8616(access.residual_terms)
         if residual is not None:
             addr_expr = structured_c.CBinaryOp("Add", addr_expr, residual, codegen=codegen)
+        codegen._inertia_indexed_bp_stack_address_materialized_count_8616 = (
+            int(getattr(codegen, "_inertia_indexed_bp_stack_address_materialized_count_8616", 0) or 0) + 1
+        )
+        return addr_expr
+
+    def _materialize_indexed_bp_stack_address_8616(access: RealModeIndexedStackAddress8616):
+        width = access.width if isinstance(access.width, int) and access.width > 0 else 1
+        addr_expr = _materialize_indexed_bp_stack_pointer_8616(access)
+        if addr_expr is None:
+            return None
+        access_type = _type_for_access_width_8616(width)
+        access_ptr_type = SimTypePointer(access_type).with_arch(project.arch)
         cast_addr = structured_c.CTypeCast(None, access_ptr_type, addr_expr, codegen=codegen)
         deref = structured_c.CUnaryOp("Dereference", cast_addr, codegen=codegen)
         with contextlib.suppress(Exception):
             deref.type = access_type
-        codegen._inertia_indexed_bp_stack_address_materialized_count_8616 = (
-            int(getattr(codegen, "_inertia_indexed_bp_stack_address_materialized_count_8616", 0) or 0) + 1
-        )
         return deref
 
     changed = False
@@ -8450,25 +8618,58 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
     def transform(node):
         nonlocal candidate_count, changed, materialized_count, refused_count
         node = _strip_casts_8616(node)
-        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        if isinstance(node, structured_c.CFunctionCall):
+            call_name = _call_name_from_expr_8616(node)
+            if call_name not in {"SEG_PTR", "MK_FP"}:
+                args = getattr(node, "args", None)
+                if isinstance(args, list):
+                    for index, arg in enumerate(tuple(args)):
+                        replacement = transform(arg)
+                        if replacement is not arg:
+                            args[index] = replacement
+                            changed = True
+                elif isinstance(args, tuple):
+                    new_args = []
+                    args_changed = False
+                    for arg in args:
+                        replacement = transform(arg)
+                        if replacement is not arg:
+                            args_changed = True
+                        new_args.append(replacement)
+                    if args_changed:
+                        setattr(node, "args", tuple(new_args))
+                        changed = True
+        if not (
+            (isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference")
+            or isinstance(node, structured_c.CFunctionCall)
+        ):
             return node
         candidate_count += 1
-        access = match_stable_ss_linear_stack_access_8616(node, project, codegen)
-        if access is not None:
-            cvar = stack_cvar_for_stable_ss_linear_access_8616(codegen, access)
-            if cvar is None:
-                refused_count += 1
-                return node
-            changed = True
-            materialized_count += 1
-            return cvar
-        indexed_access = _match_indexed_bp_stack_address_8616(node)
-        if indexed_access is not None:
-            materialized = _materialize_indexed_bp_stack_address_8616(indexed_access)
-            if materialized is not None:
+        if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
+            access = match_stable_ss_linear_stack_access_8616(node, project, codegen)
+            if access is not None:
+                cvar = stack_cvar_for_stable_ss_linear_access_8616(codegen, access)
+                if cvar is None:
+                    refused_count += 1
+                    return node
                 changed = True
                 materialized_count += 1
-                return materialized
+                return cvar
+            indexed_access = _match_indexed_bp_stack_address_8616(node)
+            if indexed_access is not None:
+                materialized = _materialize_indexed_bp_stack_address_8616(indexed_access)
+                if materialized is not None:
+                    changed = True
+                    materialized_count += 1
+                    return materialized
+        elif isinstance(node, structured_c.CFunctionCall):
+            indexed_pointer = _match_indexed_bp_stack_pointer_8616(node)
+            if indexed_pointer is not None:
+                materialized = _materialize_indexed_bp_stack_pointer_8616(indexed_pointer)
+                if materialized is not None:
+                    changed = True
+                    materialized_count += 1
+                    return materialized
         refused_count += 1
         return node
 
@@ -8516,6 +8717,19 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
                         local_changed = True
                     if replace_children(value[index]):
                         local_changed = True
+            elif isinstance(value, tuple):
+                new_items = []
+                tuple_changed = False
+                for item in value:
+                    replacement = transform(item)
+                    if replacement is not item:
+                        tuple_changed = True
+                    if replace_children(replacement):
+                        tuple_changed = True
+                    new_items.append(replacement)
+                if tuple_changed:
+                    setattr(node, attr, tuple(new_items))
+                    local_changed = True
             elif value is not None:
                 replacement = transform(value)
                 if replacement is not value:

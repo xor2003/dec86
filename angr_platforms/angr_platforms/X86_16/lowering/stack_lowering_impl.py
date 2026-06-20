@@ -1544,7 +1544,7 @@ def _canonicalize_stack_cvar_expr(
             )
             arch = getattr(getattr(codegen, "project", None), "arch", None)
             byte_width = getattr(arch, "byte_width", None)
-            type_size_bits = getattr(getattr(expr, "type", None), "size", None)
+            type_size_bits = _safe_sim_type_size_bits(getattr(expr, "type", None))
             requested_size = (
                 max(type_size_bits // byte_width, 1)
                 if isinstance(type_size_bits, int)
@@ -1671,7 +1671,7 @@ def _canonicalize_stack_cvar_expr(
                     if isinstance(resolved_offset, int) and alias_state is not None:
                         displacement = resolved_offset + alias_state[1]
                 if isinstance(displacement, int):
-                    type_bits = getattr(getattr(expr, "type", None), "size", None)
+                    type_bits = _safe_sim_type_size_bits(getattr(expr, "type", None))
                     arch = getattr(getattr(codegen, "project", None), "arch", None)
                     byte_width = getattr(arch, "byte_width", None)
                     access_size = (

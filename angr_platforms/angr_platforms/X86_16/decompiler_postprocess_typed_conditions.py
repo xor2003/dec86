@@ -1,29 +1,47 @@
+"""Typed-condition C rewrite consumer.
+
+This module replaces flag-shaped C conditions with explicit comparisons from
+ConditionIR. The condition semantics must already be proven by the early
+pipeline: lift/IR records the flag-producing operation, condition transfer binds
+it to codegen nodes, and this file only builds the equivalent C AST.
+
+Allowed work in this file:
+- map ConditionIR operands to C AST nodes;
+- replace matching tagged conditions without changing branch meaning;
+- record materialization traces for validation/debugging.
+
+Current migration debt:
+- compatibility operand handling still accepts raw VEX-like wrappers;
+- stack/global operand rendering still constructs fallback C expressions here;
+- delta/tag fallback lookup exists because transfer is not complete.
+
+Those behaviors should move to IR operand normalization, alias/stack lowering,
+segmented memory lowering, or condition transfer. Do not add new flag, JCC,
+polarity, operand, or branch inference here. If ConditionIR cannot describe the
+condition, keep the original C and let validation/reporting expose the missing
+early fact.
+"""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-"""Layer: Postprocess / Rewrite
-Responsibility: replace flag-based `if(tmp_*)` and `if(flags & ...)` with
-explicit comparisons from ConditionIR (built in lift_86_16, transferred via
-condition_transfer).
-
-AGENTS rule: this is a *rewrite* pass — it replaces one semantically-equivalent
-C node with another.  No new semantics are introduced; the ConditionIR was
-already proven by the lifting stage.  This pass only reformats the C AST.
-"""
-
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
+    CAssignment,
     CBinaryOp,
     CConstant,
+    CFunctionCall,
     CIfElse,
     CUnaryOp,
     CVariable,
 )
-from angr.sim_type import SimTypeInt, SimTypeShort
-from angr.sim_variable import SimRegisterVariable
+from angr.sim_type import SimTypeChar, SimTypeInt, SimTypeLong, SimTypeShort
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from .condition_trace import record_materialized_condition_trace_8616
 from .decompiler_postprocess_utils import (
+    _iter_c_nodes_deep_8616,
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
@@ -43,14 +61,144 @@ def _build_reg_var(project, reg_name: str, codegen, size: int = 2) -> CVariable 
     return CVariable(SimRegisterVariable(int(reg_offset), size, name=reg_name.lower()), codegen=codegen)
 
 
-def _build_c_expr_for_operand(project, operand, codegen) -> object | None:
+def _assignment_lhs_register_info_8616(project, lhs: object) -> tuple[int, int] | None:
+    variable = getattr(lhs, "variable", None) if isinstance(lhs, CVariable) else None
+    if isinstance(variable, SimRegisterVariable):
+        return int(variable.reg), int(getattr(variable, "size", 0) or 0)
+    name = getattr(lhs, "name", None)
+    if isinstance(name, str):
+        reg = getattr(project.arch, "registers", {}).get(name.lower())
+        if reg is not None:
+            return int(reg[0]), int(reg[1])
+    return None
+
+
+def _register_exprs_by_ins_addr_8616(codegen, project) -> dict[tuple[int, str, int], object]:
+    cache = getattr(codegen, "_inertia_typed_condition_register_exprs_by_ins_addr_8616", None)
+    if isinstance(cache, dict):
+        return cache
+    reg_exprs: dict[tuple[int, str, int], object] = {}
+    cfunc = getattr(codegen, "cfunc", None)
+    roots = (cfunc, getattr(cfunc, "statements", None), getattr(cfunc, "body", None))
+    seen_nodes: set[int] = set()
+    for root in roots:
+        for node in _iter_c_nodes_deep_8616(root):
+            node_id = id(node)
+            if node_id in seen_nodes:
+                continue
+            seen_nodes.add(node_id)
+            if not isinstance(node, CAssignment):
+                continue
+            tags = getattr(node, "tags", None)
+            ins_addr = None if tags is None else tags.get("ins_addr")
+            if not isinstance(ins_addr, int):
+                continue
+            lhs_reg_info = _assignment_lhs_register_info_8616(project, node.lhs)
+            if lhs_reg_info is None:
+                continue
+            lhs_reg_offset, var_size = lhs_reg_info
+            for reg_name, (reg_offset, reg_size) in project.arch.registers.items():
+                if int(reg_offset) != int(lhs_reg_offset):
+                    continue
+                if var_size and int(reg_size) != var_size:
+                    continue
+                rhs = getattr(node, "rhs", None)
+                expr = (
+                    node.lhs
+                    if any(isinstance(child, CFunctionCall) for child in _iter_c_nodes_deep_8616(rhs))
+                    else rhs
+                )
+                reg_exprs[(ins_addr, reg_name.lower(), int(reg_size))] = expr
+    try:
+        codegen._inertia_typed_condition_register_exprs_by_ins_addr_8616 = reg_exprs
+    except Exception:
+        pass
+    return reg_exprs
+
+
+def _lookup_register_expr_before_8616(
+    reg_exprs: dict[tuple[int, str, int], object], ins_addr: int, reg_name: str, size: int
+):
+    best_addr = None
+    best_expr = None
+    for (candidate_addr, candidate_name, candidate_size), candidate_expr in reg_exprs.items():
+        if candidate_name != reg_name.lower():
+            continue
+        if int(size) and int(candidate_size) != int(size):
+            continue
+        if int(candidate_addr) >= int(ins_addr):
+            continue
+        if best_addr is None or int(candidate_addr) > best_addr:
+            best_addr = int(candidate_addr)
+            best_expr = candidate_expr
+    return best_expr
+
+
+def _type_for_operand_size_8616(size: int):
+    if size <= 1:
+        return SimTypeChar(signed=False)
+    if size >= 4:
+        return SimTypeLong(signed=False)
+    return SimTypeShort(signed=False)
+
+
+def _build_segmented_operand_expr_8616(project, operand: IRValue, codegen) -> CFunctionCall | None:
+    space_to_segment = {
+        MemSpace.DS: "ds",
+        MemSpace.ES: "es",
+        MemSpace.SS: "ss",
+    }
+    segment_name = space_to_segment.get(operand.space)
+    if segment_name is None:
+        return None
+    width = int(operand.size or 2)
+    helper = {1: "SEG_U8", 2: "SEG_U16", 4: "SEG_U32"}.get(width)
+    if helper is None:
+        return None
+    segment = _build_reg_var(project, segment_name, codegen, size=2)
+    if segment is None:
+        return None
+    offset = CConstant(int(operand.offset) & 0xFFFF, SimTypeShort(signed=False), codegen=codegen)
+    return CFunctionCall(helper, None, [segment, offset], codegen=codegen)
+
+
+def _build_stack_operand_expr_8616(operand: IRValue, codegen) -> CVariable | None:
+    if operand.space != MemSpace.SS:
+        return None
+    base = operand.name if operand.name in {"bp", "sp"} else "bp"
+    offset = int(operand.offset)
+    size = int(operand.size or 2)
+    prefix = "arg" if base == "bp" and offset > 0 else "local"
+    name = f"{prefix}_{abs(offset):x}"
+    variable = SimStackVariable(offset, max(size, 1), base=base, name=name)
+    return CVariable(variable, variable_type=_type_for_operand_size_8616(size), codegen=codegen)
+
+
+def _build_c_expr_for_operand(project, operand, codegen, cond: ConditionIR | None = None) -> object | None:
     def _impl():
         """Convert a ConditionIR operand (reg name string or int) to a C AST node."""
         if isinstance(operand, IRValue):
             if operand.space == MemSpace.CONST:
                 return CConstant(int(operand.const or 0), SimTypeInt(signed=False, label="int"), codegen=codegen)
             if operand.space == MemSpace.REG and isinstance(operand.name, str) and operand.name:
+                bind_addr = getattr(cond, "producer_insn", None) if cond is not None else None
+                if not isinstance(bind_addr, int):
+                    bind_addr = getattr(cond, "src_insn", None) if cond is not None else None
+                if isinstance(bind_addr, int):
+                    expr = _lookup_register_expr_before_8616(
+                        _register_exprs_by_ins_addr_8616(codegen, project),
+                        bind_addr,
+                        operand.name,
+                        max(1, int(operand.size or 2)),
+                    )
+                    if expr is not None:
+                        return expr
                 return _build_reg_var(project, operand.name, codegen, size=max(1, int(operand.size or 2)))
+            if operand.space in {MemSpace.DS, MemSpace.ES}:
+                return _build_segmented_operand_expr_8616(project, operand, codegen)
+            if operand.space == MemSpace.SS:
+                stack_expr = _build_stack_operand_expr_8616(operand, codegen)
+                return stack_expr if stack_expr is not None else _build_segmented_operand_expr_8616(project, operand, codegen)
             return None
         if isinstance(operand, str):
             return _build_reg_var(project, operand, codegen)
@@ -85,8 +233,8 @@ def _build_c_expr_for_operand(project, operand, codegen) -> object | None:
 
 def _build_c_condition_expr(project, cond: ConditionIR, codegen) -> CBinaryOp | None:
     """Build a CBinaryOp (comparison) from a ConditionIR."""
-    lhs_expr = _build_c_expr_for_operand(project, cond.lhs, codegen)
-    rhs_expr = _build_c_expr_for_operand(project, cond.rhs, codegen)
+    lhs_expr = _build_c_expr_for_operand(project, cond.lhs, codegen, cond)
+    rhs_expr = _build_c_expr_for_operand(project, cond.rhs, codegen, cond)
     if lhs_expr is None or rhs_expr is None:
         return None
 
@@ -187,9 +335,6 @@ def _resolve_condition_by_tag_with_delta(
 def _is_flag_based_condition_node(node) -> bool:
     def _impl():
         """Detect if a condition node is flag-based (tmp_* or flags mask pattern)."""
-        # CITE nodes: if(tmp_*)
-        from angr.analyses.decompiler.structured_codegen.c import CITE
-
         if isinstance(node, CITE):
             cond = getattr(node, "cond", None)
             if cond is not None:
@@ -198,14 +343,27 @@ def _is_flag_based_condition_node(node) -> bool:
 
         # CVariable looking like flags register
         if isinstance(node, CVariable):
+            node_text = str(node).lower()
+            if "flags" in node_text or "tmp" in node_text or "vvar_" in node_text:
+                return True
             var = getattr(node, "variable", None)
             if isinstance(var, SimRegisterVariable):
                 reg = getattr(var, "reg", None)
                 name = getattr(var, "name", "")
-                # Flags register is typically offset 0 with name "flags" in x86_16
-                if reg == 0 or "flags" in str(name).lower() or "tmp" in str(name).lower():
+                name_text = str(name).lower()
+                var_text = str(var).lower()
+                if (
+                    reg == 18
+                    or "flags" in name_text
+                    or "tmp" in name_text
+                    or "vvar_" in name_text
+                    or "flags" in var_text
+                    or "tmp" in var_text
+                    or "vvar_" in var_text
+                ):
                     return True
-            if "flags" in str(var).lower():
+            var_text = str(var).lower()
+            if "flags" in var_text or "tmp" in var_text or "vvar_" in var_text:
                 return True
 
         # CBinaryOp with And or Shr on what looks like flags
@@ -221,6 +379,20 @@ def _is_flag_based_condition_node(node) -> bool:
         return False
 
     return _impl()
+
+
+def _contains_flag_mask_operator_8616(node) -> bool:
+    if node is None or not _structured_codegen_node_8616(node):
+        return False
+    if isinstance(node, CBinaryOp):
+        if node.op in {"And", "Shr"} and (_is_flag_based_condition_node(node.lhs) or _is_flag_based_condition_node(node.rhs)):
+            return True
+        return _contains_flag_mask_operator_8616(node.lhs) or _contains_flag_mask_operator_8616(node.rhs)
+    if isinstance(node, CUnaryOp):
+        return _contains_flag_mask_operator_8616(getattr(node, "operand", None))
+    if isinstance(node, CITE):
+        return _contains_flag_mask_operator_8616(getattr(node, "cond", None))
+    return False
 
 
 def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: SimpleNamespace) -> bool:
@@ -239,6 +411,7 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         return False
 
     changed = False
+    matched_condition_keys: set[tuple] = set()
 
     def _is_literal_condition(expr) -> bool:
         node = expr
@@ -247,7 +420,13 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         return isinstance(node, CConstant) and isinstance(getattr(node, "value", None), int)
 
     def _replacement_for_condition_node(cond):
+        if isinstance(cond, CBinaryOp) and cond.op in {"LogicalAnd", "LogicalOr"}:
+            return None
+        if isinstance(cond, CBinaryOp) and str(cond.op).startswith("Cmp") and not _contains_flag_mask_operator_8616(cond):
+            return None
         key = _condition_key_from_tags(cond)
+        if not _is_flag_based_condition_node(cond):
+            return None
         typed_cond = _resolve_condition_by_tag_with_delta(project, condition_index, key)
         if typed_cond is None:
             return None
@@ -259,6 +438,8 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         if _expr_fingerprint(new_cond.lhs, project) == _expr_fingerprint(new_cond.rhs, project):
             return None
         record_materialized_condition_trace_8616(project, codegen, key, new_cond)
+        if key is not None:
+            matched_condition_keys.add(key)
         return new_cond
 
     def _walk_statements(statements_obj):
@@ -341,11 +522,9 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
     if changed:
         lane = getattr(codegen, "_inertia_condition_lane", None)
         if lane is not None:
-            # Count how many unique condition keys were matched
-            matched_count = 0
-            for _ in condition_index:
-                matched_count += 1
+            matched_count = len(matched_condition_keys)
+            lane.classified = max(int(getattr(lane, "classified", 0) or 0), matched_count)
             lane.materialized = matched_count
-        codegen._inertia_semantic_condition_materialized_count = len(condition_index)
+        codegen._inertia_semantic_condition_materialized_count = len(matched_condition_keys)
 
     return changed

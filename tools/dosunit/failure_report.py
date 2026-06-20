@@ -10,7 +10,7 @@ def render_failure_report(
     *,
     limit: int = 0,
     mismatch_limit: int = 8,
-    show_unresolved_call_targets: bool = False,
+    show_unresolved_call_targets: bool = True,
     failed_only: bool = False,
     group_by_function: bool = False,
 ) -> str:
@@ -39,6 +39,8 @@ def render_failure_report(
             show_unresolved_call_targets=show_unresolved_call_targets,
             failed_only=failed_only,
         )
+    if schema == "dosunit.ssa_batched_compare.v1":
+        return _render_ssa_batched_compare(document, limit=limit)
     if schema == "dosunit.ssa_abi_compare.v1":
         return _render_ssa_abi_compare(document, limit=limit, mismatch_limit=mismatch_limit)
     if "refusals" in document:
@@ -231,6 +233,9 @@ def _collect_ssa_compare_data(
     region_equality = document.get("region_equality") if isinstance(document.get("region_equality"), dict) else {}
     region_results = [result for result in region_equality.get("results", []) or [] if isinstance(result, dict)]
     connectivity = document.get("connectivity") if isinstance(document.get("connectivity"), dict) else {}
+    external_parts = document.get("external_parts") if isinstance(document.get("external_parts"), dict) else {}
+    external_results = [result for result in external_parts.get("results", []) or [] if isinstance(result, dict)]
+    failing_external_parts = [result for result in external_results if result.get("status") != "passed"]
     loop_scc = document.get("loop_scc") if isinstance(document.get("loop_scc"), dict) else {}
     call_scc = document.get("call_scc") if isinstance(document.get("call_scc"), dict) else {}
     skipped_region_function_missing = [
@@ -258,6 +263,8 @@ def _collect_ssa_compare_data(
         region_equality,
         region_results,
         connectivity,
+        external_parts,
+        failing_external_parts,
         loop_scc,
         call_scc,
         failing_regions,
@@ -422,6 +429,8 @@ def _render_ssa_compare(
         region_equality,
         region_results,
         connectivity,
+        external_parts,
+        failing_external_parts,
         loop_scc,
         call_scc,
         failing_regions,
@@ -429,6 +438,9 @@ def _render_ssa_compare(
         document,
         show_unresolved_call_targets=show_unresolved_call_targets,
         failed_only=failed_only,
+    )
+    candidate_only_parts = (
+        document.get("candidate_only_parts") if isinstance(document.get("candidate_only_parts"), dict) else {}
     )
     lines = [
         "# DOS Unit Failure Report",
@@ -445,12 +457,15 @@ def _render_ssa_compare(
         f"- Failed: {summary.get('failed', 0)}",
         f"- Refused: {summary.get('refused', 0)}",
         f"- Unmapped oracle functions: {summary.get('skipped_unmapped', 0)}",
+        f"- External/shared-tail oracle parts: total `{summary.get('external_oracle_parts_total', 0)}` checked `{summary.get('external_oracle_parts_checked', 0)}` passed `{summary.get('external_oracle_parts_passed', 0)}` unproved `{summary.get('skipped_external_oracle_parts', 0)}`",
         f"- Missing-function rows skipped: {len(skipped_function_missing)}",
         f"- Missing-function region rows skipped: {len(skipped_region_function_missing)}",
         f"- Unresolved-call-target rows skipped: {0 if show_unresolved_call_targets else len(unresolved_call_target_failures)}",
         f"- Solver time ms: {summary.get('solver_time_ms', 0)}",
-        f"- Region equality: `{region_equality.get('status', 'not_applicable')}` passed `{region_equality.get('passed', 0)}` failed `{region_equality.get('failed', 0)}` refused `{region_equality.get('refused', 0)}` covered `{region_equality.get('covered_results', 0)}`",
-        f"- Connectivity: `{connectivity.get('status', 'not_applicable')}` edges `{connectivity.get('edges_checked', 0)}` state edges `{connectivity.get('state_edges_checked', 0)}` state inputs `{connectivity.get('state_inputs_checked', 0)}`",
+        f"- Region equality: `{region_equality.get('status', 'not_applicable')}` passed `{region_equality.get('passed', 0)}` failed `{region_equality.get('failed', 0)}` refused `{region_equality.get('refused', 0)}` covered `{region_equality.get('covered_results', 0)}` connectivity-covered `{region_equality.get('connectivity_covered_regions', 0)}` skipped-passed `{region_equality.get('skipped_passed_functions', 0)}`",
+        f"- Connectivity: `{connectivity.get('status', 'not_applicable')}` edges `{connectivity.get('edges_checked', 0)}` state edges `{connectivity.get('state_edges_checked', 0)}` state inputs `{connectivity.get('state_inputs_checked', 0)}` external edges `{connectivity.get('external_successor_edges_skipped', 0)}` external-covered `{connectivity.get('external_successor_edges_covered', 0)}` external-unproved `{connectivity.get('external_successor_edges_unproved', 0)}` failures `{len(connectivity.get('failures', []) or [])}` refusals `{len(connectivity.get('refusals', []) or [])}`",
+        f"- External shared-tail proofs: `{external_parts.get('status', 'not_applicable')}` total `{external_parts.get('total', 0)}` passed `{external_parts.get('passed', 0)}` failed `{external_parts.get('failed', 0)}` refused `{external_parts.get('refused', 0)}`",
+        f"- Candidate-only SSA parts: `{candidate_only_parts.get('total', summary.get('candidate_only_parts', 0))}` of `{candidate_only_parts.get('candidate_parts_total', summary.get('candidate_parts_total', 0))}` candidate parts, alias-only `{candidate_only_parts.get('alias_total', summary.get('candidate_alias_only_parts', 0))}`, referenced `{candidate_only_parts.get('candidate_parts_referenced', summary.get('candidate_parts_referenced', 0))}`",
         f"- Loop SCCs: `{loop_scc.get('status', 'not_applicable')}` total `{loop_scc.get('total', 0)}` passed `{loop_scc.get('passed', 0)}` failed `{loop_scc.get('failed', 0)}` refused `{loop_scc.get('refused', 0)}`",
         f"- Call SCCs: `{call_scc.get('status', 'not_applicable')}` total `{call_scc.get('total', 0)}` passed `{call_scc.get('passed', 0)}` failed `{call_scc.get('failed', 0)}` refused `{call_scc.get('refused', 0)}`",
         "",
@@ -531,6 +546,66 @@ def _render_ssa_compare(
         if len(other_refusals) > len(shown_other_refusals):
             lines.append(f"... {len(other_refusals) - len(shown_other_refusals)} more other refusals not shown.")
             lines.append("")
+
+    connectivity_gaps = [
+        item
+        for item in [
+            *(connectivity.get("failures", []) or []),
+            *(connectivity.get("refusals", []) or []),
+        ]
+        if isinstance(item, dict)
+    ]
+    if connectivity_gaps:
+        lines.append("## Connectivity Proof Gaps")
+        lines.append("")
+        lines.append(
+            "These are block-edge proof gaps, not semantic mismatches. They mean the predecessor block was proved locally, but the successor edge could not be paired or state-checked."
+        )
+        lines.append("")
+        shown_connectivity_gaps = _limited(connectivity_gaps, limit)
+        for index, gap in enumerate(shown_connectivity_gaps, start=1):
+            lines.extend(_format_connectivity_gap(gap, index=index))
+        if len(connectivity_gaps) > len(shown_connectivity_gaps):
+            lines.append(f"... {len(connectivity_gaps) - len(shown_connectivity_gaps)} more connectivity proof gaps not shown.")
+            lines.append("")
+    if failing_external_parts:
+        lines.append("## External Shared-Tail Proof Gaps")
+        lines.append("")
+        lines.append(
+            "These are out-of-declared-body SSA parts reached by functions. They are matched and proved separately when a unique candidate block can be found."
+        )
+        lines.append("")
+        for index, result in enumerate(_limited(failing_external_parts, limit), start=1):
+            lines.extend(_format_ssa_result(result, index=index, mismatch_limit=mismatch_limit, show_candidate=True))
+        if len(failing_external_parts) > limit:
+            lines.append(f"... {len(failing_external_parts) - limit} more external shared-tail proof gaps not shown.")
+            lines.append("")
+    if candidate_only_parts.get("enabled") and int(candidate_only_parts.get("total", 0) or 0) > 0:
+        lines.append("## Candidate-Only SSA Parts")
+        lines.append("")
+        lines.append(
+            "These rebuilt SSA parts were not paired with any oracle body or external/shared-tail part. They are coverage leftovers, not semantic mismatches by themselves."
+        )
+        lines.append("")
+        for index, part in enumerate(_limited(candidate_only_parts.get("parts", []) or [], limit), start=1):
+            lines.extend(_format_candidate_only_part(part, index=index))
+        total = int(candidate_only_parts.get("total", 0) or 0)
+        if total > limit:
+            lines.append(f"... {total - limit} more candidate-only SSA parts not shown.")
+            lines.append("")
+    if candidate_only_parts.get("enabled") and int(candidate_only_parts.get("alias_total", 0) or 0) > 0:
+        lines.append("## Candidate Alias-Only SSA Parts")
+        lines.append("")
+        lines.append(
+            "These rebuilt SSA parts were not directly paired, but their entry/part/code signature aliases a candidate block that was paired and checked."
+        )
+        lines.append("")
+        for index, part in enumerate(_limited(candidate_only_parts.get("alias_parts", []) or [], limit), start=1):
+            lines.extend(_format_candidate_only_part(part, index=index))
+        total = int(candidate_only_parts.get("alias_total", 0) or 0)
+        if total > limit:
+            lines.append(f"... {total - limit} more candidate alias-only SSA parts not shown.")
+            lines.append("")
     displayed_count = len(shown_semantic_failures) + len(shown_mapping_gaps) + len(_limited(other_refusals, limit))
     if len(displayed_failing) > displayed_count:
         lines.append(f"Total hidden by per-section limits: {len(displayed_failing) - displayed_count}.")
@@ -561,6 +636,8 @@ def _render_ssa_compare_grouped(
         region_equality,
         region_results,
         _connectivity,
+        external_parts,
+        _failing_external_parts,
         _loop_scc,
         _call_scc,
         _failing_regions,
@@ -606,10 +683,12 @@ def _render_ssa_compare_grouped(
         f"- Failed: {summary.get('failed', 0)}",
         f"- Refused: {summary.get('refused', 0)}",
         f"- Unmapped oracle functions: {summary.get('skipped_unmapped', 0)}",
+        f"- External/shared-tail oracle parts: total `{summary.get('external_oracle_parts_total', 0)}` checked `{summary.get('external_oracle_parts_checked', 0)}` passed `{summary.get('external_oracle_parts_passed', 0)}` unproved `{summary.get('skipped_external_oracle_parts', 0)}`",
         f"- Missing-function rows skipped: {len(skipped_function_missing)}",
         f"- Missing-function region rows skipped: {len(skipped_region_function_missing)}",
         f"- Unresolved-call-target rows skipped: {0 if show_unresolved_call_targets else len(unresolved_call_target_failures)}",
-        f"- Region equality: `{region_equality.get('status', 'not_applicable')}` passed `{region_equality.get('passed', 0)}` failed `{region_equality.get('failed', 0)}` refused `{region_equality.get('refused', 0)}` covered `{region_equality.get('covered_results', 0)}`",
+        f"- Region equality: `{region_equality.get('status', 'not_applicable')}` passed `{region_equality.get('passed', 0)}` failed `{region_equality.get('failed', 0)}` refused `{region_equality.get('refused', 0)}` covered `{region_equality.get('covered_results', 0)}` connectivity-covered `{region_equality.get('connectivity_covered_regions', 0)}` skipped-passed `{region_equality.get('skipped_passed_functions', 0)}`",
+        f"- External shared-tail proofs: `{external_parts.get('status', 'not_applicable')}` total `{external_parts.get('total', 0)}` passed `{external_parts.get('passed', 0)}` failed `{external_parts.get('failed', 0)}` refused `{external_parts.get('refused', 0)}`",
         "",
         f"- Failed/refused by reason: `{_compact_json(dict(sorted(status_reasons.items())))}`",
         f"- Mismatch kinds: `{_compact_json(dict(sorted(mismatch_kinds.items())))}`",
@@ -1051,6 +1130,38 @@ def _format_ssa_call_side(label: str, call: dict[str, Any] | None) -> list[str]:
     return [f"  - {label}: target `{target}` low16 `{low16}` -> unresolved ({reason})"]
 
 
+def _format_connectivity_gap(gap: dict[str, Any], *, index: int) -> list[str]:
+    function = gap.get("function") or "<unknown>"
+    reason = gap.get("reason") or gap.get("kind") or "connectivity_gap"
+    lines = [f"### {index}. `{function}` connectivity `{reason}`"]
+    for key, label in (
+        ("from_delta", "From delta"),
+        ("successor_delta", "Successor delta"),
+        ("oracle_from_delta", "Oracle from delta"),
+        ("oracle_successor_delta", "Oracle successor delta"),
+        ("candidate_from_delta", "Candidate from delta"),
+        ("expected_candidate_successor_delta", "Expected candidate successor delta"),
+        ("candidate_successor_delta", "Candidate successor delta"),
+        ("mapped_oracle_successor_delta", "Mapped oracle successor delta"),
+    ):
+        if gap.get(key) is not None:
+            lines.append(f"- {label}: `{gap.get(key)}`")
+    if gap.get("detail"):
+        lines.append(f"- Detail: {gap.get('detail')}")
+    if gap.get("result_index") is not None:
+        lines.append(f"- Result index: `{gap.get('result_index')}`")
+    if gap.get("oracle_successor_deltas"):
+        lines.append(
+            f"- Oracle successor deltas: `{', '.join(str(item) for item in gap.get('oracle_successor_deltas') or [])}`"
+        )
+    if gap.get("candidate_successor_deltas"):
+        lines.append(
+            f"- Candidate successor deltas: `{', '.join(str(item) for item in gap.get('candidate_successor_deltas') or [])}`"
+        )
+    lines.append("")
+    return lines
+
+
 def _format_ssa_mismatch(mismatch: dict[str, Any]) -> list[str]:
     lines = [f"  - Kind: `{mismatch.get('kind')}`"]
     if mismatch.get("reg"):
@@ -1136,6 +1247,14 @@ def _format_ssa_mismatch(mismatch: dict[str, Any]) -> list[str]:
                 if instruction and instruction.get("disassembly"):
                     line += f" after `{_format_instruction(instruction)}`"
                 lines.append(line)
+                lowering_refusal = item.get("lowering_refusal") if isinstance(item.get("lowering_refusal"), dict) else None
+                if lowering_refusal:
+                    lines.append(
+                        f"        - Lowering refusal: `{lowering_refusal.get('reason')}` {lowering_refusal.get('message')}"
+                    )
+                    metrics = lowering_refusal.get("metrics") if isinstance(lowering_refusal.get("metrics"), dict) else None
+                    if metrics:
+                        lines.append(f"        - Metrics: `{_compact_json(metrics)}`")
             if len(items) > 8:
                 lines.append(f"      - ... {len(items) - 8} more")
     if "detail" in mismatch:
@@ -1173,10 +1292,20 @@ def _ssa_jumpkind(detail: dict[str, Any] | None) -> str | None:
 
 
 def _render_refusals(document: dict[str, Any], *, limit: int) -> str:
+    counters = document.get("counters", {}) if isinstance(document.get("counters"), dict) else {}
     lines = [
         "# DOS Unit Failure Report",
         "",
         f"Schema: `{document.get('schema', 'unknown')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Functions seen: {counters.get('functions_seen', 0)}",
+        f"- Functions lowered: {counters.get('functions_lowered', 0)}",
+        f"- Functions refused: {counters.get('functions_refused', 0)}",
+        f"- SSA parts lowered: {counters.get('ssa_parts_lowered', 0)}",
+        f"- SSA parts refused: {counters.get('ssa_parts_refused', 0)}",
+        f"- Refusal reasons: `{_compact_json(counters.get('refusals_by_reason', {}))}`",
         "",
         "## Refusals",
         "",
@@ -1200,6 +1329,98 @@ def _render_refusals(document: dict[str, Any], *, limit: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_ssa_batched_compare(document: dict[str, Any], *, limit: int) -> str:
+    summary = document.get("summary", {}) if isinstance(document.get("summary"), dict) else {}
+    region_equality = document.get("region_equality") if isinstance(document.get("region_equality"), dict) else {}
+    connectivity = document.get("connectivity") if isinstance(document.get("connectivity"), dict) else {}
+    loop_scc = document.get("loop_scc") if isinstance(document.get("loop_scc"), dict) else {}
+    call_scc = document.get("call_scc") if isinstance(document.get("call_scc"), dict) else {}
+    batches = [item for item in document.get("batches", []) or [] if isinstance(item, dict)]
+    bad_batches = [
+        item
+        for item in batches
+        if int(item.get("returncode", 0) or 0) != 0
+        or int(item.get("main_failed", 0) or 0) != 0
+        or int(item.get("main_refused", 0) or 0) != 0
+        or int(item.get("external_failed", 0) or 0) != 0
+        or int(item.get("external_refused", 0) or 0) != 0
+    ]
+    lines = [
+        "# DOS Unit Batched SSA Compare Report",
+        "",
+        f"Schema: `{document.get('schema')}`",
+        f"Oracle SSA: `{document.get('oracle_ssa')}`",
+        f"Candidate SSA: `{document.get('candidate_ssa')}`",
+        f"Mapping: `{document.get('mapping')}`",
+        f"Output directory: `{document.get('out_dir')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Batches: {summary.get('batches', 0)}",
+        f"- Completed: {summary.get('batches_completed', 0)}",
+        f"- Nonzero batches: `{_compact_json(summary.get('rc_nonzero', []))}`",
+        f"- Main SSA parts: `{summary.get('main_passed', 0)}/{summary.get('main_total', 0)}` passed, failed `{summary.get('main_failed', 0)}`, refused `{summary.get('main_refused', 0)}`",
+        f"- External/shared-tail SSA parts: `{summary.get('external_passed', 0)}/{summary.get('external_total', 0)}` passed, failed `{summary.get('external_failed', 0)}`, refused `{summary.get('external_refused', 0)}`, unproved `{summary.get('external_unproved', 0)}`",
+        f"- Candidate-only SSA parts: `{summary.get('candidate_only_parts', 0)}` of `{summary.get('candidate_parts_total', 0)}` candidate parts, alias-only `{summary.get('candidate_alias_only_parts', 0)}`, referenced `{summary.get('candidate_parts_referenced', 0)}`",
+        f"- Region equality: `{region_equality.get('status', 'not_applicable')}` total `{region_equality.get('total', 0)}` passed `{region_equality.get('passed', 0)}` failed `{region_equality.get('failed', 0)}` refused `{region_equality.get('refused', 0)}` covered-results `{region_equality.get('covered_results', 0)}` connectivity-covered `{region_equality.get('connectivity_covered_regions', 0)}`",
+        f"- Connectivity: `{connectivity.get('status', 'not_applicable')}` edges `{connectivity.get('edges_checked', 0)}` state edges `{connectivity.get('state_edges_checked', 0)}` state inputs `{connectivity.get('state_inputs_checked', 0)}` external-covered `{connectivity.get('external_successor_edges_covered', 0)}` external-unproved `{connectivity.get('external_successor_edges_unproved', 0)}` failures `{connectivity.get('failures', 0)}` refusals `{connectivity.get('refusals', 0)}`",
+        f"- Loop SCCs: `{loop_scc.get('status', 'not_applicable')}` total `{loop_scc.get('total', 0)}` passed `{loop_scc.get('passed', 0)}` failed `{loop_scc.get('failed', 0)}` refused `{loop_scc.get('refused', 0)}`",
+        f"- Call SCCs: `{call_scc.get('status', 'not_applicable')}` total `{call_scc.get('total', 0)}` passed `{call_scc.get('passed', 0)}` failed `{call_scc.get('failed', 0)}` refused `{call_scc.get('refused', 0)}`",
+        f"- Solver time ms: {summary.get('solver_time_ms', 0)}",
+        "",
+        "## Notes",
+        "",
+        "- Main SSA parts are declared function-body parts compared by binary equality, compact SSA equality, Z3, region equality, and connectivity gates as applicable.",
+        "- External/shared-tail parts are out-of-declared-body SSA blocks reached by functions; they are proved separately when a unique candidate block can be found.",
+        "- Candidate-only SSA parts are rebuilt-only coverage leftovers; inspect them when exact rebuilt coverage is expected, but they are not oracle mismatches.",
+        "- SSA generation refusals are not included here. Run `report-failures --results <ssa.json>` on each SSA artifact to see functions that did not lower.",
+        "",
+        "## Failed Or Refused Batches",
+        "",
+    ]
+    if not bad_batches:
+        lines.append("No failed or refused batches.")
+        lines.append("")
+    else:
+        for batch in _limited(bad_batches, limit):
+            lines.append(f"### Batch {batch.get('batch')}")
+            lines.append(f"- Return code: `{batch.get('returncode')}`")
+            lines.append(f"- Compare JSON: `{batch.get('compare')}`")
+            lines.append(f"- Main: passed `{batch.get('main_passed', 0)}/{batch.get('main_total', 0)}`, failed `{batch.get('main_failed', 0)}`, refused `{batch.get('main_refused', 0)}`")
+            lines.append(f"- External/shared-tail: passed `{batch.get('external_passed', 0)}/{batch.get('external_total', 0)}`, failed `{batch.get('external_failed', 0)}`, refused `{batch.get('external_refused', 0)}`, unproved `{batch.get('external_unproved', 0)}`")
+            functions = [str(item) for item in batch.get("functions", []) or []]
+            if functions:
+                preview = ", ".join(functions[:8])
+                suffix = "" if len(functions) <= 8 else f", ... {len(functions) - 8} more"
+                lines.append(f"- Functions: `{preview}{suffix}`")
+            lines.append("")
+        if len(bad_batches) > len(_limited(bad_batches, limit)):
+            lines.append(f"... {len(bad_batches) - len(_limited(bad_batches, limit))} more failed/refused batches not shown.")
+            lines.append("")
+    candidate_only_parts = (
+        document.get("candidate_only_parts") if isinstance(document.get("candidate_only_parts"), dict) else {}
+    )
+    if candidate_only_parts.get("enabled") and int(candidate_only_parts.get("total", 0) or 0) > 0:
+        lines.append("## Candidate-Only SSA Parts")
+        lines.append("")
+        for index, part in enumerate(_limited(candidate_only_parts.get("parts", []) or [], limit), start=1):
+            lines.extend(_format_candidate_only_part(part, index=index))
+        total = int(candidate_only_parts.get("total", 0) or 0)
+        if total > limit:
+            lines.append(f"... {total - limit} more candidate-only SSA parts not shown.")
+            lines.append("")
+    if candidate_only_parts.get("enabled") and int(candidate_only_parts.get("alias_total", 0) or 0) > 0:
+        lines.append("## Candidate Alias-Only SSA Parts")
+        lines.append("")
+        for index, part in enumerate(_limited(candidate_only_parts.get("alias_parts", []) or [], limit), start=1):
+            lines.extend(_format_candidate_only_part(part, index=index))
+        total = int(candidate_only_parts.get("alias_total", 0) or 0)
+        if total > limit:
+            lines.append(f"... {total - limit} more candidate alias-only SSA parts not shown.")
+            lines.append("")
+    return "\n".join(lines)
+
+
 def _render_unknown(document: dict[str, Any]) -> str:
     return "\n".join(
         [
@@ -1215,6 +1436,35 @@ def _render_unknown(document: dict[str, Any]) -> str:
 
 def _compact_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _format_candidate_only_part(part: dict[str, Any], *, index: int) -> list[str]:
+    function = part.get("function") if isinstance(part.get("function"), dict) else {}
+    name = function.get("name") or function.get("id") or part.get("id") or "<unknown>"
+    detail = part.get("detail") if isinstance(part.get("detail"), dict) else part
+    lines = [f"### {index}. `{name}` candidate-only"]
+    if part.get("id"):
+        lines.append(f"- SSA id: `{part.get('id')}`")
+    if function.get("id"):
+        lines.append(f"- Function id: `{function.get('id')}`")
+    entry = detail.get("entry") if isinstance(detail, dict) else None
+    if entry:
+        lines.append(f"- Candidate entry: `{_format_ssa_entry(entry)}`")
+    part_info = detail.get("part") if isinstance(detail, dict) and isinstance(detail.get("part"), dict) else {}
+    if part_info:
+        lines.append(f"- Part: `{_compact_json(part_info)}`")
+    jumpkind = detail.get("jumpkind") if isinstance(detail, dict) else None
+    if jumpkind:
+        lines.append(f"- Jumpkind: `{jumpkind}`")
+    if isinstance(detail, dict) and detail.get("instruction_count") is not None:
+        lines.append(f"- Instructions: `{detail.get('instruction_count')}`")
+    instructions = [item for item in (detail.get("instructions", []) if isinstance(detail, dict) else []) if isinstance(item, dict)]
+    if instructions:
+        lines.append("- First instructions:")
+        for instruction in instructions[:4]:
+            lines.append(f"  - `{_format_instruction(instruction)}`")
+    lines.append("")
+    return lines
 
 
 def _format_instruction(instruction: dict[str, Any]) -> str:

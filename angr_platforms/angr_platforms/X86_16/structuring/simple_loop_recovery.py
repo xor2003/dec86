@@ -13,6 +13,7 @@ class InsnSummary8616:
     op1_value: int | str | None = None
     op0_size: int | None = None
     op1_size: int | None = None
+    address: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +146,7 @@ def _summarize_capstone_insn_8616(insn) -> InsnSummary8616:
 
     op0_kind, op0_value, op0_size = _operand(0)
     op1_kind, op1_value, op1_size = _operand(1)
+    raw_address = getattr(insn, "address", None)
     return InsnSummary8616(
         mnemonic=str(getattr(insn, "mnemonic", "")).lower(),
         op0_kind=op0_kind,
@@ -153,6 +155,7 @@ def _summarize_capstone_insn_8616(insn) -> InsnSummary8616:
         op1_value=op1_value,
         op0_size=op0_size,
         op1_size=op1_size,
+        address=raw_address if isinstance(raw_address, int) else None,
     )
 
 

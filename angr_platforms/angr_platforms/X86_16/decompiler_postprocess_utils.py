@@ -1,3 +1,25 @@
+"""Shared C AST utilities for postprocess consumers.
+
+This module should stay boring: traversal helpers, child replacement, constant
+inspection, and syntactic matchers for already-rendered C nodes. It is allowed
+to describe C AST shapes, but it must not decide semantic truth.
+
+Current migration debt:
+- several matchers recognize real-mode linear/segmented memory and BP-stack
+  patterns from rendered C shapes;
+- helper functions expose global/stack address extraction used by late
+  materialization passes.
+
+Those semantic identities belong in alias, stack lowering, segmented memory
+lowering, and typed Value/Address facts before C rendering. As those layers
+mature, keep only generic AST traversal here and delete shape matchers whose
+callers can consume structured facts instead.
+
+Do not add new recovery logic, text parsing, compiler-specific patterns, or
+validation exceptions here. New helpers should be syntax-only utilities used by
+postprocess passes after evidence has already been collected.
+"""
+
 from __future__ import annotations
 
 import re

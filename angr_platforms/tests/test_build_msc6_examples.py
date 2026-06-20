@@ -15,6 +15,7 @@ from scripts.build_msc6_examples import (
     _child_trace_path,
     _decompile_and_validate,
     _decompile_function_with_options,
+    _decompile_profile_text,
     _extract_decompiled_function_definition,
     _focused_decompile_process_timeout,
     _is_decompile_output_acceptable,
@@ -82,9 +83,42 @@ def test_acceptance_uses_final_clean_tail_validation_over_rejected_lanes():
     assert reason is None
 
 
+def test_acceptance_uses_final_clean_tail_validation_over_changed_attempt():
+    stderr = """
+WARNING | postprocess validation changed: returns differ
+[tail-validation] severity=changed
+[tail-validation] whole-tail validation clean across 1 functions
+"""
+    profile = _parse_decompile_profile(stderr)
+
+    ok, reason = _is_decompile_output_acceptable("int f(void) { return 1; }", stderr, profile)
+
+    assert profile["tail_validation_changed"] is False
+    assert ok is True
+    assert reason is None
+
+
+def test_profile_text_uses_stdout_tail_summary_after_stderr_rejection():
+    stderr = """
+WARNING | postprocess validation changed: returns differ
+[tail-validation] severity=changed
+"""
+    stdout = """
+int f(void) { return 1; }
+[tail-validation] whole-tail validation clean across 1 functions
+"""
+    profile = _parse_decompile_profile(_decompile_profile_text(stdout, stderr))
+
+    ok, reason = _is_decompile_output_acceptable(stdout, stderr, profile)
+
+    assert profile["tail_validation_changed"] is False
+    assert profile["tail_validation_status"] == "clean"
+    assert ok is True
+    assert reason is None
+
+
 def test_acceptance_rejects_validation_failed_fallback_even_with_clean_tail_summary():
     stderr = """
-[tail-validation] whole-tail validation clean across 1 functions
 /* Decompilation validation_failed: Missing source-evidenced return values in emitted C: return value(0/1) */
 /* == c (non-optimized fallback) == */
 """
@@ -94,6 +128,21 @@ def test_acceptance_rejects_validation_failed_fallback_even_with_clean_tail_summ
 
     assert ok is False
     assert reason == "validation_failed"
+
+
+def test_acceptance_allows_rejected_c_fallback_attempt_when_final_tail_is_clean():
+    stderr = """
+[tail-validation] whole-tail validation failed across 1 functions
+/* Decompilation validation_failed: Tail validation failed (structuring=changed; postprocess=stable). */
+/* == c (non-optimized fallback) == */
+[tail-validation] whole-tail validation clean across 1 functions
+"""
+    profile = _parse_decompile_profile(stderr)
+
+    ok, reason = _is_decompile_output_acceptable("int f(void) { return 1; }", stderr, profile)
+
+    assert ok is True
+    assert reason is None
 
 
 def test_enum_union_fallback_is_enabled_by_default():
@@ -251,6 +300,114 @@ def test_function_fallback_retries_transient_asm_fallback(monkeypatch, tmp_path)
         calls.append(function_name)
         if len(calls) == 1:
             return False, "", "", {"acceptance_reason": "asm_fallback"}, "cmd1", function_name
+        return True, "int f(void) { return 1; }", "", {"acceptance_reason": None}, "cmd2", function_name
+
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._decompile_function_with_options",
+        fake_decompile_function_with_options,
+    )
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._extract_decompiled_function_definition",
+        lambda _text, _name: "int f(void) { return 1; }\n",
+    )
+
+    def fake_compile_and_link(_source_path, out_dir, **kwargs):
+        (out_dir / kwargs["exe_name"]).write_bytes(b"MZ")
+        return True, "", "", "", ""
+
+    monkeypatch.setattr("scripts.build_msc6_examples._compile_and_link", fake_compile_and_link)
+    monkeypatch.setattr("scripts.build_msc6_examples._run_example", lambda *_args, **_kwargs: (True, 255, "", ""))
+
+    ok, recompiled, run_exit, *_rest = _build_from_function_decompiles(
+        tmp_path / "TEST.EXE",
+        tmp_path,
+        decompile_py=tmp_path / "decompile.py",
+        decompile_timeout=60,
+        decompile_run_timeout=60,
+        decompile_function_discovery_backend="auto",
+        decompile_seed_engine="auto",
+        decompile_rizin_timeout=8,
+        decompile_force_rizin_8616=False,
+        decompile_pat_backend=None,
+        decompile_signature_catalog=None,
+        fallback_functions=("f",),
+        fallback_harness="int main(void) { return 255; }",
+        fallback_prefix="",
+        decompile_c_name="TEST1.C",
+        decompile_obj_name="TEST1.OBJ",
+        decompile_exe_name="TEST1.EXE",
+        decompile_map_name="TEST1.MAP",
+        kvikdos=tmp_path / "kvikdos",
+        msc6_root=tmp_path / "msc6",
+    )
+
+    assert ok is True
+    assert recompiled is True
+    assert run_exit == 255
+    assert calls == ["f", "f"]
+
+
+def test_function_fallback_retries_transient_tail_validation_failure(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_decompile_function_with_options(*_args, function_name, **_kwargs):
+        calls.append(function_name)
+        if len(calls) == 1:
+            return False, "", "", {"acceptance_reason": "tail_validation_failed"}, "cmd1", function_name
+        return True, "int f(void) { return 1; }", "", {"acceptance_reason": None}, "cmd2", function_name
+
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._decompile_function_with_options",
+        fake_decompile_function_with_options,
+    )
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._extract_decompiled_function_definition",
+        lambda _text, _name: "int f(void) { return 1; }\n",
+    )
+
+    def fake_compile_and_link(_source_path, out_dir, **kwargs):
+        (out_dir / kwargs["exe_name"]).write_bytes(b"MZ")
+        return True, "", "", "", ""
+
+    monkeypatch.setattr("scripts.build_msc6_examples._compile_and_link", fake_compile_and_link)
+    monkeypatch.setattr("scripts.build_msc6_examples._run_example", lambda *_args, **_kwargs: (True, 255, "", ""))
+
+    ok, recompiled, run_exit, *_rest = _build_from_function_decompiles(
+        tmp_path / "TEST.EXE",
+        tmp_path,
+        decompile_py=tmp_path / "decompile.py",
+        decompile_timeout=60,
+        decompile_run_timeout=60,
+        decompile_function_discovery_backend="auto",
+        decompile_seed_engine="auto",
+        decompile_rizin_timeout=8,
+        decompile_force_rizin_8616=False,
+        decompile_pat_backend=None,
+        decompile_signature_catalog=None,
+        fallback_functions=("f",),
+        fallback_harness="int main(void) { return 255; }",
+        fallback_prefix="",
+        decompile_c_name="TEST1.C",
+        decompile_obj_name="TEST1.OBJ",
+        decompile_exe_name="TEST1.EXE",
+        decompile_map_name="TEST1.MAP",
+        kvikdos=tmp_path / "kvikdos",
+        msc6_root=tmp_path / "msc6",
+    )
+
+    assert ok is True
+    assert recompiled is True
+    assert run_exit == 255
+    assert calls == ["f", "f"]
+
+
+def test_function_fallback_retries_transient_nonzero_exit(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_decompile_function_with_options(*_args, function_name, **_kwargs):
+        calls.append(function_name)
+        if len(calls) == 1:
+            return False, "int f(void) { return 1; }", "", {"acceptance_reason": "nonzero_exit"}, "cmd1", function_name
         return True, "int f(void) { return 1; }", "", {"acceptance_reason": None}, "cmd2", function_name
 
     monkeypatch.setattr(

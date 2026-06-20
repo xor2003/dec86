@@ -270,6 +270,55 @@ def test_cfg_selector_return_delta_accepts_raw_stack_slot_consumed_as_source_arg
     )
 
 
+def test_cfg_selector_return_delta_accepts_source_view_stack_bias_alias():
+    codegen = SimpleNamespace(
+        _inertia_return_expr_chain_materialized_8616=True,
+        _inertia_return_selector_materialized_8616=True,
+        _inertia_return_selector_raw_stack_slot_aliases_8616={
+            "stack_arg:x:size2": (
+                "stack_slot:SS:BP+0x4:size2",
+                "stack_slot:SS:BP+0x8:size2",
+            ),
+        },
+        _inertia_return_expr_chain_materialized_return_fingerprints_8616=(
+            "Add(stack_arg:x:size2,const:-5)",
+            "Add(stack_arg:x:size2,const:20)",
+            "Shl(stack_arg:x:size2,const:1)",
+            "const:10",
+        ),
+        _inertia_return_chain_materialized_condition_fingerprints_8616=(
+            "CmpEQ(stack_arg:x:size2,const:0)",
+            "CmpLT(stack_arg:x:size2,const:1)",
+            "CmpLE(stack_arg:x:size2,const:2)",
+            "CmpEQ(stack_arg:x:size2,const:3)",
+        ),
+        _inertia_stack_probe_helper_target_fingerprints_8616=(),
+        _inertia_stack_probe_fact_stats={},
+    )
+    validation = {
+        "delta": {
+            "returns": {
+                "added": (
+                    "Add(stack_arg:x:size2,const:-5)",
+                    "Add(stack_arg:x:size2,const:20)",
+                    "Shl(stack_arg:x:size2,const:1)",
+                ),
+                "removed": (
+                    "Add(stack_arg:x:size2,const:-1)",
+                    "Add(stack_slot:SS:BP+0x8:size2,const:20)",
+                ),
+            },
+        }
+    }
+
+    assert _is_cfg_return_expr_chain_materialization_delta_8616(
+        SimpleNamespace(arch=Arch86_16()),
+        None,
+        codegen,
+        validation,
+    )
+
+
 def test_after_call_stack_lowering_rerun_is_single_round(monkeypatch):
     captured = {}
 

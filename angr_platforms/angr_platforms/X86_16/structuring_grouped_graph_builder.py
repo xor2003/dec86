@@ -1,10 +1,13 @@
+"""Grouped region graph construction for the 16-bit decompiler pipeline."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from .condition_ir import condition_compare_symbol_8616
+from .ir.condition_ir import ConditionEdgeEvidence, ConditionIR
 from .ir.core import AddressStatus, IRAddress, IRCondition, IRValue, MemSpace, SegmentOrigin
+from .structuring.condition_rendering import render_condition_ir_8616, render_condition_ir_native_8616
 from .structuring_graph_builder import RegionGraphBuildResult, build_region_graph
 from .structuring_grouped_units import (
     CrossEntryGroupedUnitArtifact,
@@ -14,6 +17,8 @@ from .structuring_grouped_units import (
 
 @dataclass(frozen=True, slots=True)
 class GroupedRegionGraphBuildResult:
+    """Region graph plus optional cross-entry grouping evidence."""
+
     graph_result: RegionGraphBuildResult
     grouped_units: CrossEntryGroupedUnitArtifact | None
 
@@ -30,7 +35,7 @@ def _format_ir_value_8616(value: IRValue) -> str | None:
 
 
 def _format_ir_address_hint_8616(address: IRAddress) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         base = tuple(getattr(address, "base", ()) or ())
         if not base:
             return None
@@ -52,7 +57,7 @@ def _format_ir_address_hint_8616(address: IRAddress) -> str | None:
 
 
 def _format_ir_condition_hint_8616(condition: IRCondition) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         args = tuple(getattr(condition, "args", ()) or ())
         op = str(getattr(condition, "op", ""))
         if op == "not" and len(args) == 1 and isinstance(args[0], IRCondition):
@@ -95,14 +100,14 @@ def _format_ir_condition_hint_8616(condition: IRCondition) -> str | None:
     return _impl()
 
 
-def _typed_ir_support_by_region_id(codegen: Any) -> dict[int, dict[str, object]]:
-    def _impl():
+def _typed_ir_support_by_region_id(codegen: object) -> dict[int, dict[str, object]]:
+    def _impl() -> dict[int, dict[str, object]]:
         artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
         function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
+        support: dict[int, dict[str, object]] = _condition_ir_support_by_region_id_8616(codegen)
         if artifact is None or not hasattr(artifact, "blocks"):
-            return {}
+            return support
 
-        support: dict[int, dict[str, bool]] = {}
         for block in tuple(getattr(artifact, "blocks", ()) or ()):
             region_id = getattr(block, "addr", None)
             if not isinstance(region_id, int):
@@ -113,22 +118,36 @@ def _typed_ir_support_by_region_id(codegen: Any) -> dict[int, dict[str, object]]
             stable_address_spaces = block_scan["stable_address_spaces"]
             segment_origin_kinds = block_scan["segment_origin_kinds"]
             address_hint = block_scan["address_hint"]
+            condition_ir_support = support.get(region_id, {})
+            condition_ir_ops = tuple(condition_ir_support.get("condition_ir_ops", ()) or ())
+            condition_edge_ops = tuple(condition_ir_support.get("condition_edge_guard_ops", ()) or ())
+            has_condition = any(
+                any(isinstance(arg, IRCondition) for arg in tuple(getattr(instr, "args", ()) or ()))
+                for instr in tuple(getattr(block, "instrs", ()) or ())
+            )
+            condition_kinds = tuple(
+                sorted(
+                    {
+                        str(arg.op)
+                        for instr in tuple(getattr(block, "instrs", ()) or ())
+                        for arg in tuple(getattr(instr, "args", ()) or ())
+                        if isinstance(arg, IRCondition)
+                    }
+                )
+            )
             support[region_id] = {
+                **condition_ir_support,
                 "has_condition": any(
-                    any(isinstance(arg, IRCondition) for arg in tuple(getattr(instr, "args", ()) or ()))
-                    for instr in tuple(getattr(block, "instrs", ()) or ())
-                ),
-                "condition_kinds": tuple(
-                    sorted(
-                        {
-                            str(arg.op)
-                            for instr in tuple(getattr(block, "instrs", ()) or ())
-                            for arg in tuple(getattr(instr, "args", ()) or ())
-                            if isinstance(arg, IRCondition)
-                        }
+                    (
+                        has_condition,
+                        bool(condition_ir_support.get("condition_ir_has_condition", False)),
+                        bool(condition_ir_support.get("condition_edge_has_guard", False)),
                     )
                 ),
-                "condition_hint": cjmp_condition_hint,
+                "condition_kinds": tuple(sorted({*condition_kinds, *condition_ir_ops, *condition_edge_ops})),
+                "condition_hint": cjmp_condition_hint
+                or condition_ir_support.get("condition_ir_hint")
+                or condition_ir_support.get("condition_hint"),
                 "has_address": bool(address_spaces),
                 "address_spaces": tuple(sorted(address_spaces)),
                 "stable_address_spaces": tuple(sorted(stable_address_spaces)),
@@ -146,6 +165,15 @@ def _typed_ir_support_by_region_id(codegen: Any) -> dict[int, dict[str, object]]
                     "has_condition": False,
                     "condition_kinds": (),
                     "condition_hint": None,
+                    "condition_ir_has_condition": False,
+                    "condition_ir_ops": (),
+                    "condition_ir_hint": None,
+                    "condition_ir_count": 0,
+                    "condition_edge_has_guard": False,
+                    "condition_edge_guard_ops": (),
+                    "condition_edge_guard_hints": (),
+                    "condition_edge_guards": (),
+                    "condition_edge_guard_count": 0,
                     "has_address": False,
                     "address_spaces": (),
                     "stable_address_spaces": (),
@@ -159,8 +187,104 @@ def _typed_ir_support_by_region_id(codegen: Any) -> dict[int, dict[str, object]]
     return _impl()
 
 
-def _scan_typed_ir_block_8616(block) -> dict[str, object]:
-    def _impl():
+def _condition_ir_support_by_region_id_8616(codegen: object) -> dict[int, dict[str, object]]:
+    def _impl() -> dict[int, dict[str, object]]:
+        conditions = getattr(codegen, "_inertia_typed_conditions", None)
+        support: dict[int, dict[str, object]] = {}
+        if isinstance(conditions, (list, tuple)):
+            for cond in conditions:
+                if not isinstance(cond, ConditionIR):
+                    continue
+                region_id = cond.block_addr if isinstance(cond.block_addr, int) else cond.src_insn
+                if not isinstance(region_id, int):
+                    continue
+                entry = support.setdefault(
+                    region_id,
+                    {
+                        "has_condition": True,
+                        "condition_kinds": (),
+                        "condition_hint": None,
+                        "condition_ir_has_condition": True,
+                        "condition_ir_ops": (),
+                        "condition_ir_hint": None,
+                        "condition_ir_count": 0,
+                        "condition_edge_has_guard": False,
+                        "condition_edge_guard_ops": (),
+                        "condition_edge_guard_hints": (),
+                        "condition_edge_guards": (),
+                        "condition_edge_guard_count": 0,
+                        "has_address": False,
+                        "address_spaces": (),
+                        "stable_address_spaces": (),
+                        "segment_origin_kinds": (),
+                        "address_hint": None,
+                        "has_phi": False,
+                    },
+                )
+                ops = set(entry.get("condition_ir_ops", ()) or ())
+                ops.add(str(cond.op))
+                entry["condition_ir_ops"] = tuple(sorted(ops))
+                entry["condition_kinds"] = tuple(sorted({*entry.get("condition_kinds", ()), str(cond.op)}))
+                entry["condition_ir_count"] = int(entry.get("condition_ir_count", 0) or 0) + 1
+                if entry.get("condition_ir_hint") is None:
+                    hint = render_condition_ir_native_8616(cond) or render_condition_ir_8616(cond)
+                    if hint is not None:
+                        entry["condition_ir_hint"] = hint
+                        entry["condition_hint"] = hint
+        edge_evidence = getattr(codegen, "_inertia_condition_edge_evidence", None)
+        if isinstance(edge_evidence, (list, tuple)):
+            for edge in edge_evidence:
+                if not isinstance(edge, ConditionEdgeEvidence):
+                    continue
+                region_id = edge.edge_block_addr
+                condition = edge.condition
+                entry = support.setdefault(
+                    region_id,
+                    {
+                        "has_condition": True,
+                        "condition_kinds": (),
+                        "condition_hint": None,
+                        "condition_ir_has_condition": False,
+                        "condition_ir_ops": (),
+                        "condition_ir_hint": None,
+                        "condition_ir_count": 0,
+                        "condition_edge_has_guard": True,
+                    "condition_edge_guard_ops": (),
+                    "condition_edge_guard_hints": (),
+                    "condition_edge_guards": (),
+                    "condition_edge_guard_count": 0,
+                        "has_address": False,
+                        "address_spaces": (),
+                        "stable_address_spaces": (),
+                        "segment_origin_kinds": (),
+                        "address_hint": None,
+                        "has_phi": False,
+                    },
+                )
+                entry["has_condition"] = True
+                entry["condition_edge_has_guard"] = True
+                edge_ops = set(entry.get("condition_edge_guard_ops", ()) or ())
+                edge_ops.add(str(condition.op))
+                entry["condition_edge_guard_ops"] = tuple(sorted(edge_ops))
+                entry["condition_kinds"] = tuple(sorted({*entry.get("condition_kinds", ()), str(condition.op)}))
+                edge_guards = tuple(entry.get("condition_edge_guards", ()) or ())
+                if condition not in edge_guards:
+                    entry["condition_edge_guards"] = (*edge_guards, condition)
+                entry["condition_edge_guard_count"] = int(entry.get("condition_edge_guard_count", 0) or 0) + 1
+                hint = render_condition_ir_native_8616(condition) or render_condition_ir_8616(condition)
+                if hint is not None:
+                    hints = tuple(entry.get("condition_edge_guard_hints", ()) or ())
+                    if hint not in hints:
+                        entry["condition_edge_guard_hints"] = (*hints, hint)
+                    if entry.get("condition_hint") is None:
+                        entry["condition_hint"] = hint
+        return support
+
+    return _impl()
+
+
+def _scan_typed_ir_block_8616(block: object) -> dict[str, object]:
+    def _impl() -> dict[str, object]:
         cjmp_condition_hint = None
         address_spaces: set[str] = set()
         stable_address_spaces: set[str] = set()
@@ -200,7 +324,7 @@ def _scan_typed_ir_block_8616(block) -> dict[str, object]:
     return _impl()
 
 
-def _annotate_typed_ir_support_on_graph(graph, typed_ir_support: dict[int, dict[str, bool]]) -> None:
+def _annotate_typed_ir_support_on_graph(graph: object, typed_ir_support: dict[int, dict[str, object]]) -> None:
     for region in graph.nodes:
         region_id = getattr(region, "region_id", None)
         if not isinstance(region_id, int):
@@ -211,6 +335,23 @@ def _annotate_typed_ir_support_on_graph(graph, typed_ir_support: dict[int, dict[
         region.metadata["typed_ir_has_condition"] = ir_support["has_condition"]
         region.metadata["typed_ir_condition_kinds"] = tuple(ir_support.get("condition_kinds", ()) or ())
         region.metadata["typed_ir_condition_hint"] = ir_support.get("condition_hint")
+        region.metadata["typed_condition_ir_has_condition"] = bool(
+            ir_support.get("condition_ir_has_condition", False)
+        )
+        region.metadata["typed_condition_ir_ops"] = tuple(ir_support.get("condition_ir_ops", ()) or ())
+        region.metadata["typed_condition_ir_hint"] = ir_support.get("condition_ir_hint")
+        region.metadata["typed_condition_ir_count"] = int(ir_support.get("condition_ir_count", 0) or 0)
+        region.metadata["typed_condition_edge_has_guard"] = bool(ir_support.get("condition_edge_has_guard", False))
+        region.metadata["typed_condition_edge_guard_ops"] = tuple(
+            ir_support.get("condition_edge_guard_ops", ()) or ()
+        )
+        region.metadata["typed_condition_edge_guard_hints"] = tuple(
+            ir_support.get("condition_edge_guard_hints", ()) or ()
+        )
+        region.metadata["typed_condition_edge_guards"] = tuple(ir_support.get("condition_edge_guards", ()) or ())
+        region.metadata["typed_condition_edge_guard_count"] = int(
+            ir_support.get("condition_edge_guard_count", 0) or 0
+        )
         region.metadata["typed_ir_has_address"] = bool(ir_support.get("has_address", False))
         region.metadata["typed_ir_address_spaces"] = tuple(ir_support.get("address_spaces", ()) or ())
         region.metadata["typed_ir_stable_address_spaces"] = tuple(ir_support.get("stable_address_spaces", ()) or ())
@@ -222,8 +363,10 @@ def _annotate_typed_ir_support_on_graph(graph, typed_ir_support: dict[int, dict[
         )
 
 
-def build_grouped_region_graph(codegen: Any) -> GroupedRegionGraphBuildResult:
-    def _impl():
+def build_grouped_region_graph(codegen: object) -> GroupedRegionGraphBuildResult:
+    """Build the region graph and attach grouped/typed-IR evidence metadata."""
+
+    def _impl() -> GroupedRegionGraphBuildResult:
         graph_result = build_region_graph(codegen)
         grouped_units = build_x86_16_cross_entry_grouped_units(codegen)
         graph = graph_result.graph
@@ -261,9 +404,10 @@ def build_grouped_region_graph(codegen: Any) -> GroupedRegionGraphBuildResult:
 
 
 def describe_x86_16_grouped_region_graph_surface() -> dict[str, object]:
+    """Describe the stable metadata surface produced by this builder."""
     return {
         "producer": "build_grouped_region_graph",
-        "graph_surface": "Region.metadata[cross_entry_*, typed_ir_*]",
+        "graph_surface": "Region.metadata[cross_entry_*, typed_ir_*, typed_condition_edge_*]",
         "unit_surface": "CrossEntryGroupedUnitArtifact",
         "purpose": "Materialize cross-entry grouping directly onto the region graph before structuring.",
     }

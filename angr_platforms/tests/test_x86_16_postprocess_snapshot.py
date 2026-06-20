@@ -20,13 +20,16 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _classify_postprocess_validation_delta_8616,
     _direct_stack_move_validation_delta_kind_8616,
     _is_callsite_stack_argument_materialization_delta_8616,
+    _is_cfg_mask_accumulator_materialization_delta_8616,
     _is_direct_global_update_materialization_delta_8616,
     _is_direct_stack_move_idiv_remainder_materialization_delta_8616,
     _is_direct_stack_move_materialization_delta_8616,
     _is_direct_stack_update_materialization_delta_8616,
     _is_jcc_call_return_condition_rebinding_delta_8616,
     _is_jcc_condition_materialization_validation_delta_8616,
+    _is_segmented_global_symbol_materialization_delta_8616,
     _postprocess_run_bootstrap_steps_8616,
+    _postprocess_run_optimization_step_8616,
     _PostprocessValidationDeltaKind8616,
     _repair_missing_cnode_codegen_metadata_8616,
     _restore_codegen_inertia_metadata_8616,
@@ -62,6 +65,31 @@ def test_bootstrap_omits_stack_materialization_passes():
     assert seen[0] == "_normalize_fact_backed_stack_accesses_8616"
     assert "_materialize_direct_stack_incdec_instructions_8616" not in seen
     assert "_materialize_stable_stack_semantics_bootstrap_8616" not in seen
+
+
+def test_optimization_runner_applies_validation_step_per_subpass(monkeypatch):
+    seen: list[str] = []
+    codegen = SimpleNamespace(cfunc=object(), _inertia_postprocess_validation_failed=False)
+    specs = (
+        SimpleNamespace(name="const_like", func=lambda _codegen: True),
+        SimpleNamespace(name="stable_like", func=lambda _codegen: False),
+    )
+
+    monkeypatch.setattr(post_stage, "OPTIMIZATION_PASSES", specs)
+    monkeypatch.setattr(post_stage, "_postprocess_optimization_enabled_8616", lambda: True)
+    monkeypatch.setattr(
+        post_stage,
+        "_normalize_cfunc_root_for_optimization_8616",
+        lambda _codegen: seen.append("normalize"),
+    )
+
+    def apply_step(name, step):
+        seen.append(name)
+        step()
+        return True
+
+    assert _postprocess_run_optimization_step_8616(SimpleNamespace(), codegen, False, apply_step) is True
+    assert seen == ["normalize", "optimization:const_like", "optimization:stable_like"]
 
 
 def test_generic_return_artifact_detects_unified_vvar_dereference():
@@ -303,7 +331,7 @@ def _callsite_global_precision_validation(*, global_token="global:0xbab"):
     }
 
 
-def _direct_global_update_codegen():
+def _direct_global_update_codegen(*, displacement: int = 0x135, width: int = 1):
     codegen = _FakeCodegen(_FakeCFunc([]))
     codegen._inertia_direct_global_update_lowering_8616 = {
         "raw_fact_count": 1,
@@ -313,13 +341,23 @@ def _direct_global_update_codegen():
     }
     codegen._inertia_direct_global_update_evidence_8616 = (
         (
-            ("displacement", 0x135),
-            ("width", 1),
+            ("displacement", displacement),
+            ("width", width),
             ("delta", 1),
             ("ins_addr", 0x10420),
             ("name", "c"),
         ),
     )
+    return codegen
+
+
+def _segmented_global_symbol_codegen(*, spans: tuple[tuple[int, int], ...]):
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_segmented_global_load_stats_8616 = SimpleNamespace(
+        direct_symbol_materialized_count=1,
+        direct_symbol_store_materialized_count=1,
+    )
+    codegen._inertia_direct_global_symbol_store_spans_8616 = spans
     return codegen
 
 
@@ -334,6 +372,138 @@ def test_direct_global_update_materialization_delta_accepts_evidenced_ds_write_p
     }
 
     assert _is_direct_global_update_materialization_delta_8616(_direct_global_update_codegen(), validation) is True
+
+
+def test_direct_global_update_materialization_delta_accepts_word_high_byte_write():
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": ("global:0xbab",),
+                "removed": ("global:0xbaa",),
+            },
+        }
+    }
+
+    assert (
+        _is_direct_global_update_materialization_delta_8616(
+            _direct_global_update_codegen(displacement=0xBAA, width=2),
+            validation,
+        )
+        is True
+    )
+
+
+def test_direct_global_update_materialization_delta_accepts_word_high_byte_loop_fingerprint():
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": (),
+                "removed": ("global:0xbab",),
+            },
+            "control_flow_effects": {
+                "added": ("while-body-writes:const:True:global:0xbaa",),
+                "removed": ("while-body-writes:const:True:global:0xbaa,global:0xbab",),
+            },
+        }
+    }
+
+    assert (
+        _is_direct_global_update_materialization_delta_8616(
+            _direct_global_update_codegen(displacement=0xBAA, width=2),
+            validation,
+        )
+        is True
+    )
+
+
+def test_segmented_global_symbol_materialization_delta_accepts_word_high_byte_loop_fingerprint():
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": (),
+                "removed": ("global:0xbab", "global:0xbad"),
+            },
+            "control_flow_effects": {
+                "added": ("while-body-writes:const:True:global:0xbaa,global:0xbac",),
+                "removed": (
+                    "while-body-writes:const:True:global:0xbaa,global:0xbab,global:0xbac,global:0xbad",
+                ),
+            },
+        }
+    }
+
+    assert (
+        _is_segmented_global_symbol_materialization_delta_8616(
+            None,
+            _segmented_global_symbol_codegen(spans=((0xBAA, 2), (0xBAC, 2))),
+            validation,
+        )
+        is True
+    )
+
+
+def test_segmented_global_symbol_materialization_delta_refuses_byte_neighbor_write():
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": (),
+                "removed": ("global:0xbab",),
+            },
+        }
+    }
+
+    assert (
+        _is_segmented_global_symbol_materialization_delta_8616(
+            None,
+            _segmented_global_symbol_codegen(spans=((0xBAA, 1),)),
+            validation,
+        )
+        is False
+    )
+
+
+def test_direct_global_update_materialization_delta_refuses_loop_fingerprint_stack_drift():
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": (),
+                "removed": ("global:0xbab",),
+            },
+            "control_flow_effects": {
+                "added": ("while-body-writes:const:True:global:0xbaa",),
+                "removed": (
+                    "while-body-writes:const:True:global:0xbaa,global:0xbab,stack_slot:SS:BP-0x2:size2",
+                ),
+            },
+        }
+    }
+
+    assert (
+        _is_direct_global_update_materialization_delta_8616(
+            _direct_global_update_codegen(displacement=0xBAA, width=2),
+            validation,
+        )
+        is False
+    )
+
+
+def test_direct_global_update_materialization_delta_refuses_byte_neighbor_write():
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": ("global:0xbab",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert (
+        _is_direct_global_update_materialization_delta_8616(
+            _direct_global_update_codegen(displacement=0xBAA, width=1),
+            validation,
+        )
+        is False
+    )
 
 
 def test_direct_global_update_materialization_delta_refuses_condition_change():
@@ -684,6 +854,184 @@ def test_callsite_materialization_delta_accepts_stack_arg_size_precision_with_pu
     assert codegen._inertia_callsite_stack_arg_size_precision_delta_accepts_8616 == 1
 
 
+def test_cfg_mask_accumulator_delta_refuses_removed_materialized_condition():
+    condition = "CmpEQ(stack_arg:b:size2,stack_arg:a:size2)"
+    codegen = SimpleNamespace(
+        _inertia_mask_accumulator_materialized_8616=True,
+        _inertia_mask_accumulator_condition_fingerprints_8616=(condition,),
+    )
+    validation = {
+        "delta": {
+            "conditions": {"added": (), "removed": (condition,)},
+            "control_flow_effects": {"added": (), "removed": (f"if:{condition}",)},
+        },
+    }
+
+    assert (
+        _is_cfg_mask_accumulator_materialization_delta_8616(
+            SimpleNamespace(), SimpleNamespace(), codegen, validation
+        )
+        is False
+    )
+
+
+def test_cfg_mask_accumulator_delta_refuses_unpaired_removed_condition():
+    expected_condition = "CmpNE(stack_arg:b:size2,stack_arg:a:size2)"
+    removed_condition = "CmpEQ(stack_arg:b:size2,stack_arg:a:size2)"
+    codegen = SimpleNamespace(
+        _inertia_mask_accumulator_materialized_8616=True,
+        _inertia_mask_accumulator_condition_fingerprints_8616=(expected_condition,),
+    )
+    validation = {
+        "delta": {
+            "conditions": {"added": (), "removed": (removed_condition,)},
+            "control_flow_effects": {"added": (), "removed": (f"if:{removed_condition}",)},
+        },
+    }
+
+    assert (
+        _is_cfg_mask_accumulator_materialization_delta_8616(
+            SimpleNamespace(), SimpleNamespace(), codegen, validation
+        )
+        is False
+    )
+
+
+def test_callsite_materialization_delta_accepts_far_pointer_high_byte_remnant_prune():
+    codegen = _callsite_materialization_codegen()
+    codegen._inertia_callsite_pre_call_farptr_high_byte_remnants_pruned_8616 = 4
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP+0x2:size4",),
+            },
+            "control_flow_effects": {
+                "added": ("for-body-writes:cond:deref:Add(global:0x8f0),reg:ax",),
+                "removed": (
+                    "for-body-writes:cond:deref:Add(global:0x8f0),reg:ax,stack_slot:SS:BP+0x2:size4",
+                ),
+            },
+        },
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is True
+    assert codegen._inertia_callsite_farptr_high_byte_remnant_delta_accepts_8616 == 1
+
+
+def test_callsite_materialization_delta_accepts_resolved_indirect_helpers_with_local_stack_precision():
+    codegen = _callsite_materialization_codegen()
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x1123a", "addr:0x12756"),
+                "removed": ("name:<indirect>", "name:<indirect>"),
+            },
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP-0x2:size2",),
+                "removed": (),
+            },
+            "control_flow_effects": {
+                "added": ("control_flow_effects:sha256:35fe2b643a18d34e:len:1045",),
+                "removed": ("control_flow_effects:sha256:fc4fe433fd0b11d5:len:1018",),
+            },
+        },
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is True
+    assert codegen._inertia_callsite_resolved_indirect_helper_stack_delta_accepts_8616 == 1
+
+
+def test_callsite_materialization_delta_accepts_resolved_helpers_with_outgoing_segmented_write_prune():
+    codegen = _callsite_materialization_codegen()
+    codegen._inertia_callsite_pre_call_farptr_high_byte_remnants_pruned_8616 = 8
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x1123a", "addr:0x128e4"),
+                "removed": ("name:<indirect>", "name:<indirect>"),
+            },
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP-0x2:size2",),
+                "removed": (),
+            },
+            "segmented_writes": {
+                "added": (),
+                "removed": (
+                    "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-7)",
+                    "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-8)",
+                ),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "while-body-writes:const:True:"
+                    "deref:Add(Mul(reg:ss,const:16),Add(reg:sp,const:-8),const:1),"
+                    "deref:Add(Mul(reg:ss,const:16),Add(reg:sp,const:-8)),"
+                    "stack_slot:SS:BP-0x2:size2",
+                ),
+                "removed": ("control_flow_effects:sha256:fc4fe433fd0b11d5:len:1018",),
+            },
+        },
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is True
+    assert codegen._inertia_callsite_resolved_indirect_helper_stack_delta_accepts_8616 == 1
+
+
+def test_callsite_materialization_delta_refuses_resolved_helper_delta_with_nonlocal_stack_write():
+    codegen = _callsite_materialization_codegen()
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x1123a",),
+                "removed": ("name:<indirect>",),
+            },
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP+0x4:size2",),
+                "removed": (),
+            },
+        },
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is False
+
+
+def test_callsite_materialization_delta_refuses_resolved_helper_delta_with_nonstack_segmented_write():
+    codegen = _callsite_materialization_codegen()
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x1123a",),
+                "removed": ("name:<indirect>",),
+            },
+            "segmented_writes": {
+                "added": (),
+                "removed": ("deref:Add(Mul(reg:ds,const:16),reg:sp,const:-8)",),
+            },
+        },
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is False
+
+
+def test_callsite_materialization_delta_refuses_resolved_helper_delta_without_indirect_source():
+    codegen = _callsite_materialization_codegen()
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x1123a",),
+                "removed": ("name:strcpy",),
+            },
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP-0x2:size2",),
+                "removed": (),
+            },
+        },
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is False
+
+
 def test_direct_stack_move_validation_accepts_proven_callsite_arg_size_precision_delta():
     codegen = _callsite_materialization_codegen()
     codegen._inertia_callsite_summaries = {
@@ -824,6 +1172,158 @@ def test_direct_stack_update_materialization_delta_accepts_evidenced_stack_slot_
     assert _is_direct_stack_update_materialization_delta_8616(_direct_stack_update_codegen(), validation) is True
 
 
+def test_direct_stack_update_materialization_delta_accepts_while_body_write_evidence():
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP-0x2:size2",),
+                "removed": (),
+            },
+            "control_flow_effects": {
+                "added": ("while-body-writes:const:True:global:0xbaa,stack_slot:SS:BP-0x2:size2",),
+                "removed": ("while-body-writes:const:True:global:0xbaa",),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(_direct_stack_update_codegen(), validation) is True
+
+
+def test_direct_stack_update_materialization_delta_accepts_combined_global_high_byte_delta():
+    codegen = _direct_stack_update_codegen()
+    codegen._inertia_direct_stack_update_evidence_8616 = (
+        (
+            ("offset", -4),
+            ("width", 2),
+            ("delta", 1),
+            ("ins_addr", 0x10AD5),
+            ("name", "iChild"),
+        ),
+    )
+    global_codegen = _direct_global_update_codegen(displacement=0xBAA, width=2)
+    codegen._inertia_direct_global_update_lowering_8616 = global_codegen._inertia_direct_global_update_lowering_8616
+    codegen._inertia_direct_global_update_evidence_8616 = global_codegen._inertia_direct_global_update_evidence_8616
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x2:size2", "stack_slot:SS:BP-0x4:size2"),
+            },
+            "global_writes": {
+                "added": ("global:0xbab",),
+                "removed": (),
+            },
+            "control_flow_effects": {
+                "added": ("while-body-writes:const:True:global:0xbaa,global:0xbab",),
+                "removed": (
+                    "ifbreak:CmpGE(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x2:size2,const:1),const:2892)),"
+                    "Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x4:size2,const:1),const:2892)))",
+                    "while-body-writes:const:True:global:0xbaa,"
+                    "stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x4:size2",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(codegen, validation) is True
+
+
+def test_direct_stack_update_materialization_delta_accepts_raw_global_fact_span(monkeypatch):
+    codegen = _direct_stack_update_codegen()
+    codegen._inertia_direct_stack_update_evidence_8616 = (
+        (
+            ("offset", -4),
+            ("width", 2),
+            ("delta", 1),
+            ("ins_addr", 0x10AD5),
+            ("name", "iChild"),
+        ),
+    )
+    codegen.project = SimpleNamespace()
+    codegen._inertia_current_function_8616 = SimpleNamespace()
+    monkeypatch.setattr(
+        post_stage,
+        "_direct_global_update_instruction_facts_8616",
+        lambda _project, _function: (SimpleNamespace(displacement=0xBAA, width=2),),
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x4:size2",),
+            },
+            "global_writes": {
+                "added": ("global:0xbab",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(codegen, validation) is True
+
+
+def test_direct_stack_update_materialization_delta_refuses_combined_unrelated_global_delta():
+    codegen = _direct_stack_update_codegen()
+    global_codegen = _direct_global_update_codegen(displacement=0xBAA, width=2)
+    codegen._inertia_direct_global_update_lowering_8616 = global_codegen._inertia_direct_global_update_lowering_8616
+    codegen._inertia_direct_global_update_evidence_8616 = global_codegen._inertia_direct_global_update_evidence_8616
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP-0x2:size2",),
+                "removed": (),
+            },
+            "global_writes": {
+                "added": ("global:0x222",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(codegen, validation) is False
+
+
+def test_direct_stack_update_materialization_delta_refuses_unrelated_while_body_write_drift():
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP-0x2:size2",),
+                "removed": (),
+            },
+            "control_flow_effects": {
+                "added": ("while-body-writes:const:True:global:0xbaa,stack_slot:SS:BP-0x4:size2",),
+                "removed": ("while-body-writes:const:True:global:0xbaa",),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(_direct_stack_update_codegen(), validation) is False
+
+
+def test_direct_stack_update_materialization_delta_refuses_partial_sortdemo_salvage():
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP-0x4:size2",),
+                "removed": ("stack_slot:SS:BP-0x2:size2", "stack_slot:SS:BP-0x6:size2"),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpLT(stack_slot:SS:BP-0x2:size2,expr_cycle):stack_slot:SS:BP-0x4:size2",
+                ),
+                "removed": (
+                    "for-body-writes:CmpLT(stack_slot:SS:BP-0x2:size2,expr_cycle):"
+                    "stack_slot:SS:BP-0x4:size2,stack_slot:SS:BP-0x6:size2",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(_direct_stack_update_codegen(), validation) is False
+
+
 def test_direct_stack_update_materialization_delta_refuses_added_raw_flags_condition():
     validation = {
         "delta": {
@@ -860,6 +1360,28 @@ def test_direct_stack_move_materialization_delta_accepts_evidenced_stack_slot_co
     }
 
     assert _is_direct_stack_move_materialization_delta_8616(_direct_stack_move_stack_slot_codegen(), validation) is True
+
+
+def test_direct_stack_move_materialization_delta_refuses_control_flow_changes():
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x2:size2",),
+            },
+            "control_flow_effects": {
+                "added": ("for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):global:0xbaa",),
+                "removed": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xbaa,stack_slot:SS:BP-0x2:size2"
+                ),
+            },
+        }
+    }
+
+    assert (
+        _is_direct_stack_move_materialization_delta_8616(_direct_stack_move_stack_slot_codegen(), validation) is False
+    )
 
 
 def test_direct_stack_move_materialization_delta_refuses_unrelated_stack_slot_copy():

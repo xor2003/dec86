@@ -31,6 +31,7 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _refresh_callsite_summary_node_ids_8616,
     _reg_expr_setup_matches_push_source_8616,
     _sidecar_label_for_target_8616,
+    _source_function_pointer_stack_offsets_8616,
     _target_addr_is_recovered_function_entry_8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -733,6 +734,56 @@ def test_function_pointer_stack_store_accepts_recovered_function_entry():
     assert _target_addr_is_recovered_function_entry_8616(project, 0x2000) is True
 
 
+def test_function_pointer_stack_store_accepts_rebased_near_offset_function_entry():
+    target = SimpleNamespace(addr=0x1010, name="Target", block_addrs_set={0x1010})
+
+    class _Functions:
+        def function(self, addr=None, create=False):
+            return target if addr == 0x1010 else None
+
+    project = SimpleNamespace(
+        loader=SimpleNamespace(main_object=SimpleNamespace(min_addr=0x1000)),
+        kb=SimpleNamespace(labels={0x1010: "Target"}, functions=_Functions()),
+    )
+
+    assert _target_addr_is_recovered_function_entry_8616(project, 0x10) is True
+
+
+def test_function_pointer_stack_store_accepts_labeled_near_offset_with_prologue():
+    class _Memory:
+        def load(self, addr, size):
+            if addr != 0x10010:
+                raise KeyError(addr)
+            return b"\x55\x8b\xec\x90"[:size]
+
+    original_project = SimpleNamespace(
+        loader=SimpleNamespace(main_object=SimpleNamespace(min_addr=0x10000), memory=_Memory()),
+        kb=SimpleNamespace(labels={0x10010: "Target"}, functions=SimpleNamespace(function=lambda **_: None)),
+    )
+    project = SimpleNamespace(
+        _inertia_original_project=original_project,
+        kb=SimpleNamespace(labels={}, functions=SimpleNamespace(function=lambda **_: None)),
+    )
+
+    assert _target_addr_is_recovered_function_entry_8616(project, 0x10) is True
+
+
+def test_function_pointer_stack_store_slot_evidence_requires_source_function_pointer_local():
+    project = SimpleNamespace(arch=Arch86_16())
+    cod_metadata = SimpleNamespace(
+        source_lines=(
+            "int (*fn)(int);",
+            "int mask;",
+        ),
+        stack_aliases={
+            -2: "fn",
+            -4: "mask",
+        },
+    )
+
+    assert _source_function_pointer_stack_offsets_8616(project, cod_metadata) == frozenset({-2})
+
+
 def test_normalize_call_targets_refuses_source_order_stack_probe_without_summary(monkeypatch):
     project = SimpleNamespace()
     codegen = _DummyCodegen(project)
@@ -1166,7 +1217,11 @@ def test_attach_callsite_summaries_drops_stale_mismatched_callee_when_source_cal
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls._lookup_callee_function_8616",
-        lambda _project, _target_addr: None,
+        lambda _project, _target_addr, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._source_name_matches_target_8616",
+        lambda _project, _target_addr, _name: _target_addr == 0x166B and _name == "DrawTime",
     )
 
     changed = _attach_callsite_summaries_8616(project, codegen)
@@ -1174,6 +1229,30 @@ def test_attach_callsite_summaries_drops_stale_mismatched_callee_when_source_cal
     assert changed is True
     assert call.callee_func is None
     assert call.callee_target == "DrawTime"
+
+
+def test_normalize_call_target_names_drops_detached_angr_callee_func():
+    class _DetachedFunction:
+        __module__ = "angr.knowledge_plugins.functions.function"
+
+        name = "Sleep"
+
+        @property
+        def project(self):
+            raise AssertionError
+
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    detached = _DetachedFunction()
+    call = CFunctionCall(None, detached, [], codegen=codegen)
+    root = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    changed = _normalize_call_target_names_8616(codegen)
+
+    assert changed is True
+    assert call.callee_func is None
+    assert call.callee_target == "Sleep"
 
 
 def test_lookup_callee_function_rejects_mismatched_exact_lookup_and_uses_containing_function():
@@ -1344,7 +1423,7 @@ def test_callsite_stats_count_stale_target_rejection(monkeypatch):
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls._lookup_callee_function_8616",
-        lambda _project, _target_addr: stale,
+        lambda _project, _target_addr, **_kwargs: stale,
     )
 
     changed = _attach_callsite_summaries_8616(project, codegen)

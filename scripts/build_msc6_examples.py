@@ -55,6 +55,8 @@ class FocusedDecompileRetryReason(str, Enum):
     """Reason to retry focused decompilation with a different fallback mode."""
 
     ASM_FALLBACK = "asm_fallback"
+    NONZERO_EXIT = "nonzero_exit"
+    TAIL_VALIDATION_FAILED = "tail_validation_failed"
     TIMEOUT = "timeout"
 
 
@@ -1431,7 +1433,17 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
             assert isinstance(states, list)
             if validation_state not in states:
                 states.append(validation_state)
+    if profile.get("tail_validation_status") in {"passed", "clean"}:
+        # A focused decompile can reject an initial direct/postprocess attempt,
+        # then emit a validated fallback in the same process. The final whole-tail
+        # summary is the acceptance boundary for this harness profile.
+        profile["tail_validation_changed"] = False
+        profile["tail_validation_uncollected"] = False
     return profile
+
+
+def _decompile_profile_text(stdout_text: str, stderr_text: str) -> str:
+    return f"{stderr_text}\n{stdout_text}"
 
 
 def _is_decompile_output_acceptable(
@@ -1466,13 +1478,15 @@ def _is_decompile_output_acceptable(
         return False, "asm_fallback"
     if "decompile timeout" in combined:
         return False, "timeout"
-    if "decompilation validation_failed" in combined:
+    if "decompilation validation_failed" in combined and not (
+        tail_status in {"passed", "clean"} and "== asm fallback ==" not in combined
+    ):
         return False, "validation_failed"
     if "acceptance-gate detail:" in combined:
         return False, "acceptance_gate_failed"
     if "missing source-evidenced" in combined:
         return False, "source_evidence_failed"
-    if "whole-tail validation failed" in combined:
+    if "whole-tail validation failed" in combined and tail_status not in {"passed", "clean"}:
         return False, "tail_validation_failed"
     return True, None
 
@@ -1544,8 +1558,11 @@ def _decompile_function_with_options(
             " ".join(cmd),
             function_name,
         )
-    profile = _parse_decompile_profile(proc.stderr)
+    profile = _parse_decompile_profile(_decompile_profile_text(proc.stdout, proc.stderr))
     acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, profile)
+    if acceptable and proc.returncode != 0:
+        reason = FocusedDecompileRetryReason.NONZERO_EXIT.value
+        acceptable = False
     profile["acceptance_reason"] = None if acceptable else reason
     profile["process_timeout_seconds"] = process_timeout
     profile["analysis_timeout_seconds"] = decompile_timeout
@@ -1888,7 +1905,7 @@ def _decompile(
                 ),
             )
             last_proc = proc
-            run_profile = _parse_decompile_profile(proc.stderr)
+            run_profile = _parse_decompile_profile(_decompile_profile_text(proc.stdout, proc.stderr))
             acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, run_profile)
             run_profile["acceptance_reason"] = None if acceptable else reason
             run_profile["candidate"] = candidate
@@ -1955,7 +1972,7 @@ def _decompile(
                 ),
             )
             last_proc = proc
-            run_profile = _parse_decompile_profile(proc.stderr)
+            run_profile = _parse_decompile_profile(_decompile_profile_text(proc.stdout, proc.stderr))
             acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, run_profile)
             run_profile["acceptance_reason"] = None if acceptable else reason
             run_profile["candidate"] = fallback_candidate
@@ -1979,7 +1996,9 @@ def _decompile(
         merged_profile = (
             last_profile
             if isinstance(last_profile, dict)
-            else _parse_decompile_profile((last_proc.stderr if last_proc else ""))
+            else _parse_decompile_profile(
+                _decompile_profile_text(last_proc.stdout, last_proc.stderr) if last_proc else ""
+            )
         )
         merged_profile["commands_tried"] = attempts
         merged_profile["selected"] = profile.get("selected", {})

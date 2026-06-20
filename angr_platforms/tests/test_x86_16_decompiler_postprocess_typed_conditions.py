@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
     CConstant,
     CIfElse,
@@ -186,6 +187,36 @@ def test_apply_typed_conditions_refuses_fingerprint_equal_replacement(monkeypatc
     assert if_stmt.condition_and_nodes[0][0] is cond
 
 
+def test_apply_typed_conditions_skips_already_explicit_equivalent_condition():
+    project = _project()
+    codegen = _codegen([])
+    cond = CBinaryOp(
+        "CmpLE",
+        _reg(project, "dx", codegen),
+        _reg(project, "bx", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        ConditionIR(
+            op="ule",
+            lhs=IRValue(MemSpace.REG, name="dx", size=2),
+            rhs=IRValue(MemSpace.REG, name="bx", size=2),
+            src_insn=0x4020,
+            block_addr=0x4000,
+        )
+    ]
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert if_stmt.condition_and_nodes[0][0] is cond
+    assert getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) == 0
+
+
 def test_apply_typed_conditions_materializes_irvalue_operands():
     project = _project()
     codegen = _codegen([])
@@ -216,3 +247,119 @@ def test_apply_typed_conditions_materializes_irvalue_operands():
     updated = if_stmt.condition_and_nodes[0][0]
     assert isinstance(updated, CBinaryOp)
     assert updated.op == "CmpLE"
+
+
+def test_apply_typed_conditions_binds_register_operand_before_flag_producer():
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    local_ax = _reg(project, "ax", codegen, var_name="local_2")
+    pre_sub = CAssignment(
+        _reg(project, "ax", codegen),
+        local_ax,
+        codegen=codegen,
+        tags={"ins_addr": 0x401E},
+    )
+    post_sub = CAssignment(
+        _reg(project, "ax", codegen),
+        CBinaryOp("Sub", local_ax, _const(27, codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4022},
+    )
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4024, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([pre_sub, post_sub, if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        ConditionIR(
+            op="ne",
+            lhs=IRValue(MemSpace.REG, name="ax", size=2),
+            rhs=IRValue(MemSpace.CONST, const=27, size=2),
+            src_insn=0x4024,
+            block_addr=0x4000,
+            producer_insn=0x4022,
+        )
+    ]
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is True
+    updated = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(updated, CBinaryOp)
+    assert updated.op == "CmpNE"
+    assert updated.lhs is local_ax
+    assert isinstance(updated.rhs, CConstant)
+    assert updated.rhs.value == 27
+
+
+def test_apply_typed_conditions_materializes_segmented_irvalue_operand():
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        ConditionIR(
+            op="ule",
+            lhs=IRValue(MemSpace.DS, offset=0x132, size=2),
+            rhs=IRValue(MemSpace.CONST, const=900, size=2),
+            src_insn=0x4020,
+            block_addr=0x4000,
+        )
+    ]
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is True
+    updated = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(updated, CBinaryOp)
+    assert updated.op == "CmpLE"
+    assert updated.lhs.callee_target == "SEG_U16"
+    assert getattr(updated.lhs.args[1], "value", None) == 0x132
+
+
+def test_apply_typed_conditions_materializes_stack_irvalue_operand():
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        ConditionIR(
+            op="ne",
+            lhs=IRValue(MemSpace.SS, name="bp", offset=-2, size=2),
+            rhs=IRValue(MemSpace.CONST, const=0, size=2),
+            src_insn=0x4020,
+            block_addr=0x4000,
+        )
+    ]
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is True
+    updated = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(updated, CBinaryOp)
+    assert updated.op == "CmpNE"
+    assert getattr(getattr(updated.lhs, "variable", None), "offset", None) == -2

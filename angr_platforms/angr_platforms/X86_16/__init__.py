@@ -1,3 +1,5 @@
+"""Public package surface for the 16-bit x86 platform support."""
+
 from typing import Callable
 
 try:
@@ -98,7 +100,10 @@ __all__ = [
     "apply_x86_16_decompiler_postprocess",
     "bootstrap",
     "apply_x86_16_bootstrap",
+    "decompiler_postprocess_inventory",
     "decompiler_postprocess_stage",
+    "describe_x86_16_decompiler_postprocess_inventory_8616",
+    "validate_x86_16_decompiler_postprocess_inventory_8616",
     "describe_x86_16_decompiler_postprocess_stage",
     "describe_x86_16_decompiler_structuring_stage",
     "tail_validation",
@@ -120,6 +125,9 @@ __all__ = [
     "resolve_x86_16_validation_cached_artifact",
     "summarize_x86_16_tail_validation_records",
     "describe_x86_16_tail_validation_scope",
+    "DecompilerPostprocessPassInventoryItem",
+    "DecompilerPostprocessPassKind8616",
+    "DecompilerPostprocessPassInventoryViolation",
     "DecompilerPostprocessPassSpec",
     "DecompilerStructuringPassSpec",
 ]
@@ -241,9 +249,30 @@ from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 _LAZY_EXPORTS = {
     "bootstrap": (".bootstrap", None),
     "apply_x86_16_bootstrap": (".bootstrap", "apply_x86_16_bootstrap"),
+    "decompiler_postprocess_inventory": (".decompiler_postprocess_inventory", None),
     "decompiler_postprocess_stage": (".decompiler_postprocess_stage", None),
+    "DecompilerPostprocessPassInventoryItem": (
+        ".decompiler_postprocess_inventory",
+        "DecompilerPostprocessPassInventoryItem",
+    ),
+    "DecompilerPostprocessPassKind8616": (
+        ".decompiler_postprocess_inventory",
+        "DecompilerPostprocessPassKind8616",
+    ),
+    "DecompilerPostprocessPassInventoryViolation": (
+        ".decompiler_postprocess_inventory",
+        "DecompilerPostprocessPassInventoryViolation",
+    ),
     "DecompilerPostprocessPassSpec": (".decompiler_postprocess_stage", "DecompilerPostprocessPassSpec"),
     "apply_x86_16_decompiler_postprocess": (".decompiler_postprocess_stage", "apply_x86_16_decompiler_postprocess"),
+    "describe_x86_16_decompiler_postprocess_inventory_8616": (
+        ".decompiler_postprocess_inventory",
+        "describe_x86_16_decompiler_postprocess_inventory_8616",
+    ),
+    "validate_x86_16_decompiler_postprocess_inventory_8616": (
+        ".decompiler_postprocess_inventory",
+        "validate_x86_16_decompiler_postprocess_inventory_8616",
+    ),
     "describe_x86_16_decompiler_postprocess_stage": (
         ".decompiler_postprocess_stage",
         "describe_x86_16_decompiler_postprocess_stage",

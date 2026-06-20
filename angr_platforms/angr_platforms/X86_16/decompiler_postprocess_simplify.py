@@ -1,3 +1,27 @@
+"""Structured-C cleanup pass; keep semantic proof outside this module.
+
+This module may simplify C AST expressions after earlier stages have already
+proved the underlying facts. Legitimate work here includes projection cleanup,
+constant folding, redundant boolean wrapper removal, and inlining/deleting
+single-use virtual temporaries when that is side-effect free and evidence-backed.
+
+Current migration debt:
+- word/byte projection materialization depends on alias/widening facts here;
+- stack/global identity checks still reach into alias and lowering helpers;
+- virtual temporary elimination still reasons about dirty/register carriers.
+
+Those proofs belong earlier: alias/widening should decide storage identity and
+adjacent-slice joins; lowering should materialize stack/global objects; IR or
+semantics should expose clean values before C rendering. This file should become
+a consumer that only removes redundant C syntax around already-materialized
+values.
+
+Do not add new alias, width, stack, register, or memory recovery here. If a
+simplification needs proof, add the proof to the earliest owning layer and make
+this pass consume a structured fact. Unknown or unproven cases must keep the
+original C AST.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -129,6 +153,21 @@ def _virtual_expr_key_8616(node) -> tuple[str, object] | None:
     return None
 
 
+def _virtual_inline_identity_keys_8616(keys: tuple[tuple[str, object], ...]) -> tuple[tuple[str, object], ...]:
+    """Return keys that identify one virtual value, not the register it occupies.
+
+    A CDirtyExpression often carries both SSA-like identity (varid/tmp/name) and
+    storage location (dirty-reg). tmp ids and register locations are reused
+    across lowered blocks, so they are fallback identities only when no stable
+    varid/name key is present.
+    """
+    stable_keys = tuple(key for key in keys if key[0] in {"dirty-name", "dirty-varid", "virtual-name"})
+    if stable_keys:
+        return stable_keys
+    tmp_keys = tuple(key for key in keys if key[0] == "dirty-tmp")
+    return tmp_keys or keys
+
+
 def _debug_c_repr_8616(node) -> str:
     try:
         return "".join(str(text) for text, _obj in node.c_repr_chunks(asexpr=True))
@@ -231,15 +270,17 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     for node in _walk(root):
         if not isinstance(node, CAssignment):
             continue
-        keys = _virtual_expr_keys_8616(getattr(node, "lhs", None))
+        raw_keys = _virtual_expr_keys_8616(getattr(node, "lhs", None))
+        keys = _virtual_inline_identity_keys_8616(raw_keys)
         if not keys:
             continue
         candidate_count += 1
         rhs = getattr(node, "rhs", None)
         if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
             _log.warning(
-                "[virtual-inline] def keys=%r lhs=%s rhs=%s",
+                "[virtual-inline] def keys=%r raw_keys=%r lhs=%s rhs=%s",
                 keys,
+                raw_keys,
                 _debug_c_repr_8616(node.lhs),
                 _debug_c_repr_8616(rhs),
             )
@@ -271,15 +312,28 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
 
     protected_refused_count = 0
 
-    def _transform(node, *, assignment_lhs: bool = False, protected_address_context: bool = False):
+    def _transform(
+        node,
+        *,
+        assignment_lhs: bool = False,
+        protected_address_context: bool = False,
+        resolving_keys: set[tuple[str, object]] | None = None,
+    ):
         nonlocal changed, protected_refused_count
         if node is None:
             return node
+        if resolving_keys is None:
+            resolving_keys = set()
         if not assignment_lhs:
-            keys = _virtual_expr_keys_8616(node)
+            raw_keys = _virtual_expr_keys_8616(node)
+            keys = _virtual_inline_identity_keys_8616(raw_keys)
             key = next((candidate_key for candidate_key in keys if candidate_key in replacements), None)
             replacement = replacements.get(key)
             if replacement is not None:
+                if key in resolving_keys:
+                    if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
+                        _log.warning("[virtual-inline] cycle-refuse key=%r expr=%s", key, _debug_c_repr_8616(node))
+                    return node
                 if protected_address_context:
                     protected_refused_count += 1
                     if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
@@ -298,9 +352,22 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
                         _debug_c_repr_8616(replacement),
                     )
                 changed = True
-                return replacement
-            if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE") and keys:
-                _log.warning("[virtual-inline] no replacement keys=%r expr=%s", keys, _debug_c_repr_8616(node))
+                resolving_keys.add(key)
+                try:
+                    return _transform(
+                        replacement,
+                        protected_address_context=protected_address_context,
+                        resolving_keys=resolving_keys,
+                    )
+                finally:
+                    resolving_keys.discard(key)
+            if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE") and raw_keys:
+                _log.warning(
+                    "[virtual-inline] no replacement keys=%r raw_keys=%r expr=%s",
+                    keys,
+                    raw_keys,
+                    _debug_c_repr_8616(node),
+                )
         for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
             child = getattr(node, attr, None)
             if not _structured_codegen_node_8616(child):
@@ -442,7 +509,9 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
                 kept = []
                 for statement in statements:
                     keys = (
-                        _virtual_expr_keys_8616(getattr(statement, "lhs", None))
+                        _virtual_inline_identity_keys_8616(
+                            _virtual_expr_keys_8616(getattr(statement, "lhs", None))
+                        )
                         if isinstance(statement, CAssignment)
                         else ()
                     )
@@ -838,6 +907,50 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
         return None
 
+    def _expr_contains_stack_or_flags_register_8616(expr) -> bool:
+        stack_or_flags_offsets: set[int] = set()
+        arch = getattr(getattr(codegen, "project", None), "arch", None)
+        registers = getattr(arch, "registers", {}) if arch is not None else {}
+        for register_name in ("sp", "bp", "esp", "ebp", "eflags", "flags"):
+            register_info = registers.get(register_name)
+            if isinstance(register_info, tuple) and register_info and isinstance(register_info[0], int):
+                stack_or_flags_offsets.add(register_info[0])
+
+        def _contains(node) -> bool:
+            node = _unwrap_c_casts_8616(node)
+            if isinstance(node, CVariable):
+                variable = getattr(node, "variable", None)
+                if not isinstance(variable, SimRegisterVariable):
+                    return False
+                name = getattr(variable, "name", None)
+                if isinstance(name, str) and name.lower() in {"sp", "bp", "esp", "ebp", "eflags", "flags"}:
+                    return True
+                for attr in ("reg", "reg_offset", "offset"):
+                    offset = getattr(variable, attr, None)
+                    if isinstance(offset, int) and offset in stack_or_flags_offsets:
+                        return True
+                return False
+            if isinstance(node, CDirtyExpression):
+                return False
+            for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval"):
+                child = getattr(node, attr, None)
+                if _structured_codegen_node_8616(child) and _contains(child):
+                    return True
+            for attr in ("operands", "args"):
+                seq = getattr(node, attr, None)
+                if not seq:
+                    continue
+                for item in seq:
+                    if _structured_codegen_node_8616(item) and _contains(item):
+                        return True
+                    if isinstance(item, tuple):
+                        for subitem in item:
+                            if _structured_codegen_node_8616(subitem) and _contains(subitem):
+                                return True
+            return False
+
+        return _contains(expr)
+
     def _shifted_high_byte_source_8616(expr):
         while isinstance(expr, CTypeCast):
             expr = getattr(expr, "expr", None)
@@ -1031,6 +1144,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
         source_expr = _extract_zero_flag_source_expr_8616(source)
         if source_expr is None:
+            return expr
+        if _expr_contains_stack_or_flags_register_8616(source_expr):
             return expr
         if expr.op == "CmpEQ":
             return source_expr

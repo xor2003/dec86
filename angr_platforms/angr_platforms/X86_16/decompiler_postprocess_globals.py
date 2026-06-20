@@ -1,3 +1,24 @@
+"""Late global-load/store cleanup; global identity belongs earlier.
+
+This module coalesces adjacent byte-shaped global accesses into word-shaped C
+globals and updates rendered variable types. That is acceptable only as a
+temporary consumer of already-proven adjacent-byte evidence.
+
+Current migration debt:
+- word global load/store coalescing still recognizes byte-pair shapes in the C
+  AST;
+- type repair mutates rendered variables after codegen;
+- unused memory declaration pruning depends on late rendered-use inspection.
+
+The permanent home is segmented memory analysis, alias/widening, object/global
+recovery, and lowering. Those layers should prove Address(space, offset, width)
+and materialize the correct object before structuring/rewrite.
+
+Do not add new global object inference, byte-pair reconstruction, or type
+recovery here. If adjacency or width is not proven by structured facts, preserve
+the original byte accesses and let validation/reporting show the missing proof.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

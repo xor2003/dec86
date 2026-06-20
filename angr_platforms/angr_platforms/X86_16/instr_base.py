@@ -244,6 +244,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.instrfuncs[opcode] = getattr(func, "__func__", func)
         self.chk[opcode] = flags
 
+    def imm8_value(self):
+        return self.emu.constant(self.instr.imm8, Type.int_8)
+
     def add_rm8_r8(self) -> None:
         binary_operation(
             self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs
@@ -280,7 +283,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation_with_carry(
             self.emu,
             lambda: self.emu.get_gpreg(reg8_t.AL),
-            lambda: self.instr.imm8,
+            self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_adc,
             lambda lhs, rhs, carry: lhs + rhs + carry,
@@ -291,7 +294,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             lambda: self.emu.get_gpreg(reg8_t.AL),
-            lambda: self.instr.imm8,
+            self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_add,
             lambda lhs, rhs: lhs + rhs,
@@ -311,7 +314,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             lambda: self.emu.get_gpreg(reg8_t.AL),
-            lambda: self.instr.imm8,
+            self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_or,
             lambda lhs, rhs: lhs | rhs,
@@ -331,7 +334,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             lambda: self.emu.get_gpreg(reg8_t.AL),
-            lambda: self.instr.imm8,
+            self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_and,
             lambda lhs, rhs: lhs & rhs,
@@ -351,7 +354,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             lambda: self.emu.get_gpreg(reg8_t.AL),
-            lambda: self.instr.imm8,
+            self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_sub,
             lambda lhs, rhs: lhs - rhs,
@@ -383,7 +386,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation_with_carry(
             self.emu,
             lambda: self.emu.get_gpreg(reg8_t.AL),
-            lambda: self.instr.imm8,
+            self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_sbb,
             lambda lhs, rhs, carry: lhs - rhs - carry,
@@ -404,7 +407,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             lambda: self.emu.get_gpreg(reg8_t.AL),
-            lambda: self.instr.imm8,
+            self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_xor,
             lambda lhs, rhs: lhs ^ rhs,
@@ -419,7 +422,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def cmp_al_imm8(self) -> None:
         compare_operation(
             lambda: self.emu.get_gpreg(reg8_t.AL),
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.emu.update_eflags_sub,
         )
 
@@ -1012,7 +1015,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             self.get_rm8,
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.set_rm8,
             self.emu.update_eflags_add,
             lambda lhs, rhs: lhs + rhs,
@@ -1022,7 +1025,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             self.get_rm8,
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.set_rm8,
             self.emu.update_eflags_or,
             lambda lhs, rhs: lhs | rhs,
@@ -1032,7 +1035,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation_with_carry(
             self.emu,
             self.get_rm8,
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.set_rm8,
             self.emu.update_eflags_adc,
             lambda lhs, rhs, carry: lhs + rhs + carry,
@@ -1043,7 +1046,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation_with_carry(
             self.emu,
             self.get_rm8,
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.set_rm8,
             self.emu.update_eflags_sbb,
             lambda lhs, rhs, carry: lhs - rhs - carry,
@@ -1054,7 +1057,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             self.get_rm8,
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.set_rm8,
             self.emu.update_eflags_and,
             lambda lhs, rhs: lhs & rhs,
@@ -1064,7 +1067,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             self.get_rm8,
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.set_rm8,
             self.emu.update_eflags_sub,
             lambda lhs, rhs: lhs - rhs,
@@ -1074,7 +1077,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         binary_operation(
             self.emu,
             self.get_rm8,
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.set_rm8,
             self.emu.update_eflags_xor,
             lambda lhs, rhs: lhs ^ rhs,
@@ -1083,7 +1086,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def cmp_rm8_imm8(self) -> None:
         compare_operation(
             self.get_rm8,
-            lambda: self.instr.imm8,
+            self.imm8_value,
             self.emu.update_eflags_sub,
         )
 
@@ -1194,7 +1197,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         unary_operation(
             self.get_rm8,
             self.set_rm8,
-            self.emu.update_eflags_sub,
+            self.emu.update_eflags_neg,
             lambda value: self.emu.constant(0, Type.int_8) - value,
         )
 

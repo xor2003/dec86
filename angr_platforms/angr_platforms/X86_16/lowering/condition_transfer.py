@@ -28,15 +28,44 @@ import os
 
 from ..condition_trace import record_classified_conditions_trace_8616
 from ..ir.condition_ir import (
+    JCC_TO_COND_8616,
+    ConditionEdgeEvidence,
     ConditionIR,
+    ConditionSource,
+    build_condition_from_cmp_8616,
+    build_condition_from_test_8616,
     deduplicate_conditions_8616,
 )
-from ..ir.core import IRValue
 
 log = logging.getLogger(__name__)
 
+_INVERTED_JCC_MNEMONICS_8616: dict[str, str] = {
+    "je": "jne",
+    "jz": "jnz",
+    "jne": "je",
+    "jnz": "jz",
+    "jb": "jae",
+    "jnae": "jae",
+    "jc": "jnc",
+    "jae": "jb",
+    "jnb": "jb",
+    "jnc": "jc",
+    "jbe": "ja",
+    "jna": "ja",
+    "ja": "jbe",
+    "jnbe": "jbe",
+    "jl": "jge",
+    "jnge": "jge",
+    "jge": "jl",
+    "jnl": "jl",
+    "jle": "jg",
+    "jng": "jg",
+    "jg": "jle",
+    "jnle": "jle",
+}
 
-def _relift_blocks_for_condition_cache_8616(project, block_addrs: list[int]) -> None:
+
+def _relift_blocks_for_condition_cache_8616(project: object, block_addrs: list[int]) -> None:
     factory = getattr(project, "factory", None) if project is not None else None
     block_lifter = getattr(factory, "block", None)
     if not callable(block_lifter):
@@ -53,10 +82,162 @@ def _relift_blocks_for_condition_cache_8616(project, block_addrs: list[int]) -> 
             continue
 
 
-def collect_typed_conditions_from_emulator_8616(
+def _decode_first_insn_at_addr_8616(project: object, addr: int) -> object | None:
+    factory = getattr(project, "factory", None) if project is not None else None
+    block_lifter = getattr(factory, "block", None)
+    if not callable(block_lifter):
+        return None
+
+    block = None
+    for kwargs in ({"num_inst": 1, "opt_level": 0}, {"size": 2, "opt_level": 0}, {"opt_level": 0}, {}):
+        try:
+            block = block_lifter(addr, **kwargs)
+            break
+        except TypeError:
+            continue
+        except Exception:
+            return None
+    if block is None:
+        return None
+    insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+    if not insns:
+        return None
+    return insns[0]
+
+
+def _condition_from_pending_source_8616(
+    source: ConditionSource,
+    jcc_mnemonic: str,
+    *,
+    src_insn: int,
+    block_addr: int,
+) -> ConditionIR | None:
+    if source.kind == "cmp":
+        if source.lhs is None or source.rhs is None:
+            return None
+        cond = build_condition_from_cmp_8616(
+            source.lhs,
+            source.rhs,
+            jcc_mnemonic,
+            width_bits=source.width_bits,
+            src_insn=src_insn,
+            block_addr=block_addr,
+            producer_insn=source.addr,
+        )
+    elif source.kind == "test":
+        if source.lhs is None:
+            return None
+        cond = build_condition_from_test_8616(
+            source.lhs,
+            jcc_mnemonic,
+            width_bits=source.width_bits,
+            src_insn=src_insn,
+            block_addr=block_addr,
+            producer_insn=source.addr,
+        )
+    else:
+        return None
+    return cond if isinstance(cond, ConditionIR) else None
+
+
+def _edge_evidence_from_pending_source_8616(
+    source: ConditionSource,
+    mnemonic: str | None,
+    *,
+    edge_block_addr: int,
+) -> ConditionEdgeEvidence | None:
+    if mnemonic not in {"jmp", "jmpw"}:
+        return None
+    source_jcc = str(getattr(source, "fallthrough_from_jcc", "") or "").lower()
+    inverted_jcc = _INVERTED_JCC_MNEMONICS_8616.get(source_jcc)
+    if inverted_jcc is None:
+        return None
+    condition = _condition_from_pending_source_8616(source, inverted_jcc, src_insn=edge_block_addr, block_addr=edge_block_addr)
+    if condition is None:
+        return None
+    return ConditionEdgeEvidence(
+        edge_block_addr=edge_block_addr,
+        condition=condition,
+        edge_kind="fallthrough_jmp",
+        source_jcc=source_jcc,
+        producer_insn=source.addr,
+    )
+
+
+def _collect_pending_fallthrough_conditions_8616(
+    project: object,
+    block_addrs: list[int],
+    pending_sources: dict[int, ConditionSource],
+) -> tuple[list[ConditionIR], list[ConditionEdgeEvidence]]:
+    """Materialize cached fallthrough JCC facts missed by block lift order.
+
+    The lifter owns operand recovery and records ConditionSource objects.  This
+    bridge only proves that a pending function block begins with a supported JCC
+    instruction, then converts that already-typed source into ConditionIR.
+    """
+    block_addr_set = set(block_addrs)
+    conditions: list[ConditionIR] = []
+    edge_evidence: list[ConditionEdgeEvidence] = []
+    processed: set[int] = set()
+    while True:
+        candidates = sorted(
+            addr
+            for addr, source in pending_sources.items()
+            if addr in block_addr_set and addr not in processed and isinstance(source, ConditionSource)
+        )
+        if not candidates:
+            break
+        for addr in candidates:
+            processed.add(addr)
+            source = pending_sources.get(addr)
+            if not isinstance(source, ConditionSource):
+                pending_sources.pop(addr, None)
+                continue
+            insn = _decode_first_insn_at_addr_8616(project, addr)
+            mnemonic = str(getattr(insn, "mnemonic", "") or "").strip().lower() if insn is not None else None
+            pending_sources.pop(addr, None)
+            if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+                log.warning(
+                    "[condition-transfer] pending_decode addr=%#x mnemonic=%r source_kind=%s",
+                    addr,
+                    mnemonic,
+                    source.kind,
+                )
+            if mnemonic not in JCC_TO_COND_8616:
+                edge = _edge_evidence_from_pending_source_8616(source, mnemonic, edge_block_addr=addr)
+                if edge is not None:
+                    edge_evidence.append(edge)
+                    if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+                        log.warning(
+                            "[condition-transfer] edge pending src_insn=%#x block=%#x op=%s source_jcc=%s lhs=%r rhs=%r",
+                            addr,
+                            edge.edge_block_addr,
+                            edge.condition.op,
+                            edge.source_jcc,
+                            edge.condition.lhs,
+                            edge.condition.rhs,
+                        )
+                continue
+            cond = _condition_from_pending_source_8616(source, mnemonic, src_insn=addr, block_addr=addr)
+            if isinstance(cond, ConditionIR):
+                conditions.append(cond)
+                if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+                    log.warning(
+                        "[condition-transfer] cond pending src_insn=%#x block=%#x op=%s source=%s lhs=%r rhs=%r",
+                        addr,
+                        addr,
+                        cond.op,
+                        cond.source,
+                        cond.lhs,
+                        cond.rhs,
+                    )
+    return conditions, edge_evidence
+
+
+def _collect_typed_condition_artifacts_8616(
     project,
     func_addr: int,
-) -> list[ConditionIR]:
+) -> tuple[list[ConditionIR], list[ConditionEdgeEvidence]]:
     def _impl():
         """Collect ConditionIR objects from the module-level cache in lift_86_16.
 
@@ -68,21 +249,22 @@ def collect_typed_conditions_from_emulator_8616(
         """
         kb = getattr(project, "kb", None) if project is not None else None
         if kb is None:
-            return []
+            return [], []
 
         func = kb.functions.function(addr=func_addr, create=False)
         if func is None:
-            return []
+            return [], []
 
         block_addrs = sorted(getattr(func, "block_addrs_set", set()) or set())
         if not block_addrs:
-            return []
+            return [], []
 
         # Read from the module-level cache populated during the initial lift
         try:
             from ..lift_86_16 import Instruction_ANY
 
             module_cache = Instruction_ANY._inertia_module_condition_cache
+            pending_sources = Instruction_ANY._inertia_pending_condition_sources_by_addr
         except Exception as ex:
             import logging
 
@@ -92,19 +274,23 @@ def collect_typed_conditions_from_emulator_8616(
                 ex,
             )
             module_cache = {}
+            pending_sources = {}
 
         if not any(isinstance(module_cache.get(block_addr, None), list) for block_addr in block_addrs):
             _relift_blocks_for_condition_cache_8616(project, block_addrs)
         if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
             cache_keys = tuple(sorted(k for k in module_cache.keys() if isinstance(k, int)))
+            pending_keys = tuple(sorted(k for k in pending_sources.keys() if isinstance(k, int)))
             log.warning(
-                "[condition-transfer] func=%#x blocks=%s cache_keys=%s",
+                "[condition-transfer] func=%#x blocks=%s cache_keys=%s pending_keys=%s",
                 func_addr,
                 tuple(hex(a) for a in block_addrs),
                 tuple(hex(a) for a in cache_keys),
+                tuple(hex(a) for a in pending_keys),
             )
 
         all_conditions: list[ConditionIR] = []
+        edge_evidence: list[ConditionEdgeEvidence] = []
         for block_addr in block_addrs:
             block_conds = module_cache.get(block_addr, None)
             if isinstance(block_conds, list):
@@ -121,11 +307,27 @@ def collect_typed_conditions_from_emulator_8616(
                                 cond.source,
                                 cond.lhs,
                                 cond.rhs,
-                            )
+                        )
 
-        return deduplicate_conditions_8616(all_conditions)
+        if isinstance(pending_sources, dict):
+            pending_conditions, pending_edges = _collect_pending_fallthrough_conditions_8616(
+                project, block_addrs, pending_sources
+            )
+            all_conditions.extend(pending_conditions)
+            edge_evidence.extend(pending_edges)
+
+        return deduplicate_conditions_8616(all_conditions), edge_evidence
 
     return _impl()
+
+
+def collect_typed_conditions_from_emulator_8616(
+    project,
+    func_addr: int,
+) -> list[ConditionIR]:
+    """Collect ConditionIR objects from the module-level lifter cache."""
+    conditions, _edge_evidence = _collect_typed_condition_artifacts_8616(project, func_addr)
+    return conditions
 
 
 def transfer_typed_conditions_from_emulator_8616(
@@ -172,31 +374,23 @@ def transfer_typed_conditions_to_codegen_8616(
     """
     from ..pipeline.contracts import SemanticLaneState
 
-    conditions = collect_typed_conditions_from_emulator_8616(project, func_addr)
+    conditions, edge_evidence = _collect_typed_condition_artifacts_8616(project, func_addr)
     codegen._inertia_typed_conditions = conditions
     codegen._inertia_condition_facts = conditions  # compatibility alias
+    codegen._inertia_condition_edge_evidence = edge_evidence
     record_classified_conditions_trace_8616(project, codegen, conditions)
 
-    def _materializable_condition(cond: ConditionIR) -> bool:
-        if not isinstance(cond.src_insn, int) or not isinstance(cond.block_addr, int):
-            return False
-        if not isinstance(cond.lhs, (str, int, IRValue)):
-            return False
-        if cond.rhs is not None and not isinstance(cond.rhs, (str, int, IRValue)):
-            return False
-        return True
-
-    classified_count = sum(1 for cond in conditions if _materializable_condition(cond))
-
     # ── Initialize CONDITION lane contract ──
-    # classified = number of ConditionIR facts
-    # bound = 0 (no equivalent of StackVariableBinding for conditions yet)
+    # classified is filled by consumers once a fact is matched to an AST guard.
+    # Transfer owns raw/normalized evidence only; claiming classification here
+    # would hard-fail functions whose conditions are collected but not yet
+    # consumed by a materializer.
     # materialized = 0 (filled by postprocess typed conditions pass)
     codegen._inertia_condition_lane = SemanticLaneState(
         name="condition",
         raw=len(conditions),  # raw facts = all ConditionIR from lifting
         normalized=len(conditions),
-        classified=classified_count,
+        classified=0,
         bound=0,
         materialized=0,
         verified=0,

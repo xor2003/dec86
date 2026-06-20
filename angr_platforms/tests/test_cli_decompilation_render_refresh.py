@@ -30,6 +30,63 @@ def test_regenerate_prefers_cfunc_text_after_call_arg_materialization(monkeypatc
     assert codegen.text == fresh_text
 
 
+def test_regenerate_replays_indexed_segmented_globals_after_regeneration(monkeypatch):
+    stale_text = "void f(void) { MEM_U16(&mem_08F0 + local_0 * 2); }\n"
+    fresh_text = "void f(void) { abarWork[local_0] = abarPerm[local_0]; }\n"
+
+    class _FakeCFunc:
+        def __init__(self):
+            self.text = stale_text
+
+        def c_repr(self):
+            return self.text
+
+    class _FakeCodegen:
+        def __init__(self):
+            self.text = stale_text
+            self.cfunc = _FakeCFunc()
+            self.project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+            self._inertia_callsite_args_ast_materialized_8616 = False
+
+        def regenerate_text(self):
+            self.text = stale_text
+            self.cfunc.text = stale_text
+
+        def render_text(self, cfunc):
+            return cfunc.c_repr()
+
+    codegen = _FakeCodegen()
+
+    def fake_indexed_replay(replay_codegen):
+        replay_codegen.cfunc.text = fresh_text
+        return True
+
+    monkeypatch.setattr(cli_decompilation, "repair_cfunctioncall_render_targets_8616", lambda _codegen: None)
+    monkeypatch.setattr(cli_decompilation, "_bind_codegen_render_variable_types_8616", lambda _codegen: None)
+    monkeypatch.setattr(
+        cli_decompilation,
+        "replay_callsite_stack_arguments_after_regeneration_8616",
+        lambda _project, _codegen: False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_indexed_segmented_global_lowering_after_regen_8616",
+        fake_indexed_replay,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_stack_address_lowering_after_regen_8616",
+        lambda _codegen: False,
+    )
+    monkeypatch.setattr(cli_decompilation, "_simplify_structured_expressions_8616", lambda _codegen: False)
+
+    text, regenerated = cli_decompilation._regenerate_codegen_text_safely(codegen, context="0x1000 f")
+
+    assert regenerated is True
+    assert text == fresh_text
+    assert codegen.text == fresh_text
+
+
 def test_render_candidate_score_refuses_stale_stack_base_when_calls_tie():
     stale_text = """
 int main(void)
@@ -54,6 +111,16 @@ int main(void)
 
     assert cli_decompilation._render_candidate_score_8616(clean_text, None) > (
         cli_decompilation._render_candidate_score_8616(stale_text, None)
+    )
+
+
+def test_render_candidate_score_penalizes_source_backed_raw_memory_leakage():
+    cod_metadata = SimpleNamespace(source_lines=("void f(void)", "{", "    g = a[i];", "}"))
+    leaky_text = "void f(void) { abarWork[i] = MEM_U16(&mem_08F0 + i * 2); }"
+    clean_text = "void f(void) { abarWork[i] = abarPerm[i]; }"
+
+    assert cli_decompilation._render_candidate_score_8616(clean_text, cod_metadata) > (
+        cli_decompilation._render_candidate_score_8616(leaky_text, cod_metadata)
     )
 
 
@@ -100,6 +167,50 @@ def test_validated_payload_replacement_rejects_source_evidenced_loop_loss():
     assert evidence.decision is cli_decompilation.ValidatedPayloadReplacementDecision8616.REJECT_WORSE_LOOP_EVIDENCE
     assert evidence.current_loop_score == 1
     assert evidence.validated_loop_score == 0
+
+
+def test_validated_payload_replacement_rejects_newly_missing_call_name_on_score_tie():
+    cod_metadata = SimpleNamespace(
+        source_lines=(),
+        call_names=("clock", "sprintf"),
+    )
+    current_payload = "void f(void) { clock(); }"
+    validated_payload = "void f(void) { sprintf(buf, fmt); }"
+
+    evidence = cli_decompilation._validated_payload_replacement_evidence_8616(
+        current_payload,
+        validated_payload,
+        cod_metadata,
+    )
+
+    assert evidence.current_call_score == evidence.validated_call_score
+    assert evidence.current_missing_calls == ("sprintf",)
+    assert evidence.validated_missing_calls == ("clock",)
+    assert evidence.decision is cli_decompilation.ValidatedPayloadReplacementDecision8616.REJECT_WORSE_CALL_EVIDENCE
+
+
+def test_validated_payload_cache_requires_passing_tail_snapshot_when_enabled():
+    project = SimpleNamespace(
+        _inertia_tail_validation_enabled=True,
+        _inertia_last_tail_validation_snapshot={
+            "structuring": {"status": "stable"},
+            "postprocess": {"status": "changed"},
+        },
+    )
+
+    assert cli_decompilation._validated_payload_cache_tail_validation_passed_8616(project) is False
+
+    project._inertia_last_tail_validation_snapshot = {
+        "structuring": {"status": "stable"},
+        "postprocess": {"status": "stable"},
+    }
+
+    assert cli_decompilation._validated_payload_cache_tail_validation_passed_8616(project) is True
+
+    project._inertia_tail_validation_enabled = False
+    project._inertia_last_tail_validation_snapshot = None
+
+    assert cli_decompilation._validated_payload_cache_tail_validation_passed_8616(project) is True
 
 
 def test_sidecar_cod_metadata_resolver_accepts_structural_metadata(tmp_path):

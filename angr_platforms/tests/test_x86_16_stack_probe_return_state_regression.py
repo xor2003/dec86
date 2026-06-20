@@ -3,7 +3,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler import structured_codegen as _scg
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CExpressionStatement, CFunctionCall, CStatements
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CDirtyExpression,
+    CExpressionStatement,
+    CFunctionCall,
+    CStatements,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -142,7 +148,7 @@ def test_stack_probe_typed_return_state_refuses_partial_recovery_when_summary_ar
     assert final_stmt.expr.args == []
     assert codegen._inertia_callsite_summaries[id(draw_bar)].arg_count == 2
     assert codegen._inertia_callsite_summaries[id(draw_bar)].arg_widths == (2, 2)
-    assert codegen._inertia_stack_probe_fact_stats == {
+    expected_stats = {
         "summaries_attached": 0,
         "stack_probe_summaries": 1,
         "ss_stack_address_returns": 1,
@@ -162,6 +168,8 @@ def test_stack_probe_typed_return_state_refuses_partial_recovery_when_summary_ar
         "known_prototype_arg_mismatch_count": 0,
         "failure_count": 0,
     }
+    for key, value in expected_stats.items():
+        assert codegen._inertia_stack_probe_fact_stats.get(key) == value
 
 
 def test_stack_probe_fact_stats_split_arg_pickup_from_later_lowering_refusal():
@@ -342,6 +350,221 @@ def test_stack_probe_materialized_arg_prunes_adjacent_segment_metadata_stores():
     assert _args_match(call.args, [zero_arg])
     assert len(codegen.cfunc.statements.statements) == 2
     assert isinstance(codegen.cfunc.statements.statements[1], CExpressionStatement)
+
+
+def test_stack_probe_prunes_typed_seg_u8_return_byte_pair():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+    value = CDirtyExpression(SimpleNamespace(varid=0x9000, name="vvar_value"), codegen=codegen)
+    segment = CDirtyExpression(SimpleNamespace(varid=0x9001, name="vvar_probe_segment"), codegen=codegen)
+    offset = CDirtyExpression(SimpleNamespace(varid=0x9002, name="vvar_probe_offset"), codegen=codegen)
+
+    def _seg_u8_store(offset_expr, rhs):
+        return CAssignment(CFunctionCall("SEG_U8", None, [segment, offset_expr], codegen=codegen), rhs, codegen=codegen)
+
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
+    call = CFunctionCall(
+        "settextcolor",
+        SimpleNamespace(name="settextcolor"),
+        [structured_c.CConstant(15, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    low_store = _seg_u8_store(offset, value)
+    high_store = _seg_u8_store(
+        structured_c.CBinaryOp("Add", offset, one, codegen=codegen),
+        structured_c.CBinaryOp("Shr", value, eight, codegen=codegen),
+    )
+    codegen.cfunc.statements = CStatements(
+        [probe, low_store, high_store, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(probe.expr): CallsiteSummary8616(
+            callsite_addr=0x4010,
+            target_addr=0x1001,
+            return_addr=0x4012,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register="ax",
+            return_used=True,
+            stack_probe_helper=True,
+            helper_return_state="stack_address",
+            helper_return_space="ss",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
+        ),
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert low_store not in statements
+    assert high_store not in statements
+    assert statements[-1].expr is call
+    assert codegen._inertia_callsite_materialization_stats.consumed_outgoing_stack_placeholder_count == 2
+
+
+def test_stack_probe_prunes_nested_seg_u8_pair_from_unique_typed_summary():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+    value = CDirtyExpression(SimpleNamespace(varid=0x9000, name="vvar_value"), codegen=codegen)
+    segment = CDirtyExpression(SimpleNamespace(varid=0x9001, name="vvar_probe_segment"), codegen=codegen)
+    offset = CDirtyExpression(SimpleNamespace(varid=0x9002, name="vvar_probe_offset"), codegen=codegen)
+
+    def _seg_u8_store(offset_expr, rhs):
+        return CAssignment(CFunctionCall("SEG_U8", None, [segment, offset_expr], codegen=codegen), rhs, codegen=codegen)
+
+    hidden_probe = CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen)
+    call = CFunctionCall(
+        "settextcolor",
+        SimpleNamespace(name="settextcolor"),
+        [structured_c.CConstant(15, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    low_store = _seg_u8_store(offset, value)
+    high_store = _seg_u8_store(
+        structured_c.CBinaryOp("Add", offset, one, codegen=codegen),
+        structured_c.CBinaryOp("Shr", value, eight, codegen=codegen),
+    )
+    nested_block = CStatements(
+        [low_store, high_store, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4020,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements([nested_block], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(hidden_probe): CallsiteSummary8616(
+            callsite_addr=0x4010,
+            target_addr=0x1001,
+            return_addr=0x4012,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register="ax",
+            return_used=True,
+            stack_probe_helper=True,
+            helper_return_state="stack_address",
+            helper_return_space="ss",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
+        ),
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    statements = nested_block.statements
+    assert low_store not in statements
+    assert high_store not in statements
+    assert statements[-1].expr is call
+    assert codegen._inertia_callsite_materialization_stats.consumed_outgoing_stack_placeholder_count == 2
+
+
+def test_stack_probe_keeps_seg_u8_byte_pair_without_ss_typed_fact():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    eight = structured_c.CConstant(8, SimTypeShort(False), codegen=codegen)
+    value = CDirtyExpression(SimpleNamespace(varid=0x9000, name="vvar_value"), codegen=codegen)
+    segment = CDirtyExpression(SimpleNamespace(varid=0x9001, name="vvar_probe_segment"), codegen=codegen)
+    offset = CDirtyExpression(SimpleNamespace(varid=0x9002, name="vvar_probe_offset"), codegen=codegen)
+
+    def _seg_u8_store(offset_expr, rhs):
+        return CAssignment(CFunctionCall("SEG_U8", None, [segment, offset_expr], codegen=codegen), rhs, codegen=codegen)
+
+    probe = CExpressionStatement(
+        CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen), codegen=codegen
+    )
+    call = CFunctionCall(
+        "settextcolor",
+        SimpleNamespace(name="settextcolor"),
+        [structured_c.CConstant(15, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    low_store = _seg_u8_store(offset, value)
+    high_store = _seg_u8_store(
+        structured_c.CBinaryOp("Add", offset, one, codegen=codegen),
+        structured_c.CBinaryOp("Shr", value, eight, codegen=codegen),
+    )
+    codegen.cfunc.statements = CStatements(
+        [probe, low_store, high_store, CExpressionStatement(call, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(probe.expr): CallsiteSummary8616(
+            callsite_addr=0x4010,
+            target_addr=0x1001,
+            return_addr=0x4012,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register="ax",
+            return_used=True,
+            stack_probe_helper=True,
+            helper_return_state="stack_address",
+            helper_return_space="ds",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
+        ),
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements[1] is low_store
+    assert codegen.cfunc.statements.statements[2] is high_store
 
 
 def test_stack_probe_materialized_arg_prunes_only_current_call_metadata():

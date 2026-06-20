@@ -1,4 +1,5 @@
 import networkx as nx
+from angr_platforms.X86_16.ir.condition_ir import ConditionEdgeEvidence, ConditionIR
 from angr_platforms.X86_16.ir.core import (
     AddressStatus,
     IRAddress,
@@ -33,12 +34,14 @@ class _CFunc:
 
 
 class _Codegen:
-    def __init__(self, addr, clinic, artifact=None):
+    def __init__(self, addr, clinic, artifact=None, typed_conditions=None, edge_evidence=None):
         self.cfunc = _CFunc(addr)
         self._clinic = clinic
         self.project = None
         self._inertia_vex_ir_artifact = artifact
         self._inertia_vex_ir_function_ssa = None
+        self._inertia_typed_conditions = tuple(typed_conditions or ())
+        self._inertia_condition_edge_evidence = tuple(edge_evidence or ())
 
 
 def test_grouped_region_graph_builder_materializes_grouping_on_region_metadata():
@@ -62,7 +65,7 @@ def test_grouped_region_graph_builder_materializes_grouping_on_region_metadata()
 def test_grouped_region_graph_builder_surface_is_deterministic():
     assert describe_x86_16_grouped_region_graph_surface() == {
         "producer": "build_grouped_region_graph",
-        "graph_surface": "Region.metadata[cross_entry_*, typed_ir_*]",
+        "graph_surface": "Region.metadata[cross_entry_*, typed_ir_*, typed_condition_edge_*]",
         "unit_surface": "CrossEntryGroupedUnitArtifact",
         "purpose": "Materialize cross-entry grouping directly onto the region graph before structuring.",
     }
@@ -107,6 +110,121 @@ def test_grouped_region_graph_builder_materializes_typed_ir_condition_metadata_w
     assert by_id[0x1000].metadata["typed_ir_allow_abnormal_loop_normalization"] is True
     assert by_id[0x1000].metadata["typed_ir_condition_hint"] == "ax == 0"
     assert "cross_entry_grouping_kind" not in by_id[0x1000].metadata
+
+
+def test_grouped_region_graph_builder_materializes_condition_ir_metadata_without_vex_artifact():
+    graph = nx.DiGraph()
+    a = _Node(0x1000)
+    b = _Node(0x1001)
+    graph.add_nodes_from([a, b])
+    graph.add_edge(a, b)
+    condition = ConditionIR(
+        op="ne",
+        lhs=IRValue(MemSpace.REG, name="ax", size=2),
+        rhs=IRValue(MemSpace.CONST, const=27, size=2),
+        src_insn=0x1003,
+        block_addr=0x1000,
+    )
+
+    result = build_grouped_region_graph(_Codegen(0x1000, _Clinic(graph), typed_conditions=(condition,)))
+
+    by_id = {region.region_id: region for region in result.graph_result.graph.nodes}
+    metadata = by_id[0x1000].metadata
+    assert metadata["typed_ir_has_condition"] is True
+    assert metadata["typed_ir_condition_kinds"] == ("ne",)
+    assert metadata["typed_ir_allow_abnormal_loop_normalization"] is True
+    assert metadata["typed_ir_condition_hint"] == "ax != 27"
+    assert metadata["typed_condition_ir_has_condition"] is True
+    assert metadata["typed_condition_ir_ops"] == ("ne",)
+    assert metadata["typed_condition_ir_hint"] == "ax != 27"
+    assert metadata["typed_condition_ir_count"] == 1
+
+
+def test_grouped_region_graph_builder_materializes_condition_edge_guard_metadata():
+    graph = nx.DiGraph()
+    a = _Node(0x1153)
+    b = _Node(0x1158)
+    graph.add_nodes_from([a, b])
+    graph.add_edge(a, b)
+    condition = ConditionIR(
+        op="eq",
+        lhs=IRValue(MemSpace.REG, name="ax", size=2),
+        rhs=IRValue(MemSpace.CONST, const=69, size=2),
+        src_insn=0x1158,
+        block_addr=0x1158,
+        producer_insn=0x1153,
+        source=("cmp", "je"),
+    )
+    edge = ConditionEdgeEvidence(
+        edge_block_addr=0x1158,
+        condition=condition,
+        edge_kind="fallthrough_jmp",
+        source_jcc="jne",
+        producer_insn=0x1153,
+    )
+
+    result = build_grouped_region_graph(_Codegen(0x1153, _Clinic(graph), edge_evidence=(edge,)))
+
+    by_id = {region.region_id: region for region in result.graph_result.graph.nodes}
+    metadata = by_id[0x1158].metadata
+    assert metadata["typed_ir_has_condition"] is True
+    assert metadata["typed_ir_condition_kinds"] == ("eq",)
+    assert metadata["typed_ir_condition_hint"] == "ax == 69"
+    assert metadata["typed_condition_ir_has_condition"] is False
+    assert metadata["typed_condition_edge_has_guard"] is True
+    assert metadata["typed_condition_edge_guard_ops"] == ("eq",)
+    assert metadata["typed_condition_edge_guard_hints"] == ("ax == 69",)
+    assert metadata["typed_condition_edge_guards"] == (condition,)
+    assert metadata["typed_condition_edge_guard_count"] == 1
+
+
+def test_grouped_region_graph_builder_preserves_vex_hint_when_condition_ir_is_also_present():
+    graph = nx.DiGraph()
+    a = _Node(0x1000)
+    graph.add_node(a)
+    artifact = IRFunctionArtifact(
+        function_addr=0x1000,
+        blocks=(
+            IRBlock(
+                addr=0x1000,
+                instrs=(
+                    IRInstr(
+                        "CJMP",
+                        None,
+                        (
+                            IRCondition(
+                                op="eq",
+                                args=(
+                                    IRValue(MemSpace.REG, name="ax", size=2),
+                                    IRValue(MemSpace.CONST, const=0, size=2),
+                                ),
+                                expr=("update_eflags_sub",),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    condition = ConditionIR(
+        op="ne",
+        lhs=IRValue(MemSpace.REG, name="ax", size=2),
+        rhs=IRValue(MemSpace.CONST, const=27, size=2),
+        src_insn=0x1003,
+        block_addr=0x1000,
+    )
+
+    result = build_grouped_region_graph(
+        _Codegen(0x1000, _Clinic(graph), artifact=artifact, typed_conditions=(condition,))
+    )
+
+    by_id = {region.region_id: region for region in result.graph_result.graph.nodes}
+    metadata = by_id[0x1000].metadata
+    assert metadata["typed_ir_condition_kinds"] == ("eq", "ne")
+    assert metadata["typed_ir_condition_hint"] == "ax == 0"
+    assert metadata["typed_condition_ir_ops"] == ("ne",)
+    assert metadata["typed_condition_ir_hint"] == "ax != 27"
+    assert metadata["typed_condition_ir_count"] == 1
 
 
 def test_grouped_region_graph_builder_formats_signed_and_unsigned_condition_hints():

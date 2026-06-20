@@ -38,6 +38,8 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
     "displaycursor": "void displaycursor(int mode);",
     "getvideoconfig": "int getvideoconfig(void *config);",
     "setvideomode": "void setvideomode(int mode);",
+    "_setbkcolor": "long _setbkcolor(long color);",
+    "setbkcolor": "long setbkcolor(long color);",
     "settextcolor": "int settextcolor(int color);",
     "settextposition": "void settextposition(int row, int col);",
     "outtext": "int outtext(const char *text);",

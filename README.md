@@ -262,6 +262,7 @@ The main entrypoints are:
 
 - `./decompile.py`
 - `./dosunit.py`
+- `./z3func.py`
 - `python -m inertia_decompiler.cli`
 - installed script: `decompile-x86-16`
 
@@ -296,7 +297,9 @@ Current CLI options:
 
 `./dosunit.py` discovers DOS functions, generates concrete input vectors,
 records original x86 outputs, and compares candidate binaries against the
-recorded oracle.
+recorded oracle. `./z3func.py` is the clearer root alias for the static
+VEX/AIL-to-SSA/Z3 function comparison flow; it exposes the same subcommands and
+keeps `./dosunit.py` available for compatibility.
 
 Basic F-15-style flow:
 
@@ -356,31 +359,50 @@ Basic F-15-style flow:
   --limit 20 \
   --out /tmp/egame.complexity.md
 
-./dosunit.py ssa \
+./z3func.py ssa \
   --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
   --functions /tmp/egame.original.functions.json \
   --cache-dir .cache/dosunit \
   --out /tmp/egame.original.ssa.json
 
-./dosunit.py ssa \
+./z3func.py ssa \
   --exe /home/xor/tmp/f15se2-re/build/egame.exe \
   --functions /tmp/egame.rebuilt.functions.json \
   --cache-dir .cache/dosunit \
   --out /tmp/egame.rebuilt.ssa.json
 
 # Optional: lower through angr AIL after the cached VEX lift.
-./dosunit.py ssa \
+./z3func.py ssa \
   --ir ail \
   --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
   --functions /tmp/egame.original.functions.json \
   --cache-dir .cache/dosunit \
   --out /tmp/egame.original.ail.ssa.json
 
-./dosunit.py compare-ssa \
+./z3func.py compare-ssa \
   --oracle-ssa /tmp/egame.original.ssa.json \
   --candidate-ssa /tmp/egame.rebuilt.ssa.json \
   --mapping /tmp/egame.mapping.json \
   --out /tmp/egame.ssa.results.json
+
+# Sequential, low-memory full compare.  Each batch gets a fresh child process,
+# but call-target lookup still sees the full SSA indexes.
+./z3func.py compare-ssa-batched \
+  --oracle-ssa /tmp/egame.original.ssa.json \
+  --candidate-ssa /tmp/egame.rebuilt.ssa.json \
+  --oracle-index-ssa /tmp/egame.original.ssa.json \
+  --candidate-index-ssa /tmp/egame.rebuilt.ssa.json \
+  --mapping /tmp/egame.mapping.json \
+  --out-dir /tmp/egame.ssa-batches \
+  --out /tmp/egame.ssa-batches/aggregate.json
+
+./dosunit.py report-failures \
+  --results /tmp/egame.ssa-batches/aggregate.json \
+  --out /tmp/egame.ssa-batches/report.md
+
+./dosunit.py report-failures \
+  --results /tmp/egame.original.ssa.json \
+  --out /tmp/egame.original.ssa.refusals.md
 
 ./dosunit.py regions \
   --exe /home/xor/tmp/f15se2-re/bin/egame.exe \
@@ -467,8 +489,8 @@ string instructions, loops, and backward branches. Only functions with no
 branch/call/interrupt/loop hazards and a low risk score are emitted as
 `whole_function` comparison parts. `ssa` reuses the existing x86-16 VEX lifter
 for instruction semantics. By default it follows direct in-function successors
-and direct call fallthrough, then lowers up to `--max-blocks-per-function 64`
-bounded basic blocks and `--max-insns-per-function 64` instructions into compact
+and direct call fallthrough, then lowers up to `--max-blocks-per-function 1000`
+bounded basic blocks and `--max-insns-per-function 256` instructions into compact
 SSA parts; use `--no-follow-call-fallthrough` to stop each SSA part at calls.
 `--ir ail` converts each cached VEX block through angr AIL and lowers
 that AIL block into the same compact SSA form. The default output ABI is
@@ -477,11 +499,13 @@ that AIL block into the same compact SSA form. The default output ABI is
 `AX/BX/CX/DX/SI/DI/BP/SP`. Unused flag and return-IP-load noise is dropped.
 VEX/AIL memory loads/stores are modeled with a symbolic byte-array memory input,
 and conditional exits are represented as an `ip` expression when `ip` is
-requested. Unsupported statements/helpers, guarded memory effects, unknown call
-value effects, and functions above the instruction bound are refused rather than
-guessed. `--max-ssa-assignments` is a second gate for refusing solver slices
-that become too large after lowering. Normalizations such as `mov al,imm`
-becoming `(AX & 0xff00) | imm` are kept. `ssa` caches lifted VEX blocks on disk as
+requested. VEX `x86g_dirtyhelper_OUT` port writes are modeled as an `io`
+byte-array observable, so timer/PIC/adlib-style hardware effects can be compared
+instead of silently dropped. Unsupported statements/helpers, guarded memory
+effects, unknown call value effects, and functions above the instruction bound
+are refused rather than guessed. `--max-ssa-assignments` defaults to `0`
+(disabled) and can be lowered when you want an early size gate. Normalizations such
+as `mov al,imm` becoming `(AX & 0xff00) | imm` are kept. `ssa` caches lifted VEX blocks on disk as
 `.cache/dosunit/vex/<exe-sha256>.pickle`, with per-address entries inside that
 single file. `compare-ssa` can use the normal function mapping document and asks
 Z3 for a concrete input model where original and candidate outputs differ.
@@ -498,7 +522,32 @@ address constants in one bounded block.
 Before Z3, `compare-ssa` applies `--max-solver-assignments`,
 `--max-solver-inputs`, and `--max-solver-memory-stores` gates so hard functions
 appear as structured `slice_too_large` refusals instead of blocking the full
-report. The default memory-store solver gate is 15 modeled stores.
+report. Assignment and input gates default to `0` (disabled); the default
+memory-store solver gate is `32` modeled stores. `--max-rss-mb` starts a
+watchdog and terminates the current process if RSS rises above the limit; it
+defaults to `4096` MiB and can be set to `0` to disable the guard.
+`compare-ssa-batched` is the
+recommended whole-program runner for large DOS EXEs: it writes per-function-batch
+oracle SSA slices into `--out-dir`, invokes `compare-ssa` sequentially in child
+processes, passes the full SSA files as `--oracle-index-ssa` and
+`--candidate-index-ssa`, and aggregates the results. This keeps memory bounded
+without losing call-target equivalence for callees outside the current batch.
+It uses 64 SSA units per child batch by default, gives each child a `300000` ms
+wall-clock timeout, and continues after bad batches by default; use
+`--stop-on-failure` for focused debugging. The aggregate and Markdown report
+include whole-program rollups for region equality, connectivity edge/state
+checks, loop SCCs, and call SCCs. The aggregate distinguishes main function-body SSA parts from
+external/shared-tail parts. External/shared-tail parts are code blocks reached
+from a function but outside its declared body; they are proved separately when a
+unique candidate block can be found. Run `report-failures` on both the batched
+aggregate and the individual SSA generation artifacts: the aggregate shows
+compare failures, while the SSA artifacts show functions or parts that refused
+to lower before comparison. External/shared-tail matching tries mapped-function
+delta, part index, exact block signature, normalized block signature,
+predecessor chaining, and finally a Capstone operand-shape ordinal inside the
+mapped function. The ordinal fallback is for duplicated shifted tails where
+immediate/displacement bytes differ but the instruction/operand structure and
+order are preserved.
 For multi-block functions, `compare-ssa` also builds a composed acyclic
 function-region summary by default. This is a stronger gate than block matching:
 if the composed original and rebuilt summaries are Z3-equivalent, block-layout
@@ -533,6 +582,15 @@ segmented offsets, while temporary stack writes and whole-memory equality are
 ignored. A call-summary `memory_clobber` with concrete `segment`/`offset`/`size`
 invalidates only that range; omit the range or use `scope: all` for a broad
 unknown memory clobber.
+For original assembly rewritten as Open Watcom C with `#pragma aux` register
+ABI, use `compare-ssa-abi` with a manifest function that names the logical ABI
+and points at the original symbol via `oracle_id`/`oracle_name`; the mapping
+document then selects the rewritten C symbol. For example, a Watcom-style
+`parm [ax] [dx] value [ax dx] modify [bx cx si di]` function should list
+`AX`/`DX` under `inputs`, `AX`/`DX` under `returns`, preserved registers under
+`preserved`, and scratch registers under `clobbers`. The comparator ignores
+declared clobbers, checks return/preserved registers and declared memory
+effects, and reports ABI-visible return changes as Z3 counterexamples.
 Edge coverage metadata belongs to the original binary only; rebuilt comparison
 still replays concrete vectors at mapped function entries and does not require
 rebuilt CFG/block alignment. Full VEX/AIL path exploration, per-call libdosbox

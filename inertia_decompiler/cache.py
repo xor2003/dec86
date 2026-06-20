@@ -1,3 +1,5 @@
+"""Content-addressed cache keys for decompiler recovery artifacts."""
+
 from __future__ import annotations
 
 import hashlib
@@ -79,6 +81,8 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_typed_conditions.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_utils.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "segmented_memory_reasoning.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "lowering" / "real_mode_linear.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "lowering" / "segmented_global_loads.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "callsite_stack_metadata.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_structuring_stage.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "lift_86_16.py",

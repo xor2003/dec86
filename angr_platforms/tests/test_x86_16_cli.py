@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from concurrent.futures.thread import _threads_queues
 from pathlib import Path
 from types import SimpleNamespace
@@ -234,6 +235,16 @@ def test_validated_nontrivial_x86_16_refuses_legacy_cli_rewrite():
             small_function=False,
             tail_validation_passed=False,
         )
+        is False
+    )
+
+
+def test_validated_rewrite_refusal_forces_render_refresh_when_text_empty():
+    assert cli_decompilation._validated_rewrite_refusal_needs_render_refresh_8616("") is True
+    assert cli_decompilation._validated_rewrite_refusal_needs_render_refresh_8616("   \n") is True
+    assert cli_decompilation._validated_rewrite_refusal_needs_render_refresh_8616(None) is True
+    assert (
+        cli_decompilation._validated_rewrite_refusal_needs_render_refresh_8616("int f(void) { return 0; }\n")
         is False
     )
 
@@ -967,6 +978,30 @@ def test_decompile_function_with_stats_skips_same_family_retry_without_new_proof
     assert elapsed >= 0
 
 
+def test_direct_timeout_stage_parses_structuring_pass_timeout_payload():
+    assert (
+        cli_core._direct_timeout_failure_stage_from_payload(
+            "Timed out after 30s during x86-16 structuring pass recovery_stage."
+        )
+        == "structuring:recovery_stage"
+    )
+
+
+def test_direct_timeout_stage_preserves_clinic_or_default_fallback():
+    assert (
+        cli_core._direct_timeout_failure_stage_from_payload("Timed out after 5s during core decompilation.") == "decompilation:core"
+    )
+    assert (
+        cli_core._direct_timeout_failure_stage_from_payload("Timed out after 5s during x86-16 postprocess pass prune")
+        == "postprocess:prune"
+    )
+    assert (
+        cli_core._direct_timeout_failure_stage_from_payload("Timed out after 5s during decompilation.") == "decompilation"
+    )
+    assert cli_core._direct_timeout_failure_stage_from_payload("Timed out after 5s.") == "decompilation"
+    assert cli_core._direct_timeout_failure_stage_from_payload(None) == "decompilation"
+
+
 def test_function_work_cache_ignores_timeout_records(monkeypatch):
     function = SimpleNamespace(addr=0x1234, name="sub_1234", project=None)
     item = FunctionWorkItem(index=1, function_cfg=object(), function=function)
@@ -993,6 +1028,89 @@ def test_function_work_cache_ignores_timeout_records(monkeypatch):
     assert result is None
     assert "ignoring cached failed function result" in _debug
     assert "status=timeout" in _debug
+
+
+def test_function_work_cache_bypasses_source_backed_leakage(monkeypatch):
+    function = SimpleNamespace(addr=0x10CE0, name="QuickSort", project=SimpleNamespace())
+    item = FunctionWorkItem(index=1, function_cfg=object(), function=function)
+    monkeypatch.setattr(cli_core, "_tail_validation_runtime_enabled", lambda _project: False)
+    monkeypatch.setattr(cli_core, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        cli_core,
+        "_load_cache_json",
+        lambda *_args, **_kwargs: {
+            "status": "ok",
+            "payload": (
+                "void QuickSort(void)\n"
+                "{\n"
+                "    unsigned short vvar_137;\n"
+                "    vvar_137 = 1;\n"
+                "    if (vvar_137) {\n"
+                "        return;\n"
+                "    }\n"
+                "}\n"
+            ),
+            "elapsed": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        cli_core,
+        "_source_evidence_payload_for_function_8616",
+        lambda **kwargs: "/// void QuickSort(int iLow, int iHigh)\n" + kwargs["payload"],
+    )
+
+    result, debug, _cache_key, _tail_enabled, _expected_stages = cli_core._function_work_cache_lookup(
+        item,
+        binary_path=Path("SORTDEMO.EXE"),
+        timeout=20,
+        api_style="dos",
+        enable_structured_simplify=True,
+        enable_postprocess=True,
+    )
+
+    assert result is None
+    assert "cache bypass" in debug
+    assert "source_quality=unresolved-vvar" in debug
+
+
+def test_function_work_cache_bypasses_stale_normalized_payload(monkeypatch):
+    function = SimpleNamespace(addr=0x10678, name="ReInitBars", project=SimpleNamespace())
+    item = FunctionWorkItem(index=1, function_cfg=object(), function=function)
+    monkeypatch.setattr(cli_core, "_tail_validation_runtime_enabled", lambda _project: False)
+    monkeypatch.setattr(cli_core, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        cli_core,
+        "_load_cache_json",
+        lambda *_args, **_kwargs: {
+            "status": "ok",
+            "payload": (
+                "void ReInitBars(void)\n"
+                "{\n"
+                "    MEM_U16(&mem_08F0 + local_0 * 2);\n"
+                "    return;\n"
+                "}\n"
+            ),
+            "elapsed": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        cli_core,
+        "_source_evidence_payload_for_function_8616",
+        lambda **kwargs: kwargs["payload"],
+    )
+
+    result, debug, _cache_key, _tail_enabled, _expected_stages = cli_core._function_work_cache_lookup(
+        item,
+        binary_path=Path("SORTDEMO.EXE"),
+        timeout=20,
+        api_style="dos",
+        enable_structured_simplify=True,
+        enable_postprocess=True,
+    )
+
+    assert result is None
+    assert "cache bypass" in debug
+    assert "stale_normalization" in debug
 
 
 def test_tail_validation_cache_paths_are_stable_for_direct_binary_runs():
@@ -1478,6 +1596,71 @@ def test_recover_direct_addr_function_rebases_interior_addr_to_sidecar_entry(mon
 
     assert (cfg, func) == (expected_cfg, expected_func)
     assert calls == [(0x10060, 0x14001, 0x11423, 0x180, True)]
+
+
+def test_canonicalize_direct_addr_from_sidecar_padding_uses_prologue_start():
+    class Memory:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load(self, addr, size):
+            self.calls.append((addr, size))
+            assert addr == 0x10A61
+            return (b"\x90" * (0x10A88 - 0x10A61)) + b"\x55\x8b\xec\x90"
+
+    memory = Memory()
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=memory),
+    )
+    metadata = SimpleNamespace(
+        absolute_addrs=True,
+        code_labels={0x10A61: "PercolateDown"},
+        code_ranges={0x10A61: (0x10A61, 0x10B2C)},
+    )
+
+    result = decompile._canonicalize_direct_addr_from_sidecar_padding_8616(
+        project,
+        metadata,
+        0x10A61,
+    )
+
+    assert result is not None
+    assert result.requested_addr == 0x10A61
+    assert result.canonical_addr == 0x10A88
+    assert result.region == (0x10A61, 0x10B2C)
+    assert result.name == "PercolateDown"
+    assert memory.calls == [(0x10A61, 0x80)]
+
+
+def test_canonicalize_sidecar_work_offset_uses_prologue_start():
+    class Memory:
+        def load(self, addr, size):
+            assert addr == 0x10672
+            assert size == 0x56
+            return (b"\x90" * 6) + b"\x55\x8b\xec\x90"
+
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=Memory()),
+    )
+    metadata = SimpleNamespace(
+        absolute_addrs=True,
+        code_labels={0x10672: "ReInitBars"},
+        code_ranges={0x10672: (0x10672, 0x106C8)},
+    )
+
+    addr, name = decompile._canonicalize_sidecar_work_offset_8616(
+        project,
+        metadata,
+        0x10672,
+        "ReInitBars",
+    )
+
+    assert addr == 0x10678
+    assert name == "ReInitBars"
 
 
 def test_fallback_entry_function_retries_broader_windows_after_narrow_recovery_fails(monkeypatch):
@@ -3157,6 +3340,65 @@ def test_emit_function_result_does_not_fabricate_passed_tail_validation_when_dis
     assert "validation=passed" not in out
 
 
+def test_emit_function_result_rejects_source_backed_leaky_ok_payload(monkeypatch, tmp_path, capsys):
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_tail_validation_enabled=True,
+    )
+    function = SimpleNamespace(addr=0x10CD4, name="QuickSort", project=project)
+    item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
+    result = decompile.FunctionWorkResult(
+        index=item.index,
+        status="ok",
+        payload="void QuickSort(void)\n{\n    return SEG_U16(ds, 42);\n}\n",
+        debug_output="",
+        function=function,
+        function_cfg=item.function_cfg,
+        tail_validation={
+            "structuring": {"changed": False, "status": "stable"},
+            "postprocess": {"changed": False, "status": "stable"},
+        },
+    )
+    args = SimpleNamespace(
+        addr=None,
+        show_asm=False,
+        binary=tmp_path / "SORTDEMO.EXE",
+        alternate_source_c=True,
+        max_functions=8,
+        timeout=20,
+        api_style="default",
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_source_evidence_payload_for_function_8616",
+        lambda **kwargs: "/// void QuickSort(int iLow, int iHigh)\n" + kwargs["payload"],
+    )
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x10CD4, 0x10CE0))
+    monkeypatch.setattr(decompile, "_format_asm_range", lambda *_args, **_kwargs: "asm fallback")
+    monkeypatch.setattr(decompile, "_probe_lift_break", lambda *_args, **_kwargs: "lift probe")
+
+    decompiled, failed = decompile._emit_function_result(
+        item,
+        result,
+        project=project,
+        args=args,
+        lst_metadata=None,
+        cod_metadata=None,
+        synthetic_globals=None,
+        precise_sidecar_regions=False,
+        allow_heavy_fallbacks=False,
+        interactive_stdout=False,
+        use_serial_fork_per_function=False,
+        fallback_tail_validation_by_index={},
+    )
+
+    out = capsys.readouterr().out
+    assert (decompiled, failed) == (0, 1)
+    assert "Source-backed quality guard rejected emitted C (raw-ds-segmented-access)." in out
+    assert "/* -- c -- */" not in out
+    assert "SEG_U16(ds, 42)" not in out
+
+
 def test_emit_function_result_retries_with_recovered_result_function(monkeypatch, tmp_path, capsys):
     project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
     original_function = SimpleNamespace(addr=0x10010, name="main", project=project)
@@ -3374,6 +3616,54 @@ def test_retry_recovered_candidate_uses_thread_when_tail_validation_enabled(monk
     assert "retry lane: recovered validation-passed candidate" in capsys.readouterr().out
 
 
+def test_retry_recovered_candidate_refuses_source_backed_leaky_payload(monkeypatch, tmp_path, capsys):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    function = SimpleNamespace(addr=0x10678, name="ReInitBars", project=project)
+    item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
+    args = SimpleNamespace(
+        binary=tmp_path / "SORTDEMO.EXE",
+        timeout=7,
+        api_style="default",
+        alternate_source_c=False,
+    )
+
+    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+        return decompile.FunctionWorkResult(
+            index=work_item.index,
+            status="ok",
+            payload="void ReInitBars(void) { abarWork[i] = MEM_U16(&mem_08F0 + i * 2); }",
+            debug_output="",
+            function=work_item.function,
+            function_cfg=work_item.function_cfg,
+            tail_validation={
+                "structuring": {"status": "stable", "changed": False},
+                "postprocess": {"status": "stable", "changed": False},
+            },
+        )
+
+    monkeypatch.setattr(decompile.os, "name", "nt")
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_run_function_work_item", _fake_work_item)
+    monkeypatch.setattr(
+        decompile,
+        "_source_evidence_payload_for_function_8616",
+        lambda **kwargs: "/// void ReInitBars(void)\n" + kwargs["payload"],
+    )
+
+    ok = decompile._try_emit_retry_recovered_candidate_8616(
+        item=item,
+        function=function,
+        project=project,
+        args=args,
+        lst_metadata=None,
+        cod_metadata=None,
+        synthetic_globals=None,
+    )
+
+    assert ok is False
+    assert "retry lane: recovered validation-passed candidate" not in capsys.readouterr().out
+
+
 def test_retry_recovered_candidate_uses_fresh_sidecar_work_item(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
@@ -3501,6 +3791,67 @@ def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path
         "structuring": {"changed": False, "mode": None, "verdict": "structuring stable", "summary_text": None},
         "postprocess": {"changed": False, "mode": None, "verdict": "postprocess stable", "summary_text": None},
     }
+
+
+def test_run_function_work_item_preserves_source_backed_quality_blocker(monkeypatch, tmp_path):
+    binary = tmp_path / "SORTDEMO.EXE"
+    binary.write_bytes(b"MZ")
+    calls = {"decompile": 0, "recover": 0}
+    project = SimpleNamespace(_inertia_c_target="portable-flat")
+    function = SimpleNamespace(addr=0x10672, name="ReInitBars", project=project, info={})
+    item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
+
+    def _fake_decompile(_project, _cfg, function_arg, *_args, **_kwargs):  # noqa: ANN001
+        calls["decompile"] += 1
+        function_arg.info = {
+            "x86_16_tail_validation": {
+                "structuring": {"changed": False, "verdict": "structuring stable"},
+                "postprocess": {"changed": False, "verdict": "postprocess stable"},
+            }
+        }
+        return (
+            "ok",
+            "void ReInitBars(void)\n{\n    return SEG_U16(ds, 42);\n}\n",
+            None,
+            1,
+            8,
+            0.01,
+        )
+
+    def _fake_recover(_project, _function):  # noqa: ANN001
+        calls["recover"] += 1
+        return (
+            "void ReInitBars(void)\n{\n    return;\n}\n",
+            {
+                "structuring": {"changed": False, "status": "stable"},
+                "postprocess": {"changed": False, "status": "stable"},
+            },
+        )
+
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-a")
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
+    monkeypatch.setattr(decompile, "_recover_binary_evidence_c_8616", _fake_recover)
+    monkeypatch.setattr(
+        decompile,
+        "_source_evidence_payload_for_function_8616",
+        lambda **kwargs: "/// void ReInitBars(void)\n" + kwargs["payload"],
+    )
+
+    result = decompile._run_function_work_item(
+        item,
+        timeout=5,
+        api_style="pascal",
+        binary_path=binary,
+        cod_metadata=None,
+        synthetic_globals=None,
+        lst_metadata=None,
+        enable_structured_simplify=True,
+    )
+
+    assert calls == {"decompile": 1, "recover": 0}
+    assert result.status == "validation_failed"
+    assert "Source-backed quality guard rejected emitted C (raw-ds-segmented-access)." in result.payload
 
 
 def test_run_function_work_item_bypasses_persistent_cache_without_passed_tail_validation(monkeypatch, tmp_path):
@@ -3933,6 +4284,13 @@ def test_try_decompile_non_optimized_slice_never_caches_results(monkeypatch, tmp
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"\x90" * 0x40)
     project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x1000),
+            memory=SimpleNamespace(load=lambda _start, size: b"\x90" * size),
+        ),
+    )
+    fresh_project = SimpleNamespace(
         entry=0x1000,
         loader=SimpleNamespace(
             main_object=SimpleNamespace(linked_base=0x1000),
@@ -10120,7 +10478,6 @@ def test_main_helper_free_small_cap_exe_uses_serial_workers_with_hidden_seed_met
             main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
         ),
     )
-    cfg = SimpleNamespace(functions={})
     entry_function = SimpleNamespace(addr=0x11423, name="_start", project=project)
     body_function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
     metadata = SimpleNamespace()
@@ -10593,7 +10950,6 @@ def test_recover_seeded_exe_functions_prioritizes_linear_body_targets_for_trunca
             ),
         ),
     )
-    call_order: list[int] = []
 
     def _collect_neighbor_call_targets(function):
         if function.addr == 0x10010:

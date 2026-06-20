@@ -631,11 +631,11 @@ def verify_case(
     allow_ip_relocation_retry: bool = True,
 ) -> CaseResult:
     def _impl():
-        project = _make_project() if project is None else project
+        local_project = _make_project() if project is None else project
         result = CaseResult(opcode=opcode, idx=case["idx"], name=case["name"], hash=case.get("hash"), passed=False)
 
         try:
-            state = _initial_state(project, case)
+            state = _initial_state(local_project, case)
             exc = case.get("exception")
             try:
                 insn_bytes = _instruction_bytes(case)
@@ -652,7 +652,7 @@ def verify_case(
             if _simulate_manual_control_flow(case, state, insn_bytes):
                 handled_exception = True
             elif exc is not None:
-                faulted_string = _simulate_faulting_word_string_case(project, state, case, insn_bytes)
+                faulted_string = _simulate_faulting_word_string_case(local_project, state, case, insn_bytes)
                 if faulted_string is not None:
                     state = faulted_string
                     handled_exception = True
@@ -663,7 +663,7 @@ def verify_case(
                 state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
             else:
                 state = _step_with_lock_retry(
-                    project,
+                    local_project,
                     state,
                     insn_bytes,
                     advance_ip_for_stripped_lock=repeat_limit is None,
@@ -689,7 +689,7 @@ def verify_case(
                     and iterations < max_iterations
                     and _repeat_should_continue(state, insn_bytes)
                 ):
-                    state = _step_with_lock_retry(project, state, insn_bytes, advance_ip_for_stripped_lock=False)
+                    state = _step_with_lock_retry(local_project, state, insn_bytes, advance_ip_for_stripped_lock=False)
                     iterations += 1
                 if state.addr == start_addr and (
                     iterations >= max_iterations or not _repeat_should_continue(state, insn_bytes)
@@ -697,7 +697,7 @@ def verify_case(
                     state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
             halted = False
             if execute_halt:
-                state, halted = _maybe_execute_terminating_halt(project, state, case)
+                state, halted = _maybe_execute_terminating_halt(local_project, state, case)
             result.mismatches = _compare_case(state, case, opcode=opcode, halted=halted)
             result.passed = not result.mismatches
             return result
@@ -721,7 +721,7 @@ def verify_moo_file(
     def _impl():
         cpu_name, cases = load_moo_cases(path)
         opcode = opcode_name_for_path(path)
-        revoked_hashes = revoked_hashes or set()
+        active_revoked_hashes = revoked_hashes or set()
         project = _make_project()
 
         results: list[CaseResult] = []
@@ -733,7 +733,7 @@ def verify_moo_file(
             print(f"[{opcode}] starting {total_cases} cases", flush=True)
         for index, case in enumerate(selected_cases, start=1):
             case_hash = case.get("hash", "").lower()
-            if case_hash and case_hash in revoked_hashes:
+            if case_hash and case_hash in active_revoked_hashes:
                 results.append(
                     CaseResult(
                         opcode=opcode,

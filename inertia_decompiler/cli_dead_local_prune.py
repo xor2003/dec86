@@ -3,9 +3,45 @@ from __future__ import annotations
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
+_PURE_GENERATED_HELPER_CALLEES = frozenset(
+    {
+        "MEM_U8",
+        "MEM_U16",
+        "MEM_U32",
+        "SEG_U8",
+        "SEG_U16",
+        "SEG_U32",
+        "MK_FP",
+        "SEG_PTR",
+    }
+)
+
+
+def _call_name(node) -> str | None:
+    target = getattr(node, "callee_target", None)
+    if isinstance(target, str):
+        return target
+    target_name = getattr(target, "name", None)
+    if isinstance(target_name, str):
+        return target_name
+    callee = getattr(node, "callee", None)
+    if isinstance(callee, str):
+        return callee
+    callee_func = getattr(node, "callee_func", None)
+    if isinstance(callee_func, str):
+        return callee_func
+    name = getattr(callee_func, "name", None)
+    return name if isinstance(name, str) else None
+
 
 def _expr_has_side_effects(node, *, iter_c_nodes_deep) -> bool:
-    return any(isinstance(subnode, structured_c.CFunctionCall) for subnode in iter_c_nodes_deep(node))
+    for subnode in iter_c_nodes_deep(node):
+        if not isinstance(subnode, structured_c.CFunctionCall):
+            continue
+        if _call_name(subnode) in _PURE_GENERATED_HELPER_CALLEES:
+            continue
+        return True
+    return False
 
 
 def _prune_dead_local_assignments(
@@ -310,8 +346,7 @@ def _prune_dead_local_assignments(
                 new_statements.append(stmt)
             if new_statements != list(node.statements):
                 node.statements = [stmt for stmt in new_statements if stmt is not None]
-                if not dropped_unread_only:
-                    changed = True
+                changed = True
             return
 
         for attr in (
