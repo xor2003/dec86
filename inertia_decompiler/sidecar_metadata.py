@@ -27,8 +27,6 @@ from inertia_decompiler.sidecar_cache import (
 from inertia_decompiler.sidecar_parsers import (
     _detect_flair_metadata,
     _parse_cod_sidecar_metadata,
-    _parse_codeview_nb00_metadata,
-    _parse_codeview_nb0204_metadata,
     _parse_ida_lst_proc_metadata,
     _parse_ida_map_metadata,
     _parse_idc_metadata,
@@ -225,53 +223,55 @@ def _load_codeview_or_ne_metadata(
         debug_identifiers: tuple[str, ...] = ()
         debug_line_map: dict[int, tuple[int, int]] = {}
         try:
-            codeview_code, codeview_data, codeview_ranges = _parse_codeview_nb00_metadata(
-                binary, load_base_linear=load_base_linear
-            )
-            if codeview_code:
+            parsed_nb00 = parse_codeview_nb00(binary, load_base_linear=load_base_linear)
+            if parsed_nb00 is not None:
                 codeview_format = "codeview_nb00"
-                parsed_nb00 = parse_codeview_nb00(binary, load_base_linear=load_base_linear)
-                if parsed_nb00 is not None:
-                    debug_source_files = parsed_nb00.source_files
-                    debug_type_names = parsed_nb00.type_record_names
-                    debug_symbols = _nb00_publics_to_symbol_evidence(
-                        parsed_nb00.publics,
-                        load_base_linear=load_base_linear,
-                        source="codeview_nb00",
-                    )
-                    debug_type_members = _codeview_type_members_to_evidence(
-                        parsed_nb00.type_members,
-                        source="codeview_nb00",
-                    )
-                    debug_identifiers = parsed_nb00.debug_identifiers
-                    debug_line_map = dict(parsed_nb00.line_map)
+                codeview_code = dict(parsed_nb00.code_labels)
+                codeview_data = dict(parsed_nb00.data_labels)
+                codeview_ranges = dict(parsed_nb00.code_ranges)
+                debug_source_files = parsed_nb00.source_files
+                debug_type_names = parsed_nb00.type_record_names
+                debug_symbols = _nb00_publics_to_symbol_evidence(
+                    parsed_nb00.publics,
+                    load_base_linear=load_base_linear,
+                    source="codeview_nb00",
+                )
+                debug_type_members = _codeview_type_members_to_evidence(
+                    parsed_nb00.type_members,
+                    source="codeview_nb00",
+                )
+                debug_identifiers = parsed_nb00.debug_identifiers
+                debug_line_map = dict(parsed_nb00.line_map)
         except Exception as exc:
             print(f"[dbg] failed to parse CodeView NB00 metadata from {binary}: {exc}")
-        if not codeview_code:
+        if codeview_format is None:
             try:
-                cv_code, cv_data, cv_ranges = _parse_codeview_nb0204_metadata(binary, load_base_linear=load_base_linear)
-                if cv_code or cv_data or cv_ranges:
-                    codeview_code, codeview_data, codeview_ranges = cv_code, cv_data, cv_ranges
+                parsed_nb0204 = parse_codeview_nb0204(binary, load_base_linear=load_base_linear)
+                if parsed_nb0204 is not None:
                     codeview_format = "codeview_nb0204"
-                    parsed_nb0204 = parse_codeview_nb0204(binary, load_base_linear=load_base_linear)
-                    if parsed_nb0204 is not None:
-                        debug_source_files = parsed_nb0204.source_files
-                        debug_type_names = parsed_nb0204.type_record_names
-                        debug_symbols = _nb0204_symbols_to_evidence(
-                            parsed_nb0204.procedures,
-                            parsed_nb0204.stack_variables,
-                            load_base_linear=load_base_linear,
-                            source="codeview_nb0204",
-                        )
-                        debug_type_members = _codeview_type_members_to_evidence(
-                            parsed_nb0204.type_members,
-                            source="codeview_nb0204",
-                        )
-                        debug_identifiers = parsed_nb0204.debug_identifiers
-                        debug_line_map = dict(parsed_nb0204.line_map)
+                    codeview_code = dict(parsed_nb0204.code_labels)
+                    codeview_data = dict(parsed_nb0204.data_labels)
+                    codeview_ranges = _nb0204_procedure_ranges(
+                        parsed_nb0204.procedures,
+                        load_base_linear=load_base_linear,
+                    )
+                    debug_source_files = parsed_nb0204.source_files
+                    debug_type_names = parsed_nb0204.type_record_names
+                    debug_symbols = _nb0204_symbols_to_evidence(
+                        parsed_nb0204.procedures,
+                        parsed_nb0204.stack_variables,
+                        load_base_linear=load_base_linear,
+                        source="codeview_nb0204",
+                    )
+                    debug_type_members = _codeview_type_members_to_evidence(
+                        parsed_nb0204.type_members,
+                        source="codeview_nb0204",
+                    )
+                    debug_identifiers = parsed_nb0204.debug_identifiers
+                    debug_line_map = dict(parsed_nb0204.line_map)
             except Exception as exc:
                 print(f"[dbg] failed to parse CodeView NB02/NB04 metadata from {binary}: {exc}")
-        if not codeview_code:
+        if codeview_format is None:
             try:
                 ne_code, ne_data, ne_ranges = _parse_ne_exe_metadata(
                     binary, load_base_linear=load_base_linear, project=project
@@ -325,6 +325,16 @@ def _load_tdinfo_sidecar(
         or tdinfo.data_labels
         or tdinfo.source_files
         or tdinfo.type_names
+        or tdinfo.type_descriptors
+        or tdinfo.type_references
+        or tdinfo.type_members
+        or tdinfo.enum_members
+        or tdinfo.named_symbols
+        or tdinfo.names_by_class
+        or tdinfo.symbols_by_class
+        or tdinfo.stack_variables
+        or tdinfo.register_symbols
+        or tdinfo.constant_symbols
         or tdinfo.candidate_identifiers
     ):
         return
@@ -504,6 +514,25 @@ def _nb0204_symbols_to_evidence(
                 )
             )
     return tuple(evidence)
+
+
+def _nb0204_procedure_ranges(
+    procedures: tuple[object, ...],
+    *,
+    load_base_linear: int,
+) -> dict[int, tuple[int, int]]:
+    ranges: dict[int, tuple[int, int]] = {}
+    for symbol in procedures:
+        segment = getattr(symbol, "segment", None)
+        offset = getattr(symbol, "offset", None)
+        length = getattr(symbol, "length", None)
+        if segment is None or offset is None or length is None:
+            continue
+        start = load_base_linear + (int(segment) << 4) + int(offset)
+        end = start + int(length)
+        if end > start:
+            ranges.setdefault(start, (start, end))
+    return ranges
 
 
 def _tdinfo_symbols_to_evidence(
