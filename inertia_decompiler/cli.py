@@ -57,8 +57,7 @@ from .cli_c_ast_rewrites import (
     _stack_slot_identity_can_join,
     _unwrap_c_casts,
 )
-from .cli_c_text_postprocess import _simplify_x86_16_stack_byte_pointers
-from .cli_c_text_postprocess import _simplify_x86_16_conditions
+from .cli_c_text_postprocess import _simplify_x86_16_conditions, _simplify_x86_16_stack_byte_pointers
 from .cli_core import main
 from .disassembly_helpers import _infer_linear_disassembly_window, _linear_disassembly
 

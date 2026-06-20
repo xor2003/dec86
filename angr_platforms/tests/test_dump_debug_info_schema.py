@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from angr_platforms.X86_16.codeview_nb00 import CodeViewNB00Info
 from angr_platforms.X86_16.codeview_nb02_nb04 import CodeViewNB0204Info
 from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoEXEInfo, TDInfoHeader
+
 from dump_debug_info import _nb00, _nb0204, _tdinfo
 
 

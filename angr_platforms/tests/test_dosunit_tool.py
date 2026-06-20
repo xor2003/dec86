@@ -10,9 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tools.dosunit import ir_edges
 from tools.dosunit import dosunit as dosunit_cli
-from tools.dosunit import straightline_ssa
+from tools.dosunit import ir_edges, straightline_ssa
 from tools.dosunit.complexity import analyze_function_complexity
 from tools.dosunit.data_compare import compare_loaded_data_images
 from tools.dosunit.discovery import discover_functions

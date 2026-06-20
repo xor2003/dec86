@@ -640,7 +640,6 @@ def _parse_legacy_source_lines(
     pairs. These pairs are debug evidence only; they do not imply control-flow
     or type semantics.
     """
-
     source_files: list[str] = []
     line_map: dict[int, tuple[int, int]] = {}
     if not blob:

@@ -11,8 +11,9 @@ from angr_platforms.X86_16.lst_extract import (
     DebugTypeReferenceEvidence,
     LSTMetadata,
 )
-from inertia_decompiler.sidecar_cache import _deserialize_lst_metadata, _serialize_lst_metadata
+
 from inertia_decompiler import sidecar_metadata
+from inertia_decompiler.sidecar_cache import _deserialize_lst_metadata, _serialize_lst_metadata
 
 
 def test_sidecar_metadata_cache_preserves_debug_information_fields():

@@ -3,8 +3,9 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
-from dump_debug_info import dump_debug_info
 from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoNameKind, TDInfoSymbolClass, parse_tdinfo_exe_bytes
+
+from dump_debug_info import dump_debug_info
 
 
 def _build_minimal_tdinfo_image() -> bytes:

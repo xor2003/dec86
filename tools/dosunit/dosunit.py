@@ -28,7 +28,6 @@ from tools.dosunit.straightline_ssa import (
 )
 from tools.dosunit.vectors import select_vectors
 
-
 DEFAULT_SSA_MAX_BLOCKS_PER_FUNCTION = 1000
 DEFAULT_SSA_MAX_INSNS_PER_FUNCTION = 256
 DEFAULT_SSA_MAX_ASSIGNMENTS = 0
