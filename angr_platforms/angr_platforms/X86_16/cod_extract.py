@@ -152,15 +152,13 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
 
         asm_call_operand_markers = {"BYTE", "WORD", "DWORD", "QWORD", "FWORD", "PTR", "NEAR", "FAR"}
 
-        def _remember_asm_calls(asm_text: str, call_re, call_names: list[str], seen_calls: set[str]) -> None:
+        def _remember_asm_calls(asm_text: str, call_re, call_names: list[str]) -> None:
             for call_match in call_re.finditer(asm_text):
                 callee = call_match.group(1)
                 if callee == "__chkstk" or callee.startswith("$") or callee.upper() in asm_call_operand_markers:
                     continue
                 canonical_callee = _canonical_name(callee)
-                if canonical_callee not in seen_calls:
-                    seen_calls.add(canonical_callee)
-                    call_names.append(canonical_callee)
+                call_names.append(canonical_callee)
 
         def _remember_asm_globals(
             asm_text: str, pattern, global_names: list[str], seen_globals: set[str], segment_registers: set[str]
@@ -183,7 +181,6 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
         call_sources: list[tuple[str, str]] = []
         global_names: list[str] = []
         seen_call_texts: set[str] = set()
-        seen_calls: set[str] = set()
         seen_globals: set[str] = set()
         source_lines: list[str] = []
 
@@ -234,7 +231,7 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
             if entry_match is None:
                 continue
             asm_text = entry_match.group(1).strip()
-            _remember_asm_calls(asm_text, call_re, call_names, seen_calls)
+            _remember_asm_calls(asm_text, call_re, call_names)
             _remember_asm_globals(asm_text, global_re, global_names, seen_globals, segment_registers)
             _remember_asm_globals(asm_text, offset_global_re, global_names, seen_globals, segment_registers)
 

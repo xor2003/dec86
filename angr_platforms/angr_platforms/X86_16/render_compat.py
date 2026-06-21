@@ -88,6 +88,7 @@ def _iter_c_nodes_8616(root):
             "condition",
             "init",
             "iteration",
+            "retval",
             "lhs",
             "rhs",
             "expr",
