@@ -3,7 +3,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import angr_platforms.X86_16.decompiler_postprocess_stage as post_stage
-from angr.analyses.decompiler.structured_codegen.c import CConstant, CIfElse, CReturn, CStatements, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CConstant,
+    CExpressionStatement,
+    CFunctionCall,
+    CIfElse,
+    CReturn,
+    CStatements,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -12,6 +20,7 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _is_cfg_return_expr_chain_materialization_delta_8616,
     _prune_duplicate_empty_return_guard_before_cfg_suffix_8616,
 )
+from angr_platforms.X86_16.decompiler_postprocess_calls import CallsiteMaterializationDecision8616
 
 
 class _DummyCodegen:
@@ -154,6 +163,247 @@ def test_empty_if_return_materialization_refuses_unsafe_effect_function(monkeypa
     assert codegen._inertia_empty_return_branch_stats_8616["materialized"] == 0
     assert codegen._inertia_empty_return_branch_stats_8616["refused"] >= 1
     assert codegen._inertia_empty_return_branch_refused_unsafe_effects_8616 == 1
+
+
+def test_void_tail_call_guard_repair_moves_cfg_proven_call_into_if_body(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond = _const(1, codegen)
+    empty_return_body = CStatements(statements=[CReturn(None, codegen=codegen)], codegen=codegen)
+    tail_call = CFunctionCall("outp", None, [_const(97, codegen)], codegen=codegen)
+    root = CStatements(
+        statements=[
+            CIfElse([(cond, empty_return_body)], else_node=None, cstyle_ifs=True, codegen=codegen),
+            CReturn(tail_call, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    monkeypatch.setattr(post_stage, "_codegen_has_explicit_void_return_8616", lambda _project, _codegen: True)
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_void_tail_call_proofs_from_cfg_8616",
+        lambda _project, _codegen: [(cond, _const(97, codegen))],
+    )
+
+    changed = post_stage._materialize_void_tail_call_guard_from_cfg_8616(project, codegen)
+
+    assert changed is True
+    assert len(root.statements) == 1
+    repaired_if = root.statements[0]
+    repaired_body = repaired_if.condition_and_nodes[0][1]
+    assert repaired_body.statements == [tail_call]
+    assert codegen._inertia_void_tail_call_guard_stats_8616 == {
+        "candidates": 1,
+        "materialized": 1,
+        "refused": 0,
+    }
+
+
+def test_void_tail_call_guard_repair_handles_else_node_tail_call(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond = _const(1, codegen)
+    empty_return_body = CStatements(statements=[CReturn(None, codegen=codegen)], codegen=codegen)
+    tail_call = CFunctionCall("outp", None, [_const(97, codegen)], codegen=codegen)
+    else_body = CStatements(statements=[CReturn(tail_call, codegen=codegen)], codegen=codegen)
+    root = CStatements(
+        statements=[
+            CIfElse([(cond, empty_return_body)], else_node=else_body, cstyle_ifs=True, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    monkeypatch.setattr(post_stage, "_codegen_has_explicit_void_return_8616", lambda _project, _codegen: True)
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_void_tail_call_proofs_from_cfg_8616",
+        lambda _project, _codegen: [(cond, _const(97, codegen))],
+    )
+
+    changed = post_stage._materialize_void_tail_call_guard_from_cfg_8616(project, codegen)
+
+    assert changed is True
+    repaired_if = root.statements[0]
+    assert repaired_if.else_node is None
+    repaired_body = repaired_if.condition_and_nodes[0][1]
+    assert repaired_body.statements == [tail_call]
+
+
+def test_void_tail_call_guard_repair_handles_wrapped_else_tail_call(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond = _const(1, codegen)
+    empty_return_body = CStatements(statements=[CReturn(None, codegen=codegen)], codegen=codegen)
+    tail_call = CFunctionCall("outp", None, [_const(97, codegen)], codegen=codegen)
+    else_body = CStatements(
+        statements=[
+            CStatements(statements=[], codegen=codegen),
+            CStatements(statements=[CReturn(tail_call, codegen=codegen)], codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    root = CStatements(
+        statements=[
+            CIfElse([(cond, empty_return_body)], else_node=else_body, cstyle_ifs=True, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    monkeypatch.setattr(post_stage, "_codegen_has_explicit_void_return_8616", lambda _project, _codegen: True)
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_void_tail_call_proofs_from_cfg_8616",
+        lambda _project, _codegen: [(cond, _const(97, codegen))],
+    )
+
+    changed = post_stage._materialize_void_tail_call_guard_from_cfg_8616(project, codegen)
+
+    assert changed is True
+    repaired_if = root.statements[0]
+    assert repaired_if.else_node is None
+    repaired_body = repaired_if.condition_and_nodes[0][1]
+    assert repaired_body.statements == [tail_call]
+
+
+def test_void_tail_call_guard_repair_preserves_setup_sequence(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond = _const(1, codegen)
+    empty_return_body = CStatements(statements=[CReturn(None, codegen=codegen)], codegen=codegen)
+    setup_a = post_stage.CAssignment(
+        CVariable(SimStackVariable(-2, 2, base="bp", name="tmp_a"), codegen=codegen),
+        _const(97, codegen),
+        codegen=codegen,
+    )
+    setup_b = post_stage.CAssignment(
+        CVariable(SimStackVariable(-4, 2, base="bp", name="tmp_b"), codegen=codegen),
+        _const(3, codegen),
+        codegen=codegen,
+    )
+    tail_call = CFunctionCall("outp", None, [_const(97, codegen)], codegen=codegen)
+    else_body = CStatements(
+        statements=[
+            CStatements(
+                statements=[
+                    setup_a,
+                    setup_b,
+                    CExpressionStatement(tail_call, codegen=codegen),
+                ],
+                codegen=codegen,
+            ),
+            CStatements(statements=[CReturn(None, codegen=codegen)], codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    root = CStatements(
+        statements=[
+            CIfElse([(cond, empty_return_body)], else_node=else_body, cstyle_ifs=True, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    monkeypatch.setattr(post_stage, "_codegen_has_explicit_void_return_8616", lambda _project, _codegen: True)
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_void_tail_call_proofs_from_cfg_8616",
+        lambda _project, _codegen: [(cond, _const(97, codegen))],
+    )
+
+    changed = post_stage._materialize_void_tail_call_guard_from_cfg_8616(project, codegen)
+
+    assert changed is True
+    repaired_if = root.statements[0]
+    assert repaired_if.else_node is None
+    repaired_body = repaired_if.condition_and_nodes[0][1]
+    assert setup_a in repaired_body.statements
+    assert setup_b in repaired_body.statements
+    assert any(isinstance(stmt, CExpressionStatement) for stmt in repaired_body.statements)
+
+
+def test_void_tail_call_guard_repair_accepts_exact_condition_with_unmaterialized_args(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond = _const(1, codegen)
+    empty_return_body = CStatements(statements=[CReturn(None, codegen=codegen)], codegen=codegen)
+    tail_call = CFunctionCall("outp", None, [], codegen=codegen)
+    else_body = CStatements(statements=[CReturn(tail_call, codegen=codegen)], codegen=codegen)
+    root = CStatements(
+        statements=[
+            CIfElse([(cond, empty_return_body)], else_node=else_body, cstyle_ifs=True, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    monkeypatch.setattr(post_stage, "_codegen_has_explicit_void_return_8616", lambda _project, _codegen: True)
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_void_tail_call_proofs_from_cfg_8616",
+        lambda _project, _codegen: [(cond, _const(97, codegen))],
+    )
+
+    changed = post_stage._materialize_void_tail_call_guard_from_cfg_8616(project, codegen)
+
+    assert changed is True
+    repaired_if = root.statements[0]
+    assert repaired_if.else_node is None
+    repaired_body = repaired_if.condition_and_nodes[0][1]
+    assert repaired_body.statements == [tail_call]
+
+
+def test_void_tail_call_guard_repair_inverts_cfg_proven_suffix_diamond(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond = _const(1, codegen)
+    false_call = CFunctionCall("sleep", None, [_const(30, codegen)], codegen=codegen)
+    false_body = CStatements(
+        statements=[
+            CExpressionStatement(false_call, codegen=codegen),
+            CReturn(None, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    setup = post_stage.CAssignment(
+        CVariable(SimStackVariable(-2, 2, base="bp", name="tmp"), codegen=codegen),
+        _const(97, codegen),
+        codegen=codegen,
+    )
+    true_call = CFunctionCall("outp", None, [_const(97, codegen), _const(3, codegen)], codegen=codegen)
+    true_sleep = CFunctionCall("sleep", None, [_const(25, codegen)], codegen=codegen)
+    root = CStatements(
+        statements=[
+            CIfElse([(cond, false_body)], else_node=None, cstyle_ifs=True, codegen=codegen),
+            setup,
+            CExpressionStatement(true_call, codegen=codegen),
+            CExpressionStatement(true_sleep, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    monkeypatch.setattr(post_stage, "_codegen_has_explicit_void_return_8616", lambda _project, _codegen: True)
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_void_tail_call_proofs_from_cfg_8616",
+        lambda _project, _codegen: [(cond, _const(97, codegen))],
+    )
+
+    changed = post_stage._materialize_void_tail_call_guard_from_cfg_8616(project, codegen)
+
+    assert changed is True
+    assert len(root.statements) == 1
+    repaired_if = root.statements[0]
+    true_body = repaired_if.condition_and_nodes[0][1]
+    assert len(true_body.statements) == 3
+    assert true_body.statements[0] is setup
+    assert true_body.statements[1].expr is true_call
+    assert true_body.statements[2].expr is true_sleep
+    assert repaired_if.else_node is false_body
 
 
 def test_cfg_selector_return_delta_accepts_proven_stack_probe_helper_cleanup():
@@ -376,6 +626,25 @@ def test_after_call_stack_lowering_rerun_refuses_selector_return_contract(monkey
 
     assert changed is False
     assert codegen._inertia_stack_lowering_rerun_refused_selector_return_8616 == 1
+
+
+def test_after_call_stack_lowering_rerun_refuses_callsite_cache_hit():
+    def fake_run_stack_lowering_pass_8616(**_kwargs):
+        raise AssertionError("cache-hit should skip stack-lowering rerun")
+
+    original = post_stage.run_stack_lowering_pass_8616
+    post_stage.run_stack_lowering_pass_8616 = fake_run_stack_lowering_pass_8616
+    try:
+        codegen = SimpleNamespace(
+            _inertia_callsite_materialization_last_decision_8616=CallsiteMaterializationDecision8616.CACHE_HIT,
+            _inertia_callsite_materialization_last_changed_8616=False,
+        )
+        changed = post_stage._rerun_stack_lowering_consumers_after_calls_8616(SimpleNamespace(), codegen)
+
+        assert changed is False
+        assert codegen._inertia_stack_lowering_rerun_refused_callsite_cache_hit_8616 == 1
+    finally:
+        post_stage.run_stack_lowering_pass_8616 = original
 
 
 def test_postprocess_scheduler_skips_stack_identity_passes_after_selector_return():
