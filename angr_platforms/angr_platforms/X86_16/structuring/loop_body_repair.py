@@ -672,7 +672,7 @@ def _classify_pretest_targets_from_cfg_8616(
     jump_target: int,
 ) -> tuple[int, int] | None:
     """Return ``(body, exit)`` only when CFG cycle reachability proves both roles."""
-    graph = cast(Any, function).graph
+    graph = getattr(cast(Any, function), "graph", None)
     if graph is None:
         return None
     branch_node = _cfg_node_containing_addr_8616(graph, branch_addr)

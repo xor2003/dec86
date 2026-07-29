@@ -116,6 +116,12 @@ def test_pretest_target_classification_refuses_ambiguous_cfg_roles() -> None:
     assert _classify_pretest_targets_from_cfg_8616(function, 0x1006, 0x1010, 0x1020) is None
 
 
+def test_pretest_target_classification_refuses_function_without_cfg_graph() -> None:
+    function = SimpleNamespace(addr=0x1000, size=0x40)
+
+    assert _classify_pretest_targets_from_cfg_8616(function, 0x1006, 0x1010, 0x1020) is None
+
+
 def _stack(offset: int, codegen, *, name: str = "local"):
     return CVariable(SimStackVariable(offset, 2, base="bp", name=name), codegen=codegen)
 
